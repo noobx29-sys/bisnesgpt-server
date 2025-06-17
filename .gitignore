@@ -1,0 +1,50 @@
+# Ignore all log files
+*.log
+
+# Ignore node_modules directory
+node_modules/
+
+# Ignore environment files
+.env
+.wwebjs_auth/
+.wwebjs_auth
+.wwebjs_auth_backup/
+.wwebjs_auth_backup
+.sessions/
+.sessions
+.session_backups/
+.session_backups
+.wwebjs_cache/
+.wwebjs_cache
+public/
+public
+# Ignore specific configuration files
+config/secret-config.json
+last_processed_row.json
+last_processed_row_001.json
+last_processed_row_060.json
+spreadsheet/spreadsheetdata
+
+
+
+# Ignore all files in the temp directory
+temp/
+sa_firebase.json
+service_account.json
+jutaCRM.code-workspace
+juta.json
+firestore.rules
+firestore.indexes.json
+firebase.json
+config.json
+last_processed_row.json
+config.js
+
+# Ignore all session-related directories and their contents
+.sessions/
+.sessions
+.session_backups/
+.session_backups
+session_backups/
+**/session-*/
+**/session_backups/
