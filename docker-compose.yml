@@ -1,0 +1,26 @@
+services:
+  app:
+    build: .
+    image: juta-server:latest
+    container_name: juta-server
+    restart: unless-stopped
+    ports:
+      - 8443:8443
+    networks:
+      - juta_network
+    depends_on:
+      - redis
+    environment:
+      - REDIS_URL=redis://redis:6379
+      - CHROME_PATH=/usr/bin/google-chrome
+
+  redis:
+    image: redis:alpine
+    container_name: juta-server-redis
+    networks:
+      - juta_network
+
+networks:
+  juta_network:
+    name: juta_network
+    driver: bridge

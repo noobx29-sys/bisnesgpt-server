@@ -1,0 +1,107 @@
+//@version=5
+indicator("Multi-Indicator Trading Signals", overlay=true, shorttitle="MITS")
+
+// === INDICATOR INPUTS ===
+// EMA
+ema_short_length = input.int(50, "Short EMA Length", minval=1)
+ema_long_length = input.int(200, "Long EMA Length", minval=1)
+
+// MACD
+macd_fast_length = input.int(12, "MACD Fast Length", minval=1)
+macd_slow_length = input.int(26, "MACD Slow Length", minval=1)
+macd_signal_length = input.int(9, "MACD Signal Length", minval=1)
+
+// RSI
+rsi_length = input.int(14, "RSI Length", minval=1)
+rsi_oversold = input.int(30, "RSI Oversold", minval=1)
+rsi_overbought = input.int(70, "RSI Overbought", minval=1)
+
+// ADX
+adx_length = input.int(14, "ADX Length", minval=1)
+adx_threshold = input.int(25, "ADX Threshold", minval=1)
+
+// Bollinger Bands
+bb_length = input.int(20, "BB Length", minval=1)
+bb_mult = input.float(2.0, "BB StdDev", step=0.1)
+
+// === CALCULATIONS ===
+// EMA (LMT)
+ema50 = ta.ema(close, 50)
+ema200 = ta.ema(close, 200)
+ema_buy = ta.crossover(ema50, ema200)
+ema_sell = ta.crossunder(ema50, ema200)
+
+// MACD (Radar KonDi)
+[macdLine, signalLine, _] = ta.macd(close, macd_fast_length, macd_slow_length, macd_signal_length)
+macd_buy = ta.crossover(macdLine, signalLine)
+macd_sell = ta.crossunder(macdLine, signalLine)
+
+// RSI (RK)
+rsi = ta.rsi(close, rsi_length)
+rsi_buy = ta.crossover(rsi, rsi_oversold)
+rsi_sell = ta.crossunder(rsi, rsi_overbought)
+
+// ADX (RAT)
+[diplus, diminus, adx] = ta.dmi(adx_length, adx_length)
+adx_buy = adx > adx_threshold and diplus > diminus
+adx_sell = adx > adx_threshold and diminus > diplus
+
+// Bollinger Bands (GTB)
+[bb_middle, bb_upper, bb_lower] = ta.bb(close, bb_length, bb_mult)
+bb_buy = ta.crossover(close, bb_lower)
+bb_sell = ta.crossunder(close, bb_upper)
+
+// === TABLES ===
+var table indicators_table = table.new(position.top_right, 2, 6, border_width=1, border_color=color.gray, frame_color=color.gray, frame_width=1)
+var table signal_table = table.new(position.bottom_center, 2, 2, border_width=1, border_color=color.gray, frame_color=color.gray, frame_width=1)
+
+if barstate.islast
+    // === INDICATORS TABLE ===
+    // Header
+    table.cell(indicators_table, 0, 0, "Indicator", bgcolor=color.white, text_color=color.black, text_size=size.small, text_halign=text.align_center)
+    table.cell(indicators_table, 1, 0, "Signal", bgcolor=color.white, text_color=color.black, text_size=size.small, text_halign=text.align_center)
+    
+    // 1. MACD (Radar KonDi)
+    signal_macd = macd_buy ? "✅ BELI" : "❌ JUAL"
+    color_macd = macd_buy ? color.green : color.red
+    table.cell(indicators_table, 0, 1, "Radar KonDi", bgcolor=color.new(color.gray, 90), text_color=color.black, text_size=size.small)
+    table.cell(indicators_table, 1, 1, signal_macd, bgcolor=color.new(color_macd, 80), text_color=color.black, text_size=size.small, text_halign=text.align_center)
+    
+    // 2. EMA (LMT)
+    signal_ma = ema_buy ? "✅ BELI" : "❌ JUAL"
+    color_ma = ema_buy ? color.green : color.red
+    table.cell(indicators_table, 0, 2, "LMT", bgcolor=color.new(color.gray, 90), text_color=color.black, text_size=size.small)
+    table.cell(indicators_table, 1, 2, signal_ma, bgcolor=color.new(color_ma, 80), text_color=color.black, text_size=size.small, text_halign=text.align_center)
+    
+    // 3. Bollinger Bands (GTB)
+    signal_bb = bb_buy ? "✅ BELI" : "❌ JUAL"
+    color_bb = bb_buy ? color.green : color.red
+    table.cell(indicators_table, 0, 3, "GTB", bgcolor=color.new(color.gray, 90), text_color=color.black, text_size=size.small)
+    table.cell(indicators_table, 1, 3, signal_bb, bgcolor=color.new(color_bb, 80), text_color=color.black, text_size=size.small, text_halign=text.align_center)
+    
+    // 4. ADX (RAT)
+    signal_adx = adx_buy ? "✅ BELI" : "❌ JUAL"
+    color_adx = adx_buy ? color.green : color.red
+    table.cell(indicators_table, 0, 4, "RAT", bgcolor=color.new(color.gray, 90), text_color=color.black, text_size=size.small)
+    table.cell(indicators_table, 1, 4, signal_adx, bgcolor=color.new(color_adx, 80), text_color=color.black, text_size=size.small, text_halign=text.align_center)
+    
+    // 5. RSI (RK)
+    signal_rsi = rsi_buy ? "✅ BELI" : "❌ JUAL"
+    color_rsi = rsi_buy ? color.green : color.red
+    table.cell(indicators_table, 0, 5, "RK", bgcolor=color.new(color.gray, 90), text_color=color.black, text_size=size.small)
+    table.cell(indicators_table, 1, 5, signal_rsi, bgcolor=color.new(color_rsi, 80), text_color=color.black, text_size=size.small, text_halign=text.align_center)
+    
+    // === OVERALL SIGNAL TABLE ===
+    buy_count = (macd_buy ? 1 : 0) + (ema_buy ? 1 : 0) + (bb_buy ? 1 : 0) + (adx_buy ? 1 : 0) + (rsi_buy ? 1 : 0)
+    
+    overall_signal = buy_count >= 3 ? "✅ BELI" : "❌ JUAL"
+    overall_color = buy_count >= 3 ? color.green : color.red
+    
+    table.cell(signal_table, 0, 0, "ISYARAT KESELURUHAN", bgcolor=color.white, text_color=color.black, text_size=size.small, text_halign=text.align_center)
+    table.cell(signal_table, 1, 0, overall_signal, bgcolor=color.new(overall_color, 80), text_color=color.black, text_size=size.small, text_halign=text.align_center)
+
+// === Plot indicators on chart ===
+plot(ema50, "EMA 50", color=color.blue)
+plot(ema200, "EMA 200", color=color.red)
+plot(bb_upper, "BB Upper", color=color.gray)
+plot(bb_lower, "BB Lower", color=color.gray)

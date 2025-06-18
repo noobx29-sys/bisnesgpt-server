@@ -1,0 +1,15 @@
+runtime: nodejs20
+env: standard
+instance_class: F4
+automatic_scaling:
+ min_idle_instances: 1
+ max_idle_instances: automatic
+ min_pending_latency: automatic
+ max_pending_latency: automatic
+handlers:
+  - url: /.*
+    secure: always
+    script: auto
+
+network:
+  session_affinity: true
