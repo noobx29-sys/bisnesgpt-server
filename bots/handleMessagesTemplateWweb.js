@@ -1,10 +1,3 @@
-// handleMessagesTemplateWweb.js
-
-//STEP BY STEP GUIDE
-//1. CHANGE all handleMessagesTemplate to -> handleMessages<YourBotName>
-//2. CHANGE all idSubstring to firebase collection name
-//3. CHANGE all <assistant> to openai assistant id
-//4. CHANGE all Template to your <YourBotName>
 const os = require("os");
 const OpenAI = require("openai");
 const axios = require("axios");
@@ -42,7 +35,7 @@ const sql = neon(process.env.DATABASE_URL);
 // For connection pooling
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  max: 200,
+  max: 2000,
 });
 
 let companyConfig = {};
@@ -340,7 +333,9 @@ async function addTask(idSubstring, taskString, assignee, dueDate) {
     `;
 
     if (companyResult.length === 0) {
-      return JSON.stringify({ message: `No company found for this company ${idSubstring}.` });
+      return JSON.stringify({
+        message: `No company found for this company ${idSubstring}.`,
+      });
     }
 
     const currentTasks = companyResult[0].tasks || [];
@@ -359,19 +354,33 @@ async function addTask(idSubstring, taskString, assignee, dueDate) {
     });
   } catch (error) {
     console.error(`Error adding task for company ${idSubstring}:`, error);
-    return JSON.stringify({ message: `Error adding task for company ${idSubstring}.` });
+    return JSON.stringify({
+      message: `Error adding task for company ${idSubstring}.`,
+    });
   }
 }
 
-async function registerUser(phoneNumber, email, username, companyName, password) {
+async function registerUser(
+  phoneNumber,
+  email,
+  username,
+  companyName,
+  password
+) {
   try {
     // Check if the contact already exists
-    const companiesSnapshot = await admin.firestore().collection("companies").get();
+    const companiesSnapshot = await admin
+      .firestore()
+      .collection("companies")
+      .get();
     let existingContact = null;
     let existingCompanyId = null;
 
     for (const doc of companiesSnapshot.docs) {
-      const contactsSnapshot = await doc.ref.collection("contacts").where("phone", "==", phoneNumber).get();
+      const contactsSnapshot = await doc.ref
+        .collection("contacts")
+        .where("phone", "==", phoneNumber)
+        .get();
       if (!contactsSnapshot.empty) {
         existingContact = contactsSnapshot.docs[0].data();
         existingCompanyId = doc.id;
@@ -414,15 +423,21 @@ async function registerUser(phoneNumber, email, username, companyName, password)
     });
 
     // Save user data under the company's employee collection
-    await admin.firestore().collection(`companies/${companyId}/employee`).doc(userRecord.uid).set({
-      name: username,
-      email: email,
-      role: "1",
-      phone: phoneNumber,
-    });
+    await admin
+      .firestore()
+      .collection(`companies/${companyId}/employee`)
+      .doc(userRecord.uid)
+      .set({
+        name: username,
+        email: email,
+        role: "1",
+        phone: phoneNumber,
+      });
 
     // Create channel (if needed)
-    const response = await axios.post(`https://juta.ngrok.app/api/channel/create/${companyId}`);
+    const response = await axios.post(
+      `https://juta.ngrok.app/api/channel/create/${companyId}`
+    );
     console.log(response.data);
 
     return { success: true, userId: userRecord.uid, companyId: companyId };
@@ -439,18 +454,25 @@ async function listAssignedTasks(idSubstring, assignee) {
     `;
 
     if (companyResult.length === 0) {
-      return JSON.stringify({ message: `No company found for this companyID ${idSubstring}.` });
+      return JSON.stringify({
+        message: `No company found for this companyID ${idSubstring}.`,
+      });
     }
 
     let tasks = companyResult[0].tasks || [];
 
-    let assignedTasks = tasks.filter((task) => task.assignee.toLowerCase() === assignee.toLowerCase());
+    let assignedTasks = tasks.filter(
+      (task) => task.assignee.toLowerCase() === assignee.toLowerCase()
+    );
 
     if (assignedTasks.length === 0) {
       return JSON.stringify({ message: `No tasks assigned to ${assignee}.` });
     }
     tasks = assignedTasks
-      .map((task, index) => `${index + 1}. [${task.status}] ${task.task} (Due: ${task.dueDate})`)
+      .map(
+        (task, index) =>
+          `${index + 1}. [${task.status}] ${task.task} (Due: ${task.dueDate})`
+      )
       .join("\n");
     return JSON.stringify({ tasks });
   } catch (error) {
@@ -466,19 +488,30 @@ async function listTasks(idSubstring) {
     `;
 
     if (companyResult.length === 0) {
-      return JSON.stringify({ message: `No company found for this companyID ${idSubstring}.` });
+      return JSON.stringify({
+        message: `No company found for this companyID ${idSubstring}.`,
+      });
     }
 
     let tasks = companyResult[0].tasks || [];
 
     if (tasks.length === 0) {
-      return JSON.stringify({ message: `No tasks found for this company ${idSubstring}.` });
+      return JSON.stringify({
+        message: `No tasks found for this company ${idSubstring}.`,
+      });
     }
-    tasks = tasks.map((task, index) => `${index + 1}. [${task.status}] ${task.task} (Due: ${task.dueDate})`).join("\n");
+    tasks = tasks
+      .map(
+        (task, index) =>
+          `${index + 1}. [${task.status}] ${task.task} (Due: ${task.dueDate})`
+      )
+      .join("\n");
     return JSON.stringify({ tasks });
   } catch (error) {
     console.error(`Error getting tasks for company ${idSubstring}:`, error);
-    return JSON.stringify({ message: `No tasks found for this company ${idSubstring}.` });
+    return JSON.stringify({
+      message: `No tasks found for this company ${idSubstring}.`,
+    });
   }
 }
 
@@ -495,7 +528,9 @@ async function updateTaskStatus(idSubstring, taskIndex, newStatus) {
     const currentTasks = companyResult[0].tasks || [];
 
     if (taskIndex === -1) {
-      return JSON.stringify({ message: `No tasks found for this index ${taskIndex}.` });
+      return JSON.stringify({
+        message: `No tasks found for this index ${taskIndex}.`,
+      });
     }
 
     currentTasks[taskIndex].status = newStatus;
@@ -507,10 +542,17 @@ async function updateTaskStatus(idSubstring, taskIndex, newStatus) {
       WHERE company_id = ${idSubstring}
     `;
 
-    return JSON.stringify({ message: `Task "${currentTasks[taskIndex].task}" status updated to ${newStatus}.` });
+    return JSON.stringify({
+      message: `Task "${currentTasks[taskIndex].task}" status updated to ${newStatus}.`,
+    });
   } catch (error) {
-    console.error(`Error updating task ${taskIndex} for company ${idSubstring}:`, error);
-    return JSON.stringify({ message: `Error updating task ${taskIndex} for company ${idSubstring}:` });
+    console.error(
+      `Error updating task ${taskIndex} for company ${idSubstring}:`,
+      error
+    );
+    return JSON.stringify({
+      message: `Error updating task ${taskIndex} for company ${idSubstring}:`,
+    });
   }
 }
 
@@ -524,14 +566,19 @@ async function addNotificationToUser(companyId, message, contactName) {
     const client = await pool.connect();
 
     try {
-      const usersQuery = await client.query("SELECT user_id FROM public.users WHERE company_id = $1", [companyId]);
+      const usersQuery = await client.query(
+        "SELECT user_id FROM public.users WHERE company_id = $1",
+        [companyId]
+      );
 
       if (usersQuery.rows.length === 0) {
         console.log("No matching users found.");
         return;
       }
 
-      const cleanMessage = Object.fromEntries(Object.entries(message).filter(([_, value]) => value !== undefined));
+      const cleanMessage = Object.fromEntries(
+        Object.entries(message).filter(([_, value]) => value !== undefined)
+      );
 
       let notificationText = cleanMessage.text?.body || "New message received";
       if (cleanMessage.hasMedia) {
@@ -556,7 +603,9 @@ async function addNotificationToUser(companyId, message, contactName) {
           ]
         );
 
-        console.log(`Notification added to PostgreSQL for user with ID: ${userId}`);
+        console.log(
+          `Notification added to PostgreSQL for user with ID: ${userId}`
+        );
       });
 
       await Promise.all(promises);
@@ -573,7 +622,12 @@ const processingQueue = new Map();
 const MAX_QUEUE_SIZE = 5;
 const RATE_LIMIT_DELAY = 5000; // 5 seconds
 
-async function generateSpecialReportMTDC(threadID, assistantId, contactName, extractedNumber) {
+async function generateSpecialReportMTDC(
+  threadID,
+  assistantId,
+  contactName,
+  extractedNumber
+) {
   try {
     var currentDate = new Date().toISOString().split("T")[0]; // Format: YYYY-MM-DD
     var reportInstruction = `Please generate a report in the following format based on our conversation:
@@ -606,7 +660,10 @@ Fill in the information in square brackets with the relevant details from our co
     let runStatus;
     do {
       await new Promise((resolve) => setTimeout(resolve, 1000)); // Wait for 1 second
-      runStatus = await openai.beta.threads.runs.retrieve(threadID, assistantResponse.id);
+      runStatus = await openai.beta.threads.runs.retrieve(
+        threadID,
+        assistantResponse.id
+      );
     } while (runStatus.status !== "completed");
 
     // Retrieve the assistant's response
@@ -622,7 +679,12 @@ Fill in the information in square brackets with the relevant details from our co
   }
 }
 
-async function generateSpecialReportSKC(threadID, assistantId, contactName, extractedNumber) {
+async function generateSpecialReportSKC(
+  threadID,
+  assistantId,
+  contactName,
+  extractedNumber
+) {
   try {
     var currentDate = new Date().toISOString().split("T")[0]; // Format: YYYY-MM-DD
     var reportInstruction = `Please generate a report in the following format based on our conversation:
@@ -655,7 +717,10 @@ Fill in the information in square brackets with the relevant details from our co
     let runStatus;
     do {
       await new Promise((resolve) => setTimeout(resolve, 1000)); // Wait for 1 second
-      runStatus = await openai.beta.threads.runs.retrieve(threadID, assistantResponse.id);
+      runStatus = await openai.beta.threads.runs.retrieve(
+        threadID,
+        assistantResponse.id
+      );
     } while (runStatus.status !== "completed");
 
     // Retrieve the assistant's response
@@ -671,7 +736,12 @@ Fill in the information in square brackets with the relevant details from our co
   }
 }
 
-async function generateSpecialReportLKSSB(threadID, assistantId, contactName, extractedNumber) {
+async function generateSpecialReportLKSSB(
+  threadID,
+  assistantId,
+  contactName,
+  extractedNumber
+) {
   try {
     var currentDate = new Date().toISOString().split("T")[0]; // Format: YYYY-MM-DD
     var reportInstruction = `Generate a report in the following format based on our conversation and return the report in this format:
@@ -704,7 +774,10 @@ Fill in the information in square brackets with the relevant details from our co
     let runStatus;
     do {
       await new Promise((resolve) => setTimeout(resolve, 1000)); // Wait for 1 second
-      runStatus = await openai.beta.threads.runs.retrieve(threadID, assistantResponse.id);
+      runStatus = await openai.beta.threads.runs.retrieve(
+        threadID,
+        assistantResponse.id
+      );
     } while (runStatus.status !== "completed");
 
     // Retrieve the assistant's response
@@ -720,7 +793,12 @@ Fill in the information in square brackets with the relevant details from our co
   }
 }
 
-async function generateSpecialReportBINA(threadID, assistantId, contactName, extractedNumber) {
+async function generateSpecialReportBINA(
+  threadID,
+  assistantId,
+  contactName,
+  extractedNumber
+) {
   try {
     var currentDate = new Date().toISOString().split("T")[0]; // Format: YYYY-MM-DD
     var reportInstruction = `Generate a report in the following format based on our conversation and return the report in this format:
@@ -756,7 +834,10 @@ Fill in the information in square brackets with the relevant details from our co
     let runStatus;
     do {
       await new Promise((resolve) => setTimeout(resolve, 1000)); // Wait for 1 second
-      runStatus = await openai.beta.threads.runs.retrieve(threadID, assistantResponse.id);
+      runStatus = await openai.beta.threads.runs.retrieve(
+        threadID,
+        assistantResponse.id
+      );
     } while (runStatus.status !== "completed");
 
     // Retrieve the assistant's response
@@ -786,21 +867,19 @@ async function insertSpreadsheetMTDC(reportMessage) {
     const lines = reportMessage.split("\n");
     const data = {
       programs: [],
-      programDates: []
+      programDates: [],
     };
     lines.forEach((line) => {
       if (line.includes(":")) {
         const colonIndex = line.indexOf(":");
         const key = line.substring(0, colonIndex).trim();
         const value = line.substring(colonIndex + 1).trim();
-        
+
         if (key.match(/^Program of Interest(\s+\d+)?$/)) {
           data.programs.push(value);
-        }
-        else if (key.match(/^Program Date & Time(\s+\d+)?$/)) {
+        } else if (key.match(/^Program Date & Time(\s+\d+)?$/)) {
           data.programDates.push(value);
-        }
-        else {
+        } else {
           switch (key) {
             case "Name":
               data["Name"] = value;
@@ -822,10 +901,13 @@ async function insertSpreadsheetMTDC(reportMessage) {
     console.log("Report Message From MTDC:", reportMessage);
     console.log("Data extracted from MTDC Report:", data);
 
-    const timestamp = moment().tz("Asia/Kuala_Lumpur").format("DD/MM/YYYY HH:mm:ss");
+    const timestamp = moment()
+      .tz("Asia/Kuala_Lumpur")
+      .format("DD/MM/YYYY HH:mm:ss");
 
     const formatDateTimeString = (dateTimeString) => {
-      if (!dateTimeString || dateTimeString === "Unspecified") return "Unspecified";
+      if (!dateTimeString || dateTimeString === "Unspecified")
+        return "Unspecified";
 
       const correctFormatRegex = /^\d{2}\/\d{2}\/\d{4} \d{2}:\d{2}:\d{2}$/;
       if (correctFormatRegex.test(dateTimeString)) {
@@ -833,7 +915,9 @@ async function insertSpreadsheetMTDC(reportMessage) {
       }
 
       try {
-        const formattedDate = moment(dateTimeString).tz("Asia/Kuala_Lumpur").format("DD/MM/YYYY HH:mm:ss");
+        const formattedDate = moment(dateTimeString)
+          .tz("Asia/Kuala_Lumpur")
+          .format("DD/MM/YYYY HH:mm:ss");
         return formattedDate !== "Invalid date" ? formattedDate : "Unspecified";
       } catch (error) {
         console.error("Error formatting date string:", error);
@@ -856,7 +940,9 @@ async function insertSpreadsheetMTDC(reportMessage) {
       range,
     });
 
-    const lastRow = getRowsResponse.data.values ? getRowsResponse.data.values.length + 1 : 1;
+    const lastRow = getRowsResponse.data.values
+      ? getRowsResponse.data.values.length + 1
+      : 1;
 
     for (const row of rowData) {
       const response = await sheets.spreadsheets.values.append({
@@ -869,7 +955,9 @@ async function insertSpreadsheetMTDC(reportMessage) {
         },
       });
 
-      console.log(`${response.data.updates.updatedCells} cells appended at row ${lastRow} for MTDC Google Sheet.`);
+      console.log(
+        `${response.data.updates.updatedCells} cells appended at row ${lastRow} for MTDC Google Sheet.`
+      );
       console.log("Added row with data:", row);
     }
 
@@ -928,7 +1016,9 @@ async function updateGoogleSheet(reportMessage) {
     });
 
     // Get current timestamp in Malaysia timezone
-    const timestamp = moment().tz("Asia/Kuala_Lumpur").format("DD/MM/YYYY HH:mm:ss");
+    const timestamp = moment()
+      .tz("Asia/Kuala_Lumpur")
+      .format("DD/MM/YYYY HH:mm:ss");
 
     // Create row data with exact column mapping
     const rowData = [
@@ -960,7 +1050,9 @@ async function updateGoogleSheet(reportMessage) {
       range: "Form_Responses!A:A", // Get all values in column A to find last row
     });
 
-    const lastRow = getRowsResponse.data.values ? getRowsResponse.data.values.length + 1 : 1;
+    const lastRow = getRowsResponse.data.values
+      ? getRowsResponse.data.values.length + 1
+      : 1;
 
     const response = await sheets.spreadsheets.values.append({
       spreadsheetId,
@@ -972,7 +1064,9 @@ async function updateGoogleSheet(reportMessage) {
       },
     });
 
-    console.log(`${response.data.updates.updatedCells} cells appended at row ${lastRow}`);
+    console.log(
+      `${response.data.updates.updatedCells} cells appended at row ${lastRow}`
+    );
     console.log("Added row with data:", rowData);
     return response;
   } catch (error) {
@@ -989,9 +1083,10 @@ async function createAppointment(companyId, appointmentData) {
 
     let userEmail = "admin@juta.com";
     try {
-      const userResult = await client.query("SELECT user_id, email FROM public.users WHERE company_id = $1 LIMIT 1", [
-        companyId,
-      ]);
+      const userResult = await client.query(
+        "SELECT user_id, email FROM public.users WHERE company_id = $1 LIMIT 1",
+        [companyId]
+      );
 
       if (userResult.rows.length > 0) {
         userEmail = userResult.rows[0].email || userResult.rows[0].user_id;
@@ -1004,7 +1099,14 @@ async function createAppointment(companyId, appointmentData) {
 
     const appointmentId = uuidv4();
 
-    const { contact_id, title, description, scheduled_time, duration_minutes, status = "scheduled" } = appointmentData;
+    const {
+      contact_id,
+      title,
+      description,
+      scheduled_time,
+      duration_minutes,
+      status = "scheduled",
+    } = appointmentData;
 
     await client.query("BEGIN");
 
@@ -1072,7 +1174,10 @@ async function createCalendarEvent(
       [idSubstring]
     );
 
-    const calendarConfig = calendarConfigQuery.rows.length > 0 ? calendarConfigQuery.rows[0].setting_value : {};
+    const calendarConfig =
+      calendarConfigQuery.rows.length > 0
+        ? calendarConfigQuery.rows[0].setting_value
+        : {};
 
     let calendarId = calendarConfig.calendarId;
     let firebaseId = calendarConfig.firebaseId;
@@ -1088,9 +1193,13 @@ async function createCalendarEvent(
     // Calculate duration based on appointment type
     let appointmentDuration;
     if (isService) {
-      appointmentDuration = Math.ceil(40 / calendarConfig.slotDuration) * calendarConfig.slotDuration;
+      appointmentDuration =
+        Math.ceil(40 / calendarConfig.slotDuration) *
+        calendarConfig.slotDuration;
     } else if (summary.toLowerCase().includes("troubleshoot")) {
-      appointmentDuration = Math.ceil(60 / calendarConfig.slotDuration) * calendarConfig.slotDuration;
+      appointmentDuration =
+        Math.ceil(60 / calendarConfig.slotDuration) *
+        calendarConfig.slotDuration;
     } else {
       appointmentDuration = calendarConfig.slotDuration;
     }
@@ -1105,7 +1214,9 @@ async function createCalendarEvent(
     } else if (unitMatch) {
       units = unitMatch[1];
     }
-    const formattedTitle = `${phoneNumber} ${isService ? "(S)" : ""} ${units} UNIT`;
+    const formattedTitle = `${phoneNumber} ${
+      isService ? "(S)" : ""
+    } ${units} UNIT`;
 
     // Extract and clean address from description
     let address = description
@@ -1122,9 +1233,12 @@ async function createCalendarEvent(
     // When creating the end time
     const start = new Date(startDateTime);
     const roundedStart = new Date(
-      Math.ceil(start.getTime() / (calendarConfig.slotDuration * 60 * 1000)) * (calendarConfig.slotDuration * 60 * 1000)
+      Math.ceil(start.getTime() / (calendarConfig.slotDuration * 60 * 1000)) *
+        (calendarConfig.slotDuration * 60 * 1000)
     );
-    const end = new Date(roundedStart.getTime() + appointmentDuration * 60 * 1000);
+    const end = new Date(
+      roundedStart.getTime() + appointmentDuration * 60 * 1000
+    );
 
     // Get available staff pair
     let assignedStaff = [];
@@ -1173,7 +1287,12 @@ async function createCalendarEvent(
         const apptStart = moment(appointment.startTime);
         const apptEnd = moment(appointment.endTime);
 
-        if (!(appointmentEnd.isSameOrBefore(apptStart) || appointmentStart.isSameOrAfter(apptEnd))) {
+        if (
+          !(
+            appointmentEnd.isSameOrBefore(apptStart) ||
+            appointmentStart.isSameOrAfter(apptEnd)
+          )
+        ) {
           appointment.staff?.forEach((staffEmail) => {
             busyStaff.add(staffEmail);
           });
@@ -1194,7 +1313,7 @@ async function createCalendarEvent(
       }
     }
 
-    // Create appointment in Firestore
+    // Appointment data to crete appointment in Database
     const appointmentData = {
       title: contactName + " " + phoneNumber,
       startTime: roundedStart.toISOString(),
@@ -1220,7 +1339,7 @@ async function createCalendarEvent(
       userEmail: userEmail,
     };
 
-    // Create appointment in Firestore
+    // Create appointment in Database
     await createAppointment(idSubstring, appointmentData);
 
     // Create event in Google Calendar if calendarId exists
@@ -1235,7 +1354,9 @@ async function createCalendarEvent(
       const event = {
         summary: summary + " - " + contactName,
         description: `${description}\n\nContact: ${contactName} (${phoneNumber})${
-          assignedStaff.length > 0 ? "\nAssigned Staff: " + assignedStaff.join(", ") : ""
+          assignedStaff.length > 0
+            ? "\nAssigned Staff: " + assignedStaff.join(", ")
+            : ""
         }`,
         start: {
           dateTime: startDateTime,
@@ -1273,7 +1394,9 @@ async function createCalendarEvent(
       try {
         const adminChatId = "120363378661947569@g.us";
         const adminMessage =
-          `*New ${isService ? "Service" : ""} Appointment Booked Please Confirm with Customer*\n\n` +
+          `*New ${
+            isService ? "Service" : ""
+          } Appointment Booked Please Confirm with Customer*\n\n` +
           `📅 Date: ${moment(startDateTime).format("DD/MM/YYYY")}\n` +
           `⏰ Time: ${moment(startDateTime).format("HH:mm")}\n` +
           `👥 Assigned Staff: ${assignedStaff.join(", ")}\n` +
@@ -1321,8 +1444,14 @@ async function createCalendarEvent(
           minute: "2-digit",
         })}`,
         description:
-          description + "\n" + `\n\nContact: ${contactName || "Unknown"} (${phoneNumber || "No phone number found"})`,
-        contact: `${contactName || "Unknown"} (${phoneNumber || "No phone number found"})`,
+          description +
+          "\n" +
+          `\n\nContact: ${contactName || "Unknown"} (${
+            phoneNumber || "No phone number found"
+          })`,
+        contact: `${contactName || "Unknown"} (${
+          phoneNumber || "No phone number found"
+        })`,
         staff: assignedStaff.join(", "),
         type: isService ? "Service" : "Installation",
         units: units,
@@ -1341,7 +1470,9 @@ async function deleteTask(idSubstring, taskIndex) {
     `;
 
     if (companyResult.length === 0) {
-      return JSON.stringify({ message: `No company found for this companyId ${idSubstring}` });
+      return JSON.stringify({
+        message: `No company found for this companyId ${idSubstring}`,
+      });
     }
 
     const currentTasks = companyResult[0].tasks || [];
@@ -1361,21 +1492,36 @@ async function deleteTask(idSubstring, taskIndex) {
       WHERE company_id = ${idSubstring}
     `;
 
-    return JSON.stringify({ message: `Task "${deletedTask.task}" has been deleted.` });
+    return JSON.stringify({
+      message: `Task "${deletedTask.task}" has been deleted.`,
+    });
   } catch (error) {
-    console.error(`Error deleting task ${taskIndex} for company ${idSubstring}:`, error);
-    return JSON.stringify({ message: `Error deleting task ${taskIndex} for company ${idSubstring}.` });
+    console.error(
+      `Error deleting task ${taskIndex} for company ${idSubstring}:`,
+      error
+    );
+    return JSON.stringify({
+      message: `Error deleting task ${taskIndex} for company ${idSubstring}.`,
+    });
   }
 }
 
-async function editTask(idSubstring, taskIndex, newTaskString, newAssignee, newDueDate) {
+async function editTask(
+  idSubstring,
+  taskIndex,
+  newTaskString,
+  newAssignee,
+  newDueDate
+) {
   try {
     const companyResult = await sql`
       SELECT tasks FROM public.companies WHERE company_id = ${idSubstring}
     `;
 
     if (companyResult.length === 0) {
-      return JSON.stringify({ message: `No company found for this companyId ${idSubstring}` });
+      return JSON.stringify({
+        message: `No company found for this companyId ${idSubstring}`,
+      });
     }
 
     const currentTasks = companyResult[0].tasks || [];
@@ -1396,7 +1542,11 @@ async function editTask(idSubstring, taskIndex, newTaskString, newAssignee, newD
       updatedAt: new Date().toISOString(),
     };
 
-    const updatedTasks = [...currentTasks.slice(0, taskIndex), updatedTask, ...currentTasks.slice(taskIndex + 1)];
+    const updatedTasks = [
+      ...currentTasks.slice(0, taskIndex),
+      updatedTask,
+      ...currentTasks.slice(taskIndex + 1),
+    ];
 
     await sql`
       UPDATE public.companies 
@@ -1407,7 +1557,10 @@ async function editTask(idSubstring, taskIndex, newTaskString, newAssignee, newD
 
     return JSON.stringify({ message: `Task has been updated.` });
   } catch (error) {
-    console.error(`Error updating task ${taskId} for company ${idSubstring}:`, error);
+    console.error(
+      `Error updating task ${taskId} for company ${idSubstring}:`,
+      error
+    );
     return JSON.stringify({ message: `Error updating task: ${error.message}` });
   }
 }
@@ -1418,14 +1571,18 @@ async function sendDailyTaskReminder(client, idSubstring) {
   `;
 
   if (companyResult.length === 0) {
-    return JSON.stringify({ message: `No company found for this companyId ${idSubstring}` });
+    return JSON.stringify({
+      message: `No company found for this companyId ${idSubstring}`,
+    });
   }
 
   const currentTasks = companyResult[0].tasks || [];
   const taskList = currentTasks
     .map(
       (task, index) =>
-        `${index + 1}. [${task.status}] ${task.task} (Assigned to: ${task.assignee}, Due: ${task.dueDate})`
+        `${index + 1}. [${task.status}] ${task.task} (Assigned to: ${
+          task.assignee
+        }, Due: ${task.dueDate})`
     )
     .join("\n");
   const reminderMessage = `Please update the tasks accordingly\n\nDaily Task Reminder:\n\n${taskList}\n.`;
@@ -1498,7 +1655,10 @@ async function getTotalContacts(idSubstring) {
 
 async function getContactsAddedToday(idSubstring) {
   try {
-    const today = moment().tz("Asia/Kuala_Lumpur").startOf("day").format("YYYY-MM-DD");
+    const today = moment()
+      .tz("Asia/Kuala_Lumpur")
+      .startOf("day")
+      .format("YYYY-MM-DD");
 
     const result = await sql`
       SELECT 
@@ -1535,7 +1695,8 @@ async function sendImage(client, phoneNumber, imageUrl, caption, idSubstring) {
   console.log("idSubstring:", idSubstring);
 
   try {
-    const formattedNumberForWhatsApp = formatPhoneNumber(phoneNumber).slice(1) + "@c.us";
+    const formattedNumberForWhatsApp =
+      formatPhoneNumber(phoneNumber).slice(1) + "@c.us";
     const formattedNumberForFirebase = formatPhoneNumber(phoneNumber);
 
     if (!formattedNumberForWhatsApp || !formattedNumberForFirebase) {
@@ -1543,7 +1704,9 @@ async function sendImage(client, phoneNumber, imageUrl, caption, idSubstring) {
     }
 
     const media = await MessageMedia.fromUrl(imageUrl);
-    const sent = await client.sendMessage(formattedNumberForWhatsApp, media, { caption: caption });
+    const sent = await client.sendMessage(formattedNumberForWhatsApp, media, {
+      caption: caption,
+    });
 
     const messageData = {
       chat_id: formattedNumberForWhatsApp,
@@ -1597,7 +1760,8 @@ async function listAssignedContacts(companyId, assigneeName, limit = 10) {
 
     const possibleNames = [
       assigneeName.toLowerCase(),
-      assigneeName.charAt(0).toUpperCase() + assigneeName.slice(1).toLowerCase(),
+      assigneeName.charAt(0).toUpperCase() +
+        assigneeName.slice(1).toLowerCase(),
       assigneeName.toUpperCase(),
     ];
 
@@ -1615,7 +1779,11 @@ async function listAssignedContacts(companyId, assigneeName, limit = 10) {
       LIMIT $3
     `;
 
-    const params = [companyId, possibleNames.map((name) => name.toLowerCase()), limit];
+    const params = [
+      companyId,
+      possibleNames.map((name) => name.toLowerCase()),
+      limit,
+    ];
 
     const result = await client.query(query, params);
 
@@ -1641,7 +1809,9 @@ async function generateInquiryReportNewTown(threadID, assistantId) {
   try {
     // Check for any active runs first
     const runs = await openai.beta.threads.runs.list(threadID);
-    const activeRun = runs.data.find((run) => ["in_progress", "queued", "requires_action"].includes(run.status));
+    const activeRun = runs.data.find((run) =>
+      ["in_progress", "queued", "requires_action"].includes(run.status)
+    );
     if (activeRun) {
       console.log(`Waiting for active run ${activeRun.id} to complete...`);
       await waitForReportCompletion(threadID, activeRun.id);
@@ -1650,7 +1820,8 @@ async function generateInquiryReportNewTown(threadID, assistantId) {
     // Add a message requesting the report
     await openai.beta.threads.messages.create(threadID, {
       role: "user",
-      content: "Please generate a detailed report of the customer's inquiry and contact information.",
+      content:
+        "Please generate a detailed report of the customer's inquiry and contact information.",
     });
 
     // Create the run for the report
@@ -1724,7 +1895,9 @@ async function waitForReportCompletion(threadId, runId, depth = 0) {
   const maxAttempts = 30;
   const pollingInterval = 2000;
 
-  console.log(`Waiting for report completion (depth: ${depth}, runId: ${runId})...`);
+  console.log(
+    `Waiting for report completion (depth: ${depth}, runId: ${runId})...`
+  );
 
   if (depth >= maxDepth) {
     console.error(`Max recursion depth reached for report runId: ${runId}`);
@@ -1733,8 +1906,13 @@ async function waitForReportCompletion(threadId, runId, depth = 0) {
 
   for (let attempts = 0; attempts < maxAttempts; attempts++) {
     try {
-      const runObject = await openai.beta.threads.runs.retrieve(threadId, runId);
-      console.log(`Report run status: ${runObject.status} (attempt ${attempts + 1})`);
+      const runObject = await openai.beta.threads.runs.retrieve(
+        threadId,
+        runId
+      );
+      console.log(
+        `Report run status: ${runObject.status} (attempt ${attempts + 1})`
+      );
 
       if (runObject.status === "completed") {
         const messagesList = await openai.beta.threads.messages.list(threadId);
@@ -1743,7 +1921,8 @@ async function waitForReportCompletion(threadId, runId, depth = 0) {
       } else if (runObject.status === "requires_action") {
         console.log("Report generation requires action...");
         try {
-          const toolCalls = runObject.required_action.submit_tool_outputs.tool_calls;
+          const toolCalls =
+            runObject.required_action.submit_tool_outputs.tool_calls;
           const toolOutputs = toolCalls.map((toolCall) => ({
             tool_call_id: toolCall.id,
             output: JSON.stringify({ status: "report_generation_completed" }),
@@ -1755,15 +1934,21 @@ async function waitForReportCompletion(threadId, runId, depth = 0) {
         } catch (toolError) {
           // If run is already completed, try to get the message
           if (toolError.message?.includes('Runs in status "completed"')) {
-            const messagesList = await openai.beta.threads.messages.list(threadId);
+            const messagesList = await openai.beta.threads.messages.list(
+              threadId
+            );
             const reportMessage = messagesList.data[0].content[0].text.value;
             return reportMessage;
           }
           throw toolError;
         }
         return await waitForReportCompletion(threadId, runId, depth + 1);
-      } else if (["failed", "cancelled", "expired"].includes(runObject.status)) {
-        console.error(`Report generation ${runId} ended with status: ${runObject.status}`);
+      } else if (
+        ["failed", "cancelled", "expired"].includes(runObject.status)
+      ) {
+        console.error(
+          `Report generation ${runId} ended with status: ${runObject.status}`
+        );
         return `Error generating report: ${runObject.status}`;
       }
 
@@ -1772,26 +1957,35 @@ async function waitForReportCompletion(threadId, runId, depth = 0) {
       // If run is completed, try to get the message
       if (error.message?.includes('Runs in status "completed"')) {
         try {
-          const messagesList = await openai.beta.threads.messages.list(threadId);
+          const messagesList = await openai.beta.threads.messages.list(
+            threadId
+          );
           const reportMessage = messagesList.data[0].content[0].text.value;
           return reportMessage;
         } catch (msgError) {
           console.error("Error fetching final message:", msgError);
         }
       }
-      console.error(`Error in report generation (depth: ${depth}, runId: ${runId}):`, error);
+      console.error(
+        `Error in report generation (depth: ${depth}, runId: ${runId}):`,
+        error
+      );
       return `Error generating report: ${error.message}`;
     }
   }
 
-  console.error(`Timeout: Report generation did not complete in time (depth: ${depth}, runId: ${runId})`);
+  console.error(
+    `Timeout: Report generation did not complete in time (depth: ${depth}, runId: ${runId})`
+  );
   return "Error: Report generation timed out. Please try again.";
 }
 async function generateSpecialReportNewTown(threadID, assistantId) {
   try {
     // Check for any active runs first
     const runs = await openai.beta.threads.runs.list(threadID);
-    const activeRun = runs.data.find((run) => ["in_progress", "queued", "requires_action"].includes(run.status));
+    const activeRun = runs.data.find((run) =>
+      ["in_progress", "queued", "requires_action"].includes(run.status)
+    );
     if (activeRun) {
       console.log(`Waiting for active run ${activeRun.id} to complete...`);
       await waitForReportCompletion(threadID, activeRun.id);
@@ -1799,7 +1993,8 @@ async function generateSpecialReportNewTown(threadID, assistantId) {
     // Add a message requesting the report
     await openai.beta.threads.messages.create(threadID, {
       role: "user",
-      content: "Please generate a detailed report of the customer's requirements and contact information.",
+      content:
+        "Please generate a detailed report of the customer's requirements and contact information.",
     });
 
     // Create the run for the report
@@ -1887,7 +2082,13 @@ AI Suggested (per month):
   }
 }
 
-async function sendFeedbackToGroupNewTown(client, feedback, customerName, customerPhone, idSubstring) {
+async function sendFeedbackToGroupNewTown(
+  client,
+  feedback,
+  customerName,
+  customerPhone,
+  idSubstring
+) {
   try {
     const feedbackMessage =
       `*New Customer Feedback*\n\n` +
@@ -1898,7 +2099,10 @@ async function sendFeedbackToGroupNewTown(client, feedback, customerName, custom
 
     // Send to feedback group (you'll need to set this group ID in your config)
     const feedbackGroupId = "120363107024888999@g.us"; // Default group or from config
-    const sentMessage = await client.sendMessage(feedbackGroupId, feedbackMessage);
+    const sentMessage = await client.sendMessage(
+      feedbackGroupId,
+      feedbackMessage
+    );
     await addMessagetoPostgres(sentMessage, idSubstring, "+120363107024888999");
     // Log feedback to Firebase
     await logFeedbackToPostgres(idSubstring, customerPhone, feedback);
@@ -2044,16 +2248,908 @@ async function handleNewMessagesTemplateWweb(client, msg, botName, phoneIndex) {
     buffer.messages.push(msg);
   }
 
-  buffer.timer = setTimeout(() => processBufferedMessages(client, chatId, botName, phoneIndex), finalBufferTime);
+  buffer.timer = setTimeout(
+    () => processBufferedMessages(client, chatId, botName, phoneIndex),
+    finalBufferTime
+  );
+}
+
+async function extractBasicMessageInfo(msg) {
+  return {
+    id: msg.id._serialized ?? "",
+    from: msg.from ?? "",
+    fromMe: msg.fromMe ?? false,
+    body: msg.body ?? "",
+    timestamp: msg.timestamp ?? 0,
+    type: msg.type === "chat" ? "text" : msg.type,
+    deviceType: msg.deviceType ?? "",
+    notifyName: msg.notifyName ?? "",
+    chatId: msg.from,
+    author: msg.author ? "+" + msg.author.split("@")[0] : null,
+  };
+}
+
+async function processMessageMedia(msg) {
+  if (!msg.hasMedia || msg.type === "audio" || msg.type === "ptt") {
+    return null;
+  }
+
+  try {
+    const media = await msg.downloadMedia();
+    if (!media) {
+      console.log(
+        `Failed to download media for message: ${msg.id._serialized}`
+      );
+      return null;
+    }
+
+    const mediaData = {
+      mimetype: media.mimetype,
+      data: media.data,
+      filename: msg._data.filename || "",
+      caption: msg._data.caption || "",
+    };
+
+    // Add type-specific fields
+    switch (msg.type) {
+      case "image":
+        mediaData.width = msg._data.width;
+        mediaData.height = msg._data.height;
+        break;
+      case "document":
+        mediaData.page_count = msg._data.pageCount;
+        mediaData.file_size = msg._data.size;
+        break;
+      case "video":
+        // Store video data separately or use a cloud storage solution
+        mediaData.link = await storeVideoData(media.data, msg._data.filename);
+        break;
+    }
+
+    // Add thumbnail information if available
+    if (msg._data.thumbnailHeight && msg._data.thumbnailWidth) {
+      mediaData.thumbnail = {
+        height: msg._data.thumbnailHeight,
+        width: msg._data.thumbnailWidth,
+      };
+    }
+
+    // Add media key if available
+    if (msg.mediaKey) {
+      mediaData.media_key = msg.mediaKey;
+    }
+
+    return mediaData;
+  } catch (error) {
+    console.error(
+      `Error handling media for message ${msg.id._serialized}:`,
+      error
+    );
+    return null;
+  }
+}
+
+async function processAudioMessage(msg) {
+  if (msg.type !== "audio" && msg.type !== "ptt") {
+    return null;
+  }
+
+  return {
+    mimetype: "audio/ogg; codecs=opus",
+    data: null,
+  };
+}
+
+async function processLocationMessage(msg) {
+  if (msg.type !== "location") {
+    return null;
+  }
+
+  return {
+    latitude: msg.location.latitude,
+    longitude: msg.location.longitude,
+    description: msg.location.description || "",
+    timestamp: new Date(),
+  };
+}
+
+async function processQuotedMessage(msg, idSubstring) {
+  if (!msg.hasQuotedMsg) {
+    return null;
+  }
+
+  const quotedMsg = await msg.getQuotedMessage();
+  const authorNumber = "+" + quotedMsg.from.split("@")[0];
+  const authorData = await getContactDataFromDatabaseByPhone(
+    authorNumber,
+    idSubstring
+  );
+
+  return {
+    quoted_content: {
+      body: quotedMsg.body,
+    },
+    quoted_author: authorData ? authorData.name : authorNumber,
+    message_id: quotedMsg.id._serialized,
+    message_type: quotedMsg.type,
+  };
+}
+
+async function processOrderMessage(msg) {
+  if (msg.type !== "order") {
+    return null;
+  }
+
+  return {
+    order_id: msg?.orderId,
+    token: msg?.token,
+    seller_jid: msg?._data?.sellerJid,
+    item_count: msg?._data?.itemCount,
+    order_title: msg?._data?.orderTitle,
+    total_amount: msg?._data?.totalAmount1000,
+    total_currency_code: msg?._data?.totalCurrencyCode,
+    thumbnail: msg?._data?.thumbnail,
+  };
+}
+
+async function getProfilePicUrl(contact) {
+  if (!contact.getProfilePicUrl) {
+    return "";
+  }
+
+  try {
+    return (await contact.getProfilePicUrl()) || "";
+  } catch (error) {
+    console.error(
+      `Error getting profile picture URL for ${contact.id.user}:`,
+      error
+    );
+    return "";
+  }
+}
+
+async function prepareMessageData(msg, idSubstring, phoneIndex) {
+  const basicInfo = await extractBasicMessageInfo(msg);
+  const contact = await msg.getContact();
+  const chat = await msg.getChat();
+
+  const messageData = {
+    chat_id: basicInfo.chatId,
+    from: basicInfo.from,
+    from_me: basicInfo.fromMe,
+    id: basicInfo.id,
+    source: basicInfo.deviceType,
+    status: "delivered",
+    text: {
+      body: basicInfo.body,
+    },
+    timestamp: basicInfo.timestamp,
+    type: basicInfo.type,
+    phone_index: phoneIndex,
+  };
+
+  // Process media if present
+  if (msg.hasMedia) {
+    const mediaData = await processMessageMedia(msg);
+    if (mediaData) {
+      messageData[msg.type] = mediaData;
+    }
+  }
+
+  // Process audio separately
+  const audioData = await processAudioMessage(msg);
+  if (audioData) {
+    messageData.audio = audioData;
+  }
+
+  // Process location
+  const locationData = await processLocationMessage(msg);
+  if (locationData) {
+    messageData.location = locationData;
+  }
+
+  // Process quoted message
+  const quotedData = await processQuotedMessage(msg, idSubstring);
+  if (quotedData) {
+    messageData.text.context = quotedData;
+  }
+
+  // Process order message
+  const orderData = await processOrderMessage(msg);
+  if (orderData) {
+    messageData.order = orderData;
+  }
+
+  // Handle group messages
+  if (basicInfo.from.includes("@g.us") && basicInfo.author) {
+    const authorData = await getContactDataFromDatabaseByPhone(
+      basicInfo.author,
+      idSubstring
+    );
+    messageData.author = authorData ? authorData.name : basicInfo.author;
+  }
+
+  return messageData;
+}
+
+async function prepareContactData(
+  msg,
+  idSubstring,
+  threadID,
+  contactData,
+  companyName
+) {
+  const contact = await msg.getContact();
+  const chat = await msg.getChat();
+  const extractedNumber = "+" + msg.from.split("@")[0];
+
+  const contactTags = contactData?.tags || [];
+  const profilePicUrl = await getProfilePicUrl(contact);
+
+  const data = {
+    additional_emails: [],
+    address1: null,
+    assigned_to: null,
+    business_id: null,
+    phone: extractedNumber,
+    tags: contactTags,
+    unread_count: (contactData?.unread_count || 0) + 1,
+    last_updated: new Date(msg.timestamp * 1000),
+    chat_data: {
+      contact_id: extractedNumber,
+      id: msg.from,
+      name:
+        contactData?.contact_name ||
+        contactData?.name ||
+        contact.pushname ||
+        extractedNumber,
+      not_spam: true,
+      tags: contactTags,
+      timestamp: chat.timestamp || Date.now(),
+      type: "contact",
+      unread_count: 0,
+      last_message: {
+        chat_id: msg.from,
+        from: msg.from ?? "",
+        from_me: msg.fromMe ?? false,
+        id: msg.id._serialized ?? "",
+        source: chat.deviceType ?? "",
+        status: "delivered",
+        text: {
+          body: msg.body ?? "",
+        },
+        timestamp: msg.timestamp ?? 0,
+        type: msg.type === "chat" ? "text" : msg.type,
+      },
+    },
+    chat_id: msg.from,
+    city: null,
+    company: companyName || null,
+    name:
+      contactData?.contact_name ||
+      contactData?.name ||
+      contact.pushname ||
+      extractedNumber,
+    thread_id: threadID ?? "",
+    last_message: {
+      chat_id: msg.from,
+      from: msg.from ?? "",
+      from_me: msg.fromMe ?? false,
+      id: msg.id._serialized ?? "",
+      source: chat.deviceType ?? "",
+      status: "delivered",
+      text: {
+        body: msg.body ?? "",
+      },
+      timestamp: msg.timestamp ?? 0,
+      type: msg.type === "chat" ? "text" : msg.type,
+    },
+    profile_pic_url: profilePicUrl,
+  };
+
+  if (!contactData) {
+    data.created_at = new Date();
+  }
+
+  return data;
+}
+
+async function checkKeywordMatch(response, message, keywordSource) {
+  return (
+    response.keywordSource === keywordSource &&
+    response.keywords.some((kw) =>
+      message.toLowerCase().includes(kw.toLowerCase())
+    )
+  );
+}
+
+// Handles AI video responses
+async function handleAIVideoResponses({
+  client,
+  message,
+  from,
+  extractedNumber,
+  idSubstring,
+  contactName,
+  keywordSource,
+}) {
+  if (!companyConfig.status_ai_responses?.ai_video) {
+    return false;
+  }
+
+  const aiVideoResponses = await getAIVideoResponses(idSubstring);
+
+  for (const response of aiVideoResponses) {
+    if (await checkKeywordMatch(response, message, keywordSource)) {
+      console.log("Videos found for keywords:", response.keywords);
+
+      for (let i = 0; i < response.videoUrls.length; i++) {
+        try {
+          const videoUrl = response.videoUrls[i];
+          const caption = response.captions?.[i] || "";
+
+          const media = await MessageMedia.fromUrl(videoUrl);
+          if (!media) throw new Error("Failed to load video from URL");
+
+          const videoMessage = await client.sendMessage(from, media, {
+            caption,
+            sendVideoAsGif: false,
+          });
+
+          await addMessagetoPostgres(
+            videoMessage,
+            idSubstring,
+            extractedNumber,
+            contactName
+          );
+          await new Promise((resolve) => setTimeout(resolve, 1000));
+        } catch (error) {
+          console.error(`Error sending video ${i}:`, error);
+        }
+      }
+    }
+  }
+}
+
+// Handles AI voice responses
+async function handleAIVoiceResponses({
+  client,
+  message,
+  from,
+  extractedNumber,
+  idSubstring,
+  contactName,
+  keywordSource,
+}) {
+  if (!companyConfig.status_ai_responses?.ai_voice) {
+    return false;
+  }
+
+  const aiVoiceResponses = await getAIVoiceResponses(idSubstring);
+
+  for (const response of aiVoiceResponses) {
+    if (await checkKeywordMatch(response, message, keywordSource)) {
+      console.log("Voice messages found for keywords:", response.keywords);
+
+      for (let i = 0; i < response.voiceUrls.length; i++) {
+        try {
+          const caption = response.captions?.[i] || "";
+          const voiceMessage = await sendVoiceMessage(
+            client,
+            from,
+            response.voiceUrls[i],
+            caption
+          );
+          await addMessagetoPostgres(
+            voiceMessage,
+            idSubstring,
+            extractedNumber,
+            contactName
+          );
+
+          if (i < response.voiceUrls.length - 1) {
+            await new Promise((resolve) => setTimeout(resolve, 1000));
+          }
+        } catch (error) {
+          console.error(`Error sending voice message:`, error);
+        }
+      }
+    }
+  }
+}
+
+// Handles AI image responses
+async function handleAIImageResponses({
+  client,
+  message,
+  from,
+  extractedNumber,
+  idSubstring,
+  contactName,
+  keywordSource,
+}) {
+  if (!companyConfig.status_ai_responses?.ai_image) {
+    return false;
+  }
+
+  const aiImageResponses = await getAIImageResponses(idSubstring);
+
+  for (const response of aiImageResponses) {
+    if (await checkKeywordMatch(response, message, keywordSource)) {
+      console.log("Images found for keywords:", response.keywords);
+
+      for (const imageUrl of response.imageUrls) {
+        try {
+          const media = await MessageMedia.fromUrl(imageUrl);
+          const imageMessage = await client.sendMessage(from, media);
+          await addMessagetoPostgres(
+            imageMessage,
+            idSubstring,
+            extractedNumber,
+            contactName
+          );
+        } catch (error) {
+          console.error(`Error sending image:`, error);
+        }
+      }
+    }
+  }
+}
+
+// Handles AI document responses
+async function handleAIDocumentResponses({
+  client,
+  message,
+  from,
+  extractedNumber,
+  idSubstring,
+  contactName,
+  keywordSource,
+}) {
+  if (!companyConfig.status_ai_responses?.ai_document) {
+    return false;
+  }
+
+  const aiDocumentResponses = await getAIDocumentResponses(idSubstring);
+
+  for (const response of aiDocumentResponses) {
+    if (await checkKeywordMatch(response, message, keywordSource)) {
+      console.log("Documents found for keywords:", response.keywords);
+
+      for (let i = 0; i < response.documentUrls.length; i++) {
+        try {
+          const documentUrl = response.documentUrls[i];
+          const documentName = response.documentNames[i] || `document_${i + 1}`;
+
+          const media = await MessageMedia.fromUrl(documentUrl);
+          if (!media) throw new Error("Failed to load document from URL");
+
+          media.filename = documentName;
+          media.mimetype =
+            media.mimetype ||
+            getMimeTypeFromExtension(path.extname(documentName));
+
+          const documentMessage = await client.sendMessage(from, media, {
+            sendMediaAsDocument: true,
+          });
+
+          await addMessagetoPostgres(
+            documentMessage,
+            idSubstring,
+            extractedNumber,
+            contactName
+          );
+          await new Promise((resolve) => setTimeout(resolve, 1000));
+        } catch (error) {
+          console.error(`Error sending document:`, error);
+        }
+      }
+    }
+  }
+}
+
+// Handles AI tag responses
+async function handleAITagResponses({
+  message,
+  extractedNumber,
+  idSubstring,
+  contactName,
+  phoneIndex,
+  keywordSource,
+  followUpTemplates,
+}) {
+  if (!companyConfig.status_ai_responses?.ai_tag) {
+    return false;
+  }
+
+  const aiTagResponses = await getAITagResponses(idSubstring);
+
+  for (const response of aiTagResponses) {
+    if (await checkKeywordMatch(response, message, keywordSource)) {
+      console.log("Tags found for keywords:", response.keywords);
+
+      try {
+        if (response.tag_action_mode === "delete") {
+          await handleTagDeletion({
+            response,
+            extractedNumber,
+            idSubstring,
+            followUpTemplates,
+          });
+        } else {
+          await handleTagAddition({
+            response,
+            extractedNumber,
+            idSubstring,
+            followUpTemplates,
+            contactName,
+            phoneIndex,
+          });
+        }
+      } catch (error) {
+        console.error(`Error handling tags:`, error);
+      }
+    }
+  }
+}
+
+// Handles AI assignment responses
+async function handleAIAssignResponses({
+  client,
+  message,
+  extractedNumber,
+  idSubstring,
+  contactName,
+  keywordSource,
+}) {
+  if (!companyConfig.status_ai_responses?.ai_assign) {
+    return false;
+  }
+
+  const aiAssignResponses = await getAIAssignResponses(idSubstring);
+
+  for (const response of aiAssignResponses) {
+    if (await checkKeywordMatch(response, message, keywordSource)) {
+      console.log("Assignment found for keywords:", response.keywords);
+
+      try {
+        const matchedKeyword = response.keywords.find((kw) =>
+          message.toLowerCase().includes(kw.toLowerCase())
+        );
+
+        await handleEmployeeAssignment({
+          response,
+          idSubstring,
+          extractedNumber,
+          contactName,
+          client,
+          matchedKeyword,
+        });
+      } catch (error) {
+        console.error(`Error handling assignment:`, error);
+      }
+    }
+  }
+}
+
+function getMimeTypeFromExtension(ext) {
+  const mimeTypes = {
+    ".pdf": "application/pdf",
+    ".doc": "application/msword",
+    ".docx":
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ".xls": "application/vnd.ms-excel",
+    ".xlsx":
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    ".ppt": "application/vnd.ms-powerpoint",
+    ".pptx":
+      "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    ".txt": "text/plain",
+    ".csv": "text/csv",
+    ".zip": "application/zip",
+    ".rar": "application/x-rar-compressed",
+  };
+  return mimeTypes[ext.toLowerCase()] || "application/octet-stream";
+}
+
+async function handleAIFollowUpResponses({
+  msg,
+  extractedNumber,
+  idSubstring,
+  contactName,
+  phoneIndex,
+  keywordSource,
+  followUpTemplates,
+}) {
+  for (const template of followUpTemplates) {
+    if (await checkKeywordMatch(response, message, keywordSource)) {
+      console.log("Follow-up trigger found for template:", template.name);
+
+      try {
+        await processFollowUpTemplate(
+          template,
+          extractedNumber,
+          idSubstring,
+          contactName,
+          phoneIndex,
+          followUpTemplates
+        );
+      } catch (error) {
+        console.error("Error triggering follow-up sequence:", error);
+      }
+      return true;
+    }
+  }
+  return false;
+}
+
+async function handleTagDeletion(
+  response,
+  extractedNumber,
+  idSubstring,
+  followUpTemplates
+) {
+  for (const tag of response.tags) {
+    await addTagToPostgres(extractedNumber, tag, idSubstring, true);
+    console.log(`Removed tag: ${tag} from number: ${extractedNumber}`);
+
+    await handleFollowUpTemplateCleanup(
+      tag,
+      extractedNumber,
+      idSubstring,
+      followUpTemplates
+    );
+  }
+}
+
+async function handleTagAddition(
+  response,
+  extractedNumber,
+  idSubstring,
+  followUpTemplates,
+  contactName,
+  phoneIndex
+) {
+  for (const tagToRemove of response.remove_tags || []) {
+    await addTagToPostgres(extractedNumber, tagToRemove, idSubstring, true);
+    await handleFollowUpTemplateCleanup(
+      tagToRemove,
+      extractedNumber,
+      idSubstring,
+      followUpTemplates
+    );
+  }
+
+  for (const tag of response.tags) {
+    await addTagToPostgres(extractedNumber, tag, idSubstring);
+    console.log(`Added tag: ${tag} for number: ${extractedNumber}`);
+
+    await handleFollowUpTemplateActivation(
+      tag,
+      extractedNumber,
+      idSubstring,
+      contactName,
+      phoneIndex,
+      followUpTemplates
+    );
+  }
+}
+
+async function handleEmployeeAssignment(
+  response,
+  idSubstring,
+  extractedNumber,
+  contactName,
+  client,
+  matchedKeyword
+) {
+  const stateResult = await pool.query(
+    "SELECT current_index FROM bot_state WHERE company_id = $1 AND bot_name = $2",
+    [idSubstring, "assignmentState"]
+  );
+  let currentIndex = stateResult.rows[0]?.current_index || 0;
+
+  const employeeEmails = response.assigned_employees;
+  if (employeeEmails.length === 0) {
+    console.log("No employees available for assignment");
+    return;
+  }
+
+  const nextEmail = employeeEmails[currentIndex % employeeEmails.length];
+  const employeeResult = await pool.query(
+    "SELECT * FROM employees WHERE company_id = $1 AND email = $2",
+    [idSubstring, nextEmail]
+  );
+
+  if (employeeResult.rows.length > 0) {
+    const employeeData = employeeResult.rows[0];
+    await assignToEmployee(
+      employeeData,
+      "Sales",
+      extractedNumber,
+      contactName,
+      client,
+      idSubstring,
+      matchedKeyword
+    );
+
+    const newIndex = (currentIndex + 1) % employeeEmails.length;
+    await pool.query(
+      "INSERT INTO bot_state (company_id, bot_name, state, current_index, last_updated) " +
+        "VALUES ($1, $2, $3, $4, $5) " +
+        "ON CONFLICT (company_id, bot_name) DO UPDATE SET current_index = $4, last_updated = $5",
+      [
+        idSubstring,
+        "assignmentState",
+        { currentIndex: newIndex },
+        newIndex,
+        new Date(),
+      ]
+    );
+  }
+}
+
+async function processFollowUpTemplate(
+  template,
+  extractedNumber,
+  idSubstring,
+  contactName,
+  phoneIndex,
+  followUpTemplates
+) {
+  const contactResult = await pool.query(
+    "SELECT tags FROM contacts WHERE company_id = $1 AND phone = $2",
+    [idSubstring, extractedNumber]
+  );
+  const contactData = contactResult.rows[0];
+  const currentTags = contactData?.tags || [];
+
+  for (const otherTemplate of followUpTemplates) {
+    const tagToRemove = otherTemplate.trigger_tags?.[0];
+    if (tagToRemove && currentTags.includes(tagToRemove)) {
+      await addTagToPostgres(extractedNumber, tagToRemove, idSubstring, true);
+      await callFollowUpAPI(
+        "removeTemplate",
+        extractedNumber,
+        contactName,
+        phoneIndex,
+        otherTemplate.id,
+        idSubstring
+      );
+    }
+  }
+
+  if (template.trigger_tags.length > 0) {
+    await addTagToPostgres(
+      extractedNumber,
+      template.trigger_tags[0],
+      idSubstring
+    );
+  }
+
+  await callFollowUpAPI(
+    "startTemplate",
+    extractedNumber,
+    contactName,
+    phoneIndex,
+    template.id,
+    idSubstring
+  );
+}
+
+async function handleFollowUpTemplateCleanup(
+  tag,
+  extractedNumber,
+  idSubstring,
+  followUpTemplates
+) {
+  for (const template of followUpTemplates) {
+    if (template.trigger_tags && template.trigger_tags.includes(tag)) {
+      await callFollowUpAPI(
+        "removeTemplate",
+        extractedNumber,
+        null,
+        null,
+        template.id,
+        idSubstring
+      );
+    }
+  }
+}
+
+async function handleFollowUpTemplateActivation(
+  tag,
+  extractedNumber,
+  idSubstring,
+  contactName,
+  phoneIndex,
+  followUpTemplates
+) {
+  for (const template of followUpTemplates) {
+    if (template.trigger_tags && template.trigger_tags.includes(tag)) {
+      await callFollowUpAPI(
+        "startTemplate",
+        extractedNumber,
+        contactName,
+        phoneIndex,
+        template.id,
+        idSubstring
+      );
+    }
+  }
+
+  if (tag === "pause followup") {
+    const contactResult = await pool.query(
+      "SELECT tags FROM contacts WHERE company_id = $1 AND phone = $2",
+      [idSubstring, extractedNumber]
+    );
+    const contactData = contactResult.rows[0];
+    const currentTags = contactData?.tags || [];
+
+    for (const template of followUpTemplates) {
+      if (
+        template.trigger_tags?.some((templateTag) =>
+          currentTags.includes(templateTag)
+        )
+      ) {
+        await callFollowUpAPI(
+          "pauseTemplate",
+          extractedNumber,
+          null,
+          phoneIndex,
+          template.id,
+          idSubstring
+        );
+      }
+    }
+  }
+}
+
+async function callFollowUpAPI(
+  action,
+  phone,
+  contactName,
+  phoneIndex,
+  templateId,
+  idSubstring
+) {
+  try {
+    const response = await fetch("https://juta.ngrok.app/api/tag/followup", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        requestType: action,
+        phone: phone,
+        first_name: contactName || phone,
+        phoneIndex: phoneIndex || 0,
+        templateId: templateId,
+        idSubstring: idSubstring,
+      }),
+    });
+
+    if (!response.ok) {
+      console.error(
+        `Failed to ${action} follow-up sequence:`,
+        await response.text()
+      );
+    }
+  } catch (error) {
+    console.error(`Error in ${action} follow-up sequence:`, error);
+  }
 }
 
 async function processImmediateActions(client, msg, botName, phoneIndex) {
   const idSubstring = botName;
   const chatId = msg.from;
   const contact = await msg.getContact();
-  console.log("processImmediateActions for company " + idSubstring);
+  console.log(
+    `Processing immediate actions for bot companyID ${botName} for chatId ${chatId}`
+  );
   const messageBody = msg.body;
 
+  // Handle special cases first
   if (
     messageBody.includes("<Confirmed Appointment>") &&
     idSubstring === "002" &&
@@ -2063,14 +3159,17 @@ async function processImmediateActions(client, msg, botName, phoneIndex) {
     try {
       await handleConfirmedAppointment(client, msg, idSubstring);
       console.log("✅ Appointment handled successfully");
-      return; // Exit early after handling appointment
+      return;
     } catch (error) {
       console.error("❌ Error handling appointment:", error);
       console.error("Full error stack:", error.stack);
     }
   }
+
   if (
-    (messageBody.startsWith("feedback") || messageBody.startsWith("rating") || messageBody.startsWith("status")) &&
+    (messageBody.startsWith("feedback") ||
+      messageBody.startsWith("rating") ||
+      messageBody.startsWith("status")) &&
     idSubstring === "0161"
   ) {
     await updateSpreadsheetData(msg, idSubstring);
@@ -2078,7 +3177,11 @@ async function processImmediateActions(client, msg, botName, phoneIndex) {
   }
 
   if (idSubstring === "0255") {
-    if (messageBody.startsWith("accept") || messageBody.startsWith("decline") || messageBody.startsWith("reschedule")) {
+    if (
+      messageBody.startsWith("accept") ||
+      messageBody.startsWith("decline") ||
+      messageBody.startsWith("reschedule")
+    ) {
       console.log("processIncomingBookingCarCare");
       const staffPhone = chatId.replace(/\D/g, "");
       await processIncomingBookingCarCare(msg, idSubstring, staffPhone, client);
@@ -2086,904 +3189,132 @@ async function processImmediateActions(client, msg, botName, phoneIndex) {
     }
   }
 
-  if (msg.type == "location") {
-    console.log(msg);
-  }
   try {
-    // Initial fetch of config
     await fetchConfigFromDatabase(idSubstring, phoneIndex);
-    const sender = {
-      to: msg.from,
-      name: msg.notifyName,
-    };
 
-    const extractedNumber = "+" + sender.to.split("@")[0];
-
-    let contactID;
-    let contactName;
-    let threadID;
-    let query;
-    let answer;
-    let parts;
-    let currentStep;
+    // Prepare contact and message data using utility functions
+    const extractedNumber = "+" + msg.from.split("@")[0];
+    const contactData = await getContactDataFromDatabaseByPhone(
+      extractedNumber,
+      idSubstring
+    );
     const chat = await msg.getChat();
-    const contactData = await getContactDataFromDatabaseByPhone(extractedNumber, idSubstring);
-    let unreadCount = 0;
-    let stopTag = contactData?.tags || [];
-    const contact = await chat.getContact();
-    const companyName = contactData?.companyName || null;
-    let replied = contactData?.replied || false;
-    console.log(contactData);
+    const companyName = contactData?.company || null;
 
-    if (contactData !== null) {
-      if (contactData.tags) {
-        stopTag = contactData.tags;
-        console.log(stopTag);
-        unreadCount = contactData.unreadCount ?? 0;
-        contactID = extractedNumber;
-        contactName = contactData.contactName ?? contact.pushname ?? extractedNumber;
-
-        if (contactData.threadid) {
-          threadID = contactData.threadid;
-        } else {
-          const thread = await createThread();
-          threadID = thread.id;
-          await saveThreadIDPostgres(contactID, threadID, idSubstring);
-        }
-      } else {
-        contactID = extractedNumber;
-        contactName = contactData.contactName ?? msg.pushname ?? extractedNumber;
-        if (contactData.threadid) {
-          threadID = contactData.threadid;
-        } else {
-          const thread = await createThread();
-          threadID = thread.id;
-          await saveThreadIDPostgres(contactID, threadID, idSubstring);
-        }
-      }
-    } else {
-      await customWait(2500);
-
-      contactID = extractedNumber;
-      contactName = contact.pushname || contact.name || extractedNumber;
-
+    // Handle thread creation/retrieval
+    let threadID = contactData?.thread_id;
+    if (!threadID) {
       const thread = await createThread();
       threadID = thread.id;
-      console.log(threadID);
-      await saveThreadIDPostgres(contactID, threadID, idSubstring);
-      console.log("sent new contact to create new contact");
+      await saveThreadIDPostgres(extractedNumber, threadID, idSubstring);
     }
+
+    // Handle messages from me
     if (msg.fromMe) {
       if (idSubstring === "0128") {
         const firebaseDC = "+" + msg.to.split("@")[0];
         await addTagToPostgres(firebaseDC, "stop bot", idSubstring);
       }
-      if (threadID) {
-        await handleOpenAIMyMessage(msg.body, threadID);
-        return;
-      } else {
-        contactID = extractedNumber;
-        contactName = contact.pushname || contact.name || extractedNumber;
-
-        const thread = await createThread();
-        threadID = thread.id;
-        console.log(threadID);
-        await saveThreadIDPostgres(contactID, threadID, idSubstring);
-        await handleOpenAIMyMessage(msg.body, threadID);
-        return;
-      }
+      await handleOpenAIMyMessage(msg.body, threadID);
+      return;
     }
 
-    let firebaseTags = [""];
+    // Prepare contact and message data
+    const contactTags = contactData?.tags || [];
+    const messageData = await prepareMessageData(msg, idSubstring, phoneIndex);
+    const contactDataForDB = await prepareContactData(
+      msg,
+      idSubstring,
+      threadID,
+      contactData,
+      companyName
+    );
+
+    // Save to database
     if (contactData) {
-      firebaseTags = contactData.tags ?? [];
-      // Remove 'snooze' tag if present
-      if (firebaseTags.includes("snooze")) {
-        firebaseTags = firebaseTags.filter((tag) => tag !== "snooze");
-      }
+      await updateContactInDatabase(
+        idSubstring,
+        extractedNumber,
+        contactDataForDB
+      );
     } else {
-      if (sender.to.includes("@g.us") || (!contactData && (companyConfig.aiAutoResponse ?? false) === true)) {
-        firebaseTags = ["stop bot"];
-        console.log("stop bot because of group chat or aiAutoResponse is disabled");
-      }
+      await createContactInDatabase(idSubstring, contactDataForDB);
     }
 
-    if (firebaseTags.includes("replied") && firebaseTags.includes("fb")) {
-      // Schedule removal of 'replied' tag after 1 hour
-      // scheduleRepliedTagRemoval(idSubstring, extractedNumber, msg.from);
-    }
+    await addMessagetoPostgres(
+      messageData,
+      idSubstring,
+      extractedNumber,
+      contactDataForDB.name
+    );
+    await addNotificationToUser(
+      idSubstring,
+      messageData,
+      contactDataForDB.name
+    );
 
-    let type = "text";
-    if (msg.type == "e2e_notification" || msg.type == "notification_template") {
-      return;
-    } else if (msg.type != "chat") {
-      type = msg.type;
-    }
-
-    if (extractedNumber.includes("status")) {
-      return;
-    }
-
-    // Use combinedMessage instead of looping through messages
-    let messageBody = msg.body;
-    let audioData = null;
-
-    const data = {
-      additionalEmails: [],
-      address1: null,
-      assignedTo: null,
-      businessId: null,
-      phone: extractedNumber,
-      tags: firebaseTags,
-      total_message_count: (contactData?.total_message_count || 0) + 1,
-      last_replied_time: msg.timestamp,
-      chat: {
-        contact_id: extractedNumber,
-        id: msg.from,
-        name: contactName || contact.name || contact.pushname || extractedNumber,
-        not_spam: true,
-        tags: firebaseTags,
-        timestamp: chat.timestamp || Date.now(),
-        type: "contact",
-        unreadCount: 0,
-        last_message: {
-          chat_id: msg.from,
-          from: msg.from ?? "",
-          from_me: msg.fromMe ?? false,
-          id: msg.id._serialized ?? "",
-          source: chat.deviceType ?? "",
-          status: "delivered",
-          text: {
-            body: messageBody ?? "",
-          },
-          timestamp: msg.timestamp ?? 0,
-          type: type,
-        },
-      },
-      chat_id: msg.from,
-      city: null,
-      companyName: companyName || null,
-      contactName: contactName || contact.name || contact.pushname || extractedNumber,
-      unreadCount: unreadCount + 1,
-      threadid: threadID ?? "",
-      phoneIndex: phoneIndex,
-      last_message: {
-        chat_id: msg.from,
-        from: msg.from ?? "",
-        from_me: msg.fromMe ?? false,
-        id: msg.id._serialized ?? "",
-        source: chat.deviceType ?? "",
-        status: "delivered",
-        text: {
-          body: messageBody ?? "",
-        },
-        timestamp: msg.timestamp ?? 0,
-        type: type,
-      },
-    };
-
-    // Only add createdAt if it's a new contact
-    if (!contactData) {
-      data.createdAt = admin.firestore.Timestamp.now();
-    }
-
-    let profilePicUrl = "";
-    if (contact.getProfilePicUrl()) {
-      try {
-        profilePicUrl = (await contact.getProfilePicUrl()) || "";
-      } catch (error) {
-        console.error(`Error getting profile picture URL for ${contact.id.user}:`, error);
-      }
-    }
-    data.profilePicUrl = profilePicUrl;
-
-    const messageData = {
-      chat_id: msg.from,
-      from: msg.from ?? "",
-      from_me: msg.fromMe ?? false,
-      id: msg.id._serialized ?? "",
-      source: msg.deviceType ?? "",
-      status: "delivered",
-      text: {
-        body: msg.body ?? "",
-      },
-      timestamp: msg.timestamp ?? 0,
-      type: type,
-      phoneIndex: phoneIndex,
-      // Only add order data if it exists
-      ...(msg.type === "order" && {
-        order: {
-          orderId: msg?.orderId,
-          token: msg?.token,
-          sellerJid: msg?._data?.sellerJid,
-          itemCount: msg?._data?.itemCount,
-          orderTitle: msg?._data?.orderTitle,
-          totalAmount1000: msg?._data?.totalAmount1000,
-          totalCurrencyCode: msg?._data?.totalCurrencyCode,
-          thumbnail: msg?._data?.thumbnail,
-        },
-      }),
-    };
-
-    if (msg.hasQuotedMsg) {
-      const quotedMsg = await msg.getQuotedMessage();
-      // Initialize the context and quoted_content structure
-      messageData.text.context = {
-        quoted_content: {
-          body: quotedMsg.body,
-        },
-      };
-      const authorNumber = "+" + quotedMsg.from.split("@")[0];
-      const authorData = await getContactDataFromDatabaseByPhone(authorNumber, idSubstring);
-      messageData.text.context.quoted_author = authorData ? authorData.contactName : authorNumber;
-    }
-
-    if (sender.to.includes("@g.us")) {
-      const authorNumber = "+" + msg.author.split("@")[0];
-
-      const authorData = await getContactDataFromDatabaseByPhone(authorNumber, idSubstring);
-      if (authorData) {
-        messageData.author = authorData.contactName;
-      } else {
-        messageData.author = authorNumber;
-      }
-    }
-    if (msg.type === "audio" || msg.type === "ptt") {
-      messageData.audio = {
-        mimetype: "audio/ogg; codecs=opus", // Default mimetype for WhatsApp voice messages
-        data: audioData, // This is the base64 encoded audio data
-      };
-    } else {
-    }
-
-    if (msg.hasMedia && (msg.type !== "audio" || msg.type !== "ptt")) {
-      try {
-        const media = await msg.downloadMedia();
-        if (media) {
-          if (msg.type === "image") {
-            messageData.image = {
-              mimetype: media.mimetype,
-              data: media.data, // This is the base64-encoded data
-              filename: msg._data.filename || "",
-              caption: msg._data.caption || "",
-            };
-            // Add width and height if available
-            if (msg._data.width) messageData.image.width = msg._data.width;
-            if (msg._data.height) messageData.image.height = msg._data.height;
-          } else if (msg.type === "document") {
-            messageData.document = {
-              mimetype: media.mimetype,
-              data: media.data, // This is the base64-encoded data
-              filename: msg._data.filename || "",
-              caption: msg._data.caption || "",
-              pageCount: msg._data.pageCount,
-              fileSize: msg._data.size,
-            };
-          } else if (msg.type === "location") {
-            messageData.location = {
-              latitude: msg.location.latitude,
-              longitude: msg.location.longitude,
-              description: msg.location.description || "",
-              timestamp: admin.firestore.Timestamp.now(),
-            };
-
-            // Optionally, send a confirmation message back to the user
-          } else if (msg.type === "video") {
-            messageData.video = {
-              mimetype: media.mimetype,
-              filename: msg._data.filename || "",
-              caption: msg._data.caption || "",
-            };
-            // Store video data separately or use a cloud storage solution
-            const videoUrl = await storeVideoData(media.data, msg._data.filename);
-            messageData.video.link = videoUrl;
-          } else {
-            messageData[msg.type] = {
-              mimetype: media.mimetype,
-              data: media.data,
-              filename: msg._data.filename || "",
-              caption: msg._data.caption || "",
-            };
-          }
-
-          // Add thumbnail information if available
-          if (msg._data.thumbnailHeight && msg._data.thumbnailWidth) {
-            messageData[msg.type].thumbnail = {
-              height: msg._data.thumbnailHeight,
-              width: msg._data.thumbnailWidth,
-            };
-          }
-
-          // Add media key if available
-          if (msg.mediaKey) {
-            messageData[msg.type].mediaKey = msg.mediaKey;
-          }
-        } else {
-          console.log(`Failed to download media for message: ${msg.id._serialized}`);
-          messageData.text = { body: "Media not available" };
-        }
-      } catch (error) {
-        console.error(`Error handling media for message ${msg.id._serialized}:`, error);
-        messageData.text = { body: "Error handling media" };
-      }
-    }
-    if (msg.type === "location") {
-      messageData.location = {
-        latitude: msg.location.latitude,
-        longitude: msg.location.longitude,
-        description: msg.location.description || "",
-        timestamp: admin.firestore.Timestamp.now(),
-      };
-
-      // Optionally, send a confirmation message back to the user
-    }
-    const contactRef = db.collection("companies").doc(idSubstring).collection("contacts").doc(extractedNumber);
-    const messagesRef = contactRef.collection("messages");
-
-    const messageDoc = messagesRef.doc(msg.id._serialized);
-    await messageDoc.set(messageData, { merge: true });
-    console.log(msg);
-    await addNotificationToUser(idSubstring, messageData, contactName);
-
-    // Add the data to Firestore
-    await db
-      .collection("companies")
-      .doc(idSubstring)
-      .collection("contacts")
-      .doc(extractedNumber)
-      .set(data, { merge: true });
-
-    const aiTagResponses = companyConfig.statusAIResponses?.aiTag === true ? await getAITagResponses(idSubstring) : [];
-    const aiAssignResponses =
-      companyConfig.statusAIResponses?.aiAssign === true ? await getAIAssignResponses(idSubstring) : [];
     const followUpTemplates = await getFollowUpTemplates(idSubstring);
 
-    let tagFound = false;
-    for (const response of aiAssignResponses) {
-      if (
-        response.keywordSource === "user" &&
-        response.keywords.some((kw) => msg.body.toLowerCase().includes(kw.toLowerCase()))
-      ) {
-        console.log("images found for keywords:", response.keywords);
-        try {
-          // Find the matching keyword that triggered the assignment
-          const matchedKeyword = response.keywords.find((kw) => msg.body.toLowerCase().includes(kw.toLowerCase()));
-          console.log("Matched keyword:", matchedKeyword);
+    const handlerParams = {
+      client: client,
+      msg: messageBody,
+      idSubstring: idSubstring,
+      extractedNumber: extractedNumber,
+      contactName:
+        contactData?.contact_name ||
+        contactData?.name ||
+        contact.pushname ||
+        extractedNumber,
+      phoneIndex: phoneIndex,
+    };
 
-          // Get the current assignment index
-          const stateRef = db.collection("companies").doc(idSubstring).collection("botState").doc("assignmentState");
-          const stateDoc = await stateRef.get();
-          let currentIndex = 0;
-          if (stateDoc.exists) {
-            currentIndex = stateDoc.data().currentIndex || 0;
-          }
-          console.log("Current assignment index:", currentIndex);
-          // Get employee list and calculate next employee
-          const employeeEmails = response.assignedEmployees;
-          console.log("Available employees:", employeeEmails);
+    // Handle user-triggered responses
+    await processAIResponses({
+      ...handlerParams,
+      keywordSource: "user",
+      handlers: {
+        assign: true,
+        tag: true,
+        followUp: true,
+        document: false,
+        image: false,
+        video: false,
+        voice: false,
+      },
+    });
 
-          if (employeeEmails.length === 0) {
-            console.log("No employees available for assignment");
-            continue;
-          }
-          const nextEmail = employeeEmails[currentIndex % employeeEmails.length];
-          console.log("Selected employee email:", nextEmail);
-
-          // Fetch employee data
-          const employeeRef = db.collection("companies").doc(idSubstring).collection("employee").doc(nextEmail);
-          const employeeDoc = await employeeRef.get();
-
-          if (employeeDoc.exists) {
-            const employeeData = employeeDoc.data();
-            console.log("Found employee data:", employeeData);
-
-            // Get contact name with fallback
-            const contactName = contactData?.contactName || extractedNumber || "Unknown Contact";
-            console.log("Using contact name:", contactName);
-
-            // Assign to the current staff member
-            await assignToEmployee(
-              employeeData,
-              "Sales",
-              extractedNumber,
-              contactName, // Changed from contactData.contactName to contactName
-              client,
-              idSubstring,
-              matchedKeyword
-            );
-            console.log(`Assigned to staff member: ${employeeData.name} (${nextEmail})`);
-
-            // Update the assignment index for next time
-            const newIndex = (currentIndex + 1) % employeeEmails.length;
-            await stateRef.set(
-              {
-                currentIndex: newIndex,
-                lastUpdated: admin.firestore.FieldValue.serverTimestamp(),
-              },
-              { merge: true }
-            );
-            console.log("Updated assignment index to:", newIndex);
-          } else {
-            console.log("Employee document not found for email:", nextEmail);
-          }
-        } catch (error) {
-          console.error(`Error handling assignment for keyword ${response.keyword}:`, error);
-          console.error("Full error:", error.stack);
-          continue;
-        }
-      }
-    }
-    for (const template of followUpTemplates) {
-      if (
-        template.keywordSource === "user" &&
-        template.triggerKeywords.some((kw) => msg.body.toLowerCase().includes(kw.toLowerCase()))
-      ) {
-        console.log("Follow-up trigger found for template:", template.name);
-        try {
-          // Get current contact data to check tags
-          const contactRef = db.collection("companies").doc(idSubstring).collection("contacts").doc(extractedNumber);
-          const contactDoc = await contactRef.get();
-          const contactData = contactDoc.data();
-          const currentTags = contactData?.tags || [];
-
-          // Check if contact has any tags that match other templates' trigger tags
-          for (const otherTemplate of followUpTemplates) {
-            const tagToRemove = otherTemplate.triggerTags?.[0];
-            if (tagToRemove && currentTags.includes(tagToRemove)) {
-              // Remove the tag if it exists
-              await addTagToPostgres(extractedNumber, tagToRemove, idSubstring, true);
-
-              // Call the API to remove scheduled messages
-              try {
-                const response = await fetch("https://juta.ngrok.app/api/tag/followup", {
-                  method: "POST",
-                  headers: {
-                    "Content-Type": "application/json",
-                  },
-                  body: JSON.stringify({
-                    requestType: "removeTemplate",
-                    phone: extractedNumber,
-                    first_name: contactName || extractedNumber,
-                    phoneIndex: phoneIndex || 0,
-                    templateId: otherTemplate.id,
-                    idSubstring: idSubstring,
-                  }),
-                });
-
-                if (!response.ok) {
-                  console.error("Failed to remove template messages:", await response.text());
-                }
-              } catch (error) {
-                console.error("Error removing template messages:", error);
-              }
-            }
-          }
-          // Add new tag for current template
-          if (template.triggerTags.length > 0) {
-            await addTagToPostgres(extractedNumber, template.triggerTags[0], idSubstring);
-          }
-
-          // Start follow-up sequence
-          const response = await fetch("https://juta.ngrok.app/api/tag/followup", {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
-              requestType: "startTemplate",
-              phone: extractedNumber,
-              first_name: contactName || extractedNumber,
-              phoneIndex: phoneIndex || 0,
-              templateId: template.id,
-              idSubstring: idSubstring,
-            }),
-          });
-
-          if (!response.ok) {
-            console.error("Failed to start follow-up sequence:", await response.text());
-          }
-        } catch (error) {
-          console.error("Error triggering follow-up sequence:", error);
-        }
-        return;
-      }
-    }
-
-    // For tags
-    if (!tagFound) {
-      for (const response of aiTagResponses) {
-        if (
-          response.keywordSource === "user" &&
-          response.keywords.some((kw) => msg.body.toLowerCase().includes(kw.toLowerCase()))
-        ) {
-          console.log("tags found for keywords:", response.keywords);
-          try {
-            if (response.tagActionMode === "delete") {
-              // Delete specified tags from both response and firebaseTags
-              for (const tag of response.tags) {
-                // Remove from Firebase
-                await addTagToPostgres(extractedNumber, tag, idSubstring, true);
-                console.log(`Removed tag: ${tag} from number: ${extractedNumber}`);
-
-                if (tag === "pause followup") {
-                  // Get the contact's current tags to find active followup templates
-                  const contactRef = db
-                    .collection("companies")
-                    .doc(idSubstring)
-                    .collection("contact")
-                    .doc(extractedNumber);
-                  const contactDoc = await contactRef.get();
-                  if (contactDoc.exists) {
-                    const contactData = contactDoc.data();
-                    const currentTags = contactData.tags || [];
-
-                    // Check each followup template to see if its tag is in the contact's tags
-                    for (const template of followUpTemplates) {
-                      // If the template has a tag that matches one of the contact's tags
-                      if (
-                        template.triggerTags &&
-                        template.triggerTags.some((templateTag) => currentTags.includes(templateTag))
-                      ) {
-                        try {
-                          // Call the API to resume follow-up sequence for this template
-                          const apiResponse = await fetch("https://juta.ngrok.app/api/tag/followup", {
-                            method: "POST",
-                            headers: {
-                              "Content-Type": "application/json",
-                            },
-                            body: JSON.stringify({
-                              requestType: "resumeTemplate",
-                              phone: extractedNumber,
-                              first_name: extractedNumber,
-                              phoneIndex: phoneIndex || 0,
-                              templateId: template.id,
-                              idSubstring: idSubstring,
-                            }),
-                          });
-
-                          if (!apiResponse.ok) {
-                            console.error(
-                              `Failed to resume follow-up sequence for template ${template.id}:`,
-                              await apiResponse.text()
-                            );
-                          } else {
-                            console.log(
-                              `Successfully resumed follow-up sequence for template ${
-                                template.id
-                              } with tag ${template.triggerTags.find((tag) => currentTags.includes(tag))}`
-                            );
-                          }
-                        } catch (error) {
-                          console.error(`Error resuming template messages:`, error);
-                        }
-                      }
-                    }
-                  }
-                }
-
-                // Check if any follow-up templates use this tag as a trigger tag
-                for (const template of followUpTemplates) {
-                  if (template.triggerTags && template.triggerTags.includes(tag)) {
-                    // Call the API to remove scheduled messages for this template
-                    try {
-                      const apiResponse = await fetch("https://juta.ngrok.app/api/tag/followup", {
-                        method: "POST",
-                        headers: {
-                          "Content-Type": "application/json",
-                        },
-                        body: JSON.stringify({
-                          requestType: "removeTemplate",
-                          phone: extractedNumber,
-                          first_name: contactName || extractedNumber,
-                          phoneIndex: phoneIndex || 0,
-                          templateId: template.id,
-                          idSubstring: idSubstring,
-                        }),
-                      });
-
-                      if (!apiResponse.ok) {
-                        console.error(
-                          `Failed to stop follow-up sequence for template ${template.id}:`,
-                          await apiResponse.text()
-                        );
-                      } else {
-                        console.log(
-                          `Successfully removed follow-up sequence for template ${template.id} with tag ${tag}`
-                        );
-                      }
-                    } catch (error) {
-                      console.error(`Error removing template messages for tag ${tag}:`, error);
-                    }
-                  }
-                }
-              }
-            } else {
-              // Default behavior: remove specified tags first
-              for (const tagToRemove of response.removeTags || []) {
-                await addTagToPostgres(extractedNumber, tagToRemove, idSubstring, true);
-
-                if (tagToRemove === "pause followup") {
-                  // Get the contact's current tags to find active followup templates
-                  const contactRef = db
-                    .collection("companies")
-                    .doc(idSubstring)
-                    .collection("contact")
-                    .doc(extractedNumber);
-                  const contactDoc = await contactRef.get();
-                  if (contactDoc.exists) {
-                    const contactData = contactDoc.data();
-                    const currentTags = contactData.tags || [];
-
-                    // Check each followup template to see if its tag is in the contact's tags
-                    for (const template of followUpTemplates) {
-                      // If the template has a tag that matches one of the contact's tags
-                      if (
-                        template.triggerTags &&
-                        template.triggerTags.some((templateTag) => currentTags.includes(templateTag))
-                      ) {
-                        try {
-                          // Call the API to resume follow-up sequence for this template
-                          const apiResponse = await fetch("https://juta.ngrok.app/api/tag/followup", {
-                            method: "POST",
-                            headers: {
-                              "Content-Type": "application/json",
-                            },
-                            body: JSON.stringify({
-                              requestType: "resumeTemplate",
-                              phone: extractedNumber,
-                              first_name: extractedNumber,
-                              phoneIndex: phoneIndex || 0,
-                              templateId: template.id,
-                              idSubstring: idSubstring,
-                            }),
-                          });
-
-                          if (!apiResponse.ok) {
-                            console.error(
-                              `Failed to resume follow-up sequence for template ${template.id}:`,
-                              await apiResponse.text()
-                            );
-                          } else {
-                            console.log(
-                              `Successfully resumed follow-up sequence for template ${
-                                template.id
-                              } with tag ${template.triggerTags.find((tag) => currentTags.includes(tag))}`
-                            );
-                          }
-                        } catch (error) {
-                          console.error(`Error resuming template messages:`, error);
-                        }
-                      }
-                    }
-                  }
-                }
-
-                // Check if any follow-up templates use this tag as a trigger tag
-                for (const template of followUpTemplates) {
-                  if (template.triggerTags && template.triggerTags.includes(tagToRemove)) {
-                    // Call the API to remove scheduled messages for this template
-                    try {
-                      const apiResponse = await fetch("https://juta.ngrok.app/api/tag/followup", {
-                        method: "POST",
-                        headers: {
-                          "Content-Type": "application/json",
-                        },
-                        body: JSON.stringify({
-                          requestType: "removeTemplate",
-                          phone: extractedNumber,
-                          first_name: contactName || extractedNumber,
-                          phoneIndex: phoneIndex || 0,
-                          templateId: template.id,
-                          idSubstring: idSubstring,
-                        }),
-                      });
-
-                      if (!apiResponse.ok) {
-                        console.error(
-                          `Failed to stop follow-up sequence for template ${template.id}:`,
-                          await apiResponse.text()
-                        );
-                      } else {
-                        console.log(
-                          `Successfully removed follow-up sequence for template ${template.id} with tag ${tagToRemove}`
-                        );
-                      }
-                    } catch (error) {
-                      console.error(`Error removing template messages for tag ${tagToRemove}:`, error);
-                    }
-                  }
-                }
-              }
-
-              // Then add new tags
-              for (const tag of response.tags) {
-                await addTagToPostgres(extractedNumber, tag, idSubstring);
-                console.log(`Added tag: ${tag} for number: ${extractedNumber}`);
-
-                // Check if any follow-up templates use this tag as a trigger tag
-                for (const template of followUpTemplates) {
-                  if (template.triggerTags && template.triggerTags.includes(tag)) {
-                    // Call the API to start follow-up sequence for this template
-                    try {
-                      const apiResponse = await fetch("https://juta.ngrok.app/api/tag/followup", {
-                        method: "POST",
-                        headers: {
-                          "Content-Type": "application/json",
-                        },
-                        body: JSON.stringify({
-                          requestType: "startTemplate",
-                          phone: extractedNumber,
-                          first_name: contactName || extractedNumber,
-                          phoneIndex: phoneIndex || 0,
-                          templateId: template.id,
-                          idSubstring: idSubstring,
-                        }),
-                      });
-
-                      if (!apiResponse.ok) {
-                        console.error(
-                          `Failed to start follow-up sequence for template ${template.id}:`,
-                          await apiResponse.text()
-                        );
-                      } else {
-                        console.log(
-                          `Successfully started follow-up sequence for template ${template.id} with tag ${tag}`
-                        );
-                      }
-                    } catch (error) {
-                      console.error(`Error starting template messages for tag ${tag}:`, error);
-                    }
-                  }
-                }
-
-                if (tag === "pause followup") {
-                  // Get the contact's current tags to find active followup templates
-                  const contactRef = db
-                    .collection("companies")
-                    .doc(idSubstring)
-                    .collection("contact")
-                    .doc(extractedNumber);
-                  const contactDoc = await contactRef.get();
-                  if (contactDoc.exists) {
-                    const contactData = contactDoc.data();
-                    const currentTags = contactData.tags || [];
-
-                    // Check each followup template to see if its tag is in the contact's tags
-                    for (const template of followUpTemplates) {
-                      // If the template has a tag that matches one of the contact's tags
-                      if (
-                        template.triggerTags &&
-                        template.triggerTags.some((templateTag) => currentTags.includes(templateTag))
-                      ) {
-                        try {
-                          // Call the API to pause follow-up sequence for this template
-                          const apiResponse = await fetch("https://juta.ngrok.app/api/tag/followup", {
-                            method: "POST",
-                            headers: {
-                              "Content-Type": "application/json",
-                            },
-                            body: JSON.stringify({
-                              requestType: "pauseTemplate",
-                              phone: extractedNumber,
-                              first_name: extractedNumber,
-                              phoneIndex: phoneIndex || 0,
-                              templateId: template.id,
-                              idSubstring: idSubstring,
-                            }),
-                          });
-
-                          if (!apiResponse.ok) {
-                            console.error(
-                              `Failed to pause follow-up sequence for template ${template.id}:`,
-                              await apiResponse.text()
-                            );
-                          } else {
-                            console.log(
-                              `Successfully paused follow-up sequence for template ${
-                                template.id
-                              } with tag ${template.triggerTags.find((tag) => currentTags.includes(tag))}`
-                            );
-                          }
-                        } catch (error) {
-                          console.error(`Error pausing template messages in ai responses:`, error);
-                        }
-                      }
-                    }
-                  }
-                }
-
-                if (tag === "stop followup") {
-                  // Get the contact's current tags to find active followup templates
-                  const contactRef = db
-                    .collection("companies")
-                    .doc(idSubstring)
-                    .collection("contact")
-                    .doc(extractedNumber);
-                  const contactDoc = await contactRef.get();
-                  if (contactDoc.exists) {
-                    const contactData = contactDoc.data();
-                    const currentTags = contactData.tags || [];
-
-                    // Check each followup template to see if its tag is in the contact's tags
-                    for (const template of followUpTemplates) {
-                      // If the template has a tag that matches one of the contact's tags
-                      if (
-                        template.triggerTags &&
-                        template.triggerTags.some((templateTag) => currentTags.includes(templateTag))
-                      ) {
-                        try {
-                          // Call the API to pause follow-up sequence for this template
-                          const apiResponse = await fetch("https://juta.ngrok.app/api/tag/followup", {
-                            method: "POST",
-                            headers: {
-                              "Content-Type": "application/json",
-                            },
-                            body: JSON.stringify({
-                              requestType: "removeTemplate",
-                              phone: extractedNumber,
-                              first_name: extractedNumber,
-                              phoneIndex: phoneIndex || 0,
-                              templateId: template.id,
-                              idSubstring: idSubstring,
-                            }),
-                          });
-
-                          if (!apiResponse.ok) {
-                            console.error(
-                              `Failed to pause follow-up sequence for template ${template.id}:`,
-                              await apiResponse.text()
-                            );
-                          } else {
-                            console.log(
-                              `Successfully paused follow-up sequence for template ${
-                                template.id
-                              } with tag ${template.triggerTags.find((tag) => currentTags.includes(tag))}`
-                            );
-                          }
-
-                          await addTagToPostgres(extractedNumber, tag, botName, true);
-                        } catch (error) {
-                          console.error(`Error stopping template messages in ai responses:`, error);
-                        }
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          } catch (error) {
-            console.error(`Error handling tags for keywords ${response.keywords}:`, error);
-            continue;
-          }
-        }
-      }
-    }
-
-    //reset bot command
+    // Reset bot command
     if (msg.body.includes("/resetbot")) {
       const thread = await createThread();
       threadID = thread.id;
-      await saveThreadIDPostgres(contactID, threadID, idSubstring);
+      await saveThreadIDPostgres(extractedNumber, threadID, idSubstring);
       client.sendMessage(msg.from, "Bot is now restarting with new thread.");
       return;
     }
 
     if (companyConfig.stopbot) {
       if (companyConfig.stopbot == true) {
-        console.log("bot stop all");
+        console.log(`Main Bot Toggled Off for Company ${idSubstring}`);
         return;
       }
     }
 
-    if (firebaseTags !== undefined) {
-      if (firebaseTags.includes("stop bot")) {
-        console.log("bot stop");
+    if (contactTags !== undefined) {
+      if (contactTags.includes("stop bot")) {
+        console.log(
+          `Bot stopped for contact ${extractedNumber} for Company ${idSubstring}`
+        );
         return;
       }
     }
 
-    if (companyConfig.stopbots && companyConfig.stopbots[phoneIndex.toString()] === true) {
-      console.log(`bot stop for phone index ${phoneIndex}`);
+    if (
+      companyConfig.stopbots &&
+      companyConfig.stopbots[phoneIndex.toString()] === true
+    ) {
+      console.log(
+        `Bot Toggled Off for Company ${idSubstring} phone index ${phoneIndex}`
+      );
       return;
     }
 
@@ -2994,7 +3325,13 @@ async function processImmediateActions(client, msg, botName, phoneIndex) {
 }
 
 // Add sendFeedbackToGroup function
-async function sendFeedbackToGroup(client, feedback, customerName, customerPhone, idSubstring) {
+async function sendFeedbackToGroup(
+  client,
+  feedback,
+  customerName,
+  customerPhone,
+  idSubstring
+) {
   if (idSubstring !== "0128") return;
 
   try {
@@ -3006,7 +3343,10 @@ async function sendFeedbackToGroup(client, feedback, customerName, customerPhone
       `Received: ${new Date().toLocaleString()}`;
 
     const feedbackGroupId = "120363107024888999@g.us";
-    const sentMessage = await client.sendMessage(feedbackGroupId, feedbackMessage);
+    const sentMessage = await client.sendMessage(
+      feedbackGroupId,
+      feedbackMessage
+    );
     await addMessagetoPostgres(sentMessage, idSubstring, "+120363107024888999");
     await logFeedbackToPostgres(idSubstring, customerPhone, feedback);
 
@@ -3059,7 +3399,12 @@ async function mtdcAttendance(extractedNumber, msg, idSubstring, client) {
 
     let rowIndex = -1;
     for (let i = 0; i < rows.length; i++) {
-      if (rows[i][3] && rows[i][3].replace(/\D/g, "").includes(extractedNumber.replace(/\D/g, ""))) {
+      if (
+        rows[i][3] &&
+        rows[i][3]
+          .replace(/\D/g, "")
+          .includes(extractedNumber.replace(/\D/g, ""))
+      ) {
         rowIndex = i;
         break;
       }
@@ -3081,7 +3426,11 @@ async function mtdcAttendance(extractedNumber, msg, idSubstring, client) {
       },
     });
 
-    console.log(`Updated attendance status to "${attendanceStatus}" for ${extractedNumber} at row ${rowIndex + 1}`);
+    console.log(
+      `Updated attendance status to "${attendanceStatus}" for ${extractedNumber} at row ${
+        rowIndex + 1
+      }`
+    );
 
     // Send confirmation message to the user
     const confirmationMessage =
@@ -3100,7 +3449,12 @@ async function mtdcAttendance(extractedNumber, msg, idSubstring, client) {
   }
 }
 
-async function mtdcConfirmAttendance(extractedNumber, msg, idSubstring, client) {
+async function mtdcConfirmAttendance(
+  extractedNumber,
+  msg,
+  idSubstring,
+  client
+) {
   try {
     const attendanceStatus = "Accepted";
 
@@ -3126,7 +3480,12 @@ async function mtdcConfirmAttendance(extractedNumber, msg, idSubstring, client) 
 
     let rowIndex = -1;
     for (let i = 0; i < rows.length; i++) {
-      if (rows[i][3] && rows[i][3].replace(/\D/g, "").includes(extractedNumber.replace(/\D/g, ""))) {
+      if (
+        rows[i][3] &&
+        rows[i][3]
+          .replace(/\D/g, "")
+          .includes(extractedNumber.replace(/\D/g, ""))
+      ) {
         rowIndex = i;
         break;
       }
@@ -3148,7 +3507,9 @@ async function mtdcConfirmAttendance(extractedNumber, msg, idSubstring, client) 
     });
 
     console.log(
-      `Updated attendance confirmation status to "${attendanceStatus}" for ${extractedNumber} at row ${rowIndex + 1}`
+      `Updated attendance confirmation status to "${attendanceStatus}" for ${extractedNumber} at row ${
+        rowIndex + 1
+      }`
     );
 
     // Send confirmation message to the user
@@ -3176,26 +3537,47 @@ async function processBufferedMessages(client, chatId, botName, phoneIndex) {
   const combinedMessage = messages.map((m) => m.body).join(" ");
 
   // Process the combined message
-  await processMessage(client, messages[0], botName, phoneIndex, combinedMessage);
+  await processMessage(
+    client,
+    messages[0],
+    botName,
+    phoneIndex,
+    combinedMessage
+  );
 }
 
-async function processMessage(client, msg, botName, phoneIndex, combinedMessage) {
-  console.log("Processing buffered messages for " + botName);
-
+async function processMessage(
+  client,
+  msg,
+  botName,
+  phoneIndex,
+  combinedMessage
+) {
   const idSubstring = botName;
   const chatId = msg.from;
-  await checkAndScheduleDailyReport(client, idSubstring);
+  console.log(
+    `Processing immediate actions for Company ${botName} from chat ${chatId}`
+  );
+
   try {
     // Initial fetch of config
     await fetchConfigFromDatabase(idSubstring, phoneIndex);
+
+    // Check if bot is stopped
     if (companyConfig.stopbot) {
       if (companyConfig.stopbot == true) {
-        console.log("bot stop all");
+        console.log(`Main Bot Toggled Off for Company ${botName}`);
         return;
       }
     }
-    if (companyConfig.stopbots && companyConfig.stopbots[phoneIndex.toString()] === true) {
-      console.log(`bot stop for phone index ${phoneIndex}`);
+
+    if (
+      companyConfig.stopbots &&
+      companyConfig.stopbots[phoneIndex.toString()] === true
+    ) {
+      console.log(
+        `Bot Toggled Off for Company ${botName} for Phone Index ${phoneIndex}`
+      );
       return;
     }
 
@@ -3215,22 +3597,20 @@ async function processMessage(client, msg, botName, phoneIndex, combinedMessage)
       return;
     }
 
-    let contactID;
     let contactName;
     let threadID;
-    let query;
-    let answer;
-    let parts;
-    let currentStep;
-    let companyName;
+    let query = combinedMessage;
     const chat = await msg.getChat();
-    const contactData = await getContactDataFromDatabaseByPhone(extractedNumber, idSubstring);
-    let unreadCount = 0;
+    const contactData = await getContactDataFromDatabaseByPhone(
+      extractedNumber,
+      idSubstring
+    );
     let stopTag = contactData?.tags || [];
     const contact = await chat.getContact();
 
     if (msg.fromMe) {
       if (stopTag.includes("idle")) {
+        return;
       }
       return;
     }
@@ -3239,1689 +3619,791 @@ async function processMessage(client, msg, botName, phoneIndex, combinedMessage)
       return;
     }
 
-    // Remove 'stop bot' tag if it exists for group messages
-    // if (extractedNumber === '+120363178065670386') {
-    //   // Remove 'stop bot' tag if it exists
-    //   if (stopTag.includes('stop bot')) {
-    //     await db.collection('companies').doc(idSubstring)
-    //       .collection('contacts')
-    //       .doc(extractedNumber)
-    //       .update({
-    //         tags: admin.firestore.FieldValue.arrayRemove('stop bot')
-    //       });
-    //     console.log('Removed stop bot tag for group message');
-    //   }
-
-    //   // Add this section to enable bot responses for the group
-    //   let existingContact = await getContactDataFromDatabaseByPhone(extractedNumber, idSubstring);
-
-    //   // If no thread exists, create one
-    //   if (!existingContact.threadid) {
-    //     const thread = await openai.beta.threads.create();
-    //     await saveThreadIDPostgres(extractedNumber, thread.id, idSubstring);
-    //     existingContact.threadid = thread.id;
-    //   }
-
-    //   // Process the message with the bot
-    //   const response = await handleOpenAIAssistant(
-    //     msg.body,
-    //     existingContact.threadid,
-    //     existingContact.tags || [],
-    //     extractedNumber,
-    //     idSubstring,
-    //     client,
-    //     existingContact.name || "Group Member"
-    //   );
-
-    //   // Send the bot's response back to the group
-    //   if (response) {
-    //     await client.sendMessage(msg.from, response);
-    //   }
-    // }
-
     if (stopTag.includes("stop bot")) {
-      console.log("Bot stopped for this message");
+      console.log(
+        `Bot stopped for this message from ${sender.to} for Company ${idSubstring}`
+      );
       return;
     }
 
-    if (contactData.threadid) {
+    // Get or create thread ID
+    if (contactData?.threadid) {
       threadID = contactData.threadid;
     } else {
       const thread = await createThread();
       threadID = thread.id;
-      await saveThreadIDPostgres(contactID, threadID, idSubstring);
+      await saveThreadIDPostgres(
+        contactData?.contact_id || extractedNumber,
+        threadID,
+        idSubstring
+      );
     }
-    if (msg.body.toLowerCase().includes("attending".toLowerCase()) && idSubstring === "0380") {
+
+    // Handle special cases like attendance
+    if (
+      msg.body.toLowerCase().includes("attending".toLowerCase()) &&
+      idSubstring === "0380"
+    ) {
       try {
-        const status = await mtdcAttendance(extractedNumber, msg.body, idSubstring, client);
+        const status = await mtdcAttendance(
+          extractedNumber,
+          msg.body,
+          idSubstring,
+          client
+        );
         if (status === true) {
-          console.log("Attendance message for MTDC processed successfully, stopping further processing");
+          console.log(
+            "Attendance message for MTDC processed successfully, stopping further processing"
+          );
           return;
         }
       } catch (error) {
         console.error("Error processing attendance for MTDC:", error);
       }
     }
-    if (msg.body.toLowerCase().includes("have attended the program at mtdc".toLowerCase()) && idSubstring === "0380") {
+
+    if (
+      msg.body
+        .toLowerCase()
+        .includes("have attended the program at mtdc".toLowerCase()) &&
+      idSubstring === "0380"
+    ) {
       try {
-        const status = await mtdcConfirmAttendance(extractedNumber, msg.body, idSubstring, client);
+        const status = await mtdcConfirmAttendance(
+          extractedNumber,
+          msg.body,
+          idSubstring,
+          client
+        );
         if (status === true) {
-          console.log("Confirmation of attendance for MTDC processed successfully, stopping further processing");
+          console.log(
+            "Confirmation of attendance for MTDC processed successfully, stopping further processing"
+          );
           return;
         }
       } catch (error) {
-        console.error("Error processing confirmation of attendance for MTDC:", error);
+        console.error(
+          "Error processing confirmation of attendance for MTDC:",
+          error
+        );
       }
     }
+
+    // Start typing indicator
     chat.sendStateTyping();
-    currentStep = userState.get(sender.to) || steps.START;
-    switch (currentStep) {
-      case steps.START:
-        var context = "";
 
-        const aiTagResponses =
-          companyConfig.statusAIResponses?.aiTag === true ? await getAITagResponses(idSubstring) : [];
-        const aiAssignResponses =
-          companyConfig.statusAIResponses?.aiAssign === true ? await getAIAssignResponses(idSubstring) : [];
-        const aiImageResponses =
-          companyConfig.statusAIResponses?.aiImage === true ? await getAIImageResponses(idSubstring) : [];
-        const aiVoiceResponses =
-          companyConfig.statusAIResponses?.aiVoice === true ? await getAIVoiceResponses(idSubstring) : [];
-        const aiVideoResponses =
-          companyConfig.statusAIResponses?.aiVideo === true ? await getAIVideoResponses(idSubstring) : [];
-        const aiDocumentResponses =
-          companyConfig.statusAIResponses?.aiDocument === true ? await getAIDocumentResponses(idSubstring) : [];
-        const followUpTemplates = await getFollowUpTemplates(idSubstring);
-
-        let templateFound = false;
-        let imageFound = false;
-        let voiceFound = false;
-        let tagFound = false;
-        let documentFound = false;
-        let assignFound = false;
-        let videoFound = false;
-        query = `${combinedMessage}`;
-
-        // For voice messages
-        if (!voiceFound) {
-          for (const response of aiVoiceResponses) {
-            if (
-              response.keywordSource === "user" &&
-              response.keywords.some((kw) => query.toLowerCase().includes(kw.toLowerCase()))
-            ) {
-              console.log("voice messages found for keywords:", response.keywords);
-              for (let i = 0; i < response.voiceUrls.length; i++) {
-                try {
-                  const caption = response.captions?.[i] || "";
-                  const voiceMessage = await sendVoiceMessage(client, msg.from, response.voiceUrls[i], caption);
-                  await addMessagetoPostgres(voiceMessage, idSubstring, extractedNumber, contactName);
-                  if (i < response.voiceUrls.length - 1) {
-                    await new Promise((resolve) => setTimeout(resolve, 1000));
-                  }
-                } catch (error) {
-                  console.error(`Error sending voice message ${response.voiceUrls[i]}:`, error);
-                  continue;
-                }
-              }
-            }
-          }
-        }
-
-        // For images
-        if (!imageFound) {
-          for (const response of aiImageResponses) {
-            if (
-              response.keywordSource === "user" &&
-              response.keywords.some((kw) => query.toLowerCase().includes(kw.toLowerCase()))
-            ) {
-              console.log("images found for keywords:", response.keywords);
-              for (const imageUrl of response.imageUrls) {
-                try {
-                  const media = await MessageMedia.fromUrl(imageUrl);
-                  const imageMessage = await client.sendMessage(msg.from, media);
-                  await addMessagetoPostgres(imageMessage, idSubstring, extractedNumber, contactName);
-                } catch (error) {
-                  console.error(`Error sending image ${imageUrl}:`, error);
-                  continue;
-                }
-              }
-              // Remove this empty block that was causing the function to effectively return
-              // imageFound = true; // Optionally set this if you want to prevent multiple image responses
-            }
-          }
-        }
-        // Add this alongside other response handlers:
-        if (!assignFound) {
-          for (const response of aiAssignResponses) {
-            console.log("Processing response:", response);
-
-            // Use the actual message body instead of 'part'
-            const messageBody = msg.body || combinedMessage;
-
-            if (
-              response.keywordSource === "user" &&
-              response.keywords.some((kw) => messageBody.toLowerCase().includes(kw.toLowerCase()))
-            ) {
-              console.log("Keyword match found:", response.keywords);
-              try {
-                // Get the current assignment index
-                const stateRef = db
-                  .collection("companies")
-                  .doc(idSubstring)
-                  .collection("botState")
-                  .doc("assignmentState");
-                const stateDoc = await stateRef.get();
-                let currentIndex = 0;
-                if (stateDoc.exists) {
-                  currentIndex = stateDoc.data().currentIndex || 0;
-                }
-
-                // Get employee list and calculate next employee
-                const employeeEmails = response.assignedEmployees;
-                if (employeeEmails.length === 0) {
-                  console.log("No employees available for assignment");
-                  continue;
-                }
-
-                const nextEmail = employeeEmails[currentIndex % employeeEmails.length];
-
-                // Find the matching keyword that triggered the assignment
-                const triggerKeyword = response.keywords.find((kw) =>
-                  messageBody.toLowerCase().includes(kw.toLowerCase())
-                );
-
-                console.log("Trigger keyword found:", triggerKeyword);
-
-                // Fetch employee data
-                const employeeRef = db.collection("companies").doc(idSubstring).collection("employee").doc(nextEmail);
-                const employeeDoc = await employeeRef.get();
-
-                if (employeeDoc.exists) {
-                  const employeeData = employeeDoc.data();
-                  console.log("Employee data:", employeeData);
-                  console.log("Assigning with keyword:", triggerKeyword);
-
-                  // Get contact name with fallback
-                  const contactName = contactData?.contactName || extractedNumber || "Unknown Contact";
-                  console.log("Using contact name:", contactName);
-
-                  await assignToEmployee(
-                    employeeData,
-                    "Sales",
-                    extractedNumber,
-                    contactName, // Changed from contactData.contactName to contactName
-                    client,
-                    idSubstring,
-                    triggerKeyword
-                  );
-
-                  // Update the assignment index for next time
-                  const newIndex = (currentIndex + 1) % employeeEmails.length;
-                  await stateRef.set(
-                    {
-                      currentIndex: newIndex,
-                      lastUpdated: admin.firestore.FieldValue.serverTimestamp(),
-                    },
-                    { merge: true }
-                  );
-
-                  assignFound = true;
-                  break;
-                } else {
-                  console.log("Employee document not found:", nextEmail);
-                }
-              } catch (error) {
-                console.error("Error in assignment process:", error);
-                console.error("Full error stack:", error.stack);
-                continue;
-              }
-            }
-          }
-        }
-        if (!videoFound) {
-          for (const response of aiVideoResponses) {
-            if (
-              response.keywordSource === "user" &&
-              response.keywords.some((kw) => query.toLowerCase().includes(kw.toLowerCase()))
-            ) {
-              console.log("videos found for keywords:", response.keywords);
-
-              for (let i = 0; i < response.videoUrls.length; i++) {
-                try {
-                  const videoUrl = response.videoUrls[i];
-                  const caption = response.captions?.[i] || "";
-                  console.log(`Sending video ${i + 1}/${response.videoUrls.length}`);
-                  console.log(`URL: ${videoUrl}`);
-
-                  const media = await MessageMedia.fromUrl(videoUrl);
-                  if (!media) {
-                    throw new Error("Failed to load video from URL");
-                  }
-
-                  const videoMessage = await client.sendMessage(msg.from, media, {
-                    caption: caption,
-                    sendVideoAsGif: false, // Set to true if you want to send as GIF
-                  });
-                  if (!videoMessage) {
-                    throw new Error("Video send returned null");
-                  }
-                  await addMessagetoPostgres(videoMessage, idSubstring, extractedNumber, contactName);
-                  // Add delay between videos
-                  await new Promise((resolve) => setTimeout(resolve, 1000));
-                } catch (error) {
-                  console.error(`Error sending video ${i}:`, error);
-                  console.error("Full error:", error.stack);
-                  continue;
-                }
-              }
-            }
-          }
-        }
-
-        if (!documentFound) {
-          for (const response of aiDocumentResponses) {
-            if (
-              response.keywordSource === "user" &&
-              response.keywords.some((kw) => query.toLowerCase().includes(kw.toLowerCase()))
-            ) {
-              console.log("documents found for keyword " + response.keywords);
-              console.log("Document URLs:", response.documentUrls); // Debug log
-
-              // Send all documents for this keyword
-              for (let i = 0; i < response.documentUrls.length; i++) {
-                try {
-                  const documentUrl = response.documentUrls[i];
-                  console.log(`Sending document ${i + 1}/${response.documentUrls.length}`);
-                  console.log(`URL: ${documentUrl}`);
-
-                  const media = await MessageMedia.fromUrl(documentUrl);
-                  if (!media) {
-                    throw new Error("Failed to load document from URL");
-                  }
-
-                  // Use the document name from the response
-                  const documentName = response.documentNames[i] || `document_${i + 1}`;
-                  media.filename = documentName;
-
-                  // If the mimetype is not set, try to infer it from the file extension
-                  if (!media.mimetype) {
-                    const ext = path.extname(documentName).toLowerCase();
-                    switch (ext) {
-                      case ".pdf":
-                        media.mimetype = "application/pdf";
-                        break;
-                      case ".doc":
-                      case ".docx":
-                        media.mimetype = "application/msword";
-                        break;
-                      case ".xls":
-                      case ".xlsx":
-                        media.mimetype = "application/vnd.ms-excel";
-                        break;
-                      case ".ppt":
-                      case ".pptx":
-                        media.mimetype = "application/vnd.ms-powerpoint";
-                        break;
-                      case ".txt":
-                        media.mimetype = "text/plain";
-                        break;
-                      case ".csv":
-                        media.mimetype = "text/csv";
-                        break;
-                      case ".zip":
-                        media.mimetype = "application/zip";
-                        break;
-                      case ".rar":
-                        media.mimetype = "application/x-rar-compressed";
-                        break;
-                      default:
-                        media.mimetype = "application/octet-stream";
-                    }
-                  }
-
-                  const documentMessage = await client.sendMessage(msg.from, media, {
-                    sendMediaAsDocument: true,
-                  });
-
-                  if (!documentMessage) {
-                    throw new Error("Document send returned null");
-                  }
-
-                  await addMessagetoPostgres(documentMessage, idSubstring, extractedNumber, contactName);
-
-                  await new Promise((resolve) => setTimeout(resolve, 1000)); // 1 second delay
-                } catch (error) {
-                  console.error(`Error sending document ${i}:`, error);
-                  console.error("Full error:", error.stack);
-                  continue;
-                }
-              }
-            }
-          }
-        }
-
-        if (
-          !sender.to.includes("@g.us") ||
-          (combinedMessage.toLowerCase().startsWith("@juta") && phoneIndex == 0) ||
-          (sender.to.includes("@g.us") && idSubstring === "0385" && !stopTag.includes("stop bot"))
-        ) {
-          if (msg.type === "document" && msg._data.mimetype === "application/pdf") {
-            var pdfAnalysis = await handlePDFMessage(msg, sender, threadID, client, idSubstring, extractedNumber);
-            query = `${combinedMessage} The user PDF content analysis is: ${pdfAnalysis}`;
-            console.log(query);
-            answer = await handleOpenAIAssistant(
-              query,
-              threadID,
-              stopTag,
-              extractedNumber,
-              idSubstring,
-              client,
-              contactData.contactName
-            );
-            parts = answer.split(/\s*\|\|\s*/);
-
-            for (let i = 0; i < parts.length; i++) {
-              const part = parts[i].trim();
-              if (part) {
-                const sentMessage = await client.sendMessage(msg.from, part);
-                await addMessagetoPostgres(sentMessage, idSubstring, extractedNumber, contactName);
-              }
-            }
-          } else if (msg.type === "location") {
-            //var pdfAnalysis = await handlePDFMessage(msg, sender, threadID, client, idSubstring, extractedNumber);
-            query = `${combinedMessage} The user sent a location message`;
-            console.log(query);
-            answer = await handleOpenAIAssistant(
-              query,
-              threadID,
-              stopTag,
-              extractedNumber,
-              idSubstring,
-              client,
-              contactData.contactName
-            );
-            parts = answer.split(/\s*\|\|\s*/);
-
-            for (let i = 0; i < parts.length; i++) {
-              const part = parts[i].trim();
-              if (part) {
-                const sentMessage = await client.sendMessage(msg.from, part);
-                await addMessagetoPostgres(sentMessage, idSubstring, extractedNumber, contactName);
-              }
-            }
-          } else if (msg.type === "image") {
-            var image = await handleImageMessage(msg, sender, threadID, client, idSubstring, extractedNumber);
-            query = `${combinedMessage} The user image analysis is: ${image}]`;
-            console.log(query);
-            answer = await handleOpenAIAssistant(
-              query,
-              threadID,
-              stopTag,
-              extractedNumber,
-              idSubstring,
-              client,
-              contactData.contactName
-            );
-            parts = answer.split(/\s*\|\|\s*/);
-
-            for (let i = 0; i < parts.length; i++) {
-              const part = parts[i].trim();
-              const check = part.toLowerCase();
-              if (part) {
-                if (part) {
-                  const sentMessage = await client.sendMessage(msg.from, part);
-
-                  // Save the message to Firebase
-                  const sentMessageData = {
-                    chat_id: sentMessage.from,
-                    from: sentMessage.from ?? "",
-                    from_me: true,
-                    id: sentMessage.id._serialized ?? "",
-                    source: sentMessage.deviceType ?? "",
-                    status: "delivered",
-                    text: {
-                      body: part,
-                    },
-                    timestamp: sentMessage.timestamp ?? 0,
-                    type: "text",
-                    ack: sentMessage.ack ?? 0,
-                  };
-                  const contactRef = db
-                    .collection("companies")
-                    .doc(idSubstring)
-                    .collection("contacts")
-                    .doc(extractedNumber);
-                  const messagesRef = contactRef.collection("messages");
-
-                  const messageDoc = messagesRef.doc(sentMessage.id._serialized);
-
-                  await messageDoc.set(sentMessageData, { merge: true });
-                }
-              }
-            }
-          } else {
-            answer = await handleOpenAIAssistant(
-              query,
-              threadID,
-              stopTag,
-              extractedNumber,
-              idSubstring,
-              client,
-              contactData.contactName
-            );
-            console.log(answer);
-            parts = answer.split(/\s*\|\|\s*/);
-
-            for (let i = 0; i < parts.length; i++) {
-              const part = parts[i].trim();
-              const check = part.toLowerCase();
-
-              if (part) {
-                if (part.includes("You sent this to the user:") || part.toLowerCase().includes("error")) {
-                  return;
-                }
-                if (part) {
-                  if (part.startsWith("~") && idSubstring == "020") {
-                    // Split the message by newlines and process each line that starts with ~
-                    // Split the message by newlines and process each line that starts with ~
-                    const lines = part.split("\n");
-                    for (const line of lines) {
-                      if (line.trim().startsWith("~")) {
-                        // Extract just the product name up to "The price per" or end of line
-                        const rawProductName = line
-                          .slice(1) // Remove tilde
-                          .split(/\s+the\s+price\s+per/i)[0] // Split at "The price per" if present
-                          .trim();
-                        const productName = rawProductName.toLowerCase().replace(/\s+/g, "") + "-thepriceper";
-                        const filePath = carpetTileFilePaths[productName];
-
-                        console.log("productName:", productName);
-                        console.log(filePath);
-
-                        if (filePath) {
-                          console.log(`${productName} sending file`);
-                          try {
-                            const media = await MessageMedia.fromUrl(filePath, {
-                              unsafeMime: true,
-                              filename: `${productName}.pdf`,
-                            });
-                            if (!media) {
-                              throw new Error("Failed to load document from URL");
-                            }
-
-                            const documentMessage = await client.sendMessage(msg.from, media, {
-                              sendMediaAsDocument: true,
-                            });
-
-                            if (!documentMessage) {
-                              throw new Error("Document send returned null");
-                            }
-
-                            // Prepare the message data for Firebase
-                            const messageData = {
-                              chat_id: documentMessage.from,
-                              from: documentMessage.from,
-                              from_me: true,
-                              id: documentMessage.id._serialized,
-                              source: documentMessage.deviceType || "web",
-                              status: "delivered",
-                              timestamp: documentMessage.timestamp || Date.now(),
-                              type: "document",
-                              document: {
-                                filename: `${productName}.pdf`,
-                                mimetype: media.mimetype || "application/pdf",
-                              },
-                            };
-
-                            // Save to Firebase with proper error handling
-                            try {
-                              const contactRef = db
-                                .collection("companies")
-                                .doc(idSubstring)
-                                .collection("contacts")
-                                .doc(extractedNumber);
-                              const messagesRef = contactRef.collection("messages");
-                              await messagesRef.doc(documentMessage.id._serialized).set(messageData);
-                            } catch (firebaseError) {
-                              console.error("Error saving to Firebase:", firebaseError);
-                            }
-                          } catch (error) {
-                            console.error(`Error sending document:`, error);
-                            console.error("Full error:", error.stack);
-                            //  await client.sendMessage(msg.from, 'media not found for ' + rawProductName);
-                          }
-                        } else {
-                          // await client.sendMessage(msg.from, 'media not found for ' + rawProductName);
-                        }
-                      }
-                    }
-                  }
-                  // if (msg.type === 'audio' || msg.type === 'ptt') {
-                  //     console.log('audio or ptt');
-                  //     let sentMessage = null;
-                  //     // Generate audio file
-                  //     const audioFilePath = await generateAudioFromText(part);
-
-                  //     // Send audio message
-                  //     const media = MessageMedia.fromFilePath(audioFilePath);
-                  //     media.mimetype = 'audio/mp4';
-                  //     sentMessage = await client.sendMessage(msg.from, media, { sendAudioAsVoice: true });
-
-                  //     // Clean up the audio file
-                  //     await fs.promises.unlink(audioFilePath);
-                  //     await addMessagetoPostgres(sentMessage, idSubstring, extractedNumber, contactName);
-                  // } else {
-                  const sentMessage = await client.sendMessage(msg.from, part);
-
-                  // Save the message to Firebase
-                  const sentMessageData = {
-                    chat_id: sentMessage.from,
-                    from: sentMessage.from ?? "",
-                    from_me: true,
-                    id: sentMessage.id._serialized ?? "",
-                    source: sentMessage.deviceType ?? "",
-                    status: "delivered",
-                    text: {
-                      body: part,
-                    },
-                    timestamp: sentMessage.timestamp ?? 0,
-                    type: "text",
-                    ack: sentMessage.ack ?? 0,
-                  };
-
-                  const contactRef = db
-                    .collection("companies")
-                    .doc(idSubstring)
-                    .collection("contacts")
-                    .doc(extractedNumber);
-                  const messagesRef = contactRef.collection("messages");
-
-                  const messageDoc = messagesRef.doc(sentMessage.id._serialized);
-
-                  await messageDoc.set(sentMessageData, { merge: true });
-                  if (idSubstring === "0128") {
-                    // Trigger for inquiry notification
-                    if (
-                      part.toLowerCase().includes("i will notify the team") ||
-                      part.toLowerCase().includes("i have notified the team")
-                    ) {
-                      await assignNewContactToEmployee(extractedNumber, idSubstring, client);
-                    }
-
-                    // Trigger for booking/order completion
-                    if (part.toLowerCase().includes("get back to you")) {
-                      await addTagToPostgres(extractedNumber, "stop bot", idSubstring);
-                      await assignNewContactToEmployee(extractedNumber, idSubstring, client);
-                    }
-
-                    // Trigger for feedback handling
-                    if (
-                      part.toLowerCase().includes("thank you for your feedback") ||
-                      part.toLowerCase().includes("sorry to hear that") ||
-                      part.toLowerCase().includes("apologize for")
-                    ) {
-                      await addTagToPostgres(extractedNumber, "feedback", idSubstring);
-                    }
-
-                    // Trigger for inquiry handling
-                    if (
-                      part.toLowerCase().includes("i understand you need more information") ||
-                      part.toLowerCase().includes("let me forward your inquiry")
-                    ) {
-                      await addTagToPostgres(extractedNumber, "inquiry", idSubstring);
-                    }
-
-                    // Trigger for order completion
-                    if (
-                      part.toLowerCase().includes("thank you for your order") ||
-                      part.toLowerCase().includes("order has been confirmed")
-                    ) {
-                      await addTagToPostgres(extractedNumber, "ordered", idSubstring);
-                    }
-                  }
-
-                  // Existing follow-up template handling
-                  for (const template of followUpTemplates) {
-                    if (template.triggerKeywords.some((kw) => part.toLowerCase().includes(kw.toLowerCase()))) {
-                      console.log("Follow-up trigger found for template:", template.name);
-                      try {
-                        const contactDoc = await contactRef.get();
-                        const contactData = contactDoc.data();
-                        const currentTags = contactData?.tags || [];
-
-                        for (const otherTemplate of followUpTemplates) {
-                          const tagToRemove = otherTemplate.triggerTags?.[0];
-                          if (tagToRemove && currentTags.includes(tagToRemove)) {
-                            // Call the API to remove scheduled messages
-                            console.log("Removing template:", otherTemplate.id);
-                            try {
-                              const response = await fetch("https://juta.ngrok.app/api/tag/followup", {
-                                method: "POST",
-                                headers: {
-                                  "Content-Type": "application/json",
-                                },
-                                body: JSON.stringify({
-                                  requestType: "removeTemplate",
-                                  phone: extractedNumber,
-                                  first_name: contactName || extractedNumber,
-                                  phoneIndex: phoneIndex || 0,
-                                  templateId: otherTemplate.id,
-                                  idSubstring: idSubstring,
-                                }),
-                              });
-
-                              if (!response.ok) {
-                                console.error("Failed to remove template messages:", await response.text());
-                              }
-                            } catch (error) {
-                              console.error("Error removing template messages:", error);
-                            }
-                            await contactRef.update({
-                              tags: admin.firestore.FieldValue.arrayRemove(tagToRemove),
-                            });
-                          }
-                        }
-                      } catch (error) {
-                        console.error("Error handling follow-up template:", error);
-                      }
-                    }
-                  }
-
-                  if (part.includes("notified the team")) {
-                    await assignNewContactToEmployee(extractedNumber, idSubstring, client);
-                  }
-                  if (part.includes("Your details are registered") && idSubstring == "0380") {
-                    console.log("Triggering update google sheet for bot 0380...");
-                    var { reportMessage, contactInfoMTDC } = await generateSpecialReportMTDC(
-                      threadID,
-                      companyConfig.assistantId,
-                      contactName,
-                      extractedNumber
-                    );
-
-                    // Send to group chat
-                    var sentMessage2 = await client.sendMessage("120363386875697540@g.us", reportMessage);
-                    await insertSpreadsheetMTDC(reportMessage);
-
-                    // Add message to Firebase for the group chat
-
-                    await addMessagetoPostgres(sentMessage2, idSubstring, "+120363386875697540", "Group Chat");
-
-                    // Update contact data in Firestore
-                    let data = {
-                      phone: extractedNumber,
-                      contactName: (contactInfoMTDC.contactName || contactName || "").trim(), // Ensure name is trimmed
-                      threadid: threadID,
-                      customFields: {
-                        Company: contactInfoMTDC.company || "[Not specified]",
-                        "IC Number": contactInfoMTDC.ic || "[Not specified]",
-                        Email: contactInfoMTDC.email || "[Not specified]",
-                        "Program of Interest": contactInfoMTDC.program || "[Not specified]",
-                        "Program Date & Time": contactInfoMTDC.programDateTime || "[Not specified]",
-                      },
-                    };
-
-                    // Remove any undefined values
-                    data = removeUndefined(data);
-
-                    // Update Firestore with merge option
-                    await db
-                      .collection("companies")
-                      .doc(idSubstring)
-                      .collection("contacts")
-                      .doc(extractedNumber)
-                      .set(data, { merge: true });
-                  }
-                  if (part.includes("forward your details") && idSubstring == "0161") {
-                    console.log("Triggering update google sheet for bot 0161...");
-                    var { reportMessage, contactInfoSKC } = await generateSpecialReportSKC(
-                      threadID,
-                      companyConfig.assistantId,
-                      contactName,
-                      extractedNumber
-                    );
-
-                    // Send to group chat
-                    var sentMessage2 = await client.sendMessage("120363386875697540@g.us", reportMessage);
-                    await updateGoogleSheet(reportMessage);
-
-                    // Add message to Firebase for the group chat
-
-                    await addMessagetoPostgres(sentMessage2, idSubstring, "+120363386875697540", "Group Chat");
-
-                    // Update contact data in Firestore
-                    let data = {
-                      phone: extractedNumber,
-                      contactName: (contactInfoSKC.contactName || contactName || "").trim(), // Ensure name is trimmed
-                      threadid: threadID,
-                      customFields: {
-                        "Highest Qualification": contactInfoSKC.highestQualification || "[Not specified]",
-                        "Years of Work Experience": contactInfoSKC.yearsOfWorkExperience || "[Not specified]",
-                        Age: contactInfoSKC.age || "[Not specified]",
-                        "Program of Interest": contactInfoSKC.programOfInterest || "[Not specified]",
-                        "Current Occupation": contactInfoSKC.currentOccupation || "[Not specified]",
-                        "Current Industry": contactInfoSKC.currentIndustry || "[Not specified]",
-                      },
-                    };
-
-                    // Remove any undefined values
-                    data = removeUndefined(data);
-
-                    // Update Firestore with merge option
-                    await db
-                      .collection("companies")
-                      .doc(idSubstring)
-                      .collection("contacts")
-                      .doc(extractedNumber)
-                      .set(data, { merge: true });
-                  }
-                  if (part.includes("get back to you") && idSubstring === "080") {
-                    console.log("Triggering special report for Maha Aerospace...");
-                    var { reportMessage, contactInfo } = await generateSpecialReportMaha(
-                      threadID,
-                      companyConfig.assistantId,
-                      contactName,
-                      extractedNumber
-                    );
-
-                    // Send to group chat
-                    var sentMessage2 = await client.sendMessage("120363318433286839@g.us", reportMessage);
-                    await addMessagetoPostgres(sentMessage2, idSubstring, "+120363318433286839", "Group Chat");
-
-                    // Update Google Sheet
-                    try {
-                      await updateMahaGoogleSheet(reportMessage);
-                      console.log("Maha Aerospace Google Sheet updated successfully");
-                    } catch (error) {
-                      console.error("Error updating Maha Aerospace Google Sheet:", error);
-                    }
-
-                    // Update contact data in Firestore
-                    let data = {
-                      phone: extractedNumber,
-                      contactName: `${contactInfo.firstName || ""} ${contactInfo.lastName || ""}`.trim(),
-                      threadid: threadID,
-                      customFields: {
-                        "First Name": contactInfo.firstName || "[Not specified]",
-                        "Last Name": contactInfo.lastName || "[Not specified]",
-                        "Birth Date": contactInfo.birthDate || "[Not specified]",
-                        Country: contactInfo.country || "[Not specified]",
-                        "Education Level": contactInfo.educationLevel || "[Not specified]",
-                        Courses: contactInfo.courses || "[Not specified]",
-                        Sponsor: contactInfo.sponsor || "[Not specified]",
-                        "Referral Source": contactInfo.referralSource || "[Not specified]",
-                      },
-                    };
-
-                    // Remove any undefined values
-                    data = removeUndefined(data);
-
-                    // Update Firestore with merge option
-                    await db
-                      .collection("companies")
-                      .doc(idSubstring)
-                      .collection("contacts")
-                      .doc(extractedNumber)
-                      .set(data, { merge: true });
-                  }
-                  if (part.includes("forward your details") && idSubstring == "0119") {
-                    console.log("Triggering generate special report for bot 0119...");
-                    var { reportMessage, contactInfoLKSSB } = await generateSpecialReportLKSSB(
-                      threadID,
-                      companyConfig.assistantId,
-                      contactName,
-                      extractedNumber
-                    );
-
-                    // Send to group chat
-                    var sentMessage2 = await client.sendMessage("120363374300897170@g.us", reportMessage);
-                    // Add message to Firebase for the group chat
-
-                    await addMessagetoPostgres(sentMessage2, idSubstring, "+120363374300897170", "Group Chat");
-
-                    // Update contact data in Firestore
-                    let data = {
-                      phone: extractedNumber,
-                      contactName: (contactInfoLKSSB.contactName || contactName || "").trim(), // Ensure name is trimmed
-                      threadid: threadID,
-                      customFields: {
-                        "Company Name": contactInfoLKSSB.companyName || "[Not specified]",
-                        "Company Address": contactInfoLKSSB.companyAddress || "[Not specified]",
-                        "Length Of Construction": contactInfoLKSSB.lengthOfConstruction || "[Not specified]",
-                        "Height Of Construction": contactInfoLKSSB.heightOfConstruction || "[Not specified]",
-                        Location: contactInfoLKSSB.location || "[Not specified]",
-                      },
-                    };
-
-                    // Remove any undefined values
-                    data = removeUndefined(data);
-
-                    // Update Firestore with merge option
-                    await db
-                      .collection("companies")
-                      .doc(idSubstring)
-                      .collection("contacts")
-                      .doc(extractedNumber)
-                      .set(data, { merge: true });
-                  }
-                  if ((part.includes("Ms Goh") || part.includes("0182786776")) && idSubstring == "002") {
-                    console.log("Triggering generate special report for bot 002...");
-
-                    var { reportMessage, contactInfoBINA } = await generateSpecialReportBINA(
-                      threadID,
-                      companyConfig.assistantId,
-                      contactName,
-                      extractedNumber
-                    );
-
-                    // Send to group chat
-                    var sentMessage2 = await client.sendMessage("60182786776@c.us", reportMessage);
-                    // Add message to Firebase for the group chat
-
-                    await addMessagetoPostgres(sentMessage2, idSubstring, "+60182786776", "Contact Chat");
-
-                    // Update contact data in Firestore
-                    let data = {
-                      phone: extractedNumber,
-                      contactName: (contactInfoBINA.contactName || contactName || "").trim(), // Ensure name is trimmed
-                      threadid: threadID,
-                      customFields: {
-                        Email: contactInfoBINA.email || "[Not specified]",
-                        Availability: contactInfoBINA.availability || "[Not specified]",
-                        Issue: contactInfoBINA.issue || "[Not specified]",
-                        "Photos/Video": contactInfoBINA.photosVideo || "[Not specified]",
-                        "How Many Floor": contactInfoBINA.howManyFloor || "[Not specified]",
-                        "Roof Tile/Slab": contactInfoBINA.roofTileSlab || "[Not specified]",
-                      },
-                    };
-
-                    // Remove any undefined values
-                    data = removeUndefined(data);
-
-                    // Update Firestore with merge option
-                    await db
-                      .collection("companies")
-                      .doc(idSubstring)
-                      .collection("contacts")
-                      .doc(extractedNumber)
-                      .set(data, { merge: true });
-                  }
-                  if (part.includes("get back to you") && idSubstring == "095") {
-                    // Generate and send the special report
-                    var { reportMessage, contactInfo } = await generateSpecialReport(
-                      threadID,
-                      companyConfig.assistantId,
-                      contactName,
-                      extractedNumber
-                    );
-                    var sentMessage2 = await client.sendMessage("120363325228671809@g.us", reportMessage);
-                    await addMessagetoPostgres(sentMessage2, idSubstring, "+120363325228671809");
-
-                    // Initialize the data object with basic contact information
-                    let data = {
-                      phone: extractedNumber,
-                      contactName: contactName || null, // Use null if contactName is undefined
-                      threadid: threadID,
-                    };
-
-                    // Now update the data object with the extracted contact info
-                    data = removeUndefined({
-                      ...data,
-                      contactName: contactInfo.contactName || contactName, // Use contactInfo.contactName if available, otherwise use existing contactName
-                      country: contactInfo.country,
-                      highestEducation: contactInfo.highestEducation,
-                      programOfStudy: contactInfo.programOfStudy,
-                      intakePreference: contactInfo.intakePreference,
-                      englishProficiency: contactInfo.englishProficiency,
-                      passport: contactInfo.passport,
-                      nationality: contactInfo.nationality,
-                    });
-
-                    // Then use this data object to update Firestore
-                    await db
-                      .collection("companies")
-                      .doc(idSubstring)
-                      .collection("contacts")
-                      .doc(extractedNumber)
-                      .set(data, { merge: true });
-                    await addTagToPostgres(extractedNumber, "stop bot", idSubstring);
-                  }
-                  if (part.includes("check with the team") && idSubstring == "095") {
-                    // Generate and send the special report
-                    var { reportMessage, contactInfo } = await generateSpecialReport2(
-                      threadID,
-                      companyConfig.assistantId,
-                      contactName,
-                      extractedNumber
-                    );
-                    var sentMessage2 = await client.sendMessage("120363325228671809@g.us", reportMessage);
-                    await addMessagetoPostgres(sentMessage2, idSubstring, "+120363325228671809");
-                    await addTagToPostgres(extractedNumber, "stop bot", idSubstring);
-                  }
-
-                  for (const template of followUpTemplates) {
-                    if (template.triggerKeywords.some((kw) => part.toLowerCase().includes(kw.toLowerCase()))) {
-                      console.log("Follow-up trigger found for template:", template.name);
-                      try {
-                        // Get current contact data to check tags
-                        const contactRef = db
-                          .collection("companies")
-                          .doc(idSubstring)
-                          .collection("contacts")
-                          .doc(extractedNumber);
-                        const contactDoc = await contactRef.get();
-                        const contactData = contactDoc.data();
-                        const currentTags = contactData?.tags || [];
-
-                        // Check if contact has any tags that match other templates' trigger tags
-                        for (const otherTemplate of followUpTemplates) {
-                          const tagToRemove = otherTemplate.triggerTags?.[0];
-                          console.log("tagToRemove:", tagToRemove);
-                          console.log("currentTags:", currentTags);
-                          if (tagToRemove && currentTags.includes(tagToRemove)) {
-                            // Remove the tag if it exists
-                            console.log("Removing tag:", tagToRemove);
-                            await contactRef.update({
-                              tags: admin.firestore.FieldValue.arrayRemove(tagToRemove),
-                            });
-
-                            // Call the API to remove scheduled messages
-                            console.log("Removing template:", otherTemplate.id);
-                            try {
-                              const response = await fetch("https://juta.ngrok.app/api/tag/followup", {
-                                method: "POST",
-                                headers: {
-                                  "Content-Type": "application/json",
-                                },
-                                body: JSON.stringify({
-                                  requestType: "removeTemplate",
-                                  phone: extractedNumber,
-                                  first_name: contactName || extractedNumber,
-                                  phoneIndex: phoneIndex || 0,
-                                  templateId: otherTemplate.id,
-                                  idSubstring: idSubstring,
-                                }),
-                              });
-
-                              if (!response.ok) {
-                                console.error("Failed to remove template messages:", await response.text());
-                              }
-                            } catch (error) {
-                              console.error("Error removing template messages:", error);
-                            }
-                          }
-                        }
-                        // Add new tag for current template
-                        if (template.triggerTags.length > 0) {
-                          await addTagToPostgres(extractedNumber, template.triggerTags[0], idSubstring);
-                        }
-
-                        // Start follow-up sequence
-                        const response = await fetch("https://juta.ngrok.app/api/tag/followup", {
-                          method: "POST",
-                          headers: {
-                            "Content-Type": "application/json",
-                          },
-                          body: JSON.stringify({
-                            requestType: "startTemplate",
-                            phone: extractedNumber,
-                            first_name: contactName || extractedNumber,
-                            phoneIndex: phoneIndex || 0,
-                            templateId: template.id,
-                            idSubstring: idSubstring,
-                          }),
-                        });
-
-                        if (!response.ok) {
-                          console.error("Failed to start follow-up sequence:", await response.text());
-                        }
-                      } catch (error) {
-                        console.error("Error triggering follow-up sequence:", error);
-                      }
-                    }
-                  }
-                  if (!videoFound) {
-                    for (const response of aiVideoResponses) {
-                      if (
-                        response.keywordSource === "bot" &&
-                        response.keywords.some((kw) => part.toLowerCase().includes(kw.toLowerCase()))
-                      ) {
-                        console.log("videos found for keywords:", response.keywords);
-
-                        for (let i = 0; i < response.videoUrls.length; i++) {
-                          try {
-                            const videoUrl = response.videoUrls[i];
-                            const caption = response.captions?.[i] || "";
-                            console.log(`Sending video ${i + 1}/${response.videoUrls.length}`);
-                            console.log(`URL: ${videoUrl}`);
-
-                            const media = await MessageMedia.fromUrl(videoUrl);
-                            if (!media) {
-                              throw new Error("Failed to load video from URL");
-                            }
-
-                            const videoMessage = await client.sendMessage(msg.from, media, {
-                              caption: caption,
-                              sendVideoAsGif: false, // Set to true if you want to send as GIF
-                            });
-                            if (!videoMessage) {
-                              throw new Error("Video send returned null");
-                            }
-                            await addMessagetoPostgres(videoMessage, idSubstring, extractedNumber, contactName);
-                            // Add delay between videos
-                            await new Promise((resolve) => setTimeout(resolve, 1000));
-                          } catch (error) {
-                            console.error(`Error sending video ${i}:`, error);
-                            console.error("Full error:", error.stack);
-                            continue;
-                          }
-                        }
-                      }
-                    }
-                  }
-
-                  // For tags
-                  if (!tagFound) {
-                    for (const response of aiTagResponses) {
-                      if (
-                        response.keywordSource === "bot" &&
-                        response.keywords.some((kw) => part.toLowerCase().includes(kw.toLowerCase()))
-                      ) {
-                        console.log("tags found for keywords:", response.keywords);
-                        try {
-                          if (response.tagActionMode === "delete") {
-                            // Delete specified tags from both response and firebaseTags
-                            for (const tag of response.tags) {
-                              // Remove from Firebase
-                              await addTagToPostgres(extractedNumber, tag, idSubstring, true);
-                              console.log(`Removed tag: ${tag} from number: ${extractedNumber}`);
-
-                              if (tag === "pause followup") {
-                                // Get the contact's current tags to find active followup templates
-                                const contactRef = db
-                                  .collection("companies")
-                                  .doc(idSubstring)
-                                  .collection("contact")
-                                  .doc(extractedNumber);
-                                const contactDoc = await contactRef.get();
-                                if (contactDoc.exists) {
-                                  const contactData = contactDoc.data();
-                                  const currentTags = contactData.tags || [];
-
-                                  // Check each followup template to see if its tag is in the contact's tags
-                                  for (const template of followUpTemplates) {
-                                    // If the template has a tag that matches one of the contact's tags
-                                    if (
-                                      template.triggerTags &&
-                                      template.triggerTags.some((templateTag) => currentTags.includes(templateTag))
-                                    ) {
-                                      try {
-                                        // Call the API to resume follow-up sequence for this template
-                                        const apiResponse = await fetch("https://juta.ngrok.app/api/tag/followup", {
-                                          method: "POST",
-                                          headers: {
-                                            "Content-Type": "application/json",
-                                          },
-                                          body: JSON.stringify({
-                                            requestType: "resumeTemplate",
-                                            phone: extractedNumber,
-                                            first_name: extractedNumber,
-                                            phoneIndex: phoneIndex || 0,
-                                            templateId: template.id,
-                                            idSubstring: idSubstring,
-                                          }),
-                                        });
-
-                                        if (!apiResponse.ok) {
-                                          console.error(
-                                            `Failed to resume follow-up sequence for template ${template.id}:`,
-                                            await apiResponse.text()
-                                          );
-                                        } else {
-                                          console.log(
-                                            `Successfully resumed follow-up sequence for template ${
-                                              template.id
-                                            } with tag ${template.triggerTags.find((tag) => currentTags.includes(tag))}`
-                                          );
-                                        }
-                                      } catch (error) {
-                                        console.error(`Error resuming template messages:`, error);
-                                      }
-                                    }
-                                  }
-                                }
-                              }
-
-                              // Check if any follow-up templates use this tag as a trigger tag
-                              for (const template of followUpTemplates) {
-                                if (template.triggerTags && template.triggerTags.includes(tag)) {
-                                  // Call the API to remove scheduled messages for this template
-                                  try {
-                                    const apiResponse = await fetch("https://juta.ngrok.app/api/tag/followup", {
-                                      method: "POST",
-                                      headers: {
-                                        "Content-Type": "application/json",
-                                      },
-                                      body: JSON.stringify({
-                                        requestType: "removeTemplate",
-                                        phone: extractedNumber,
-                                        first_name: contactName || extractedNumber,
-                                        phoneIndex: phoneIndex || 0,
-                                        templateId: template.id,
-                                        idSubstring: idSubstring,
-                                      }),
-                                    });
-
-                                    if (!apiResponse.ok) {
-                                      console.error(
-                                        `Failed to stop follow-up sequence for template ${template.id}:`,
-                                        await apiResponse.text()
-                                      );
-                                    } else {
-                                      console.log(
-                                        `Successfully removed follow-up sequence for template ${template.id} with tag ${tag}`
-                                      );
-                                    }
-                                  } catch (error) {
-                                    console.error(`Error removing template messages for tag ${tag}:`, error);
-                                  }
-                                }
-                              }
-                            }
-                          } else {
-                            // Default behavior: remove specified tags first
-                            for (const tagToRemove of response.removeTags || []) {
-                              await addTagToPostgres(extractedNumber, tagToRemove, idSubstring, true);
-
-                              if (tagToRemove === "pause followup") {
-                                // Get the contact's current tags to find active followup templates
-                                const contactRef = db
-                                  .collection("companies")
-                                  .doc(idSubstring)
-                                  .collection("contact")
-                                  .doc(extractedNumber);
-                                const contactDoc = await contactRef.get();
-                                if (contactDoc.exists) {
-                                  const contactData = contactDoc.data();
-                                  const currentTags = contactData.tags || [];
-
-                                  // Check each followup template to see if its tag is in the contact's tags
-                                  for (const template of followUpTemplates) {
-                                    // If the template has a tag that matches one of the contact's tags
-                                    if (
-                                      template.triggerTags &&
-                                      template.triggerTags.some((templateTag) => currentTags.includes(templateTag))
-                                    ) {
-                                      try {
-                                        // Call the API to resume follow-up sequence for this template
-                                        const apiResponse = await fetch("https://juta.ngrok.app/api/tag/followup", {
-                                          method: "POST",
-                                          headers: {
-                                            "Content-Type": "application/json",
-                                          },
-                                          body: JSON.stringify({
-                                            requestType: "resumeTemplate",
-                                            phone: extractedNumber,
-                                            first_name: extractedNumber,
-                                            phoneIndex: phoneIndex || 0,
-                                            templateId: template.id,
-                                            idSubstring: idSubstring,
-                                          }),
-                                        });
-
-                                        if (!apiResponse.ok) {
-                                          console.error(
-                                            `Failed to resume follow-up sequence for template ${template.id}:`,
-                                            await apiResponse.text()
-                                          );
-                                        } else {
-                                          console.log(
-                                            `Successfully resumed follow-up sequence for template ${
-                                              template.id
-                                            } with tag ${template.triggerTags.find((tag) => currentTags.includes(tag))}`
-                                          );
-                                        }
-                                      } catch (error) {
-                                        console.error(`Error resuming template messages:`, error);
-                                      }
-                                    }
-                                  }
-                                }
-                              }
-
-                              // Check if any follow-up templates use this tag as a trigger tag
-                              for (const template of followUpTemplates) {
-                                if (template.triggerTags && template.triggerTags.includes(tagToRemove)) {
-                                  // Call the API to remove scheduled messages for this template
-                                  try {
-                                    const apiResponse = await fetch("https://juta.ngrok.app/api/tag/followup", {
-                                      method: "POST",
-                                      headers: {
-                                        "Content-Type": "application/json",
-                                      },
-                                      body: JSON.stringify({
-                                        requestType: "removeTemplate",
-                                        phone: extractedNumber,
-                                        first_name: contactName || extractedNumber,
-                                        phoneIndex: phoneIndex || 0,
-                                        templateId: template.id,
-                                        idSubstring: idSubstring,
-                                      }),
-                                    });
-
-                                    if (!apiResponse.ok) {
-                                      console.error(
-                                        `Failed to stop follow-up sequence for template ${template.id}:`,
-                                        await apiResponse.text()
-                                      );
-                                    } else {
-                                      console.log(
-                                        `Successfully removed follow-up sequence for template ${template.id} with tag ${tagToRemove}`
-                                      );
-                                    }
-                                  } catch (error) {
-                                    console.error(`Error removing template messages for tag ${tagToRemove}:`, error);
-                                  }
-                                }
-                              }
-                            }
-
-                            // Then add new tags
-                            for (const tag of response.tags) {
-                              await addTagToPostgres(extractedNumber, tag, idSubstring);
-                              console.log(`Added tag: ${tag} for number: ${extractedNumber}`);
-
-                              // Check if any follow-up templates use this tag as a trigger tag
-                              for (const template of followUpTemplates) {
-                                if (template.triggerTags && template.triggerTags.includes(tag)) {
-                                  // Call the API to start follow-up sequence for this template
-                                  try {
-                                    const apiResponse = await fetch("https://juta.ngrok.app/api/tag/followup", {
-                                      method: "POST",
-                                      headers: {
-                                        "Content-Type": "application/json",
-                                      },
-                                      body: JSON.stringify({
-                                        requestType: "startTemplate",
-                                        phone: extractedNumber,
-                                        first_name: contactName || extractedNumber,
-                                        phoneIndex: phoneIndex || 0,
-                                        templateId: template.id,
-                                        idSubstring: idSubstring,
-                                      }),
-                                    });
-
-                                    if (!apiResponse.ok) {
-                                      console.error(
-                                        `Failed to start follow-up sequence for template ${template.id}:`,
-                                        await apiResponse.text()
-                                      );
-                                    } else {
-                                      console.log(
-                                        `Successfully started follow-up sequence for template ${template.id} with tag ${tag}`
-                                      );
-                                    }
-                                  } catch (error) {
-                                    console.error(`Error starting template messages for tag ${tag}:`, error);
-                                  }
-                                }
-                              }
-
-                              if (tag === "pause followup") {
-                                // Get the contact's current tags to find active followup templates
-                                const contactRef = db
-                                  .collection("companies")
-                                  .doc(idSubstring)
-                                  .collection("contact")
-                                  .doc(extractedNumber);
-                                const contactDoc = await contactRef.get();
-                                if (contactDoc.exists) {
-                                  const contactData = contactDoc.data();
-                                  const currentTags = contactData.tags || [];
-
-                                  // Check each followup template to see if its tag is in the contact's tags
-                                  for (const template of followUpTemplates) {
-                                    // If the template has a tag that matches one of the contact's tags
-                                    if (
-                                      template.triggerTags &&
-                                      template.triggerTags.some((templateTag) => currentTags.includes(templateTag))
-                                    ) {
-                                      try {
-                                        // Call the API to pause follow-up sequence for this template
-                                        const apiResponse = await fetch("https://juta.ngrok.app/api/tag/followup", {
-                                          method: "POST",
-                                          headers: {
-                                            "Content-Type": "application/json",
-                                          },
-                                          body: JSON.stringify({
-                                            requestType: "pauseTemplate",
-                                            phone: extractedNumber,
-                                            first_name: extractedNumber,
-                                            phoneIndex: phoneIndex || 0,
-                                            templateId: template.id,
-                                            idSubstring: idSubstring,
-                                          }),
-                                        });
-
-                                        if (!apiResponse.ok) {
-                                          console.error(
-                                            `Failed to pause follow-up sequence for template ${template.id}:`,
-                                            await apiResponse.text()
-                                          );
-                                        } else {
-                                          console.log(
-                                            `Successfully paused follow-up sequence for template ${
-                                              template.id
-                                            } with tag ${template.triggerTags.find((tag) => currentTags.includes(tag))}`
-                                          );
-                                        }
-                                      } catch (error) {
-                                        console.error(`Error pausing template messages in ai responses:`, error);
-                                      }
-                                    }
-                                  }
-                                }
-                              }
-
-                              if (tag === "stop followup") {
-                                // Get the contact's current tags to find active followup templates
-                                const contactRef = db
-                                  .collection("companies")
-                                  .doc(idSubstring)
-                                  .collection("contact")
-                                  .doc(extractedNumber);
-                                const contactDoc = await contactRef.get();
-                                if (contactDoc.exists) {
-                                  const contactData = contactDoc.data();
-                                  const currentTags = contactData.tags || [];
-
-                                  // Check each followup template to see if its tag is in the contact's tags
-                                  for (const template of followUpTemplates) {
-                                    // If the template has a tag that matches one of the contact's tags
-                                    if (
-                                      template.triggerTags &&
-                                      template.triggerTags.some((templateTag) => currentTags.includes(templateTag))
-                                    ) {
-                                      try {
-                                        // Call the API to pause follow-up sequence for this template
-                                        const apiResponse = await fetch("https://juta.ngrok.app/api/tag/followup", {
-                                          method: "POST",
-                                          headers: {
-                                            "Content-Type": "application/json",
-                                          },
-                                          body: JSON.stringify({
-                                            requestType: "removeTemplate",
-                                            phone: extractedNumber,
-                                            first_name: extractedNumber,
-                                            phoneIndex: phoneIndex || 0,
-                                            templateId: template.id,
-                                            idSubstring: idSubstring,
-                                          }),
-                                        });
-
-                                        if (!apiResponse.ok) {
-                                          console.error(
-                                            `Failed to pause follow-up sequence for template ${template.id}:`,
-                                            await apiResponse.text()
-                                          );
-                                        } else {
-                                          console.log(
-                                            `Successfully paused follow-up sequence for template ${
-                                              template.id
-                                            } with tag ${template.triggerTags.find((tag) => currentTags.includes(tag))}`
-                                          );
-                                        }
-
-                                        await addTagToPostgres(extractedNumber, tag, botName, true);
-                                      } catch (error) {
-                                        console.error(`Error stopping template messages in ai responses:`, error);
-                                      }
-                                    }
-                                  }
-                                }
-                              }
-                            }
-                          }
-                        } catch (error) {
-                          console.error(`Error handling tags for keywords ${response.keywords}:`, error);
-                          continue;
-                        }
-                      }
-                    }
-                  }
-
-                  // For voice messages
-                  if (!voiceFound) {
-                    for (const response of aiVoiceResponses) {
-                      if (
-                        response.keywordSource === "bot" &&
-                        response.keywords.some((kw) => part.toLowerCase().includes(kw.toLowerCase()))
-                      ) {
-                        console.log("voice messages found for keywords:", response.keywords);
-                        for (let i = 0; i < response.voiceUrls.length; i++) {
-                          try {
-                            const caption = response.captions?.[i] || "";
-                            const voiceMessage = await sendVoiceMessage(
-                              client,
-                              msg.from,
-                              response.voiceUrls[i],
-                              caption
-                            );
-                            await addMessagetoPostgres(voiceMessage, idSubstring, extractedNumber, contactName);
-                            if (i < response.voiceUrls.length - 1) {
-                              await new Promise((resolve) => setTimeout(resolve, 1000));
-                            }
-                          } catch (error) {
-                            console.error(`Error sending voice message ${response.voiceUrls[i]}:`, error);
-                            continue;
-                          }
-                        }
-                      }
-                    }
-                  }
-
-                  // For images
-                  if (!imageFound) {
-                    for (const response of aiImageResponses) {
-                      if (
-                        response.keywordSource === "bot" &&
-                        response.keywords.some((kw) => part.toLowerCase().includes(kw.toLowerCase()))
-                      ) {
-                        console.log("images found for keywords:", response.keywords);
-                        for (const imageUrl of response.imageUrls) {
-                          try {
-                            const media = await MessageMedia.fromUrl(imageUrl);
-                            const imageMessage = await client.sendMessage(msg.from, media);
-                            await addMessagetoPostgres(imageMessage, idSubstring, extractedNumber, contactName);
-                          } catch (error) {
-                            console.error(`Error sending image ${imageUrl}:`, error);
-                            continue;
-                          }
-                        }
-                      }
-                    }
-                  }
-                  // Add this alongside other response handlers:
-                  if (!assignFound) {
-                    for (const response of aiAssignResponses) {
-                      if (
-                        response.keywordSource === "bot" &&
-                        response.keywords.some((kw) => part.toLowerCase().includes(kw.toLowerCase()))
-                      ) {
-                        console.log("images found for keywords:", response.keywords);
-                        try {
-                          // Get the current assignment index
-                          const stateRef = db
-                            .collection("companies")
-                            .doc(idSubstring)
-                            .collection("botState")
-                            .doc("assignmentState");
-                          const stateDoc = await stateRef.get();
-                          let currentIndex = 0;
-                          if (stateDoc.exists) {
-                            currentIndex = stateDoc.data().currentIndex || 0;
-                          }
-                          console.log("Current assignment index:", currentIndex);
-                          // Get employee list and calculate next employee
-                          const employeeEmails = response.assignedEmployees;
-                          console.log("Available employees:", employeeEmails);
-
-                          if (employeeEmails.length === 0) {
-                            console.log("No employees available for assignment");
-                            continue;
-                          }
-                          const nextEmail = employeeEmails[currentIndex % employeeEmails.length];
-                          console.log("Selected employee email:", nextEmail);
-
-                          // Fetch employee data
-                          const employeeRef = db
-                            .collection("companies")
-                            .doc(idSubstring)
-                            .collection("employee")
-                            .doc(nextEmail);
-                          const employeeDoc = await employeeRef.get();
-
-                          if (employeeDoc.exists) {
-                            const employeeData = employeeDoc.data();
-                            console.log("Found employee data:", employeeData);
-
-                            // Assign to the current staff member
-                            await assignToEmployee(
-                              employeeData,
-                              "Sales",
-                              extractedNumber,
-                              contactData.contactName,
-                              client,
-                              idSubstring
-                            );
-                            console.log(`Assigned to staff member: ${employeeData.name} (${nextEmail})`);
-
-                            // Update the assignment index for next time
-                            const newIndex = (currentIndex + 1) % employeeEmails.length;
-                            await stateRef.set(
-                              {
-                                currentIndex: newIndex,
-                                lastUpdated: admin.firestore.FieldValue.serverTimestamp(),
-                              },
-                              { merge: true }
-                            );
-                            console.log("Updated assignment index to:", newIndex);
-                          } else {
-                            console.log("Employee document not found for email:", nextEmail);
-                          }
-                        } catch (error) {
-                          console.error(`Error handling assignment for keyword ${response.keyword}:`, error);
-                          console.error("Full error:", error.stack);
-                          continue;
-                        }
-                      }
-                    }
-                  }
-
-                  if (!documentFound) {
-                    for (const response of aiDocumentResponses) {
-                      if (
-                        response.keywordSource === "bot" &&
-                        response.keywords.some((kw) => part.toLowerCase().includes(kw.toLowerCase()))
-                      ) {
-                        console.log("documents found for keyword " + response.keywords);
-                        console.log("Document URLs:", response.documentUrls); // Debug log
-
-                        // Send all documents for this keyword
-                        for (let i = 0; i < response.documentUrls.length; i++) {
-                          try {
-                            const documentUrl = response.documentUrls[i];
-                            console.log(`Sending document ${i + 1}/${response.documentUrls.length}`);
-                            console.log(`URL: ${documentUrl}`);
-
-                            const media = await MessageMedia.fromUrl(documentUrl);
-                            if (!media) {
-                              throw new Error("Failed to load document from URL");
-                            }
-
-                            // Use the document name from the response
-                            const documentName = response.documentNames[i] || `document_${i + 1}`;
-                            media.filename = documentName;
-
-                            // If the mimetype is not set, try to infer it from the file extension
-                            if (!media.mimetype) {
-                              const ext = path.extname(documentName).toLowerCase();
-                              switch (ext) {
-                                case ".pdf":
-                                  media.mimetype = "application/pdf";
-                                  break;
-                                case ".doc":
-                                case ".docx":
-                                  media.mimetype = "application/msword";
-                                  break;
-                                case ".xls":
-                                case ".xlsx":
-                                  media.mimetype = "application/vnd.ms-excel";
-                                  break;
-                                case ".ppt":
-                                case ".pptx":
-                                  media.mimetype = "application/vnd.ms-powerpoint";
-                                  break;
-                                case ".txt":
-                                  media.mimetype = "text/plain";
-                                  break;
-                                case ".csv":
-                                  media.mimetype = "text/csv";
-                                  break;
-                                case ".zip":
-                                  media.mimetype = "application/zip";
-                                  break;
-                                case ".rar":
-                                  media.mimetype = "application/x-rar-compressed";
-                                  break;
-                                default:
-                                  media.mimetype = "application/octet-stream";
-                              }
-                            }
-
-                            const documentMessage = await client.sendMessage(msg.from, media, {
-                              sendMediaAsDocument: true,
-                            });
-
-                            if (!documentMessage) {
-                              throw new Error("Document send returned null");
-                            }
-
-                            await addMessagetoPostgres(documentMessage, idSubstring, extractedNumber, contactName);
-
-                            await new Promise((resolve) => setTimeout(resolve, 1000)); // 1 second delay
-                          } catch (error) {
-                            console.error(`Error sending document ${i}:`, error);
-                            console.error("Full error:", error.stack);
-                            continue;
-                          }
-                        }
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          }
-        }
-        await chat.markUnread();
-        console.log("Response sent.");
-        userState.set(sender.to, steps.START);
-        break;
-      default:
-        // Handle unrecognized step
-        console.error("Unrecognized step:", currentStep);
-        break;
+    // Message Body
+    const messageBody = msg.body;
+
+    const handlerParams = {
+      client: client,
+      msg: messageBody,
+      idSubstring: idSubstring,
+      extractedNumber: extractedNumber,
+      contactName:
+        contactData?.contact_name ||
+        contactData?.name ||
+        contact.pushname ||
+        extractedNumber,
+      phoneIndex: phoneIndex,
+    };
+
+    // Process AI responses for 'user'
+    await processAIResponses({
+      ...handlerParams,
+      keywordSource: "user",
+      handlers: {
+        assign: false,
+        tag: false,
+        followUp: false,
+        document: true,
+        image: true,
+        video: true,
+        voice: true,
+      },
+    });
+
+    if (
+      !sender.to.includes("@g.us") ||
+      (combinedMessage.toLowerCase().startsWith("@juta") && phoneIndex == 0) ||
+      (sender.to.includes("@g.us") &&
+        idSubstring === "0385" &&
+        !stopTag.includes("stop bot"))
+    ) {
+      const typeAnalysis = await handleMessageByType({
+        client,
+        msg,
+        sender,
+        threadID,
+        idSubstring,
+        extractedNumber,
+        contactName,
+        combinedMessage,
+        stopTag,
+        contactData,
+      });
+
+      query = typeAnalysis
+        ? `${combinedMessage} ${typeAnalysis}`
+        : combinedMessage;
+
+      // Send Message to OpenAI for Processing
+      const answer = await handleOpenAIAssistant(
+        query,
+        threadID,
+        stopTag,
+        extractedNumber,
+        idSubstring,
+        client,
+        contactData?.contact_name ||
+          contactData?.name ||
+          contact.pushname ||
+          extractedNumber
+      );
+
+      if (answer) {
+        await processBotResponse({
+          client,
+          msg,
+          answer,
+          idSubstring,
+          extractedNumber,
+          contactName:
+            contactData?.contact_name ||
+            contactData?.name ||
+            contact.pushname ||
+            extractedNumber,
+          phoneIndex,
+          threadID,
+          contactData,
+        });
+      }
     }
-    // Implement rate limiting
-    await new Promise((resolve) => setTimeout(resolve, RATE_LIMIT_DELAY));
+
+    await chat.markUnread();
+    console.log("Response sent.");
   } catch (e) {
     console.error("Error:", e.message);
     return e.message;
   }
 }
 
-async function generateSpecialReport(threadID, assistantId, contactName, extractedNumber) {
+// Modular function to process all AI responses
+async function processAIResponses({
+  client,
+  msg,
+  idSubstring,
+  extractedNumber,
+  contactName,
+  phoneIndex,
+  keywordSource,
+  handlers = {
+    assign: true,
+    tag: true,
+    followUp: true,
+    document: true,
+    image: true,
+    video: true,
+    voice: true,
+  },
+}) {
+  const followUpTemplates = await getFollowUpTemplates(idSubstring);
+
+  const chatid = formatPhoneNumber(extractedNumber).slice(1) + "@c.us";
+
+  const handlerParams = {
+    client: client,
+    message: msg,
+    chatId: chatid,
+    extractedNumber: extractedNumber,
+    idSubstring: idSubstring,
+    contactName: contactName,
+    phoneIndex: phoneIndex,
+    keywordSource: keywordSource,
+  };
+
+  // Handle user-triggered responses
+  if (handlers.assign) {
+    await handleAIAssignResponses({
+      ...handlerParams,
+    });
+  }
+
+  if (handlers.tag) {
+    await handleAITagResponses({
+      ...handlerParams,
+      followUpTemplates: followUpTemplates,
+    });
+  }
+
+  if (handlers.followUp) {
+    await handleAIFollowUpResponses({
+      ...handlerParams,
+      followUpTemplates: followUpTemplates,
+    });
+  }
+
+  if (handlers.document) {
+    await handleAIDocumentResponses({
+      ...handlerParams,
+    });
+  }
+
+  if (handlers.image) {
+    await handleAIImageResponses({
+      ...handlerParams,
+    });
+  }
+
+  if (handlers.video) {
+    await handleAIVideoResponses({
+      ...handlerParams,
+    });
+  }
+
+  if (handlers.voice) {
+    await handleAIVoiceResponses({
+      ...handlerParams,
+    });
+  }
+}
+
+async function handleMessageByType({
+  client,
+  msg,
+  sender,
+  threadID,
+  idSubstring,
+  extractedNumber,
+  contactName,
+  combinedMessage,
+  stopTag,
+  contactData,
+}) {
+  if (msg.type === "document" && msg._data.mimetype === "application/pdf") {
+    return await handlePDFMessage(
+      msg,
+      sender,
+      threadID,
+      client,
+      idSubstring,
+      extractedNumber
+    );
+  } else if (msg.type === "location") {
+    return "The user sent a location message";
+  } else if (msg.type === "image") {
+    return await handleImageMessage(
+      msg,
+      sender,
+      threadID,
+      client,
+      idSubstring,
+      extractedNumber
+    );
+  }
+  return null;
+}
+
+// Modular function to process bot response
+async function processBotResponse({
+  client,
+  msg,
+  answer,
+  idSubstring,
+  extractedNumber,
+  contactName,
+  phoneIndex,
+  threadID,
+  contactData,
+}) {
+  const parts = answer.split(/\s*\|\|\s*/);
+  const followUpTemplates = await getFollowUpTemplates(idSubstring);
+
+  for (let i = 0; i < parts.length; i++) {
+    const part = parts[i].trim();
+    if (!part) continue;
+
+    const check = part.toLowerCase();
+
+    if (
+      part.includes("You sent this to the user:") ||
+      check.includes("error")
+    ) {
+      return;
+    }
+
+    // Handle special product cases
+    if (part.startsWith("~") && idSubstring == "020") {
+      await handleProductResponse({
+        client,
+        msg,
+        part,
+        idSubstring,
+        extractedNumber,
+        contactName,
+      });
+      continue;
+    }
+
+    // Send text message
+    const sentMessage = await client.sendMessage(msg.from, part);
+
+    // Save message to PostgreSQL
+    await addMessagetoPostgres({
+      msg: sentMessage,
+      idSubstring: idSubstring,
+      extractedNumber: extractedNumber,
+      contactName: contactName,
+    });
+
+    // Handle special cases based on message content
+    await handleSpecialCases({
+      part,
+      idSubstring,
+      extractedNumber,
+      client,
+      followUpTemplates,
+      contactName,
+      threadID,
+    });
+
+    const handlerParams = {
+      client: client,
+      msg: part,
+      idSubstring: idSubstring,
+      extractedNumber: extractedNumber,
+      contactName:
+        contactData?.contact_name || contactData?.name || extractedNumber,
+      phoneIndex: phoneIndex,
+    };
+
+    // Process AI responses for 'bot'
+    await processAIResponses({
+      ...handlerParams,
+      keywordSource: "bot",
+      handlers: {
+        assign: true,
+        tag: true,
+        followUp: true,
+        document: true,
+        image: true,
+        video: true,
+        voice: true,
+      },
+    });
+  }
+}
+
+// Modular function to handle product responses
+async function handleProductResponse({
+  client,
+  msg,
+  part,
+  idSubstring,
+  extractedNumber,
+  contactName,
+}) {
+  const lines = part.split("\n");
+  for (const line of lines) {
+    if (line.trim().startsWith("~")) {
+      const rawProductName = line
+        .slice(1)
+        .split(/\s+the\s+price\s+per/i)[0]
+        .trim();
+      const productName =
+        rawProductName.toLowerCase().replace(/\s+/g, "") + "-thepriceper";
+      const filePath = carpetTileFilePaths[productName];
+
+      if (filePath) {
+        try {
+          const media = await MessageMedia.fromUrl(filePath, {
+            unsafeMime: true,
+            filename: `${productName}.pdf`,
+          });
+
+          const documentMessage = await client.sendMessage(msg.from, media, {
+            sendMediaAsDocument: true,
+          });
+
+          await addMessagetoPostgres({
+            msg: documentMessage,
+            idSubstring: idSubstring,
+            extractedNumber: extractedNumber,
+            contactName: contactName,
+          });
+        } catch (error) {
+          console.error(`Error sending document for ${rawProductName}:`, error);
+        }
+      }
+    }
+  }
+}
+
+// Modular function to handle special cases
+async function handleSpecialCases({
+  part,
+  idSubstring,
+  extractedNumber,
+  client,
+  followUpTemplates,
+  contactName,
+  threadID,
+}) {
+  // Handle general team notification
+  if (part.includes("notified the team")) {
+    await assignNewContactToEmployee(extractedNumber, idSubstring, client);
+  }
+
+  // Handle 0128 bot triggers
+  if (idSubstring === "0128") {
+    if (
+      part.toLowerCase().includes("i will notify the team") ||
+      part.toLowerCase().includes("i have notified the team")
+    ) {
+      await assignNewContactToEmployee(extractedNumber, idSubstring, client);
+    }
+
+    if (part.toLowerCase().includes("get back to you")) {
+      await addTagToPostgres(extractedNumber, "stop bot", idSubstring);
+      await assignNewContactToEmployee(extractedNumber, idSubstring, client);
+    }
+
+    if (
+      part.toLowerCase().includes("thank you for your feedback") ||
+      part.toLowerCase().includes("sorry to hear that") ||
+      part.toLowerCase().includes("apologize for")
+    ) {
+      await addTagToPostgres(extractedNumber, "feedback", idSubstring);
+    }
+
+    if (
+      part.toLowerCase().includes("i understand you need more information") ||
+      part.toLowerCase().includes("let me forward your inquiry")
+    ) {
+      await addTagToPostgres(extractedNumber, "inquiry", idSubstring);
+    }
+
+    if (
+      part.toLowerCase().includes("thank you for your order") ||
+      part.toLowerCase().includes("order has been confirmed")
+    ) {
+      await addTagToPostgres(extractedNumber, "ordered", idSubstring);
+    }
+  }
+
+  // Handle MTDC case (0380)
+  if (part.includes("Your details are registered") && idSubstring == "0380") {
+    const { reportMessage, contactInfoMTDC } = await generateSpecialReportMTDC(
+      threadID,
+      companyConfig.assistantId,
+      contactName,
+      extractedNumber
+    );
+
+    const sentMessage = await client.sendMessage(
+      "120363386875697540@g.us",
+      reportMessage
+    );
+    await insertSpreadsheetMTDC(reportMessage);
+    await addMessagetoPostgres(
+      sentMessage,
+      idSubstring,
+      "+120363386875697540",
+      "Group Chat"
+    );
+
+    const data = {
+      phone: extractedNumber,
+      contactName: (contactInfoMTDC.contactName || contactName || "").trim(),
+      threadid: threadID,
+      customFields: {
+        Company: contactInfoMTDC.company || "[Not specified]",
+        "IC Number": contactInfoMTDC.ic || "[Not specified]",
+        Email: contactInfoMTDC.email || "[Not specified]",
+        "Program of Interest": contactInfoMTDC.program || "[Not specified]",
+        "Program Date & Time":
+          contactInfoMTDC.programDateTime || "[Not specified]",
+      },
+    };
+
+    await contactRef.set(removeUndefined(data), { merge: true });
+  }
+
+  // Handle SKC case (0161)
+  if (part.includes("forward your details") && idSubstring == "0161") {
+    const { reportMessage, contactInfoSKC } = await generateSpecialReportSKC(
+      threadID,
+      companyConfig.assistantId,
+      contactName,
+      extractedNumber
+    );
+
+    const sentMessage = await client.sendMessage(
+      "120363386875697540@g.us",
+      reportMessage
+    );
+    await updateGoogleSheet(reportMessage);
+    await addMessagetoPostgres(
+      sentMessage,
+      idSubstring,
+      "+120363386875697540",
+      "Group Chat"
+    );
+
+    const data = {
+      phone: extractedNumber,
+      contactName: (contactInfoSKC.contactName || contactName || "").trim(),
+      threadid: threadID,
+      customFields: {
+        "Highest Qualification":
+          contactInfoSKC.highestQualification || "[Not specified]",
+        "Years of Work Experience":
+          contactInfoSKC.yearsOfWorkExperience || "[Not specified]",
+        Age: contactInfoSKC.age || "[Not specified]",
+        "Program of Interest":
+          contactInfoSKC.programOfInterest || "[Not specified]",
+        "Current Occupation":
+          contactInfoSKC.currentOccupation || "[Not specified]",
+        "Current Industry": contactInfoSKC.currentIndustry || "[Not specified]",
+      },
+    };
+
+    await contactRef.set(removeUndefined(data), { merge: true });
+  }
+
+  // Handle Maha Aerospace case (080)
+  if (part.includes("get back to you") && idSubstring === "080") {
+    const { reportMessage, contactInfo } = await generateSpecialReportMaha(
+      threadID,
+      companyConfig.assistantId,
+      contactName,
+      extractedNumber
+    );
+
+    const sentMessage = await client.sendMessage(
+      "120363318433286839@g.us",
+      reportMessage
+    );
+    await addMessagetoPostgres(
+      sentMessage,
+      idSubstring,
+      "+120363318433286839",
+      "Group Chat"
+    );
+
+    try {
+      await updateMahaGoogleSheet(reportMessage);
+    } catch (error) {
+      console.error("Error updating Maha Aerospace Google Sheet:", error);
+    }
+
+    const data = {
+      phone: extractedNumber,
+      contactName: `${contactInfo.firstName || ""} ${
+        contactInfo.lastName || ""
+      }`.trim(),
+      threadid: threadID,
+      customFields: {
+        "First Name": contactInfo.firstName || "[Not specified]",
+        "Last Name": contactInfo.lastName || "[Not specified]",
+        "Birth Date": contactInfo.birthDate || "[Not specified]",
+        Country: contactInfo.country || "[Not specified]",
+        "Education Level": contactInfo.educationLevel || "[Not specified]",
+        Courses: contactInfo.courses || "[Not specified]",
+        Sponsor: contactInfo.sponsor || "[Not specified]",
+        "Referral Source": contactInfo.referralSource || "[Not specified]",
+      },
+    };
+
+    await contactRef.set(removeUndefined(data), { merge: true });
+  }
+
+  // Handle LKSSB case (0119)
+  if (part.includes("forward your details") && idSubstring == "0119") {
+    const { reportMessage, contactInfoLKSSB } =
+      await generateSpecialReportLKSSB(
+        threadID,
+        companyConfig.assistantId,
+        contactName,
+        extractedNumber
+      );
+
+    const sentMessage = await client.sendMessage(
+      "120363374300897170@g.us",
+      reportMessage
+    );
+    await addMessagetoPostgres(
+      sentMessage,
+      idSubstring,
+      "+120363374300897170",
+      "Group Chat"
+    );
+
+    const data = {
+      phone: extractedNumber,
+      contactName: (contactInfoLKSSB.contactName || contactName || "").trim(),
+      threadid: threadID,
+      customFields: {
+        "Company Name": contactInfoLKSSB.companyName || "[Not specified]",
+        "Company Address": contactInfoLKSSB.companyAddress || "[Not specified]",
+        "Length Of Construction":
+          contactInfoLKSSB.lengthOfConstruction || "[Not specified]",
+        "Height Of Construction":
+          contactInfoLKSSB.heightOfConstruction || "[Not specified]",
+        Location: contactInfoLKSSB.location || "[Not specified]",
+      },
+    };
+
+    await contactRef.set(removeUndefined(data), { merge: true });
+  }
+
+  // Handle BINA case (002)
+  if (
+    (part.includes("Ms Goh") || part.includes("0182786776")) &&
+    idSubstring == "002"
+  ) {
+    const { reportMessage, contactInfoBINA } = await generateSpecialReportBINA(
+      threadID,
+      companyConfig.assistantId,
+      contactName,
+      extractedNumber
+    );
+
+    const sentMessage = await client.sendMessage(
+      "60182786776@c.us",
+      reportMessage
+    );
+    await addMessagetoPostgres(
+      sentMessage,
+      idSubstring,
+      "+60182786776",
+      "Contact Chat"
+    );
+
+    const data = {
+      phone: extractedNumber,
+      contactName: (contactInfoBINA.contactName || contactName || "").trim(),
+      threadid: threadID,
+      customFields: {
+        Email: contactInfoBINA.email || "[Not specified]",
+        Availability: contactInfoBINA.availability || "[Not specified]",
+        Issue: contactInfoBINA.issue || "[Not specified]",
+        "Photos/Video": contactInfoBINA.photosVideo || "[Not specified]",
+        "How Many Floor": contactInfoBINA.howManyFloor || "[Not specified]",
+        "Roof Tile/Slab": contactInfoBINA.roofTileSlab || "[Not specified]",
+      },
+    };
+
+    await contactRef.set(removeUndefined(data), { merge: true });
+  }
+
+  // Handle case 095
+  if (idSubstring == "095") {
+    if (part.includes("get back to you")) {
+      const { reportMessage, contactInfo } = await generateSpecialReport(
+        threadID,
+        companyConfig.assistantId,
+        contactName,
+        extractedNumber
+      );
+      const sentMessage = await client.sendMessage(
+        "120363325228671809@g.us",
+        reportMessage
+      );
+      await addMessagetoPostgres(
+        sentMessage,
+        idSubstring,
+        "+120363325228671809"
+      );
+
+      const data = {
+        phone: extractedNumber,
+        contactName: contactName || null,
+        threadid: threadID,
+        ...removeUndefined({
+          contactName: contactInfo.contactName || contactName,
+          country: contactInfo.country,
+          highestEducation: contactInfo.highestEducation,
+          programOfStudy: contactInfo.programOfStudy,
+          intakePreference: contactInfo.intakePreference,
+          englishProficiency: contactInfo.englishProficiency,
+          passport: contactInfo.passport,
+          nationality: contactInfo.nationality,
+        }),
+      };
+
+      await contactRef.set(data, { merge: true });
+      await addTagToPostgres(extractedNumber, "stop bot", idSubstring);
+    }
+
+    if (part.includes("check with the team")) {
+      const { reportMessage } = await generateSpecialReport2(
+        threadID,
+        companyConfig.assistantId,
+        contactName,
+        extractedNumber
+      );
+      const sentMessage = await client.sendMessage(
+        "120363325228671809@g.us",
+        reportMessage
+      );
+      await addMessagetoPostgres(
+        sentMessage,
+        idSubstring,
+        "+120363325228671809"
+      );
+      await addTagToPostgres(extractedNumber, "stop bot", idSubstring);
+    }
+  }
+
+  // Handle follow-up templates
+  for (const template of followUpTemplates) {
+    if (
+      template.triggerKeywords.some((kw) =>
+        part.toLowerCase().includes(kw.toLowerCase())
+      )
+    ) {
+      try {
+        const contactDoc = await contactRef.get();
+        const currentTags = contactDoc.data()?.tags || [];
+
+        for (const otherTemplate of followUpTemplates) {
+          const tagToRemove = otherTemplate.triggerTags?.[0];
+          if (tagToRemove && currentTags.includes(tagToRemove)) {
+            try {
+              await fetch("https://juta.ngrok.app/api/tag/followup", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  requestType: "removeTemplate",
+                  phone: extractedNumber,
+                  first_name: contactName || extractedNumber,
+                  phoneIndex: phoneIndex || 0,
+                  templateId: otherTemplate.id,
+                  idSubstring: idSubstring,
+                }),
+              });
+            } catch (error) {
+              console.error("Error removing template messages:", error);
+            }
+            await contactRef.update({
+              tags: admin.firestore.FieldValue.arrayRemove(tagToRemove),
+            });
+          }
+        }
+      } catch (error) {
+        console.error("Error handling follow-up template:", error);
+      }
+    }
+  }
+}
+
+async function generateSpecialReport(
+  threadID,
+  assistantId,
+  contactName,
+  extractedNumber
+) {
   try {
     var currentDate = new Date().toISOString().split("T")[0]; // Format: YYYY-MM-DD
     var reportInstruction = `Please generate a report in the following format based on our conversation:
@@ -4954,7 +4436,10 @@ Fill in the information in square brackets with the relevant details from our co
     let runStatus;
     do {
       await new Promise((resolve) => setTimeout(resolve, 1000)); // Wait for 1 second
-      runStatus = await openai.beta.threads.runs.retrieve(threadID, assistantResponse.id);
+      runStatus = await openai.beta.threads.runs.retrieve(
+        threadID,
+        assistantResponse.id
+      );
     } while (runStatus.status !== "completed");
 
     // Retrieve the assistant's response
@@ -4970,7 +4455,12 @@ Fill in the information in square brackets with the relevant details from our co
   }
 }
 
-async function generateSpecialReport2(threadID, assistantId, contactName, extractedNumber) {
+async function generateSpecialReport2(
+  threadID,
+  assistantId,
+  contactName,
+  extractedNumber
+) {
   try {
     var currentDate = new Date().toISOString().split("T")[0]; // Format: YYYY-MM-DD
     var reportInstruction = `Please generate a enquiry notification in the following format based on our conversation:
@@ -4997,7 +4487,10 @@ Fill in the information in square brackets with the relevant details from our co
     let runStatus;
     do {
       await new Promise((resolve) => setTimeout(resolve, 1000)); // Wait for 1 second
-      runStatus = await openai.beta.threads.runs.retrieve(threadID, assistantResponse.id);
+      runStatus = await openai.beta.threads.runs.retrieve(
+        threadID,
+        assistantResponse.id
+      );
     } while (runStatus.status !== "completed");
 
     // Retrieve the assistant's response
@@ -5029,7 +4522,9 @@ function extractContactInfo(report) {
       contactInfo.programOfStudy = line.split(":")[1].trim();
     } else if (line.startsWith("- Which intake you want to join:")) {
       contactInfo.intakePreference = line.split(":")[1].trim();
-    } else if (line.startsWith("- Do you have any English proficiency certificate")) {
+    } else if (
+      line.startsWith("- Do you have any English proficiency certificate")
+    ) {
       contactInfo.englishProficiency = line.split(":")[1].trim();
     } else if (line.startsWith("- Do you have a valid passport?:")) {
       contactInfo.passport = line.split(":")[1].trim();
@@ -5083,7 +4578,7 @@ function extractContactInfoMTDC(report) {
   var lines = report.split("\n");
   var contactInfoMTDC = {
     programs: [],
-    programDates: []
+    programDates: [],
   };
 
   for (var line of lines) {
@@ -5166,7 +4661,12 @@ async function updateSpreadsheetData(msg, idSubstring) {
   }
 }
 
-async function processIncomingBookingCarCare(msg, idSubstring, staffPhone, client) {
+async function processIncomingBookingCarCare(
+  msg,
+  idSubstring,
+  staffPhone,
+  client
+) {
   try {
     const carCareSpreadsheet = new CarCareSpreadsheet();
     await carCareSpreadsheet.handleIncomingMessage(msg, staffPhone, client);
@@ -5175,74 +4675,14 @@ async function processIncomingBookingCarCare(msg, idSubstring, staffPhone, clien
   }
 }
 
-async function getAIAssignResponses(companyId) {
-  console.log("Starting getAIAssignResponses for companyId:", companyId);
-  const responses = [];
-  const sqlClient = await pool.connect();
-
-  try {
-    await sqlClient.query('BEGIN');
-    
-    const query = `
-      SELECT 
-        response_id,
-        keywords,
-        keyword_source,
-        assigned_employees,
-        description,
-        created_at,
-        status
-      FROM 
-        public.ai_assign_responses
-      WHERE 
-        company_id = $1 
-        AND status = 'active'
-    `;
-    
-    console.log("Fetching active aiAssignResponses...");
-    const result = await sqlClient.query(query, [companyId]);
-    console.log("Found aiAssignResponses records:", result.rows.length);
-
-    for (const row of result.rows) {
-      console.log("\nProcessing record:", row.response_id);
-      console.log("Record data:", row);
-
-      const assignedEmployees = row.assigned_employees || [];
-      console.log("Assigned employees array:", assignedEmployees);
-
-      if (assignedEmployees.length === 0) {
-        console.log("No assigned employees found, skipping record");
-        continue;
-      }
-
-      const responseObj = {
-        keywords: Array.isArray(row.keywords) ? row.keywords : [row.keywords?.toLowerCase()].filter(Boolean),
-        keywordSource: row.keyword_source || "user",
-        assignedEmployees: assignedEmployees,
-        description: row.description || "",
-        createdAt: row.created_at || null,
-        status: row.status || "active",
-      };
-
-      console.log("Adding response object:", responseObj);
-      responses.push(responseObj);
-    }
-
-    await sqlClient.query('COMMIT');
-    console.log("\nFinal responses array:", responses);
-    return responses;
-  } catch (error) {
-    await sqlClient.query('ROLLBACK');
-    console.error("Error in getAIAssignResponses:", error);
-    console.error("Full error:", error.stack);
-    throw error;
-  } finally {
-    sqlClient.release();
-    console.log("Database client released back to the pool");
-  }
-}
-
-async function handleImageMessage(msg, sender, threadID, client, idSubstring, extractedNumber) {
+async function handleImageMessage(
+  msg,
+  sender,
+  threadID,
+  client,
+  idSubstring,
+  extractedNumber
+) {
   try {
     const media = await msg.downloadMedia();
 
@@ -5278,7 +4718,15 @@ async function handleImageMessage(msg, sender, threadID, client, idSubstring, ex
     return "error processing image";
   }
 }
-async function handlePDFMessage(msg, sender, threadID, client, idSubstring, extractedNumber) {
+
+async function handlePDFMessage(
+  msg,
+  sender,
+  threadID,
+  client,
+  idSubstring,
+  extractedNumber
+) {
   try {
     console.log("Processing PDF document...");
     const media = await msg.downloadMedia();
@@ -5338,7 +4786,9 @@ async function handlePDFMessage(msg, sender, threadID, client, idSubstring, extr
       });
 
       // Add page analysis to results
-      allPagesAnalysis.push(`Page ${i}: ${response.choices[0].message.content}`);
+      allPagesAnalysis.push(
+        `Page ${i}: ${response.choices[0].message.content}`
+      );
 
       // Clean up temporary image file
       await fs.promises.unlink(pageImage.path);
@@ -5365,10 +4815,10 @@ async function handlePDFMessage(msg, sender, threadID, client, idSubstring, extr
 async function getFollowUpTemplates(companyId) {
   const templates = [];
   const sqlClient = await pool.connect();
-  
+
   try {
-    await sqlClient.query('BEGIN');
-    
+    await sqlClient.query("BEGIN");
+
     const query = `
       SELECT 
         id,
@@ -5384,24 +4834,24 @@ async function getFollowUpTemplates(companyId) {
         company_id = $1 
         AND status = 'active'
     `;
-    
+
     const result = await sqlClient.query(query, [companyId]);
-    
+
     for (const row of result.rows) {
       templates.push({
         id: row.template_id,
         triggerKeywords: row.trigger_keywords || [],
         triggerTags: row.trigger_tags || [],
         name: row.name,
-        keywordSource: row.keyword_source || 'bot',
-        content: row.content
+        keywordSource: row.keyword_source || "bot",
+        content: row.content,
       });
     }
-    
-    await sqlClient.query('COMMIT');
+
+    await sqlClient.query("COMMIT");
     return templates;
   } catch (error) {
-    await sqlClient.query('ROLLBACK');
+    await sqlClient.query("ROLLBACK");
     console.error("Error fetching follow-up templates:", error);
     throw error;
   } finally {
@@ -5409,13 +4859,82 @@ async function getFollowUpTemplates(companyId) {
   }
 }
 
+async function getAIAssignResponses(companyId) {
+  console.log("Starting getAIAssignResponses for companyId:", companyId);
+  const responses = [];
+  const sqlClient = await pool.connect();
+
+  try {
+    await sqlClient.query("BEGIN");
+
+    const query = `
+      SELECT 
+        response_id,
+        keywords,
+        keyword_source,
+        assigned_employees,
+        description,
+        created_at,
+        status
+      FROM 
+        public.ai_assign_responses
+      WHERE 
+        company_id = $1 
+        AND status = 'active'
+    `;
+
+    console.log("Fetching active aiAssignResponses...");
+    const result = await sqlClient.query(query, [companyId]);
+    console.log("Found aiAssignResponses records:", result.rows.length);
+
+    for (const row of result.rows) {
+      console.log("\nProcessing record:", row.response_id);
+      console.log("Record data:", row);
+
+      const assignedEmployees = row.assigned_employees || [];
+      console.log("Assigned employees array:", assignedEmployees);
+
+      if (assignedEmployees.length === 0) {
+        console.log("No assigned employees found, skipping record");
+        continue;
+      }
+
+      const responseObj = {
+        keywords: Array.isArray(row.keywords)
+          ? row.keywords
+          : [row.keywords?.toLowerCase()].filter(Boolean),
+        keywordSource: row.keyword_source || "user",
+        assignedEmployees: assignedEmployees,
+        description: row.description || "",
+        createdAt: row.created_at || null,
+        status: row.status || "active",
+      };
+
+      console.log("Adding response object:", responseObj);
+      responses.push(responseObj);
+    }
+
+    await sqlClient.query("COMMIT");
+    console.log("\nFinal responses array:", responses);
+    return responses;
+  } catch (error) {
+    await sqlClient.query("ROLLBACK");
+    console.error("Error in getAIAssignResponses:", error);
+    console.error("Full error:", error.stack);
+    throw error;
+  } finally {
+    sqlClient.release();
+    console.log("Database client released back to the pool");
+  }
+}
+
 async function getAITagResponses(companyId) {
   const responses = [];
   const sqlClient = await pool.connect();
-  
+
   try {
-    await sqlClient.query('BEGIN');
-    
+    await sqlClient.query("BEGIN");
+
     const query = `
       SELECT 
         response_id,
@@ -5430,9 +4949,9 @@ async function getAITagResponses(companyId) {
         company_id = $1 
         AND status = 'active'
     `;
-    
+
     const result = await sqlClient.query(query, [companyId]);
-    
+
     for (const row of result.rows) {
       responses.push({
         keywords: row.keywords || [],
@@ -5442,11 +4961,11 @@ async function getAITagResponses(companyId) {
         tagActionMode: row.tag_action_mode || "add",
       });
     }
-    
-    await sqlClient.query('COMMIT');
+
+    await sqlClient.query("COMMIT");
     return responses;
   } catch (error) {
-    await sqlClient.query('ROLLBACK');
+    await sqlClient.query("ROLLBACK");
     console.error("Error fetching AI tag responses:", error);
     throw error;
   } finally {
@@ -5457,10 +4976,10 @@ async function getAITagResponses(companyId) {
 async function getAIImageResponses(companyId) {
   const responses = [];
   const sqlClient = await pool.connect();
-  
+
   try {
-    await sqlClient.query('BEGIN');
-    
+    await sqlClient.query("BEGIN");
+
     const query = `
       SELECT 
         response_id,
@@ -5474,9 +4993,9 @@ async function getAIImageResponses(companyId) {
         company_id = $1 
         AND status = 'active'
     `;
-    
+
     const result = await sqlClient.query(query, [companyId]);
-    
+
     for (const row of result.rows) {
       responses.push({
         keywords: row.keywords || [],
@@ -5484,11 +5003,11 @@ async function getAIImageResponses(companyId) {
         keywordSource: row.keyword_source || "user",
       });
     }
-    
-    await sqlClient.query('COMMIT');
+
+    await sqlClient.query("COMMIT");
     return responses;
   } catch (error) {
-    await sqlClient.query('ROLLBACK');
+    await sqlClient.query("ROLLBACK");
     console.error("Error fetching AI image responses:", error);
     throw error;
   } finally {
@@ -5499,10 +5018,10 @@ async function getAIImageResponses(companyId) {
 async function getAIVideoResponses(companyId) {
   const responses = [];
   const sqlClient = await pool.connect();
-  
+
   try {
-    await sqlClient.query('BEGIN');
-    
+    await sqlClient.query("BEGIN");
+
     const query = `
       SELECT 
         response_id,
@@ -5517,9 +5036,9 @@ async function getAIVideoResponses(companyId) {
         company_id = $1 
         AND status = 'active'
     `;
-    
+
     const result = await sqlClient.query(query, [companyId]);
-    
+
     for (const row of result.rows) {
       responses.push({
         keywords: row.keywords || [],
@@ -5528,11 +5047,11 @@ async function getAIVideoResponses(companyId) {
         keywordSource: row.keyword_source || "user",
       });
     }
-    
-    await sqlClient.query('COMMIT');
+
+    await sqlClient.query("COMMIT");
     return responses;
   } catch (error) {
-    await sqlClient.query('ROLLBACK');
+    await sqlClient.query("ROLLBACK");
     console.error("Error fetching AI video responses:", error);
     throw error;
   } finally {
@@ -5543,10 +5062,10 @@ async function getAIVideoResponses(companyId) {
 async function getAIVoiceResponses(companyId) {
   const responses = [];
   const sqlClient = await pool.connect();
-  
+
   try {
-    await sqlClient.query('BEGIN');
-    
+    await sqlClient.query("BEGIN");
+
     const query = `
       SELECT 
         response_id,
@@ -5561,9 +5080,9 @@ async function getAIVoiceResponses(companyId) {
         company_id = $1 
         AND status = 'active'
     `;
-    
+
     const result = await sqlClient.query(query, [companyId]);
-    
+
     for (const row of result.rows) {
       responses.push({
         keywords: row.keywords || [],
@@ -5573,11 +5092,11 @@ async function getAIVoiceResponses(companyId) {
         keywordSource: row.keyword_source || "user",
       });
     }
-    
-    await sqlClient.query('COMMIT');
+
+    await sqlClient.query("COMMIT");
     return responses;
   } catch (error) {
-    await sqlClient.query('ROLLBACK');
+    await sqlClient.query("ROLLBACK");
     console.error("Error fetching AI voice responses:", error);
     throw error;
   } finally {
@@ -5588,10 +5107,10 @@ async function getAIVoiceResponses(companyId) {
 async function getAIDocumentResponses(companyId) {
   const responses = [];
   const sqlClient = await pool.connect();
-  
+
   try {
-    await sqlClient.query('BEGIN');
-    
+    await sqlClient.query("BEGIN");
+
     const query = `
       SELECT 
         response_id,
@@ -5605,9 +5124,9 @@ async function getAIDocumentResponses(companyId) {
         company_id = $1 
         AND status = 'active'
     `;
-    
+
     const result = await sqlClient.query(query, [companyId]);
-    
+
     for (const row of result.rows) {
       responses.push({
         keywords: row.keywords || [],
@@ -5616,11 +5135,11 @@ async function getAIDocumentResponses(companyId) {
         keywordSource: row.keyword_source || "user",
       });
     }
-    
-    await sqlClient.query('COMMIT');
+
+    await sqlClient.query("COMMIT");
     return responses;
   } catch (error) {
-    await sqlClient.query('ROLLBACK');
+    await sqlClient.query("ROLLBACK");
     console.error("Error fetching AI document responses:", error);
     throw error;
   } finally {
@@ -5692,12 +5211,19 @@ function extractAppointmentInfo(messageBody) {
   lines.forEach((line) => {
     if (line.includes("Date:")) info.date = line.split("Date:")[1].trim();
     if (line.includes("Time:")) info.time = line.split("Time:")[1].trim();
-    if (line.includes("Senior Inspector:")) info.inspectorName = line.split("Senior Inspector:")[1].trim();
+    if (line.includes("Senior Inspector:"))
+      info.inspectorName = line.split("Senior Inspector:")[1].trim();
     if (line.includes("Contact Direct:"))
-      info.inspectorPhone = line.split("Contact Direct:")[1].trim().replace("wa.me/", "");
-    if (line.includes("Vehicle No Plate:")) info.vehiclePlate = line.split("Vehicle No Plate:")[1].trim();
-    if (line.includes("Client:")) info.clientName = line.split("Client:")[1].trim();
-    if (line.includes("Contact:")) info.clientPhone = line.split("Contact:")[1].trim().replace("wa.me/", "");
+      info.inspectorPhone = line
+        .split("Contact Direct:")[1]
+        .trim()
+        .replace("wa.me/", "");
+    if (line.includes("Vehicle No Plate:"))
+      info.vehiclePlate = line.split("Vehicle No Plate:")[1].trim();
+    if (line.includes("Client:"))
+      info.clientName = line.split("Client:")[1].trim();
+    if (line.includes("Contact:"))
+      info.clientPhone = line.split("Contact:")[1].trim().replace("wa.me/", "");
     if (line.includes("Site Add:")) {
       info.siteAddress = line.split("Site Add:")[1].trim();
       // Capture multi-line address
@@ -5843,7 +5369,8 @@ async function handleConfirmedAppointment(client, msg, idSubstring) {
     console.log("Formatted client phone:", clientPhone);
 
     // Get the correct participant group or use a default group
-    const baseParticipants = PARTICIPANT_GROUPS[authorNumber] || PARTICIPANT_GROUPS["601111393111"];
+    const baseParticipants =
+      PARTICIPANT_GROUPS[authorNumber] || PARTICIPANT_GROUPS["601111393111"];
     const participants = [`${clientPhone}@c.us`, ...baseParticipants];
 
     // Create a new group
@@ -5863,7 +5390,11 @@ async function handleConfirmedAppointment(client, msg, idSubstring) {
       let finalMessage = "";
       console.log("Detected language:", appointmentInfo.language);
 
-      await addContactToPostgres(result.gid._serialized, groupTitle, idSubstring);
+      await addContactToPostgres(
+        result.gid._serialized,
+        groupTitle,
+        idSubstring
+      );
 
       if (appointmentInfo.language == "BM") {
         initialMessage = `Hi En/Pn👋, Saya Mr Kelvern (wa.me/601111393111) 
@@ -5949,22 +5480,49 @@ async function handleConfirmedAppointment(client, msg, idSubstring) {
       }
 
       console.log("Sending initial message to group...");
-      const message = await client.sendMessage(result.gid._serialized, initialMessage);
-      await addMessagetoPostgres(message, idSubstring, "+" + result.gid._serialized.split("@")[0], groupTitle);
+      const message = await client.sendMessage(
+        result.gid._serialized,
+        initialMessage
+      );
+      await addMessagetoPostgres(
+        message,
+        idSubstring,
+        "+" + result.gid._serialized.split("@")[0],
+        groupTitle
+      );
 
       const documentUrl =
         "https://firebasestorage.googleapis.com/v0/b/onboarding-a5fcb.appspot.com/o/kelven.jpg?alt=media&token=baef675f-43e3-4f56-b2ba-19db0a6ddbf5";
       const media = await MessageMedia.fromUrl(documentUrl);
-      const documentMessage = await client.sendMessage(result.gid._serialized, media);
-      await addMessagetoPostgres(documentMessage, idSubstring, "+" + result.gid._serialized.split("@")[0], groupTitle);
+      const documentMessage = await client.sendMessage(
+        result.gid._serialized,
+        media
+      );
+      await addMessagetoPostgres(
+        documentMessage,
+        idSubstring,
+        "+" + result.gid._serialized.split("@")[0],
+        groupTitle
+      );
 
       const documentUrl2 = `https://firebasestorage.googleapis.com/v0/b/onboarding-a5fcb.appspot.com/o/Your%20Roofing's%20Doctor.pdf?alt=media&token=7c72f8e4-72cd-4da1-bb3d-387ffeb8ab91`;
       const media2 = await MessageMedia.fromUrl(documentUrl2);
       media2.filename = "Your Roofing's Doctor.pdf";
-      const documentMessage2 = await client.sendMessage(result.gid._serialized, media2);
+      const documentMessage2 = await client.sendMessage(
+        result.gid._serialized,
+        media2
+      );
 
-      const message2 = await client.sendMessage(result.gid._serialized, finalMessage);
-      await addMessagetoPostgres(message2, idSubstring, "+" + result.gid._serialized.split("@")[0], groupTitle);
+      const message2 = await client.sendMessage(
+        result.gid._serialized,
+        finalMessage
+      );
+      await addMessagetoPostgres(
+        message2,
+        idSubstring,
+        "+" + result.gid._serialized.split("@")[0],
+        groupTitle
+      );
     } catch (groupError) {
       console.error("Error creating WhatsApp group:", groupError);
       console.error("Full group error stack:", groupError.stack);
@@ -5999,13 +5557,20 @@ function extractAppointmentInfo(messageBody) {
 
       // Extract inspector name
       if (line.includes("Senior Inspector:")) {
-        info.inspectorName = line.split("Senior Inspector:")[1].trim().replace(/\*/g, "");
+        info.inspectorName = line
+          .split("Senior Inspector:")[1]
+          .trim()
+          .replace(/\*/g, "");
         console.log("Extracted inspector:", info.inspectorName);
       }
 
       // Extract inspector phone
       if (line.includes("Contact Direct:")) {
-        info.inspectorPhone = line.split("Contact Direct:")[1].trim().replace("wa.me/", "").replace(/\*/g, "");
+        info.inspectorPhone = line
+          .split("Contact Direct:")[1]
+          .trim()
+          .replace("wa.me/", "")
+          .replace(/\*/g, "");
         console.log("Extracted inspector phone:", info.inspectorPhone);
       }
 
@@ -6022,7 +5587,11 @@ function extractAppointmentInfo(messageBody) {
 
       // Extract client phone
       if (line.includes("Contact:") && !line.includes("Contact Direct:")) {
-        info.clientPhone = line.split("Contact:")[1].trim().replace("wa.me/", "").replace(/\*/g, "");
+        info.clientPhone = line
+          .split("Contact:")[1]
+          .trim()
+          .replace("wa.me/", "")
+          .replace(/\*/g, "");
         console.log("Extracted client phone:", info.clientPhone);
       }
 
@@ -6063,19 +5632,22 @@ async function addContactToPostgres(groupId, groupTitle, idSubstring) {
   if (idSubstring !== "002") return;
 
   const extractedNumber = groupId.split("@")[0];
-  
+
   const sqlClient = await pool.connect();
-  
+
   try {
-    await sqlClient.query('BEGIN');
-    
+    await sqlClient.query("BEGIN");
+
     const checkQuery = `
       SELECT id FROM public.contacts 
       WHERE contact_id = $1 AND company_id = $2
     `;
-    
-    const checkResult = await sqlClient.query(checkQuery, [extractedNumber, idSubstring]);
-    
+
+    const checkResult = await sqlClient.query(checkQuery, [
+      extractedNumber,
+      idSubstring,
+    ]);
+
     if (checkResult.rows.length === 0) {
       const insertQuery = `
         INSERT INTO public.contacts (
@@ -6092,7 +5664,7 @@ async function addContactToPostgres(groupId, groupTitle, idSubstring) {
           last_message
         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
       `;
-      
+
       const chatData = {
         contact_id: extractedNumber,
         id: groupId,
@@ -6100,9 +5672,9 @@ async function addContactToPostgres(groupId, groupTitle, idSubstring) {
         not_spam: true,
         tags: [""],
         timestamp: new Date(),
-        type: "group"
+        type: "group",
       };
-      
+
       const lastMessage = {
         chat_id: groupId,
         from: groupId,
@@ -6112,9 +5684,9 @@ async function addContactToPostgres(groupId, groupTitle, idSubstring) {
         status: "",
         text: { body: "" },
         timestamp: new Date(),
-        type: "text"
+        type: "text",
       };
-      
+
       const insertValues = [
         extractedNumber,
         idSubstring,
@@ -6126,9 +5698,9 @@ async function addContactToPostgres(groupId, groupTitle, idSubstring) {
         groupId,
         JSON.stringify(chatData),
         0,
-        JSON.stringify(lastMessage)
+        JSON.stringify(lastMessage),
       ];
-      
+
       await sqlClient.query(insertQuery, insertValues);
       console.log("Group added to PostgreSQL:", groupId);
     } else {
@@ -6146,7 +5718,7 @@ async function addContactToPostgres(groupId, groupTitle, idSubstring) {
           last_updated = CURRENT_TIMESTAMP
         WHERE contact_id = $6 AND company_id = $7
       `;
-      
+
       const chatData = {
         contact_id: extractedNumber,
         id: groupId,
@@ -6154,9 +5726,9 @@ async function addContactToPostgres(groupId, groupTitle, idSubstring) {
         not_spam: true,
         tags: [""],
         timestamp: new Date(),
-        type: "group"
+        type: "group",
       };
-      
+
       const lastMessage = {
         chat_id: groupId,
         from: groupId,
@@ -6166,9 +5738,9 @@ async function addContactToPostgres(groupId, groupTitle, idSubstring) {
         status: "",
         text: { body: "" },
         timestamp: new Date(),
-        type: "text"
+        type: "text",
       };
-      
+
       const updateValues = [
         groupTitle,
         groupTitle,
@@ -6176,16 +5748,16 @@ async function addContactToPostgres(groupId, groupTitle, idSubstring) {
         JSON.stringify(chatData),
         JSON.stringify(lastMessage),
         extractedNumber,
-        idSubstring
+        idSubstring,
       ];
-      
+
       await sqlClient.query(updateQuery, updateValues);
       console.log("Group updated in PostgreSQL:", groupId);
     }
-    
-    await sqlClient.query('COMMIT');
+
+    await sqlClient.query("COMMIT");
   } catch (error) {
-    await sqlClient.query('ROLLBACK');
+    await sqlClient.query("ROLLBACK");
     console.error("Error adding/updating group in PostgreSQL:", error);
   } finally {
     sqlClient.release();
@@ -6207,7 +5779,8 @@ async function sendMessage(client, phoneNumber, message, idSubstring) {
 
   try {
     // Format the phone number for WhatsApp
-    const formattedNumberForWhatsApp = formatPhoneNumber(phoneNumber).slice(1) + "@c.us"; // Remove '+' and add '@c.us'
+    const formattedNumberForWhatsApp =
+      formatPhoneNumber(phoneNumber).slice(1) + "@c.us"; // Remove '+' and add '@c.us'
     console.log("Formatted number for WhatsApp:", formattedNumberForWhatsApp);
 
     // Format the phone number for Firebase
@@ -6261,12 +5834,12 @@ async function sendMessage(client, phoneNumber, message, idSubstring) {
 
 async function listContactsWithTag(idSubstring, tag, limit = 10) {
   const sqlClient = await pool.connect();
-  
+
   try {
-    await sqlClient.query('BEGIN');
-    
+    await sqlClient.query("BEGIN");
+
     const lowercaseSearchTag = tag.toLowerCase();
-    
+
     const query = `
       SELECT 
         contact_id AS "phoneNumber",
@@ -6283,25 +5856,24 @@ async function listContactsWithTag(idSubstring, tag, limit = 10) {
         )
       LIMIT $3
     `;
-    
+
     const result = await sqlClient.query(query, [
-      idSubstring, 
+      idSubstring,
       `.*${lowercaseSearchTag}.*`,
-      limit
+      limit,
     ]);
-    
-    await sqlClient.query('COMMIT');
-    
-    const contacts = result.rows.map(row => ({
+
+    await sqlClient.query("COMMIT");
+
+    const contacts = result.rows.map((row) => ({
       phoneNumber: row.phoneNumber,
       contactName: row.contactName,
-      tags: row.tags
+      tags: row.tags,
     }));
-    
+
     return JSON.stringify(contacts);
-    
   } catch (error) {
-    await sqlClient.query('ROLLBACK');
+    await sqlClient.query("ROLLBACK");
     console.error("Error listing contacts with tag:", error);
     return JSON.stringify({ error: "Failed to list contacts with tag" });
   } finally {
@@ -6309,7 +5881,12 @@ async function listContactsWithTag(idSubstring, tag, limit = 10) {
   }
 }
 
-async function addMessagetoPostgres(msg, idSubstring, extractedNumber, contactName) {
+async function addMessagetoPostgres(
+  msg,
+  idSubstring,
+  extractedNumber,
+  contactName
+) {
   console.log("Adding message to PostgreSQL");
   console.log("idSubstring:", idSubstring);
   console.log("extractedNumber:", extractedNumber);
@@ -6339,10 +5916,14 @@ async function addMessagetoPostgres(msg, idSubstring, extractedNumber, contactNa
     const media = await msg.downloadMedia();
     const transcription = await transcribeAudio(media.data);
 
-    if (transcription && transcription !== "Audio transcription failed. Please try again.") {
+    if (
+      transcription &&
+      transcription !== "Audio transcription failed. Please try again."
+    ) {
       messageBody = transcription;
     } else {
-      messageBody = "I couldn't transcribe the audio. Could you please type your message instead?";
+      messageBody =
+        "I couldn't transcribe the audio. Could you please type your message instead?";
     }
 
     combinedMessage = messageBody;
@@ -6390,14 +5971,20 @@ async function addMessagetoPostgres(msg, idSubstring, extractedNumber, contactNa
         }
       }
     } catch (error) {
-      console.error(`Error handling media for message ${msg.id._serialized}:`, error);
+      console.error(
+        `Error handling media for message ${msg.id._serialized}:`,
+        error
+      );
     }
   }
 
   let author = null;
   if (msg.from.includes("@g.us")) {
     const authorNumber = "+" + msg.author.split("@")[0];
-    const authorData = await getContactDataFromDatabaseByPhone(authorNumber, idSubstring);
+    const authorData = await getContactDataFromDatabaseByPhone(
+      authorNumber,
+      idSubstring
+    );
 
     if (authorData) {
       author = authorData.contactName;
@@ -6446,7 +6033,10 @@ async function addMessagetoPostgres(msg, idSubstring, extractedNumber, contactNa
         WHERE contact_id = $1 AND company_id = $2
       `;
 
-      const contactResult = await client.query(contactCheckQuery, [extractedNumber, idSubstring]);
+      const contactResult = await client.query(contactCheckQuery, [
+        extractedNumber,
+        idSubstring,
+      ]);
 
       if (contactResult.rows.length === 0) {
         const contactQuery = `
@@ -6464,14 +6054,19 @@ async function addMessagetoPostgres(msg, idSubstring, extractedNumber, contactNa
       }
 
       await client.query("COMMIT");
-      console.log(`Message successfully added to PostgreSQL with ID: ${messageDbId}`);
+      console.log(
+        `Message successfully added to PostgreSQL with ID: ${messageDbId}`
+      );
     } catch (error) {
       await client.query("ROLLBACK");
       console.error("Error in PostgreSQL transaction:", error);
       throw error;
     } finally {
       try {
-        const contactData = await getContactDataFromDatabaseByPhone(extractedNumber, idSubstring);
+        const contactData = await getContactDataFromDatabaseByPhone(
+          extractedNumber,
+          idSubstring
+        );
         if (
           contactData &&
           contactData.contact_Name &&
@@ -6504,7 +6099,9 @@ async function testDailyReminders(client, idSubstring) {
   // Send the task reminder
   await sendDailyTaskReminder(client, idSubstring);
 
-  return JSON.stringify({ message: "Daily reminders sent successfully for testing." });
+  return JSON.stringify({
+    message: "Daily reminders sent successfully for testing.",
+  });
 }
 
 async function createThread() {
@@ -6521,16 +6118,27 @@ async function addMessage(threadId, message) {
   return response;
 }
 
-async function checkAvailableTimeSlots(idSubstring, specificDate = null, contact, client) {
+async function checkAvailableTimeSlots(
+  idSubstring,
+  specificDate = null,
+  contact,
+  client
+) {
   // Get current date and time in KL timezone
   const now = moment().tz("Asia/Kuala_Lumpur");
   const today = now.clone().startOf("day");
   const availableSlots = [];
 
-  console.log(`Current date and time (KL): ${now.format("dddd, YYYY-MM-DD HH:mm:ss")}`);
+  console.log(
+    `Current date and time (KL): ${now.format("dddd, YYYY-MM-DD HH:mm:ss")}`
+  );
 
   console.log("\n=== Starting checkAvailableTimeSlots ===");
-  console.log("Parameters:", { idSubstring, specificDate, contactInfo: contact?.phone || "No contact" });
+  console.log("Parameters:", {
+    idSubstring,
+    specificDate,
+    contactInfo: contact?.phone || "No contact",
+  });
 
   // Get calendar config from PostgreSQL
   const sqlClient = await pool.connect();
@@ -6542,7 +6150,10 @@ async function checkAvailableTimeSlots(idSubstring, specificDate = null, contact
        AND setting_key = 'calendar'`,
       [idSubstring]
     );
-    const calendarConfig = calendarConfigQuery.rows.length > 0 ? calendarConfigQuery.rows[0].setting_value : {};
+    const calendarConfig =
+      calendarConfigQuery.rows.length > 0
+        ? calendarConfigQuery.rows[0].setting_value
+        : {};
 
     // Use config values or defaults
     let calendarId = calendarConfig.calendarId;
@@ -6576,7 +6187,10 @@ async function checkAvailableTimeSlots(idSubstring, specificDate = null, contact
       console.log("Using specific date:", startDate.format("dddd, YYYY-MM-DD"));
     } else {
       startDate = today.clone().add(1, "day");
-      console.log("Using tomorrow as start date:", startDate.format("dddd, YYYY-MM-DD"));
+      console.log(
+        "Using tomorrow as start date:",
+        startDate.format("dddd, YYYY-MM-DD")
+      );
     }
 
     // If using Firebase appointments
@@ -6619,11 +6233,18 @@ async function checkAvailableTimeSlots(idSubstring, specificDate = null, contact
         });
 
         // Compute start and end times
-        const startTime = moment(appointment.scheduled_time).tz("Asia/Kuala_Lumpur");
-        const endTime = startTime.clone().add(appointment.duration_minutes, 'minutes');
+        const startTime = moment(appointment.scheduled_time).tz(
+          "Asia/Kuala_Lumpur"
+        );
+        const endTime = startTime
+          .clone()
+          .add(appointment.duration_minutes, "minutes");
 
         // Process staff assignments
-        if (appointment.staff_assigned && Array.isArray(appointment.staff_assigned)) {
+        if (
+          appointment.staff_assigned &&
+          Array.isArray(appointment.staff_assigned)
+        ) {
           appointment.staff_assigned.forEach((staffEmail) => {
             if (!staffAppointments[staffEmail]) {
               staffAppointments[staffEmail] = [];
@@ -6647,7 +6268,9 @@ async function checkAvailableTimeSlots(idSubstring, specificDate = null, contact
 
       console.log("\n=== Staff Schedules Summary ===");
       Object.keys(staffAppointments).forEach((staffEmail) => {
-        console.log(`${staffEmail}: ${staffAppointments[staffEmail].length} appointments`);
+        console.log(
+          `${staffEmail}: ${staffAppointments[staffEmail].length} appointments`
+        );
       });
 
       // Different handling for 0153 vs other companies
@@ -6661,7 +6284,9 @@ async function checkAvailableTimeSlots(idSubstring, specificDate = null, contact
 
           // Skip if date is in the past
           if (dateToCheck.isBefore(now, "day")) {
-            console.log(`Skipping past date: ${dateToCheck.format("YYYY-MM-DD")}`);
+            console.log(
+              `Skipping past date: ${dateToCheck.format("YYYY-MM-DD")}`
+            );
             continue;
           }
 
@@ -6674,8 +6299,8 @@ async function checkAvailableTimeSlots(idSubstring, specificDate = null, contact
             availableStaff.push("All Staff");
           } else {
             for (const staffEmail in staffAppointments) {
-              const hasAppointmentOnDay = staffAppointments[staffEmail].some((appt) =>
-                appt.startTime.isSame(dateToCheck, "day")
+              const hasAppointmentOnDay = staffAppointments[staffEmail].some(
+                (appt) => appt.startTime.isSame(dateToCheck, "day")
               );
 
               if (!hasAppointmentOnDay) {
@@ -6694,7 +6319,7 @@ async function checkAvailableTimeSlots(idSubstring, specificDate = null, contact
           }
         }
 
-        const sortedDates = Array.from(availableDates).sort((a, b) => 
+        const sortedDates = Array.from(availableDates).sort((a, b) =>
           moment(a.date).diff(moment(b.date))
         );
 
@@ -6707,7 +6332,11 @@ async function checkAvailableTimeSlots(idSubstring, specificDate = null, contact
           console.log(`\nAnalyzing date: ${dateToCheck.format("YYYY-MM-DD")}`);
 
           // Check each hour (removed minute intervals)
-          for (let hour = startHour; hour < endHour; hour += slotDuration / 60) {
+          for (
+            let hour = startHour;
+            hour < endHour;
+            hour += slotDuration / 60
+          ) {
             // Only process if it's a whole hour
             if (hour % 1 === 0) {
               const slotStart = dateToCheck.clone().set({ hour, minute: 0 });
@@ -6721,10 +6350,13 @@ async function checkAvailableTimeSlots(idSubstring, specificDate = null, contact
               const slotEnd = slotStart.clone().add(slotDuration, "minutes");
 
               // Check if slot is available
-              const isSlotAvailable = !Object.values(staffAppointments).some((staffAppts) => 
-                staffAppts.some((appt) => 
-                  slotStart.isBefore(appt.endTime) && slotEnd.isAfter(appt.startTime)
-                )
+              const isSlotAvailable = !Object.values(staffAppointments).some(
+                (staffAppts) =>
+                  staffAppts.some(
+                    (appt) =>
+                      slotStart.isBefore(appt.endTime) &&
+                      slotEnd.isAfter(appt.startTime)
+                  )
               );
 
               if (isSlotAvailable) {
@@ -6734,7 +6366,9 @@ async function checkAvailableTimeSlots(idSubstring, specificDate = null, contact
                   .diff(slotStart, "minutes");
 
                 if (timeUntilEndOfDay >= slotDuration) {
-                  console.log(`Adding available slot: ${slotStart.format("HH:mm")}`);
+                  console.log(
+                    `Adding available slot: ${slotStart.format("HH:mm")}`
+                  );
                   const slot = {
                     startTime: slotStart.format("YYYY-MM-DD HH:mm:ss"),
                   };
@@ -6764,11 +6398,19 @@ async function checkAvailableTimeSlots(idSubstring, specificDate = null, contact
       // Loop through the days
       for (let dayOffset = 0; dayOffset < daysAhead; dayOffset++) {
         const dateToCheck = startDate.clone().add(dayOffset, "days");
-        const startOfDay = dateToCheck.clone().set({ hour: startHour, minute: 0 });
+        const startOfDay = dateToCheck
+          .clone()
+          .set({ hour: startHour, minute: 0 });
         const endOfDay = dateToCheck.clone().set({ hour: endHour, minute: 0 });
 
-        console.log(`\nChecking Google Calendar for ${dateToCheck.format("YYYY-MM-DD")}`);
-        console.log(`Time range: ${startOfDay.format("HH:mm")} - ${endOfDay.format("HH:mm")}`);
+        console.log(
+          `\nChecking Google Calendar for ${dateToCheck.format("YYYY-MM-DD")}`
+        );
+        console.log(
+          `Time range: ${startOfDay.format("HH:mm")} - ${endOfDay.format(
+            "HH:mm"
+          )}`
+        );
 
         // Skip if the entire day is in the past
         if (endOfDay.isBefore(now)) {
@@ -6790,9 +6432,17 @@ async function checkAvailableTimeSlots(idSubstring, specificDate = null, contact
         console.log(`Found ${events.length} existing events`);
 
         const bookedSlots = events.map((event) => {
-          const startTime = moment(event.start.dateTime || event.start.date).tz("Asia/Kuala_Lumpur");
-          const endTime = moment(event.end.dateTime || event.end.date).tz("Asia/Kuala_Lumpur");
-          console.log(`Booked: ${startTime.format("HH:mm")} (${event.summary || "No title"})`);
+          const startTime = moment(event.start.dateTime || event.start.date).tz(
+            "Asia/Kuala_Lumpur"
+          );
+          const endTime = moment(event.end.dateTime || event.end.date).tz(
+            "Asia/Kuala_Lumpur"
+          );
+          console.log(
+            `Booked: ${startTime.format("HH:mm")} (${
+              event.summary || "No title"
+            })`
+          );
           return { startTime, endTime };
         });
 
@@ -6803,7 +6453,9 @@ async function checkAvailableTimeSlots(idSubstring, specificDate = null, contact
         for (let hour = startHour; hour < endHour; hour++) {
           for (let slot = 0; slot < slotsPerHour; slot++) {
             const minutes = slot * slotDuration;
-            const slotStart = dateToCheck.clone().set({ hour, minute: minutes });
+            const slotStart = dateToCheck
+              .clone()
+              .set({ hour, minute: minutes });
 
             // Skip if slot is in the past
             if (slotStart.isBefore(now)) {
@@ -6815,7 +6467,9 @@ async function checkAvailableTimeSlots(idSubstring, specificDate = null, contact
 
             // Check if slot is available
             const isSlotAvailable = !bookedSlots.some(
-              (bookedSlot) => slotStart.isBefore(bookedSlot.endTime) && slotEnd.isAfter(bookedSlot.startTime)
+              (bookedSlot) =>
+                slotStart.isBefore(bookedSlot.endTime) &&
+                slotEnd.isAfter(bookedSlot.startTime)
             );
 
             if (isSlotAvailable) {
@@ -6823,7 +6477,9 @@ async function checkAvailableTimeSlots(idSubstring, specificDate = null, contact
               const timeUntilEndOfDay = endOfDay.diff(slotStart, "minutes");
 
               if (timeUntilEndOfDay >= slotDuration) {
-                console.log(`Adding available slot: ${slotStart.format("HH:mm")}`);
+                console.log(
+                  `Adding available slot: ${slotStart.format("HH:mm")}`
+                );
                 const slot = {
                   startTime: slotStart.format("YYYY-MM-DD HH:mm:ss"),
                 };
@@ -6854,10 +6510,12 @@ async function checkAvailableTimeSlots(idSubstring, specificDate = null, contact
     } else {
       console.log(`Total available slots found: ${availableSlots.length}`);
       // Sort slots by date and time
-      availableSlots.sort((a, b) => 
+      availableSlots.sort((a, b) =>
         moment(a.startTime).diff(moment(b.startTime))
       );
-      return availableSlots.length > 0 ? availableSlots : "No available time slots for the next few days.";
+      return availableSlots.length > 0
+        ? availableSlots
+        : "No available time slots for the next few days.";
     }
   } catch (error) {
     console.error("Error in checkAvailableTimeSlots:", error);
@@ -6869,26 +6527,26 @@ async function checkAvailableTimeSlots(idSubstring, specificDate = null, contact
 
 async function countContactsCreatedToday(idSubstring) {
   const sqlClient = await pool.connect();
-  
+
   try {
-    await sqlClient.query('BEGIN');
-    
-    const today = moment().tz("Asia/Kuala_Lumpur").format('YYYY-MM-DD');
-    
+    await sqlClient.query("BEGIN");
+
+    const today = moment().tz("Asia/Kuala_Lumpur").format("YYYY-MM-DD");
+
     const query = `
       SELECT COUNT(*) as count
       FROM public.contacts
       WHERE company_id = $1
       AND DATE(created_at) = $2
     `;
-    
+
     const result = await sqlClient.query(query, [idSubstring, today]);
-    
-    await sqlClient.query('COMMIT');
-    
+
+    await sqlClient.query("COMMIT");
+
     return parseInt(result.rows[0].count);
   } catch (error) {
-    await sqlClient.query('ROLLBACK');
+    await sqlClient.query("ROLLBACK");
     console.error("Error counting contacts created today:", error);
     return 0;
   } finally {
@@ -6896,7 +6554,13 @@ async function countContactsCreatedToday(idSubstring) {
   }
 }
 
-async function assignNewContactToEmployee(contactID, idSubstring, client, contactName, triggerKeyword = "") {
+async function assignNewContactToEmployee(
+  contactID,
+  idSubstring,
+  client,
+  contactName,
+  triggerKeyword = ""
+) {
   if (employees.length === 0) {
     await fetchEmployeesFromFirebase(idSubstring);
   }
@@ -6909,8 +6573,12 @@ async function assignNewContactToEmployee(contactID, idSubstring, client, contac
   }
 
   const tags = [];
-  const contactData = await getContactDataFromDatabaseByPhone(contactID, idSubstring);
-  const updatedContactName = contactData?.contactName || contactName || "Not provided";
+  const contactData = await getContactDataFromDatabaseByPhone(
+    contactID,
+    idSubstring
+  );
+  const updatedContactName =
+    contactData?.contactName || contactName || "Not provided";
 
   // Filter employees by role
   const managers = employees.filter((emp) => emp.role === "4");
@@ -6938,7 +6606,10 @@ async function assignNewContactToEmployee(contactID, idSubstring, client, contac
   // Assign to sales if available
   if (salesEmployees.length > 0) {
     // Calculate total weightage
-    const totalWeight = salesEmployees.reduce((sum, emp) => sum + (emp.weightage || 1), 0);
+    const totalWeight = salesEmployees.reduce(
+      (sum, emp) => sum + (emp.weightage || 1),
+      0
+    );
     const randomValue = Math.random() * totalWeight;
 
     let cumulativeWeight = 0;
@@ -6967,7 +6638,15 @@ async function assignNewContactToEmployee(contactID, idSubstring, client, contac
   // If no manager and no sales, assign to admin
   if (!assignedManager && !assignedSales && admins.length > 0) {
     const assignedAdmin = admins[Math.floor(Math.random() * admins.length)];
-    await assignToEmployee(assignedAdmin, "Admin", contactID, updatedContactName, client, idSubstring, triggerKeyword);
+    await assignToEmployee(
+      assignedAdmin,
+      "Admin",
+      contactID,
+      updatedContactName,
+      client,
+      idSubstring,
+      triggerKeyword
+    );
     tags.push(assignedAdmin.name, assignedAdmin.phoneNumber);
   }
 
@@ -6976,7 +6655,15 @@ async function assignNewContactToEmployee(contactID, idSubstring, client, contac
   return tags;
 }
 
-async function assignToEmployee(employee, role, contactID, contactName, client, idSubstring, triggerKeyword = "") {
+async function assignToEmployee(
+  employee,
+  role,
+  contactID,
+  contactName,
+  client,
+  idSubstring,
+  triggerKeyword = ""
+) {
   const employeeID = employee.phoneNumber.split("+")[1] + "@c.us";
 
   // Get current date and time in Malaysia timezone
@@ -6993,7 +6680,9 @@ async function assignToEmployee(employee, role, contactID, contactName, client, 
 Name: ${contactName}
 Phone: ${contactID}
      
-Triggered keyword: ${triggerKeyword ? `*${triggerKeyword}*` : "[No keyword trigger found]"}
+Triggered keyword: ${
+          triggerKeyword ? `*${triggerKeyword}*` : "[No keyword trigger found]"
+        }
      
 Date & Time: ${currentDateTime}`
       : idSubstring === "0335"
@@ -7035,8 +6724,13 @@ async function checkAndScheduleDailyReport(client, idSubstring) {
         AND setting_key = 'dailyReport'
       `;
 
-      const settingsResult = await sqlClient.query(settingsQuery, [idSubstring]);
-      const settings = settingsResult.rows.length > 0 ? settingsResult.rows[0].setting_value : null;
+      const settingsResult = await sqlClient.query(settingsQuery, [
+        idSubstring,
+      ]);
+      const settings =
+        settingsResult.rows.length > 0
+          ? settingsResult.rows[0].setting_value
+          : null;
 
       // Check if daily report is enabled and settings exist
       if (settings?.enabled) {
@@ -7053,11 +6747,18 @@ async function checkAndScheduleDailyReport(client, idSubstring) {
 
         // Check if report was already sent today
         const now = moment().tz("Asia/Kuala_Lumpur");
-        const wasRunToday = lastRun && moment(lastRun).tz("Asia/Kuala_Lumpur").isSame(now, "day");
+        const wasRunToday =
+          lastRun && moment(lastRun).tz("Asia/Kuala_Lumpur").isSame(now, "day");
 
         // If not run today and it's past the scheduled time, send report immediately
-        if (!wasRunToday && now.hours() >= parseInt(hours) && now.minutes() >= parseInt(minutes)) {
-          console.log(`[${idSubstring}] Daily report not sent yet today and it's past scheduled time. Sending now...`);
+        if (
+          !wasRunToday &&
+          now.hours() >= parseInt(hours) &&
+          now.minutes() >= parseInt(minutes)
+        ) {
+          console.log(
+            `[${idSubstring}] Daily report not sent yet today and it's past scheduled time. Sending now...`
+          );
           await sendDailyContactReport(client, idSubstring);
 
           // Update the lastRun timestamp in the database
@@ -7073,16 +6774,21 @@ async function checkAndScheduleDailyReport(client, idSubstring) {
         }
 
         // Schedule for next run
-        console.log(`[${idSubstring}] Scheduling daily report for ${reportTime}`);
-        schedule.scheduleJob(cronJobName, `0 ${minutes} ${hours} * * *`, async function () {
-          console.log(`[${idSubstring}] Running scheduled daily report`);
-          await sendDailyContactReport(client, idSubstring);
+        console.log(
+          `[${idSubstring}] Scheduling daily report for ${reportTime}`
+        );
+        schedule.scheduleJob(
+          cronJobName,
+          `0 ${minutes} ${hours} * * *`,
+          async function () {
+            console.log(`[${idSubstring}] Running scheduled daily report`);
+            await sendDailyContactReport(client, idSubstring);
 
-          // Update lastRun in the database after scheduled run
-          const sqlClientForCron = await pool.connect();
-          try {
-            await sqlClientForCron.query("BEGIN");
-            const updateQuery = `
+            // Update lastRun in the database after scheduled run
+            const sqlClientForCron = await pool.connect();
+            try {
+              await sqlClientForCron.query("BEGIN");
+              const updateQuery = `
               UPDATE public.settings 
               SET setting_value = jsonb_set(setting_value, '{lastRun}', to_jsonb($1::text))
               WHERE company_id = $2 
@@ -7090,26 +6796,39 @@ async function checkAndScheduleDailyReport(client, idSubstring) {
               AND setting_key = 'dailyReport'
             `;
 
-            await sqlClientForCron.query(updateQuery, [new Date().toISOString(), idSubstring]);
-            await sqlClientForCron.query("COMMIT");
-          } catch (cronError) {
-            await sqlClientForCron.query("ROLLBACK");
-            console.error(`[${idSubstring}] Error updating lastRun after scheduled report:`, cronError);
-          } finally {
-            sqlClientForCron.release();
+              await sqlClientForCron.query(updateQuery, [
+                new Date().toISOString(),
+                idSubstring,
+              ]);
+              await sqlClientForCron.query("COMMIT");
+            } catch (cronError) {
+              await sqlClientForCron.query("ROLLBACK");
+              console.error(
+                `[${idSubstring}] Error updating lastRun after scheduled report:`,
+                cronError
+              );
+            } finally {
+              sqlClientForCron.release();
+            }
           }
-        });
+        );
       }
 
       await sqlClient.query("COMMIT");
     } catch (error) {
       await sqlClient.query("ROLLBACK");
-      console.error(`[${idSubstring}] Error in checkAndScheduleDailyReport:`, error);
+      console.error(
+        `[${idSubstring}] Error in checkAndScheduleDailyReport:`,
+        error
+      );
     } finally {
       sqlClient.release();
     }
   } catch (connectionError) {
-    console.error(`[${idSubstring}] Database connection error:`, connectionError);
+    console.error(
+      `[${idSubstring}] Database connection error:`,
+      connectionError
+    );
   }
 }
 
@@ -7117,7 +6836,10 @@ async function sendDailyContactReport(client, idSubstring) {
   const sqlClient = await pool.connect();
 
   try {
-    const { count, contacts } = await getContactsAddedToday(idSubstring, sqlClient);
+    const { count, contacts } = await getContactsAddedToday(
+      idSubstring,
+      sqlClient
+    );
 
     const currentNow = moment().tz("Asia/Kuala_Lumpur");
 
@@ -7126,7 +6848,9 @@ async function sendDailyContactReport(client, idSubstring) {
       `📅 Date: ${currentNow.format("DD/MM/YYYY")}\n` +
       `🔔 New Leads Today: ${count}\n\n` +
       (contacts.length > 0
-        ? `*New Contacts:*\n${contacts.map((c) => `- ${c.contactName} (${c.phoneNumber})`).join("\n")}\n\n`
+        ? `*New Contacts:*\n${contacts
+            .map((c) => `- ${c.contactName} (${c.phoneNumber})`)
+            .join("\n")}\n\n`
         : "") +
       `Generated by Juta AI`;
 
@@ -7139,18 +6863,28 @@ async function sendDailyContactReport(client, idSubstring) {
     `;
 
     const settingsResult = await sqlClient.query(settingsQuery, [idSubstring]);
-    const groupId = settingsResult.rows.length > 0 ? settingsResult.rows[0].group_id : null;
+    const groupId =
+      settingsResult.rows.length > 0 ? settingsResult.rows[0].group_id : null;
 
     if (groupId) {
       await client.sendMessage(groupId, message);
-      console.log(`Daily report sent to group ${groupId} for company ${idSubstring} at ${currentNow.format("HH:mm")}`);
+      console.log(
+        `Daily report sent to group ${groupId} for company ${idSubstring} at ${currentNow.format(
+          "HH:mm"
+        )}`
+      );
     } else {
-      console.log(`No group ID configured for daily report for company ${idSubstring}`);
+      console.log(
+        `No group ID configured for daily report for company ${idSubstring}`
+      );
     }
 
     return { success: true, message: "Report sent successfully" };
   } catch (error) {
-    console.error(`Error sending daily contact report for ${idSubstring}:`, error);
+    console.error(
+      `Error sending daily contact report for ${idSubstring}:`,
+      error
+    );
     return { success: false, error: error.message };
   } finally {
     sqlClient.release();
@@ -7159,40 +6893,42 @@ async function sendDailyContactReport(client, idSubstring) {
 
 async function getContactDataFromDatabaseByPhone(phoneNumber, idSubstring) {
   const sqlClient = await pool.connect();
-  
+
   try {
     if (!phoneNumber) {
       throw new Error("Phone number is undefined or null");
     }
 
-    await sqlClient.query('BEGIN');
-    
+    await sqlClient.query("BEGIN");
+
     const query = `
       SELECT * FROM public.contacts
       WHERE phone = $1 AND company_id = $2
       LIMIT 1
     `;
-    
+
     const result = await sqlClient.query(query, [phoneNumber, idSubstring]);
-    
-    await sqlClient.query('COMMIT');
-    
+
+    await sqlClient.query("COMMIT");
+
     if (result.rows.length === 0) {
-      console.log("No matching documents for contact in company." + idSubstring);
+      console.log(
+        "No matching documents for contact in company." + idSubstring
+      );
       return null;
     } else {
       const contactData = result.rows[0];
       const contactName = contactData.contact_name || contactData.name;
       const threadID = contactData.thread_id;
-      
-      return { 
+
+      return {
         ...contactData,
         contactName,
-        threadID
+        threadID,
       };
     }
   } catch (error) {
-    await sqlClient.query('ROLLBACK');
+    await sqlClient.query("ROLLBACK");
     console.error("Error fetching contact data:", error);
     throw error;
   } finally {
@@ -7224,7 +6960,10 @@ async function waitForCompletion(
 
   for (let attempts = 0; attempts < maxAttempts; attempts++) {
     try {
-      const runObject = await openai.beta.threads.runs.retrieve(threadId, runId);
+      const runObject = await openai.beta.threads.runs.retrieve(
+        threadId,
+        runId
+      );
       console.log(`Run status: ${runObject.status} (attempt ${attempts + 1})`);
 
       if (runObject.status === "completed") {
@@ -7233,7 +6972,8 @@ async function waitForCompletion(
         return latestMessage;
       } else if (runObject.status === "requires_action") {
         console.log("Run requires action, handling tool calls...");
-        const toolCalls = runObject.required_action.submit_tool_outputs.tool_calls;
+        const toolCalls =
+          runObject.required_action.submit_tool_outputs.tool_calls;
         const toolOutputs = await handleToolCalls(
           toolCalls,
           idSubstring,
@@ -7245,8 +6985,12 @@ async function waitForCompletion(
           threadId
         );
         console.log("Submitting tool outputs...");
-        await openai.beta.threads.runs.submitToolOutputs(threadId, runId, { tool_outputs: toolOutputs });
-        console.log("Tool outputs submitted, restarting wait for completion...");
+        await openai.beta.threads.runs.submitToolOutputs(threadId, runId, {
+          tool_outputs: toolOutputs,
+        });
+        console.log(
+          "Tool outputs submitted, restarting wait for completion..."
+        );
         return await waitForCompletion(
           threadId,
           runId,
@@ -7258,19 +7002,25 @@ async function waitForCompletion(
           companyName,
           contact
         );
-      } else if (["failed", "cancelled", "expired"].includes(runObject.status)) {
+      } else if (
+        ["failed", "cancelled", "expired"].includes(runObject.status)
+      ) {
         console.error(`Run ${runId} ended with status: ${runObject.status}`);
         return `I encountered an error (${runObject.status}). Please try your request again.`;
       }
 
       await new Promise((resolve) => setTimeout(resolve, pollingInterval));
     } catch (error) {
-      console.error(`Error in waitForCompletion (depth: ${depth}, runId: ${runId}): ${error}`);
+      console.error(
+        `Error in waitForCompletion (depth: ${depth}, runId: ${runId}): ${error}`
+      );
       return "I'm sorry, but I encountered an error while processing your request. Please try again.";
     }
   }
 
-  console.error(`Timeout: Assistant did not complete in time (depth: ${depth}, runId: ${runId})`);
+  console.error(
+    `Timeout: Assistant did not complete in time (depth: ${depth}, runId: ${runId})`
+  );
   return "I'm sorry, but it's taking longer than expected to process your request. Please try again or rephrase your question.";
 }
 
@@ -7288,7 +7038,9 @@ async function runAssistant(
 ) {
   console.log("Running assistant for thread: " + threadId);
   const currentAssistantId = await getCompanyAssistantId(idSubstring);
-  console.log(`Running assistant ${currentAssistantId} for company ${idSubstring}`);
+  console.log(
+    `Running assistant ${currentAssistantId} for company ${idSubstring}`
+  );
   const response = await openai.beta.threads.runs.create(threadId, {
     assistant_id: currentAssistantId,
     tools: tools,
@@ -7313,34 +7065,34 @@ async function runAssistant(
 async function getCompanyAssistantId(idSubstring) {
   try {
     const sqlClient = await pool.connect();
-    
+
     try {
-      await sqlClient.query('BEGIN');
-      
+      await sqlClient.query("BEGIN");
+
       const query = `
         SELECT assistant_id
         FROM public.companies
         WHERE company_id = $1
       `;
-      
+
       const result = await sqlClient.query(query, [idSubstring]);
-      
-      await sqlClient.query('COMMIT');
-      
+
+      await sqlClient.query("COMMIT");
+
       if (result.rows.length === 0) {
         throw new Error(`No config found for company ${idSubstring}`);
       }
-      
+
       const assistantId = result.rows[0].assistant_id;
-      
+
       if (!assistantId) {
         throw new Error(`No assistant ID found for company ${idSubstring}`);
       }
-      
+
       console.log(`Retrieved assistant ID for ${idSubstring}:`, assistantId);
       return assistantId;
     } catch (error) {
-      await sqlClient.query('ROLLBACK');
+      await sqlClient.query("ROLLBACK");
       throw error;
     } finally {
       sqlClient.release();
@@ -7355,7 +7107,10 @@ async function fetchMultipleContactsData(phoneNumbers, idSubstring) {
   try {
     const contactsData = await Promise.all(
       phoneNumbers.map(async (phoneNumber) => {
-        const contactData = await getContactDataFromDatabaseByPhone(phoneNumber, idSubstring);
+        const contactData = await getContactDataFromDatabaseByPhone(
+          phoneNumber,
+          idSubstring
+        );
         return { phoneNumber, ...contactData };
       })
     );
@@ -7368,10 +7123,10 @@ async function fetchMultipleContactsData(phoneNumbers, idSubstring) {
 
 async function listContacts(idSubstring, limit = 10, offset = 0) {
   const sqlClient = await pool.connect();
-  
+
   try {
-    await sqlClient.query('BEGIN');
-    
+    await sqlClient.query("BEGIN");
+
     const query = `
       SELECT 
         id,
@@ -7386,20 +7141,20 @@ async function listContacts(idSubstring, limit = 10, offset = 0) {
         contact_name
       LIMIT $2 OFFSET $3
     `;
-    
+
     const result = await sqlClient.query(query, [idSubstring, limit, offset]);
-    
-    await sqlClient.query('COMMIT');
-    
-    const contacts = result.rows.map(row => ({
+
+    await sqlClient.query("COMMIT");
+
+    const contacts = result.rows.map((row) => ({
       phoneNumber: row.phone || row.contact_id,
-      contactName: row.contact_name || 'Unknown',
-      phone: row.phone || ''
+      contactName: row.contact_name || "Unknown",
+      phone: row.phone || "",
     }));
-    
+
     return JSON.stringify(contacts);
   } catch (error) {
-    await sqlClient.query('ROLLBACK');
+    await sqlClient.query("ROLLBACK");
     console.error("Error listing contacts:", error);
     return JSON.stringify({ error: "Failed to list contacts" });
   } finally {
@@ -7409,12 +7164,12 @@ async function listContacts(idSubstring, limit = 10, offset = 0) {
 
 async function searchContacts(idSubstring, searchTerm) {
   const sqlClient = await pool.connect();
-  
+
   try {
     console.log(`Searching for contacts with term: "${searchTerm}"`);
     const searchTermLower = searchTerm.toLowerCase();
-    
-    await sqlClient.query('BEGIN');
+
+    await sqlClient.query("BEGIN");
 
     const query = `
       SELECT 
@@ -7436,32 +7191,38 @@ async function searchContacts(idSubstring, searchTerm) {
           )
         )
     `;
-    
-    const result = await sqlClient.query(query, [idSubstring, `%${searchTermLower}%`]);
-    
-    await sqlClient.query('COMMIT');
-    
-    const matchingContacts = result.rows.map(row => ({
+
+    const result = await sqlClient.query(query, [
+      idSubstring,
+      `%${searchTermLower}%`,
+    ]);
+
+    await sqlClient.query("COMMIT");
+
+    const matchingContacts = result.rows.map((row) => ({
       phoneNumber: row.contact_id,
       contactName: row.contact_name || "Unknown",
       phone: row.phone || "",
-      tags: row.tags ? row.tags : []
+      tags: row.tags ? row.tags : [],
     }));
-    
+
     console.log(`Found ${matchingContacts.length} matching contacts`);
-    
+
     if (matchingContacts.length === 0) {
       return JSON.stringify({ message: "No matching contacts found." });
     }
-    
+
     return JSON.stringify({
       matchingContacts,
       totalMatches: matchingContacts.length,
     });
   } catch (error) {
-    await sqlClient.query('ROLLBACK');
+    await sqlClient.query("ROLLBACK");
     console.error("Error searching contacts:", error);
-    return JSON.stringify({ error: "Failed to search contacts", details: error.message });
+    return JSON.stringify({
+      error: "Failed to search contacts",
+      details: error.message,
+    });
   } finally {
     sqlClient.release();
   }
@@ -7469,112 +7230,157 @@ async function searchContacts(idSubstring, searchTerm) {
 
 async function tagContact(idSubstring, phoneNumber, tag) {
   const sqlClient = await pool.connect();
-  
+
   try {
-    await sqlClient.query('BEGIN');
-    
+    await sqlClient.query("BEGIN");
+
     const fetchQuery = `
       SELECT tags 
       FROM public.contacts 
       WHERE company_id = $1 AND phone = $2
       LIMIT 1
     `;
-    
-    const fetchResult = await sqlClient.query(fetchQuery, [idSubstring, phoneNumber]);
-    
+
+    const fetchResult = await sqlClient.query(fetchQuery, [
+      idSubstring,
+      phoneNumber,
+    ]);
+
     if (fetchResult.rows.length === 0) {
       console.log(`No contact found for number: ${phoneNumber}`);
-      await sqlClient.query('ROLLBACK');
+      await sqlClient.query("ROLLBACK");
       return JSON.stringify({
         error: "Contact not found",
         details: `No contact found for number: ${phoneNumber}. Please check the number and try again.`,
       });
     }
-    
+
     const currentTags = fetchResult.rows[0].tags || [];
-    
+
     const newTags = [...new Set([...currentTags, tag])];
-    
+
     const updateQuery = `
       UPDATE public.contacts 
       SET tags = $1, last_updated = CURRENT_TIMESTAMP
       WHERE company_id = $2 AND phone = $3
       RETURNING tags
     `;
-    
-    const updateResult = await sqlClient.query(updateQuery, [JSON.stringify(newTags), idSubstring, phoneNumber]);
-    
-    await sqlClient.query('COMMIT');
-    
+
+    const updateResult = await sqlClient.query(updateQuery, [
+      JSON.stringify(newTags),
+      idSubstring,
+      phoneNumber,
+    ]);
+
+    await sqlClient.query("COMMIT");
+
     return JSON.stringify({
       success: true,
       message: `Contact ${phoneNumber} tagged with "${tag}"`,
       updatedTags: updateResult.rows[0].tags,
     });
   } catch (error) {
-    await sqlClient.query('ROLLBACK');
+    await sqlClient.query("ROLLBACK");
     console.error("Error tagging contact:", error);
-    return JSON.stringify({ error: "Failed to tag contact", details: error.message });
+    return JSON.stringify({
+      error: "Failed to tag contact",
+      details: error.message,
+    });
   } finally {
     sqlClient.release();
   }
 }
 
-async function addPointsForBottlesBought(phoneNumber, idSubstring, bottlesBought) {
+async function addPointsForBottlesBought(
+  phoneNumber,
+  idSubstring,
+  bottlesBought
+) {
   const sqlClient = await pool.connect();
-  
+
   try {
-    await sqlClient.query('BEGIN');
-    
+    await sqlClient.query("BEGIN");
+
     const checkQuery = `
       SELECT points 
       FROM public.contacts 
       WHERE phone = $1 AND company_id = $2
       LIMIT 1
     `;
-    
-    const checkResult = await sqlClient.query(checkQuery, [phoneNumber, idSubstring]);
-    
+
+    const checkResult = await sqlClient.query(checkQuery, [
+      phoneNumber,
+      idSubstring,
+    ]);
+
     if (checkResult.rows.length === 0) {
-      await sqlClient.query('ROLLBACK');
+      await sqlClient.query("ROLLBACK");
       return JSON.stringify({ error: "Contact not found" });
     }
-    
+
     const currentPoints = checkResult.rows[0].points || 0;
     const newPoints = currentPoints + bottlesBought * 5;
-    
+
     const updateQuery = `
       UPDATE public.contacts 
       SET points = $1, last_updated = CURRENT_TIMESTAMP
       WHERE phone = $2 AND company_id = $3
       RETURNING points
     `;
-    
-    const updateResult = await sqlClient.query(updateQuery, [newPoints, phoneNumber, idSubstring]);
-    
-    await sqlClient.query('COMMIT');
-    
+
+    const updateResult = await sqlClient.query(updateQuery, [
+      newPoints,
+      phoneNumber,
+      idSubstring,
+    ]);
+
+    await sqlClient.query("COMMIT");
+
     return JSON.stringify({
       success: true,
-      message: `Added ${bottlesBought * 5} points for ${bottlesBought} bottles bought.`,
+      message: `Added ${
+        bottlesBought * 5
+      } points for ${bottlesBought} bottles bought.`,
       newPoints: updateResult.rows[0].points,
     });
   } catch (error) {
-    await sqlClient.query('ROLLBACK');
+    await sqlClient.query("ROLLBACK");
     console.error("Error adding points for bottles bought:", error);
-    return JSON.stringify({ error: "Failed to add points for bottles bought", details: error.message });
+    return JSON.stringify({
+      error: "Failed to add points for bottles bought",
+      details: error.message,
+    });
   } finally {
     sqlClient.release();
   }
 }
 
-async function checkSpreadsheetDCAuto(client, phoneNumber, model, year, idSubstring) {
+async function checkSpreadsheetDCAuto(
+  client,
+  phoneNumber,
+  model,
+  year,
+  idSubstring
+) {
   console.log("Checking spreadsheet DC STOCKLIST...");
   let matchingVehicles = [];
   const currentDate = new Date();
   let currentMonth = currentDate.getMonth();
   let currentYear = currentDate.getFullYear();
-  const monthNames = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"];
+  const monthNames = [
+    "JAN",
+    "FEB",
+    "MAR",
+    "APR",
+    "MAY",
+    "JUN",
+    "JUL",
+    "AUG",
+    "SEP",
+    "OCT",
+    "NOV",
+    "DEC",
+  ];
   const monthName = monthNames[currentMonth];
   const yearShort = currentYear % 100;
   const sheetName = `${monthName}${yearShort}`;
@@ -7625,7 +7431,10 @@ async function checkSpreadsheetDCAuto(client, phoneNumber, model, year, idSubstr
         modelInSheetWords.some((sheetWord) => sheetWord.includes(word))
       );
 
-      if (allWordsPresent && (!year || String(yearInSheet).includes(String(year)))) {
+      if (
+        allWordsPresent &&
+        (!year || String(yearInSheet).includes(String(year)))
+      ) {
         if (inStock.toLowerCase() === "true") {
           matchingVehicles.push({
             model: modelInSheet,
@@ -7641,8 +7450,14 @@ async function checkSpreadsheetDCAuto(client, phoneNumber, model, year, idSubstr
       console.log(`Found ${matchingVehicles.length} matching vehicles.`);
       return JSON.stringify(matchingVehicles);
     } else {
-      console.log(`No vehicles found matching model "${model}"${year ? ` and year "${year}"` : ""}.`);
-      return `No vehicles found matching model "${model}"${year ? ` and year "${year}"` : ""}.`;
+      console.log(
+        `No vehicles found matching model "${model}"${
+          year ? ` and year "${year}"` : ""
+        }.`
+      );
+      return `No vehicles found matching model "${model}"${
+        year ? ` and year "${year}"` : ""
+      }.`;
     }
   } catch (error) {
     console.error("Error checking spreadsheet:", error);
@@ -7650,50 +7465,67 @@ async function checkSpreadsheetDCAuto(client, phoneNumber, model, year, idSubstr
   }
 }
 
-async function updateCustomFieldInDatabase(idSubstring, phoneNumber, fieldName, fieldValue) {
+async function updateCustomFieldInDatabase(
+  idSubstring,
+  phoneNumber,
+  fieldName,
+  fieldValue
+) {
   console.log(`Updating custom field for company ${idSubstring}...`);
   const sqlClient = await pool.connect();
-  
+
   try {
-    await sqlClient.query('BEGIN');
-    
+    await sqlClient.query("BEGIN");
+
     const checkQuery = `
       SELECT custom_fields 
       FROM public.contacts 
       WHERE phone = $1 AND company_id = $2
       LIMIT 1
     `;
-    
-    const checkResult = await sqlClient.query(checkQuery, [phoneNumber, idSubstring]);
-    
+
+    const checkResult = await sqlClient.query(checkQuery, [
+      phoneNumber,
+      idSubstring,
+    ]);
+
     if (checkResult.rows.length === 0) {
-      await sqlClient.query('ROLLBACK');
-      console.log(`No contact found for phone number ${phoneNumber} in company ${idSubstring}.`);
+      await sqlClient.query("ROLLBACK");
+      console.log(
+        `No contact found for phone number ${phoneNumber} in company ${idSubstring}.`
+      );
       return "Contact not found";
     }
-    
+
     const currentCustomFields = checkResult.rows[0].custom_fields || {};
-    
+
     currentCustomFields[fieldName] = fieldValue;
-    
+
     const updateQuery = `
       UPDATE public.contacts 
       SET custom_fields = $1, last_updated = CURRENT_TIMESTAMP
       WHERE phone = $2 AND company_id = $3
     `;
-    
-    await sqlClient.query(updateQuery, [JSON.stringify(currentCustomFields), phoneNumber, idSubstring]);
-    
-    await sqlClient.query('COMMIT');
-    
+
+    await sqlClient.query(updateQuery, [
+      JSON.stringify(currentCustomFields),
+      phoneNumber,
+      idSubstring,
+    ]);
+
+    await sqlClient.query("COMMIT");
+
     console.log(
       `Successfully updated custom field '${fieldName}' with value '${fieldValue}' for Company ${idSubstring} at ID ${phoneNumber}`
     );
-    
+
     return "Custom field updated successfully";
   } catch (error) {
-    await sqlClient.query('ROLLBACK');
-    console.error(`Error updating custom field in database for Company ${idSubstring} at ID ${phoneNumber}:`, error);
+    await sqlClient.query("ROLLBACK");
+    console.error(
+      `Error updating custom field in database for Company ${idSubstring} at ID ${phoneNumber}:`,
+      error
+    );
     return "Failed to update custom field.";
   } finally {
     sqlClient.release();
@@ -7703,40 +7535,57 @@ async function updateCustomFieldInDatabase(idSubstring, phoneNumber, fieldName, 
 async function getCustomFieldsFromDatabase(idSubstring, phoneNumber) {
   console.log(`Retrieving custom fields for company ${idSubstring}...`);
   const sqlClient = await pool.connect();
-  
+
   try {
-    await sqlClient.query('BEGIN');
-    
+    await sqlClient.query("BEGIN");
+
     const query = `
       SELECT custom_fields 
       FROM public.contacts 
       WHERE phone = $1 AND company_id = $2
       LIMIT 1
     `;
-    
+
     const result = await sqlClient.query(query, [phoneNumber, idSubstring]);
-    
-    await sqlClient.query('COMMIT');
-    
+
+    await sqlClient.query("COMMIT");
+
     if (result.rows.length === 0) {
-      console.log(`No contact found for phone number ${phoneNumber} in company ${idSubstring}.`);
+      console.log(
+        `No contact found for phone number ${phoneNumber} in company ${idSubstring}.`
+      );
       return { error: "Contact not found" };
     }
-    
+
     const customFields = result.rows[0].custom_fields || {};
-    
-    console.log(`Retrieved custom fields for phone number ${phoneNumber}:`, customFields);
+
+    console.log(
+      `Retrieved custom fields for phone number ${phoneNumber}:`,
+      customFields
+    );
     return customFields;
   } catch (error) {
-    await sqlClient.query('ROLLBACK');
-    console.error(`Error retrieving custom fields for Company ${idSubstring} at ID ${phoneNumber}:`, error);
+    await sqlClient.query("ROLLBACK");
+    console.error(
+      `Error retrieving custom fields for Company ${idSubstring} at ID ${phoneNumber}:`,
+      error
+    );
     return { error: "Failed to retrieve custom fields" };
   } finally {
     sqlClient.release();
   }
 }
 
-async function handleToolCalls(toolCalls, idSubstring, client, phoneNumber, name, companyName, contact, threadID) {
+async function handleToolCalls(
+  toolCalls,
+  idSubstring,
+  client,
+  phoneNumber,
+  name,
+  companyName,
+  contact,
+  threadID
+) {
   console.log("Handling tool calls...");
   const toolOutputs = [];
   for (const toolCall of toolCalls) {
@@ -7746,13 +7595,22 @@ async function handleToolCalls(toolCalls, idSubstring, client, phoneNumber, name
         try {
           console.log("Checking Spreadsheet...");
           const args = JSON.parse(toolCall.function.arguments);
-          const result = await checkSpreadsheetDCAuto(client, phoneNumber, args.model, args.modelYear, idSubstring);
+          const result = await checkSpreadsheetDCAuto(
+            client,
+            phoneNumber,
+            args.model,
+            args.modelYear,
+            idSubstring
+          );
           toolOutputs.push({
             tool_call_id: toolCall.id,
             output: result,
           });
         } catch (error) {
-          console.error("Error in handleToolCalls for checkSpreadsheetDCAuto:", error);
+          console.error(
+            "Error in handleToolCalls for checkSpreadsheetDCAuto:",
+            error
+          );
           toolOutputs.push({
             tool_call_id: toolCall.id,
             output: JSON.stringify({ error: error.message }),
@@ -7764,13 +7622,22 @@ async function handleToolCalls(toolCalls, idSubstring, client, phoneNumber, name
           try {
             console.log("Sending feedback to group...");
             const args = JSON.parse(toolCall.function.arguments);
-            const result = await sendFeedbackToGroup(client, args.feedback, name, phoneNumber, idSubstring);
+            const result = await sendFeedbackToGroup(
+              client,
+              args.feedback,
+              name,
+              phoneNumber,
+              idSubstring
+            );
             toolOutputs.push({
               tool_call_id: toolCall.id,
               output: result,
             });
           } catch (error) {
-            console.error("Error in handleToolCalls for sendFeedbackToGroup:", error);
+            console.error(
+              "Error in handleToolCalls for sendFeedbackToGroup:",
+              error
+            );
             toolOutputs.push({
               tool_call_id: toolCall.id,
               output: JSON.stringify({ error: error.message }),
@@ -7782,7 +7649,13 @@ async function handleToolCalls(toolCalls, idSubstring, client, phoneNumber, name
         try {
           console.log("Sending image...");
           const args = JSON.parse(toolCall.function.arguments);
-          const result = await sendImage(client, phoneNumber, args.imageUrl, args.caption, idSubstring);
+          const result = await sendImage(
+            client,
+            phoneNumber,
+            args.imageUrl,
+            args.caption,
+            idSubstring
+          );
           toolOutputs.push({
             tool_call_id: toolCall.id,
             output: result,
@@ -7805,13 +7678,20 @@ async function handleToolCalls(toolCalls, idSubstring, client, phoneNumber, name
             throw new Error("Missing required fields for adding points");
           }
 
-          const result = await addPointsForBottlesBought(phoneNumber, idSubstring, args.bottlesBought);
+          const result = await addPointsForBottlesBought(
+            phoneNumber,
+            idSubstring,
+            args.bottlesBought
+          );
           toolOutputs.push({
             tool_call_id: toolCall.id,
             output: result,
           });
         } catch (error) {
-          console.error("Error in handleToolCalls for addPointsForBottlesBought:", error);
+          console.error(
+            "Error in handleToolCalls for addPointsForBottlesBought:",
+            error
+          );
           toolOutputs.push({
             tool_call_id: toolCall.id,
             output: JSON.stringify({ error: error.message }),
@@ -7824,7 +7704,13 @@ async function handleToolCalls(toolCalls, idSubstring, client, phoneNumber, name
           const args = JSON.parse(toolCall.function.arguments);
 
           // Ensure all required fields are provided
-          if (!args.phoneNumber || !args.email || !args.username || !args.companyName || !args.password) {
+          if (
+            !args.phoneNumber ||
+            !args.email ||
+            !args.username ||
+            !args.companyName ||
+            !args.password
+          ) {
             throw new Error("Missing required fields for user registration");
           }
 
@@ -7856,7 +7742,10 @@ async function handleToolCalls(toolCalls, idSubstring, client, phoneNumber, name
             output: result,
           });
         } catch (error) {
-          console.error("Error in handleToolCalls for testDailyReminders:", error);
+          console.error(
+            "Error in handleToolCalls for testDailyReminders:",
+            error
+          );
           toolOutputs.push({
             tool_call_id: toolCall.id,
             output: JSON.stringify({ error: error.message }),
@@ -7913,7 +7802,10 @@ async function handleToolCalls(toolCalls, idSubstring, client, phoneNumber, name
             output: result,
           });
         } catch (error) {
-          console.error("Error in handleToolCalls for listAssignedTasks:", error);
+          console.error(
+            "Error in handleToolCalls for listAssignedTasks:",
+            error
+          );
           toolOutputs.push({
             tool_call_id: toolCall.id,
             output: JSON.stringify({ error: error.message }),
@@ -7924,7 +7816,10 @@ async function handleToolCalls(toolCalls, idSubstring, client, phoneNumber, name
         try {
           console.log("Searching contacts...");
           const args = JSON.parse(toolCall.function.arguments);
-          const searchResults = await searchContacts(idSubstring, args.searchTerm);
+          const searchResults = await searchContacts(
+            idSubstring,
+            args.searchTerm
+          );
           toolOutputs.push({
             tool_call_id: toolCall.id,
             output: searchResults,
@@ -7941,7 +7836,11 @@ async function handleToolCalls(toolCalls, idSubstring, client, phoneNumber, name
         try {
           console.log("Tagging contact...");
           const args = JSON.parse(toolCall.function.arguments);
-          const result = await tagContact(idSubstring, args.phoneNumber, args.tag);
+          const result = await tagContact(
+            idSubstring,
+            args.phoneNumber,
+            args.tag
+          );
           toolOutputs.push({
             tool_call_id: toolCall.id,
             output: result,
@@ -7963,7 +7862,10 @@ async function handleToolCalls(toolCalls, idSubstring, client, phoneNumber, name
             output: JSON.stringify(result),
           });
         } catch (error) {
-          console.error("Error in handleToolCalls for getContactsAddedToday:", error);
+          console.error(
+            "Error in handleToolCalls for getContactsAddedToday:",
+            error
+          );
           toolOutputs.push({
             tool_call_id: toolCall.id,
             output: JSON.stringify({ error: error.message }),
@@ -7974,13 +7876,20 @@ async function handleToolCalls(toolCalls, idSubstring, client, phoneNumber, name
         try {
           console.log("Listing assigned contacts...");
           const args = JSON.parse(toolCall.function.arguments);
-          const result = await listAssignedContacts(idSubstring, args.assigneeName, args.limit);
+          const result = await listAssignedContacts(
+            idSubstring,
+            args.assigneeName,
+            args.limit
+          );
           toolOutputs.push({
             tool_call_id: toolCall.id,
             output: result,
           });
         } catch (error) {
-          console.error("Error in handleToolCalls for listAssignedContacts:", error);
+          console.error(
+            "Error in handleToolCalls for listAssignedContacts:",
+            error
+          );
           toolOutputs.push({
             tool_call_id: toolCall.id,
             output: JSON.stringify({ error: error.message }),
@@ -7991,13 +7900,20 @@ async function handleToolCalls(toolCalls, idSubstring, client, phoneNumber, name
         try {
           console.log("Listing contacts with tag...");
           const args = JSON.parse(toolCall.function.arguments);
-          const result = await listContactsWithTag(idSubstring, args.tag, args.limit);
+          const result = await listContactsWithTag(
+            idSubstring,
+            args.tag,
+            args.limit
+          );
           toolOutputs.push({
             tool_call_id: toolCall.id,
             output: result,
           });
         } catch (error) {
-          console.error("Error in handleToolCalls for listContactsWithTag:", error);
+          console.error(
+            "Error in handleToolCalls for listContactsWithTag:",
+            error
+          );
           toolOutputs.push({
             tool_call_id: toolCall.id,
             output: JSON.stringify({ error: error.message }),
@@ -8025,23 +7941,40 @@ async function handleToolCalls(toolCalls, idSubstring, client, phoneNumber, name
         try {
           console.log("\n=== START: checkAvailableTimeSlots Tool Call ===");
           const now = moment().tz("Asia/Kuala_Lumpur");
-          console.log(`Tool Call - Current date and time (KL): ${now.format("dddd, YYYY-MM-DD HH:mm:ss")}`);
+          console.log(
+            `Tool Call - Current date and time (KL): ${now.format(
+              "dddd, YYYY-MM-DD HH:mm:ss"
+            )}`
+          );
 
           // Parse and validate the requested date if provided
           const args = JSON.parse(toolCall.function.arguments);
-          const requestedDate = args.specificDate ? moment(args.specificDate).tz("Asia/Kuala_Lumpur") : null;
+          const requestedDate = args.specificDate
+            ? moment(args.specificDate).tz("Asia/Kuala_Lumpur")
+            : null;
 
           console.log("Tool Call - Current day:", now.format("dddd"));
           console.log(
             "Tool Call - Requested date:",
-            requestedDate ? requestedDate.format("dddd, YYYY-MM-DD") : "No specific date requested"
+            requestedDate
+              ? requestedDate.format("dddd, YYYY-MM-DD")
+              : "No specific date requested"
           );
 
           // Call the function and get result
-          const result = await checkAvailableTimeSlots(idSubstring, args.specificDate, contact, client);
+          const result = await checkAvailableTimeSlots(
+            idSubstring,
+            args.specificDate,
+            contact,
+            client
+          );
 
           if (Array.isArray(result) && result.length > 0) {
-            console.log(`Tool Call - Found ${result.length} available slots for ${now.format("dddd")}`);
+            console.log(
+              `Tool Call - Found ${
+                result.length
+              } available slots for ${now.format("dddd")}`
+            );
             toolOutputs.push({
               tool_call_id: toolCall.id,
               output: JSON.stringify({
@@ -8050,7 +7983,9 @@ async function handleToolCalls(toolCalls, idSubstring, client, phoneNumber, name
               }),
             });
           } else {
-            console.log(`Tool Call - No available slots found for ${now.format("dddd")}`);
+            console.log(
+              `Tool Call - No available slots found for ${now.format("dddd")}`
+            );
             toolOutputs.push({
               tool_call_id: toolCall.id,
               output: JSON.stringify({
@@ -8061,7 +7996,10 @@ async function handleToolCalls(toolCalls, idSubstring, client, phoneNumber, name
           }
           console.log("=== END: checkAvailableTimeSlots Tool Call ===\n");
         } catch (error) {
-          console.error("Error in handleToolCalls for checkAvailableTimeSlots:", error);
+          console.error(
+            "Error in handleToolCalls for checkAvailableTimeSlots:",
+            error
+          );
           toolOutputs.push({
             tool_call_id: toolCall.id,
             output: JSON.stringify({ error: error.message }),
@@ -8073,7 +8011,10 @@ async function handleToolCalls(toolCalls, idSubstring, client, phoneNumber, name
           console.log("Parsing arguments for createCalendarEvent...");
           const args = JSON.parse(toolCall.function.arguments);
           console.log("Arguments:", args);
-          console.log("Phone Number in createCalendarEvent before function call...  " + phoneNumber);
+          console.log(
+            "Phone Number in createCalendarEvent before function call...  " +
+              phoneNumber
+          );
           console.log("Calling createCalendarEvent...");
           const result = await createCalendarEvent(
             args.summary,
@@ -8090,7 +8031,9 @@ async function handleToolCalls(toolCalls, idSubstring, client, phoneNumber, name
 
           if (result.error) {
             if (result.error === "Scheduling conflict detected") {
-              console.log("Scheduling conflict detected, preparing conflict information...");
+              console.log(
+                "Scheduling conflict detected, preparing conflict information..."
+              );
               toolOutputs.push({
                 tool_call_id: toolCall.id,
                 output: JSON.stringify({
@@ -8133,13 +8076,19 @@ async function handleToolCalls(toolCalls, idSubstring, client, phoneNumber, name
         try {
           console.log("Fetching contact data...");
           const args = JSON.parse(toolCall.function.arguments);
-          const contactData = await fetchContactData(args.phoneNumber, idSubstring);
+          const contactData = await fetchContactData(
+            args.phoneNumber,
+            idSubstring
+          );
           toolOutputs.push({
             tool_call_id: toolCall.id,
             output: contactData,
           });
         } catch (error) {
-          console.error("Error in handleToolCalls for fetchContactData:", error);
+          console.error(
+            "Error in handleToolCalls for fetchContactData:",
+            error
+          );
           toolOutputs.push({
             tool_call_id: toolCall.id,
             output: JSON.stringify({ error: error.message }),
@@ -8155,7 +8104,10 @@ async function handleToolCalls(toolCalls, idSubstring, client, phoneNumber, name
             output: JSON.stringify({ totalContacts }),
           });
         } catch (error) {
-          console.error("Error in handleToolCalls for getTotalContacts:", error);
+          console.error(
+            "Error in handleToolCalls for getTotalContacts:",
+            error
+          );
           toolOutputs.push({
             tool_call_id: toolCall.id,
             output: JSON.stringify({ error: error.message }),
@@ -8166,7 +8118,12 @@ async function handleToolCalls(toolCalls, idSubstring, client, phoneNumber, name
         try {
           console.log("Adding task...");
           const args = JSON.parse(toolCall.function.arguments);
-          const result = await addTask(idSubstring, args.taskString, args.assignee, args.dueDate);
+          const result = await addTask(
+            idSubstring,
+            args.taskString,
+            args.assignee,
+            args.dueDate
+          );
           toolOutputs.push({
             tool_call_id: toolCall.id,
             output: result,
@@ -8199,13 +8156,20 @@ async function handleToolCalls(toolCalls, idSubstring, client, phoneNumber, name
         try {
           console.log("Updating task status...");
           const args = JSON.parse(toolCall.function.arguments);
-          const result = await updateTaskStatus(idSubstring, args.taskIndex, args.newStatus);
+          const result = await updateTaskStatus(
+            idSubstring,
+            args.taskIndex,
+            args.newStatus
+          );
           toolOutputs.push({
             tool_call_id: toolCall.id,
             output: result,
           });
         } catch (error) {
-          console.error("Error in handleToolCalls for updateTaskStatus:", error);
+          console.error(
+            "Error in handleToolCalls for updateTaskStatus:",
+            error
+          );
           toolOutputs.push({
             tool_call_id: toolCall.id,
             output: JSON.stringify({ error: error.message }),
@@ -8216,13 +8180,19 @@ async function handleToolCalls(toolCalls, idSubstring, client, phoneNumber, name
         try {
           console.log("Fetching multiple contacts data...");
           const args = JSON.parse(toolCall.function.arguments);
-          const contactsData = await fetchMultipleContactsData(args.phoneNumbers, idSubstring);
+          const contactsData = await fetchMultipleContactsData(
+            args.phoneNumbers,
+            idSubstring
+          );
           toolOutputs.push({
             tool_call_id: toolCall.id,
             output: contactsData,
           });
         } catch (error) {
-          console.error("Error in handleToolCalls for fetchMultipleContactsData:", error);
+          console.error(
+            "Error in handleToolCalls for fetchMultipleContactsData:",
+            error
+          );
           toolOutputs.push({
             tool_call_id: toolCall.id,
             output: JSON.stringify({ error: error.message }),
@@ -8233,7 +8203,11 @@ async function handleToolCalls(toolCalls, idSubstring, client, phoneNumber, name
         try {
           console.log("Listing contacts...");
           const args = JSON.parse(toolCall.function.arguments);
-          const contactsList = await listContacts(idSubstring, args.limit, args.offset);
+          const contactsList = await listContacts(
+            idSubstring,
+            args.limit,
+            args.offset
+          );
           toolOutputs.push({
             tool_call_id: toolCall.id,
             output: contactsList,
@@ -8270,7 +8244,9 @@ async function handleToolCalls(toolCalls, idSubstring, client, phoneNumber, name
               output: JSON.stringify({ error: result.error }),
             });
           } else {
-            console.log("sendRescheduleRequest sent successfully, preparing tool output...");
+            console.log(
+              "sendRescheduleRequest sent successfully, preparing tool output..."
+            );
             toolOutputs.push({
               tool_call_id: toolCall.id,
               output: JSON.stringify(result),
@@ -8287,9 +8263,19 @@ async function handleToolCalls(toolCalls, idSubstring, client, phoneNumber, name
         break;
       case "sendInquiryToGroupNewTown":
         try {
-          const report = await generateInquiryReportNewTown(threadID, companyConfig.assistantId);
-          const sentMessage = await client.sendMessage("120363107024888999@g.us", report);
-          await addMessagetoPostgres(sentMessage, idSubstring, "+120363107024888999");
+          const report = await generateInquiryReportNewTown(
+            threadID,
+            companyConfig.assistantId
+          );
+          const sentMessage = await client.sendMessage(
+            "120363107024888999@g.us",
+            report
+          );
+          await addMessagetoPostgres(
+            sentMessage,
+            idSubstring,
+            "+120363107024888999"
+          );
 
           // Add inquiry tag to contact in Firebase
           await addTagToPostgres(phoneNumber, "inquiry", idSubstring);
@@ -8312,9 +8298,19 @@ async function handleToolCalls(toolCalls, idSubstring, client, phoneNumber, name
       case "assignContactAndGenerateReportNewTown":
         try {
           // Generate and send report
-          const report = await generateSpecialReportNewTown(threadID, companyConfig.assistantId);
-          const sentMessage = await client.sendMessage("120363107024888999@g.us", report);
-          await addMessagetoPostgres(sentMessage, idSubstring, "+120363107024888999");
+          const report = await generateSpecialReportNewTown(
+            threadID,
+            companyConfig.assistantId
+          );
+          const sentMessage = await client.sendMessage(
+            "120363107024888999@g.us",
+            report
+          );
+          await addMessagetoPostgres(
+            sentMessage,
+            idSubstring,
+            "+120363107024888999"
+          );
 
           toolOutputs.push({
             tool_call_id: toolCall.id,
@@ -8324,7 +8320,10 @@ async function handleToolCalls(toolCalls, idSubstring, client, phoneNumber, name
             }),
           });
         } catch (error) {
-          console.error("Error in assignContactAndGenerateReportNewTown:", error);
+          console.error(
+            "Error in assignContactAndGenerateReportNewTown:",
+            error
+          );
           toolOutputs.push({
             tool_call_id: toolCall.id,
             output: JSON.stringify({ error: error.message }),
@@ -8335,13 +8334,22 @@ async function handleToolCalls(toolCalls, idSubstring, client, phoneNumber, name
         try {
           console.log("Sending feedback to group for NewTown...");
           const args = JSON.parse(toolCall.function.arguments);
-          const result = await sendFeedbackToGroupNewTown(client, args.feedback, name, phoneNumber, idSubstring);
+          const result = await sendFeedbackToGroupNewTown(
+            client,
+            args.feedback,
+            name,
+            phoneNumber,
+            idSubstring
+          );
           toolOutputs.push({
             tool_call_id: toolCall.id,
             output: result,
           });
         } catch (error) {
-          console.error("Error in handleToolCalls for sendFeedbackToGroupNewTown:", error);
+          console.error(
+            "Error in handleToolCalls for sendFeedbackToGroupNewTown:",
+            error
+          );
           toolOutputs.push({
             tool_call_id: toolCall.id,
             output: JSON.stringify({ error: error.message }),
@@ -8350,7 +8358,9 @@ async function handleToolCalls(toolCalls, idSubstring, client, phoneNumber, name
         break;
       case "updateCustomFields":
         try {
-          console.log(`Updating Custom Fields using ToolCalls for Company ${idSubstring}...`);
+          console.log(
+            `Updating Custom Fields using ToolCalls for Company ${idSubstring}...`
+          );
           const args = JSON.parse(toolCall.function.arguments);
 
           if (!Array.isArray(args.customFields)) {
@@ -8362,15 +8372,26 @@ async function handleToolCalls(toolCalls, idSubstring, client, phoneNumber, name
               throw new Error("Each custom field must have a key and a value");
             }
             console.log(`Updating custom field: ${field.key} = ${field.value}`);
-            await updateCustomFieldInDatabase(idSubstring, phoneNumber, field.key, field.value);
+            await updateCustomFieldInDatabase(
+              idSubstring,
+              phoneNumber,
+              field.key,
+              field.value
+            );
           }
 
           toolOutputs.push({
             tool_call_id: toolCall.id,
-            output: JSON.stringify({ success: true, message: "Custom fields updated successfully" }),
+            output: JSON.stringify({
+              success: true,
+              message: "Custom fields updated successfully",
+            }),
           });
         } catch (error) {
-          console.error("Error in handleToolCalls for updateCustomFields:", error);
+          console.error(
+            "Error in handleToolCalls for updateCustomFields:",
+            error
+          );
           toolOutputs.push({
             tool_call_id: toolCall.id,
             output: JSON.stringify({ error: error.message }),
@@ -8380,7 +8401,10 @@ async function handleToolCalls(toolCalls, idSubstring, client, phoneNumber, name
       case "getCustomFields":
         try {
           console.log(`Retrieving Custom Fields for Company ${idSubstring}...`);
-          const result = await getCustomFieldsFromDatabase(idSubstring, phoneNumber);
+          const result = await getCustomFieldsFromDatabase(
+            idSubstring,
+            phoneNumber
+          );
 
           if (result.error) {
             throw new Error(result.error);
@@ -8426,10 +8450,13 @@ async function analyzeAndSetUserProfile(phoneNumber, threadId, idSubstring) {
 
     // Add chat history to thread
     console.log("Adding chat history to profiling thread...");
-    const messageResponse = await openai.beta.threads.messages.create(profilingThread.id, {
-      role: "user",
-      content: JSON.stringify(chatHistory),
-    });
+    const messageResponse = await openai.beta.threads.messages.create(
+      profilingThread.id,
+      {
+        role: "user",
+        content: JSON.stringify(chatHistory),
+      }
+    );
     console.log("Chat history added to thread:", {
       messageId: messageResponse.id,
       threadId: profilingThread.id,
@@ -8448,7 +8475,10 @@ async function analyzeAndSetUserProfile(phoneNumber, threadId, idSubstring) {
 
     // Wait for completion
     console.log("Waiting for profiling completion...");
-    const profile = await waitForProfilingCompletion(profilingThread.id, run.id);
+    const profile = await waitForProfilingCompletion(
+      profilingThread.id,
+      run.id
+    );
     console.log("Received profile data:", profile);
 
     // Parse profile data
@@ -8489,7 +8519,10 @@ async function waitForProfilingCompletion(threadId, runId) {
 
   for (let attempts = 0; attempts < maxAttempts; attempts++) {
     try {
-      const runStatus = await openai.beta.threads.runs.retrieve(threadId, runId);
+      const runStatus = await openai.beta.threads.runs.retrieve(
+        threadId,
+        runId
+      );
 
       if (runStatus.status === "completed") {
         const messages = await openai.beta.threads.messages.list(threadId);
@@ -8514,12 +8547,17 @@ async function waitForProfilingCompletion(threadId, runId) {
           JSON.parse(cleanedMessage);
           return cleanedMessage;
         } catch (parseError) {
-          console.log("Error parsing assistant response, wrapping in JSON structure:", latestMessage);
+          console.log(
+            "Error parsing assistant response, wrapping in JSON structure:",
+            latestMessage
+          );
           return JSON.stringify({
             profileAnalysis: latestMessage,
           });
         }
-      } else if (["failed", "cancelled", "expired"].includes(runStatus.status)) {
+      } else if (
+        ["failed", "cancelled", "expired"].includes(runStatus.status)
+      ) {
         throw new Error(`Profiling analysis ${runStatus.status}`);
       }
 
@@ -8537,30 +8575,35 @@ async function setUserProfile(idSubstring, phoneNumber, profileData) {
   console.log("Setting user profile for", phoneNumber);
 
   const sqlClient = await pool.connect();
-  
+
   try {
-    await sqlClient.query('BEGIN');
-    
+    await sqlClient.query("BEGIN");
+
     const checkQuery = `
       SELECT 1 FROM public.contacts 
       WHERE contact_id = $1 AND company_id = $2
     `;
-    const checkResult = await sqlClient.query(checkQuery, [phoneNumber, idSubstring]);
-    
+    const checkResult = await sqlClient.query(checkQuery, [
+      phoneNumber,
+      idSubstring,
+    ]);
+
     if (checkResult.rows.length === 0) {
-      console.log(`Contact ${phoneNumber} does not exist, creating new contact`);
-      
+      console.log(
+        `Contact ${phoneNumber} does not exist, creating new contact`
+      );
+
       const insertQuery = `
         INSERT INTO public.contacts (contact_id, company_id, profile, last_updated)
         VALUES ($1, $2, $3, CURRENT_TIMESTAMP)
       `;
       await sqlClient.query(insertQuery, [
-        phoneNumber, 
-        idSubstring, 
+        phoneNumber,
+        idSubstring,
         JSON.stringify({
           ...profileData,
-          lastUpdated: new Date().toISOString()
-        })
+          lastUpdated: new Date().toISOString(),
+        }),
       ]);
     } else {
       const updateQuery = `
@@ -8573,23 +8616,23 @@ async function setUserProfile(idSubstring, phoneNumber, profileData) {
           last_updated = CURRENT_TIMESTAMP
         WHERE contact_id = $2 AND company_id = $3
       `;
-      
+
       const profileWithTimestamp = {
         ...profileData,
-        lastUpdated: new Date().toISOString()
+        lastUpdated: new Date().toISOString(),
       };
-      
+
       await sqlClient.query(updateQuery, [
-        JSON.stringify(profileWithTimestamp), 
-        phoneNumber, 
-        idSubstring
+        JSON.stringify(profileWithTimestamp),
+        phoneNumber,
+        idSubstring,
       ]);
     }
-    
-    await sqlClient.query('COMMIT');
+
+    await sqlClient.query("COMMIT");
     console.log(`Profile updated for contact ${phoneNumber} in PostgreSQL`);
   } catch (error) {
-    await sqlClient.query('ROLLBACK');
+    await sqlClient.query("ROLLBACK");
     console.error("Error saving profile to PostgreSQL:", error);
     throw error;
   } finally {
@@ -8597,7 +8640,11 @@ async function setUserProfile(idSubstring, phoneNumber, profileData) {
   }
 }
 
-async function analyzeAndSetLeadTemperature(phoneNumber, threadId, idSubstring) {
+async function analyzeAndSetLeadTemperature(
+  phoneNumber,
+  threadId,
+  idSubstring
+) {
   try {
     console.log("Analyzing chat history for lead temperature...", phoneNumber);
     const chatHistory = await fetchRecentChatHistory(threadId);
@@ -8650,9 +8697,15 @@ async function analyzeChatsWithAI(chatHistory) {
 function determineLeadTemperature(analysis) {
   const lowercaseAnalysis = analysis.toLowerCase();
   console.log(lowercaseAnalysis);
-  if (lowercaseAnalysis.includes("high interest") || lowercaseAnalysis.includes("very engaged")) {
+  if (
+    lowercaseAnalysis.includes("high interest") ||
+    lowercaseAnalysis.includes("very engaged")
+  ) {
     return "hot";
-  } else if (lowercaseAnalysis.includes("moderate interest") || lowercaseAnalysis.includes("somewhat engaged")) {
+  } else if (
+    lowercaseAnalysis.includes("moderate interest") ||
+    lowercaseAnalysis.includes("somewhat engaged")
+  ) {
     return "medium";
   } else {
     return "cold";
@@ -8665,24 +8718,29 @@ function removeUndefined(obj) {
 
 async function addTagToPostgres(contactID, tag, companyID, remove = false) {
   console.log(
-    `${remove ? "Removing" : "Adding"} tag "${tag}" ${remove ? "from" : "to"} PostgreSQL for contact ${contactID}`
+    `${remove ? "Removing" : "Adding"} tag "${tag}" ${
+      remove ? "from" : "to"
+    } PostgreSQL for contact ${contactID}`
   );
 
   const sqlClient = await pool.connect();
-  
+
   try {
-    await sqlClient.query('BEGIN');
-    
+    await sqlClient.query("BEGIN");
+
     const checkQuery = `
       SELECT 1 FROM public.contacts 
       WHERE contact_id = $1 AND company_id = $2
     `;
-    const checkResult = await sqlClient.query(checkQuery, [contactID, companyID]);
-    
+    const checkResult = await sqlClient.query(checkQuery, [
+      contactID,
+      companyID,
+    ]);
+
     if (checkResult.rows.length === 0) {
       throw new Error("Contact does not exist!");
     }
-    
+
     if (remove) {
       const removeQuery = `
         UPDATE public.contacts 
@@ -8697,10 +8755,16 @@ async function addTagToPostgres(contactID, tag, companyID, remove = false) {
         WHERE contact_id = $2 AND company_id = $3
         RETURNING (tags ? $1) AS tag_existed_before
       `;
-      const removeResult = await sqlClient.query(removeQuery, [tag, contactID, companyID]);
-      
+      const removeResult = await sqlClient.query(removeQuery, [
+        tag,
+        contactID,
+        companyID,
+      ]);
+
       if (removeResult.rows[0].tag_existed_before) {
-        console.log(`Tag "${tag}" removed successfully from contact ${contactID}`);
+        console.log(
+          `Tag "${tag}" removed successfully from contact ${contactID}`
+        );
       } else {
         console.log(`Tag "${tag}" doesn't exist for contact ${contactID}`);
       }
@@ -8717,18 +8781,22 @@ async function addTagToPostgres(contactID, tag, companyID, remove = false) {
         WHERE contact_id = $2 AND company_id = $3
         RETURNING (tags ? $1) AS tag_existed_before_update
       `;
-      const addResult = await sqlClient.query(addQuery, [tag, contactID, companyID]);
-      
+      const addResult = await sqlClient.query(addQuery, [
+        tag,
+        contactID,
+        companyID,
+      ]);
+
       if (!addResult.rows[0].tag_existed_before_update) {
         console.log(`Tag "${tag}" added successfully to contact ${contactID}`);
       } else {
         console.log(`Tag "${tag}" already exists for contact ${contactID}`);
       }
     }
-    
-    await sqlClient.query('COMMIT');
+
+    await sqlClient.query("COMMIT");
   } catch (error) {
-    await sqlClient.query('ROLLBACK');
+    await sqlClient.query("ROLLBACK");
     console.error("Error managing tags in PostgreSQL:", error);
   } finally {
     sqlClient.release();
@@ -8736,33 +8804,38 @@ async function addTagToPostgres(contactID, tag, companyID, remove = false) {
 }
 
 async function setLeadTemperature(idSubstring, phoneNumber, temperature) {
-  console.log(`Setting lead temperature "${temperature}" for contact ${phoneNumber} in PostgreSQL`);
+  console.log(
+    `Setting lead temperature "${temperature}" for contact ${phoneNumber} in PostgreSQL`
+  );
 
   const sqlClient = await pool.connect();
-  
+
   try {
-    await sqlClient.query('BEGIN');
-    
+    await sqlClient.query("BEGIN");
+
     const leadTemperatureTags = ["cold", "medium", "hot"];
-    
+
     const checkQuery = `
       SELECT tags FROM public.contacts 
       WHERE contact_id = $1 AND company_id = $2
     `;
-    const checkResult = await sqlClient.query(checkQuery, [phoneNumber, idSubstring]);
-    
+    const checkResult = await sqlClient.query(checkQuery, [
+      phoneNumber,
+      idSubstring,
+    ]);
+
     if (checkResult.rows.length === 0) {
       throw new Error(`Contact ${phoneNumber} does not exist!`);
     }
-    
+
     let currentTags = checkResult.rows[0].tags || [];
-    
-    const updatedTags = Array.isArray(currentTags) 
-      ? currentTags.filter(tag => !leadTemperatureTags.includes(tag)) 
+
+    const updatedTags = Array.isArray(currentTags)
+      ? currentTags.filter((tag) => !leadTemperatureTags.includes(tag))
       : [];
-    
+
     updatedTags.push(temperature);
-    
+
     const updateQuery = `
       UPDATE public.contacts 
       SET 
@@ -8770,12 +8843,18 @@ async function setLeadTemperature(idSubstring, phoneNumber, temperature) {
         last_updated = CURRENT_TIMESTAMP
       WHERE contact_id = $2 AND company_id = $3
     `;
-    await sqlClient.query(updateQuery, [JSON.stringify(updatedTags), phoneNumber, idSubstring]);
-    
-    await sqlClient.query('COMMIT');
-    console.log(`Lead temperature "${temperature}" set for contact ${phoneNumber} in PostgreSQL`);
+    await sqlClient.query(updateQuery, [
+      JSON.stringify(updatedTags),
+      phoneNumber,
+      idSubstring,
+    ]);
+
+    await sqlClient.query("COMMIT");
+    console.log(
+      `Lead temperature "${temperature}" set for contact ${phoneNumber} in PostgreSQL`
+    );
   } catch (error) {
-    await sqlClient.query('ROLLBACK');
+    await sqlClient.query("ROLLBACK");
     console.error("Error setting lead temperature in PostgreSQL:", error);
   } finally {
     sqlClient.release();
@@ -8832,19 +8911,36 @@ async function updateMessageUsage(idSubstring) {
   }
 }
 
-async function handleOpenAIAssistant(message, threadID, tags, phoneNumber, idSubstring, client, name) {
+async function handleOpenAIAssistant(
+  message,
+  threadID,
+  tags,
+  phoneNumber,
+  idSubstring,
+  client,
+  name
+) {
   console.log(companyConfig.assistantId);
   let assistantId = companyConfig.assistantId;
-  const contactData = await getContactDataFromDatabaseByPhone(phoneNumber, idSubstring);
+  const contactData = await getContactDataFromDatabaseByPhone(
+    phoneNumber,
+    idSubstring
+  );
 
   await addMessage(threadID, message);
   await updateMessageUsage(idSubstring);
-  analyzeAndSetLeadTemperature(phoneNumber, threadID, idSubstring).catch((error) =>
-    console.error("Error in background lead temperature analysis:", error)
+  analyzeAndSetLeadTemperature(phoneNumber, threadID, idSubstring).catch(
+    (error) =>
+      console.error("Error in background lead temperature analysis:", error)
   );
-  if (idSubstring === "001" || idSubstring === "0145" || idSubstring === "0124") {
-    analyzeAndSetUserProfile(phoneNumber, threadID, idSubstring).catch((error) =>
-      console.error("Error in background user profile analysis:", error)
+  if (
+    idSubstring === "001" ||
+    idSubstring === "0145" ||
+    idSubstring === "0124"
+  ) {
+    analyzeAndSetUserProfile(phoneNumber, threadID, idSubstring).catch(
+      (error) =>
+        console.error("Error in background user profile analysis:", error)
     );
   }
 
@@ -8853,7 +8949,8 @@ async function handleOpenAIAssistant(message, threadID, tags, phoneNumber, idSub
       type: "function",
       function: {
         name: "checkSpreadsheetDCAuto",
-        description: "Check for vehicle availability in the stock list spreadsheet",
+        description:
+          "Check for vehicle availability in the stock list spreadsheet",
         parameters: {
           type: "object",
           properties: {
@@ -8898,7 +8995,8 @@ async function handleOpenAIAssistant(message, threadID, tags, phoneNumber, idSub
       type: "function",
       function: {
         name: "registerUser",
-        description: "Register a new user with their details and create a new company",
+        description:
+          "Register a new user with their details and create a new company",
         parameters: {
           type: "object",
           properties: {
@@ -8923,7 +9021,13 @@ async function handleOpenAIAssistant(message, threadID, tags, phoneNumber, idSub
               description: "The name of the company to create",
             },
           },
-          required: ["phoneNumber", "email", "password", "username", "companyName"],
+          required: [
+            "phoneNumber",
+            "email",
+            "password",
+            "username",
+            "companyName",
+          ],
         },
       },
     },
@@ -8947,7 +9051,10 @@ async function handleOpenAIAssistant(message, threadID, tags, phoneNumber, idSub
         parameters: {
           type: "object",
           properties: {
-            taskIndex: { type: "number", description: "Index of the task to delete" },
+            taskIndex: {
+              type: "number",
+              description: "Index of the task to delete",
+            },
           },
           required: ["taskIndex"],
         },
@@ -8961,10 +9068,23 @@ async function handleOpenAIAssistant(message, threadID, tags, phoneNumber, idSub
         parameters: {
           type: "object",
           properties: {
-            taskIndex: { type: "number", description: "Index of the task to edit" },
-            newTaskString: { type: "string", description: "New task description (optional)" },
-            newAssignee: { type: "string", description: "New person assigned to the task (optional)" },
-            newDueDate: { type: "string", description: "New due date for the task (YYYY-MM-DD format, optional)" },
+            taskIndex: {
+              type: "number",
+              description: "Index of the task to edit",
+            },
+            newTaskString: {
+              type: "string",
+              description: "New task description (optional)",
+            },
+            newAssignee: {
+              type: "string",
+              description: "New person assigned to the task (optional)",
+            },
+            newDueDate: {
+              type: "string",
+              description:
+                "New due date for the task (YYYY-MM-DD format, optional)",
+            },
           },
           required: ["taskIndex"],
         },
@@ -8978,7 +9098,10 @@ async function handleOpenAIAssistant(message, threadID, tags, phoneNumber, idSub
         parameters: {
           type: "object",
           properties: {
-            assignee: { type: "string", description: "Name of the person assigned to the tasks" },
+            assignee: {
+              type: "string",
+              description: "Name of the person assigned to the tasks",
+            },
           },
           required: ["assignee"],
         },
@@ -8998,7 +9121,8 @@ async function handleOpenAIAssistant(message, threadID, tags, phoneNumber, idSub
             },
             searchTerm: {
               type: "string",
-              description: "Term to search for in contact names, phone numbers, or tags",
+              description:
+                "Term to search for in contact names, phone numbers, or tags",
             },
           },
           required: ["idSubstring", "searchTerm"],
@@ -9009,7 +9133,8 @@ async function handleOpenAIAssistant(message, threadID, tags, phoneNumber, idSub
       type: "function",
       function: {
         name: "tagContact",
-        description: "Tag or assign a contact. Assigning a contact is done by tagging them with the assignee's name.",
+        description:
+          "Tag or assign a contact. Assigning a contact is done by tagging them with the assignee's name.",
         parameters: {
           type: "object",
           properties: {
@@ -9023,7 +9148,8 @@ async function handleOpenAIAssistant(message, threadID, tags, phoneNumber, idSub
             },
             tag: {
               type: "string",
-              description: "Tag to add to the contact. For assignments, use the assignee's name as the tag.",
+              description:
+                "Tag to add to the contact. For assignments, use the assignee's name as the tag.",
             },
           },
           required: ["idSubstring", "phoneNumber", "tag"],
@@ -9038,7 +9164,10 @@ async function handleOpenAIAssistant(message, threadID, tags, phoneNumber, idSub
         parameters: {
           type: "object",
           properties: {
-            idSubstring: { type: "string", description: "ID substring for the company" },
+            idSubstring: {
+              type: "string",
+              description: "ID substring for the company",
+            },
           },
           required: ["idSubstring"],
         },
@@ -9055,7 +9184,8 @@ async function handleOpenAIAssistant(message, threadID, tags, phoneNumber, idSub
           properties: {
             assigneeName: {
               type: "string",
-              description: "The name of the person to whom contacts are assigned",
+              description:
+                "The name of the person to whom contacts are assigned",
             },
             limit: {
               type: "number",
@@ -9108,7 +9238,8 @@ async function handleOpenAIAssistant(message, threadID, tags, phoneNumber, idSub
       type: "function",
       function: {
         name: "fetchMultipleContactsData",
-        description: "Fetch data for multiple contacts given their phone numbers",
+        description:
+          "Fetch data for multiple contacts given their phone numbers",
         parameters: {
           type: "object",
           properties: {
@@ -9130,9 +9261,18 @@ async function handleOpenAIAssistant(message, threadID, tags, phoneNumber, idSub
         parameters: {
           type: "object",
           properties: {
-            idSubstring: { type: "string", description: "ID substring for the company" },
-            limit: { type: "number", description: "Number of contacts to return (default 10)" },
-            offset: { type: "number", description: "Number of contacts to skip (default 0)" },
+            idSubstring: {
+              type: "string",
+              description: "ID substring for the company",
+            },
+            limit: {
+              type: "number",
+              description: "Number of contacts to return (default 10)",
+            },
+            offset: {
+              type: "number",
+              description: "Number of contacts to skip (default 0)",
+            },
           },
           required: ["idSubstring"],
         },
@@ -9153,7 +9293,8 @@ async function handleOpenAIAssistant(message, threadID, tags, phoneNumber, idSub
             },
             specificDate: {
               type: "string",
-              description: "Optional. Specific date to check in YYYY-MM-DD format",
+              description:
+                "Optional. Specific date to check in YYYY-MM-DD format",
             },
           },
           required: ["idSubstring"],
@@ -9169,18 +9310,29 @@ async function handleOpenAIAssistant(message, threadID, tags, phoneNumber, idSub
         parameters: {
           type: "object",
           properties: {
-            summary: { type: "string", description: "Title of the event include the contact name" },
-            description: { type: "string", description: "Description of the event" },
+            summary: {
+              type: "string",
+              description: "Title of the event include the contact name",
+            },
+            description: {
+              type: "string",
+              description: "Description of the event",
+            },
             startDateTime: {
               type: "string",
-              description: "Start date and time in ISO 8601 format in Asia/Kuala Lumpur Timezone",
+              description:
+                "Start date and time in ISO 8601 format in Asia/Kuala Lumpur Timezone",
             },
             endDateTime: {
               type: "string",
-              description: "End date and time in ISO 8601 format in Asia/Kuala Lumpur Timezone",
+              description:
+                "End date and time in ISO 8601 format in Asia/Kuala Lumpur Timezone",
             },
             contactName: { type: "string", description: "Name of the contact" },
-            phoneNumber: { type: "string", description: "Phone number of the contact" },
+            phoneNumber: {
+              type: "string",
+              description: "Phone number of the contact",
+            },
           },
           required: ["summary", "startDateTime", "endDateTime", "contactName"],
         },
@@ -9206,8 +9358,14 @@ async function handleOpenAIAssistant(message, threadID, tags, phoneNumber, idSub
         parameters: {
           type: "object",
           properties: {
-            phoneNumber: { type: "string", description: "Phone number of the contact" },
-            idSubstring: { type: "string", description: "ID substring for the company" },
+            phoneNumber: {
+              type: "string",
+              description: "Phone number of the contact",
+            },
+            idSubstring: {
+              type: "string",
+              description: "ID substring for the company",
+            },
           },
           required: ["phoneNumber", "idSubstring"],
         },
@@ -9221,7 +9379,10 @@ async function handleOpenAIAssistant(message, threadID, tags, phoneNumber, idSub
         parameters: {
           type: "object",
           properties: {
-            idSubstring: { type: "string", description: "ID substring for the company" },
+            idSubstring: {
+              type: "string",
+              description: "ID substring for the company",
+            },
           },
           required: ["idSubstring"],
         },
@@ -9236,8 +9397,14 @@ async function handleOpenAIAssistant(message, threadID, tags, phoneNumber, idSub
           type: "object",
           properties: {
             taskString: { type: "string", description: "Task description" },
-            assignee: { type: "string", description: "Person assigned to the task" },
-            dueDate: { type: "string", description: "Due date for the task (YYYY-MM-DD format)" },
+            assignee: {
+              type: "string",
+              description: "Person assigned to the task",
+            },
+            dueDate: {
+              type: "string",
+              description: "Due date for the task (YYYY-MM-DD format)",
+            },
           },
           required: ["taskString", "assignee", "dueDate"],
         },
@@ -9262,8 +9429,14 @@ async function handleOpenAIAssistant(message, threadID, tags, phoneNumber, idSub
         parameters: {
           type: "object",
           properties: {
-            taskIndex: { type: "number", description: "Index of the task to update" },
-            newStatus: { type: "string", description: "New status for the task" },
+            taskIndex: {
+              type: "number",
+              description: "Index of the task to update",
+            },
+            newStatus: {
+              type: "string",
+              description: "New status for the task",
+            },
           },
           required: ["taskIndex", "newStatus"],
         },
@@ -9277,7 +9450,10 @@ async function handleOpenAIAssistant(message, threadID, tags, phoneNumber, idSub
         parameters: {
           type: "object",
           properties: {
-            bottlesBought: { type: "number", description: "Number of bottles bought" },
+            bottlesBought: {
+              type: "number",
+              description: "Number of bottles bought",
+            },
           },
           required: ["bottlesBought"],
         },
@@ -9287,13 +9463,15 @@ async function handleOpenAIAssistant(message, threadID, tags, phoneNumber, idSub
       type: "function",
       function: {
         name: "sendRescheduleRequest",
-        description: "Send a date request with booking details to merchant for approval",
+        description:
+          "Send a date request with booking details to merchant for approval",
         parameters: {
           type: "object",
           properties: {
             requestedDate: {
               type: "string",
-              description: "The date requested by the customer (YYYY-MM-DD format)",
+              description:
+                "The date requested by the customer (YYYY-MM-DD format)",
             },
             requestedTime: {
               type: "string",
@@ -9375,7 +9553,8 @@ async function handleOpenAIAssistant(message, threadID, tags, phoneNumber, idSub
           properties: {
             customFields: {
               type: "array",
-              description: "An array of objects, each containing a key-value pair for a custom field.",
+              description:
+                "An array of objects, each containing a key-value pair for a custom field.",
               items: {
                 type: "object",
                 properties: {
@@ -9525,16 +9704,19 @@ async function saveThreadIDPostgres(contactID, threadID, idSubstring) {
   let sqlClient;
   try {
     sqlClient = await pool.connect();
-    
-    await sqlClient.query('BEGIN');
-    
+
+    await sqlClient.query("BEGIN");
+
     const checkQuery = `
       SELECT id FROM public.contacts
       WHERE contact_id = $1 AND company_id = $2
     `;
-    
-    const checkResult = await sqlClient.query(checkQuery, [contactID, idSubstring]);
-    
+
+    const checkResult = await sqlClient.query(checkQuery, [
+      contactID,
+      idSubstring,
+    ]);
+
     if (checkResult.rows.length === 0) {
       const insertQuery = `
         INSERT INTO public.contacts (
@@ -9543,24 +9725,34 @@ async function saveThreadIDPostgres(contactID, threadID, idSubstring) {
           $1, $2, $3, $4, $5, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
         )
       `;
-      
-      await sqlClient.query(insertQuery, [contactID, idSubstring, threadID, contactID, contactID]);
-      console.log(`New contact created with Thread ID in PostgreSQL for contact ${contactID}`);
+
+      await sqlClient.query(insertQuery, [
+        contactID,
+        idSubstring,
+        threadID,
+        contactID,
+        contactID,
+      ]);
+      console.log(
+        `New contact created with Thread ID in PostgreSQL for contact ${contactID}`
+      );
     } else {
       const updateQuery = `
         UPDATE public.contacts
         SET thread_id = $1, last_updated = CURRENT_TIMESTAMP
         WHERE contact_id = $2 AND company_id = $3
       `;
-      
+
       await sqlClient.query(updateQuery, [threadID, contactID, idSubstring]);
-      console.log(`Thread ID updated in PostgreSQL for existing contact ${contactID}`);
+      console.log(
+        `Thread ID updated in PostgreSQL for existing contact ${contactID}`
+      );
     }
-    
-    await sqlClient.query('COMMIT');
+
+    await sqlClient.query("COMMIT");
   } catch (error) {
     if (sqlClient) {
-      await sqlClient.query('ROLLBACK');
+      await sqlClient.query("ROLLBACK");
     }
     console.error("Error saving Thread ID to PostgreSQL:", error);
   } finally {
@@ -9590,7 +9782,6 @@ async function fetchConfigFromDatabase(idSubstring) {
 
     companyConfig = result.rows[0];
     console.log(`CompanyConfig for company ${idSubstring}:`, companyConfig);
-
   } catch (error) {
     console.error("Error fetching config:", error);
   } finally {
@@ -9600,8 +9791,6 @@ async function fetchConfigFromDatabase(idSubstring) {
   }
 }
 
-
-
 const FormData = require("form-data");
 const { ids } = require("googleapis/build/src/apis/ids/index.js");
 async function transcribeAudio(audioData) {
@@ -9609,7 +9798,9 @@ async function transcribeAudio(audioData) {
     const formData = new FormData();
 
     // Check if audioData is already a Buffer, if not, convert it
-    const audioBuffer = Buffer.isBuffer(audioData) ? audioData : Buffer.from(audioData, "base64");
+    const audioBuffer = Buffer.isBuffer(audioData)
+      ? audioData
+      : Buffer.from(audioData, "base64");
 
     formData.append("file", audioBuffer, {
       filename: "audio.ogg",
@@ -9618,12 +9809,16 @@ async function transcribeAudio(audioData) {
     formData.append("model", "whisper-1");
     formData.append("response_format", "json");
 
-    const response = await axios.post("https://api.openai.com/v1/audio/transcriptions", formData, {
-      headers: {
-        ...formData.getHeaders(),
-        Authorization: `Bearer ${process.env.OPENAIKEY}`,
-      },
-    });
+    const response = await axios.post(
+      "https://api.openai.com/v1/audio/transcriptions",
+      formData,
+      {
+        headers: {
+          ...formData.getHeaders(),
+          Authorization: `Bearer ${process.env.OPENAIKEY}`,
+        },
+      }
+    );
 
     if (!response.data || !response.data.text) {
       throw new Error("Transcription response is missing or invalid");

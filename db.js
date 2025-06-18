@@ -1,11 +1,16 @@
-const { Pool } = require('pg');
+const { neon, neonConfig } = require("@neondatabase/serverless");
+const { Pool } = require("pg");
 
-// Initialize PostgreSQL connection pool
+// Configure Neon for WebSocket pooling
+neonConfig.webSocketConstructor = require("ws");
+
+// For direct SQL queries (single connection)
+const sql = neon(process.env.DATABASE_URL);
+
+// For connection pooling
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  ssl: {
-    rejectUnauthorized: false
-  }
+  max: 2000,
 });
 
 // Helper function to execute SQL queries

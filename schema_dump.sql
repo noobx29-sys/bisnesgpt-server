@@ -32,32 +32,27 @@ COMMENT ON EXTENSION "uuid-ossp" IS 'generate universally unique identifiers (UU
 
 
 --
--- Name: update_updated_at_column(); Type: FUNCTION; Schema: public; Owner: juta_owner
+-- Name: update_updated_at_column(); Type: FUNCTION; Schema: public; Owner: neondb_owner
 --
 
 CREATE FUNCTION public.update_updated_at_column() RETURNS trigger
     LANGUAGE plpgsql
-    AS $$
-
-BEGIN
-
-    NEW.updated_at = CURRENT_TIMESTAMP;
-
-    RETURN NEW;
-
-END;
-
+    AS $$
+BEGIN
+    NEW.updated_at = CURRENT_TIMESTAMP;
+    RETURN NEW;
+END;
 $$;
 
 
-ALTER FUNCTION public.update_updated_at_column() OWNER TO juta_owner;
+ALTER FUNCTION public.update_updated_at_column() OWNER TO neondb_owner;
 
 SET default_tablespace = '';
 
 SET default_table_access_method = heap;
 
 --
--- Name: companies; Type: TABLE; Schema: public; Owner: juta_owner
+-- Name: companies; Type: TABLE; Schema: public; Owner: neondb_owner
 --
 
 CREATE TABLE public.companies (
@@ -86,21 +81,23 @@ CREATE TABLE public.companies (
     error_type character varying(100),
     error_message text,
     feedback jsonb,
-    phone_count integer DEFAULT 1
+    status_ai_responses jsonb,
+    stopbot boolean DEFAULT false,
+    stopbots jsonb
 );
 
 
-ALTER TABLE public.companies OWNER TO juta_owner;
+ALTER TABLE public.companies OWNER TO neondb_owner;
 
 --
--- Name: TABLE companies; Type: COMMENT; Schema: public; Owner: juta_owner
+-- Name: TABLE companies; Type: COMMENT; Schema: public; Owner: neondb_owner
 --
 
 COMMENT ON TABLE public.companies IS 'Main companies/organizations table';
 
 
 --
--- Name: active_companies; Type: VIEW; Schema: public; Owner: juta_owner
+-- Name: active_companies; Type: VIEW; Schema: public; Owner: neondb_owner
 --
 
 CREATE VIEW public.active_companies AS
@@ -133,10 +130,10 @@ CREATE VIEW public.active_companies AS
   WHERE (((status)::text = 'active'::text) AND (enabled = true));
 
 
-ALTER VIEW public.active_companies OWNER TO juta_owner;
+ALTER VIEW public.active_companies OWNER TO neondb_owner;
 
 --
--- Name: ai_assign_responses; Type: TABLE; Schema: public; Owner: juta_owner
+-- Name: ai_assign_responses; Type: TABLE; Schema: public; Owner: neondb_owner
 --
 
 CREATE TABLE public.ai_assign_responses (
@@ -144,17 +141,20 @@ CREATE TABLE public.ai_assign_responses (
     response_id character varying(255) NOT NULL,
     company_id character varying(255) NOT NULL,
     message_id character varying(255),
-    assigned_employee_id character varying(255),
-    confidence numeric(3,2),
-    reasoning text,
-    created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP
+    created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP,
+    keywords jsonb,
+    keyword_source character varying(50) DEFAULT 'user'::character varying,
+    assigned_employees jsonb,
+    description text,
+    status character varying(50) DEFAULT 'active'::character varying,
+    updated_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP
 );
 
 
-ALTER TABLE public.ai_assign_responses OWNER TO juta_owner;
+ALTER TABLE public.ai_assign_responses OWNER TO neondb_owner;
 
 --
--- Name: ai_document_responses; Type: TABLE; Schema: public; Owner: juta_owner
+-- Name: ai_document_responses; Type: TABLE; Schema: public; Owner: neondb_owner
 --
 
 CREATE TABLE public.ai_document_responses (
@@ -163,16 +163,21 @@ CREATE TABLE public.ai_document_responses (
     company_id character varying(255) NOT NULL,
     message_id character varying(255),
     document_url character varying(500),
+    document_urls text[] DEFAULT '{}'::text[],
+    document_names text[] DEFAULT '{}'::text[],
+    keywords text[] DEFAULT '{}'::text[],
+    keyword_source character varying(50) DEFAULT 'user'::character varying,
     extracted_text text,
     analysis_result jsonb,
+    status character varying(50) DEFAULT 'active'::character varying,
     created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP
 );
 
 
-ALTER TABLE public.ai_document_responses OWNER TO juta_owner;
+ALTER TABLE public.ai_document_responses OWNER TO neondb_owner;
 
 --
--- Name: ai_image_responses; Type: TABLE; Schema: public; Owner: juta_owner
+-- Name: ai_image_responses; Type: TABLE; Schema: public; Owner: neondb_owner
 --
 
 CREATE TABLE public.ai_image_responses (
@@ -180,16 +185,19 @@ CREATE TABLE public.ai_image_responses (
     response_id character varying(255) NOT NULL,
     company_id character varying(255) NOT NULL,
     message_id character varying(255),
-    image_url character varying(500),
     analysis_result jsonb,
-    created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP
+    created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP,
+    keywords text[] DEFAULT '{}'::text[],
+    image_urls text[] DEFAULT '{}'::text[],
+    keyword_source character varying(50) DEFAULT 'user'::character varying,
+    status character varying(50) DEFAULT 'active'::character varying
 );
 
 
-ALTER TABLE public.ai_image_responses OWNER TO juta_owner;
+ALTER TABLE public.ai_image_responses OWNER TO neondb_owner;
 
 --
--- Name: ai_tag_responses; Type: TABLE; Schema: public; Owner: juta_owner
+-- Name: ai_tag_responses; Type: TABLE; Schema: public; Owner: neondb_owner
 --
 
 CREATE TABLE public.ai_tag_responses (
@@ -199,14 +207,19 @@ CREATE TABLE public.ai_tag_responses (
     message_id character varying(255),
     tags jsonb,
     confidence numeric(3,2),
-    created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP
+    created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP,
+    keywords jsonb,
+    remove_tags jsonb,
+    keyword_source character varying(50) DEFAULT 'user'::character varying,
+    tag_action_mode character varying(50) DEFAULT 'add'::character varying,
+    status character varying(50) DEFAULT 'active'::character varying
 );
 
 
-ALTER TABLE public.ai_tag_responses OWNER TO juta_owner;
+ALTER TABLE public.ai_tag_responses OWNER TO neondb_owner;
 
 --
--- Name: ai_video_responses; Type: TABLE; Schema: public; Owner: juta_owner
+-- Name: ai_video_responses; Type: TABLE; Schema: public; Owner: neondb_owner
 --
 
 CREATE TABLE public.ai_video_responses (
@@ -214,16 +227,20 @@ CREATE TABLE public.ai_video_responses (
     response_id character varying(255) NOT NULL,
     company_id character varying(255) NOT NULL,
     message_id character varying(255),
-    video_url character varying(500),
     analysis_result jsonb,
-    created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP
+    created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP,
+    keywords text[] DEFAULT '{}'::text[] NOT NULL,
+    video_urls text[] DEFAULT '{}'::text[] NOT NULL,
+    captions text[] DEFAULT '{}'::text[],
+    keyword_source character varying(50) DEFAULT 'user'::character varying,
+    status character varying(50) DEFAULT 'active'::character varying
 );
 
 
-ALTER TABLE public.ai_video_responses OWNER TO juta_owner;
+ALTER TABLE public.ai_video_responses OWNER TO neondb_owner;
 
 --
--- Name: ai_voice_responses; Type: TABLE; Schema: public; Owner: juta_owner
+-- Name: ai_voice_responses; Type: TABLE; Schema: public; Owner: neondb_owner
 --
 
 CREATE TABLE public.ai_voice_responses (
@@ -234,14 +251,20 @@ CREATE TABLE public.ai_voice_responses (
     audio_url character varying(500),
     transcription text,
     analysis_result jsonb,
-    created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP
+    created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP,
+    keywords text[] DEFAULT '{}'::text[],
+    voice_urls text[] DEFAULT '{}'::text[],
+    captions text[] DEFAULT '{}'::text[],
+    language character varying(10) DEFAULT 'en'::character varying,
+    keyword_source character varying(50) DEFAULT 'user'::character varying,
+    status character varying(20) DEFAULT 'active'::character varying
 );
 
 
-ALTER TABLE public.ai_voice_responses OWNER TO juta_owner;
+ALTER TABLE public.ai_voice_responses OWNER TO neondb_owner;
 
 --
--- Name: appointments; Type: TABLE; Schema: public; Owner: juta_owner
+-- Name: appointments; Type: TABLE; Schema: public; Owner: neondb_owner
 --
 
 CREATE TABLE public.appointments (
@@ -261,10 +284,10 @@ CREATE TABLE public.appointments (
 );
 
 
-ALTER TABLE public.appointments OWNER TO juta_owner;
+ALTER TABLE public.appointments OWNER TO neondb_owner;
 
 --
--- Name: archived_messages; Type: TABLE; Schema: public; Owner: juta_owner
+-- Name: archived_messages; Type: TABLE; Schema: public; Owner: neondb_owner
 --
 
 CREATE TABLE public.archived_messages (
@@ -276,10 +299,10 @@ CREATE TABLE public.archived_messages (
 );
 
 
-ALTER TABLE public.archived_messages OWNER TO juta_owner;
+ALTER TABLE public.archived_messages OWNER TO neondb_owner;
 
 --
--- Name: assignments; Type: TABLE; Schema: public; Owner: juta_owner
+-- Name: assignments; Type: TABLE; Schema: public; Owner: neondb_owner
 --
 
 CREATE TABLE public.assignments (
@@ -295,17 +318,17 @@ CREATE TABLE public.assignments (
 );
 
 
-ALTER TABLE public.assignments OWNER TO juta_owner;
+ALTER TABLE public.assignments OWNER TO neondb_owner;
 
 --
--- Name: TABLE assignments; Type: COMMENT; Schema: public; Owner: juta_owner
+-- Name: TABLE assignments; Type: COMMENT; Schema: public; Owner: neondb_owner
 --
 
 COMMENT ON TABLE public.assignments IS 'Contact assignments to employees';
 
 
 --
--- Name: batches; Type: TABLE; Schema: public; Owner: juta_owner
+-- Name: batches; Type: TABLE; Schema: public; Owner: neondb_owner
 --
 
 CREATE TABLE public.batches (
@@ -321,10 +344,10 @@ CREATE TABLE public.batches (
 );
 
 
-ALTER TABLE public.batches OWNER TO juta_owner;
+ALTER TABLE public.batches OWNER TO neondb_owner;
 
 --
--- Name: bot_state; Type: TABLE; Schema: public; Owner: juta_owner
+-- Name: bot_state; Type: TABLE; Schema: public; Owner: neondb_owner
 --
 
 CREATE TABLE public.bot_state (
@@ -336,10 +359,10 @@ CREATE TABLE public.bot_state (
 );
 
 
-ALTER TABLE public.bot_state OWNER TO juta_owner;
+ALTER TABLE public.bot_state OWNER TO neondb_owner;
 
 --
--- Name: contacts; Type: TABLE; Schema: public; Owner: juta_owner
+-- Name: contacts; Type: TABLE; Schema: public; Owner: neondb_owner
 --
 
 CREATE TABLE public.contacts (
@@ -360,21 +383,30 @@ CREATE TABLE public.contacts (
     edited boolean DEFAULT false,
     edited_at timestamp with time zone,
     whapi_token character varying(255),
-    created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP
+    created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP,
+    additional_emails jsonb DEFAULT '[]'::jsonb,
+    address1 text,
+    assigned_to character varying(255),
+    business_id character varying(255),
+    chat_data jsonb,
+    is_group boolean DEFAULT false,
+    unread_count integer DEFAULT 0,
+    last_message jsonb,
+    custom_fields jsonb
 );
 
 
-ALTER TABLE public.contacts OWNER TO juta_owner;
+ALTER TABLE public.contacts OWNER TO neondb_owner;
 
 --
--- Name: TABLE contacts; Type: COMMENT; Schema: public; Owner: juta_owner
+-- Name: TABLE contacts; Type: COMMENT; Schema: public; Owner: neondb_owner
 --
 
 COMMENT ON TABLE public.contacts IS 'Customer contacts for each company';
 
 
 --
--- Name: employees; Type: TABLE; Schema: public; Owner: juta_owner
+-- Name: employees; Type: TABLE; Schema: public; Owner: neondb_owner
 --
 
 CREATE TABLE public.employees (
@@ -392,17 +424,17 @@ CREATE TABLE public.employees (
 );
 
 
-ALTER TABLE public.employees OWNER TO juta_owner;
+ALTER TABLE public.employees OWNER TO neondb_owner;
 
 --
--- Name: TABLE employees; Type: COMMENT; Schema: public; Owner: juta_owner
+-- Name: TABLE employees; Type: COMMENT; Schema: public; Owner: neondb_owner
 --
 
 COMMENT ON TABLE public.employees IS 'Company employees and staff';
 
 
 --
--- Name: messages; Type: TABLE; Schema: public; Owner: juta_owner
+-- Name: messages; Type: TABLE; Schema: public; Owner: neondb_owner
 --
 
 CREATE TABLE public.messages (
@@ -437,17 +469,17 @@ CREATE TABLE public.messages (
 );
 
 
-ALTER TABLE public.messages OWNER TO juta_owner;
+ALTER TABLE public.messages OWNER TO neondb_owner;
 
 --
--- Name: TABLE messages; Type: COMMENT; Schema: public; Owner: juta_owner
+-- Name: TABLE messages; Type: COMMENT; Schema: public; Owner: neondb_owner
 --
 
 COMMENT ON TABLE public.messages IS 'All messages (WhatsApp and other channels)';
 
 
 --
--- Name: company_stats; Type: VIEW; Schema: public; Owner: juta_owner
+-- Name: company_stats; Type: VIEW; Schema: public; Owner: neondb_owner
 --
 
 CREATE VIEW public.company_stats AS
@@ -463,10 +495,10 @@ CREATE VIEW public.company_stats AS
   GROUP BY c.company_id, c.name;
 
 
-ALTER VIEW public.company_stats OWNER TO juta_owner;
+ALTER VIEW public.company_stats OWNER TO neondb_owner;
 
 --
--- Name: duplicate_check_logs; Type: TABLE; Schema: public; Owner: juta_owner
+-- Name: duplicate_check_logs; Type: TABLE; Schema: public; Owner: neondb_owner
 --
 
 CREATE TABLE public.duplicate_check_logs (
@@ -481,10 +513,10 @@ CREATE TABLE public.duplicate_check_logs (
 );
 
 
-ALTER TABLE public.duplicate_check_logs OWNER TO juta_owner;
+ALTER TABLE public.duplicate_check_logs OWNER TO neondb_owner;
 
 --
--- Name: error_logs; Type: TABLE; Schema: public; Owner: juta_owner
+-- Name: error_logs; Type: TABLE; Schema: public; Owner: neondb_owner
 --
 
 CREATE TABLE public.error_logs (
@@ -499,10 +531,10 @@ CREATE TABLE public.error_logs (
 );
 
 
-ALTER TABLE public.error_logs OWNER TO juta_owner;
+ALTER TABLE public.error_logs OWNER TO neondb_owner;
 
 --
--- Name: feedback; Type: TABLE; Schema: public; Owner: juta_owner
+-- Name: feedback; Type: TABLE; Schema: public; Owner: neondb_owner
 --
 
 CREATE TABLE public.feedback (
@@ -519,10 +551,10 @@ CREATE TABLE public.feedback (
 );
 
 
-ALTER TABLE public.feedback OWNER TO juta_owner;
+ALTER TABLE public.feedback OWNER TO neondb_owner;
 
 --
--- Name: followup_templates; Type: TABLE; Schema: public; Owner: juta_owner
+-- Name: followup_templates; Type: TABLE; Schema: public; Owner: neondb_owner
 --
 
 CREATE TABLE public.followup_templates (
@@ -530,25 +562,28 @@ CREATE TABLE public.followup_templates (
     template_id character varying(255) NOT NULL,
     company_id character varying(255) NOT NULL,
     name character varying(255) NOT NULL,
-    content text NOT NULL,
-    delay_hours integer DEFAULT 24,
-    active boolean DEFAULT true,
     created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP,
-    updated_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP
+    updated_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP,
+    trigger_keywords text[] DEFAULT '{}'::text[],
+    trigger_tags text[] DEFAULT '{}'::text[],
+    keyword_source character varying(50) DEFAULT 'bot'::character varying,
+    status character varying(50) DEFAULT 'active'::character varying,
+    content text NOT NULL,
+    delay_hours integer DEFAULT 24
 );
 
 
-ALTER TABLE public.followup_templates OWNER TO juta_owner;
+ALTER TABLE public.followup_templates OWNER TO neondb_owner;
 
 --
--- Name: TABLE followup_templates; Type: COMMENT; Schema: public; Owner: juta_owner
+-- Name: TABLE followup_templates; Type: COMMENT; Schema: public; Owner: neondb_owner
 --
 
 COMMENT ON TABLE public.followup_templates IS 'Automated follow-up message templates';
 
 
 --
--- Name: merchants; Type: TABLE; Schema: public; Owner: juta_owner
+-- Name: merchants; Type: TABLE; Schema: public; Owner: neondb_owner
 --
 
 CREATE TABLE public.merchants (
@@ -562,10 +597,10 @@ CREATE TABLE public.merchants (
 );
 
 
-ALTER TABLE public.merchants OWNER TO juta_owner;
+ALTER TABLE public.merchants OWNER TO neondb_owner;
 
 --
--- Name: notifications; Type: TABLE; Schema: public; Owner: juta_owner
+-- Name: notifications; Type: TABLE; Schema: public; Owner: neondb_owner
 --
 
 CREATE TABLE public.notifications (
@@ -581,10 +616,10 @@ CREATE TABLE public.notifications (
 );
 
 
-ALTER TABLE public.notifications OWNER TO juta_owner;
+ALTER TABLE public.notifications OWNER TO neondb_owner;
 
 --
--- Name: phone_status; Type: TABLE; Schema: public; Owner: juta_owner
+-- Name: phone_status; Type: TABLE; Schema: public; Owner: neondb_owner
 --
 
 CREATE TABLE public.phone_status (
@@ -598,10 +633,10 @@ CREATE TABLE public.phone_status (
 );
 
 
-ALTER TABLE public.phone_status OWNER TO juta_owner;
+ALTER TABLE public.phone_status OWNER TO neondb_owner;
 
 --
--- Name: pinned_items; Type: TABLE; Schema: public; Owner: juta_owner
+-- Name: pinned_items; Type: TABLE; Schema: public; Owner: neondb_owner
 --
 
 CREATE TABLE public.pinned_items (
@@ -614,10 +649,10 @@ CREATE TABLE public.pinned_items (
 );
 
 
-ALTER TABLE public.pinned_items OWNER TO juta_owner;
+ALTER TABLE public.pinned_items OWNER TO neondb_owner;
 
 --
--- Name: pricing; Type: TABLE; Schema: public; Owner: juta_owner
+-- Name: pricing; Type: TABLE; Schema: public; Owner: neondb_owner
 --
 
 CREATE TABLE public.pricing (
@@ -630,10 +665,10 @@ CREATE TABLE public.pricing (
 );
 
 
-ALTER TABLE public.pricing OWNER TO juta_owner;
+ALTER TABLE public.pricing OWNER TO neondb_owner;
 
 --
--- Name: recent_messages; Type: VIEW; Schema: public; Owner: juta_owner
+-- Name: recent_messages; Type: VIEW; Schema: public; Owner: neondb_owner
 --
 
 CREATE VIEW public.recent_messages AS
@@ -668,10 +703,10 @@ CREATE VIEW public.recent_messages AS
   ORDER BY m."timestamp" DESC;
 
 
-ALTER VIEW public.recent_messages OWNER TO juta_owner;
+ALTER VIEW public.recent_messages OWNER TO neondb_owner;
 
 --
--- Name: scheduled_messages; Type: TABLE; Schema: public; Owner: juta_owner
+-- Name: scheduled_messages; Type: TABLE; Schema: public; Owner: neondb_owner
 --
 
 CREATE TABLE public.scheduled_messages (
@@ -690,17 +725,17 @@ CREATE TABLE public.scheduled_messages (
 );
 
 
-ALTER TABLE public.scheduled_messages OWNER TO juta_owner;
+ALTER TABLE public.scheduled_messages OWNER TO neondb_owner;
 
 --
--- Name: TABLE scheduled_messages; Type: COMMENT; Schema: public; Owner: juta_owner
+-- Name: TABLE scheduled_messages; Type: COMMENT; Schema: public; Owner: neondb_owner
 --
 
 COMMENT ON TABLE public.scheduled_messages IS 'Messages scheduled to be sent later';
 
 
 --
--- Name: sent_followups; Type: TABLE; Schema: public; Owner: juta_owner
+-- Name: sent_followups; Type: TABLE; Schema: public; Owner: neondb_owner
 --
 
 CREATE TABLE public.sent_followups (
@@ -713,17 +748,17 @@ CREATE TABLE public.sent_followups (
 );
 
 
-ALTER TABLE public.sent_followups OWNER TO juta_owner;
+ALTER TABLE public.sent_followups OWNER TO neondb_owner;
 
 --
--- Name: TABLE sent_followups; Type: COMMENT; Schema: public; Owner: juta_owner
+-- Name: TABLE sent_followups; Type: COMMENT; Schema: public; Owner: neondb_owner
 --
 
 COMMENT ON TABLE public.sent_followups IS 'Tracking of sent follow-up messages';
 
 
 --
--- Name: sessions; Type: TABLE; Schema: public; Owner: juta_owner
+-- Name: sessions; Type: TABLE; Schema: public; Owner: neondb_owner
 --
 
 CREATE TABLE public.sessions (
@@ -736,10 +771,10 @@ CREATE TABLE public.sessions (
 );
 
 
-ALTER TABLE public.sessions OWNER TO juta_owner;
+ALTER TABLE public.sessions OWNER TO neondb_owner;
 
 --
--- Name: settings; Type: TABLE; Schema: public; Owner: juta_owner
+-- Name: settings; Type: TABLE; Schema: public; Owner: neondb_owner
 --
 
 CREATE TABLE public.settings (
@@ -753,17 +788,17 @@ CREATE TABLE public.settings (
 );
 
 
-ALTER TABLE public.settings OWNER TO juta_owner;
+ALTER TABLE public.settings OWNER TO neondb_owner;
 
 --
--- Name: TABLE settings; Type: COMMENT; Schema: public; Owner: juta_owner
+-- Name: TABLE settings; Type: COMMENT; Schema: public; Owner: neondb_owner
 --
 
 COMMENT ON TABLE public.settings IS 'Company-specific configuration settings';
 
 
 --
--- Name: system_config; Type: TABLE; Schema: public; Owner: juta_owner
+-- Name: system_config; Type: TABLE; Schema: public; Owner: neondb_owner
 --
 
 CREATE TABLE public.system_config (
@@ -775,10 +810,10 @@ CREATE TABLE public.system_config (
 );
 
 
-ALTER TABLE public.system_config OWNER TO juta_owner;
+ALTER TABLE public.system_config OWNER TO neondb_owner;
 
 --
--- Name: threads; Type: TABLE; Schema: public; Owner: juta_owner
+-- Name: threads; Type: TABLE; Schema: public; Owner: neondb_owner
 --
 
 CREATE TABLE public.threads (
@@ -793,10 +828,10 @@ CREATE TABLE public.threads (
 );
 
 
-ALTER TABLE public.threads OWNER TO juta_owner;
+ALTER TABLE public.threads OWNER TO neondb_owner;
 
 --
--- Name: usage_logs; Type: TABLE; Schema: public; Owner: juta_owner
+-- Name: usage_logs; Type: TABLE; Schema: public; Owner: neondb_owner
 --
 
 CREATE TABLE public.usage_logs (
@@ -809,10 +844,10 @@ CREATE TABLE public.usage_logs (
 );
 
 
-ALTER TABLE public.usage_logs OWNER TO juta_owner;
+ALTER TABLE public.usage_logs OWNER TO neondb_owner;
 
 --
--- Name: users; Type: TABLE; Schema: public; Owner: juta_owner
+-- Name: users; Type: TABLE; Schema: public; Owner: neondb_owner
 --
 
 CREATE TABLE public.users (
@@ -830,17 +865,17 @@ CREATE TABLE public.users (
 );
 
 
-ALTER TABLE public.users OWNER TO juta_owner;
+ALTER TABLE public.users OWNER TO neondb_owner;
 
 --
--- Name: TABLE users; Type: COMMENT; Schema: public; Owner: juta_owner
+-- Name: TABLE users; Type: COMMENT; Schema: public; Owner: neondb_owner
 --
 
 COMMENT ON TABLE public.users IS 'System users with access permissions';
 
 
 --
--- Name: ai_assign_responses ai_assign_responses_pkey; Type: CONSTRAINT; Schema: public; Owner: juta_owner
+-- Name: ai_assign_responses ai_assign_responses_pkey; Type: CONSTRAINT; Schema: public; Owner: neondb_owner
 --
 
 ALTER TABLE ONLY public.ai_assign_responses
@@ -848,7 +883,7 @@ ALTER TABLE ONLY public.ai_assign_responses
 
 
 --
--- Name: ai_assign_responses ai_assign_responses_response_id_key; Type: CONSTRAINT; Schema: public; Owner: juta_owner
+-- Name: ai_assign_responses ai_assign_responses_response_id_key; Type: CONSTRAINT; Schema: public; Owner: neondb_owner
 --
 
 ALTER TABLE ONLY public.ai_assign_responses
@@ -856,7 +891,7 @@ ALTER TABLE ONLY public.ai_assign_responses
 
 
 --
--- Name: ai_document_responses ai_document_responses_pkey; Type: CONSTRAINT; Schema: public; Owner: juta_owner
+-- Name: ai_document_responses ai_document_responses_pkey; Type: CONSTRAINT; Schema: public; Owner: neondb_owner
 --
 
 ALTER TABLE ONLY public.ai_document_responses
@@ -864,7 +899,7 @@ ALTER TABLE ONLY public.ai_document_responses
 
 
 --
--- Name: ai_document_responses ai_document_responses_response_id_key; Type: CONSTRAINT; Schema: public; Owner: juta_owner
+-- Name: ai_document_responses ai_document_responses_response_id_key; Type: CONSTRAINT; Schema: public; Owner: neondb_owner
 --
 
 ALTER TABLE ONLY public.ai_document_responses
@@ -872,7 +907,7 @@ ALTER TABLE ONLY public.ai_document_responses
 
 
 --
--- Name: ai_image_responses ai_image_responses_pkey; Type: CONSTRAINT; Schema: public; Owner: juta_owner
+-- Name: ai_image_responses ai_image_responses_pkey; Type: CONSTRAINT; Schema: public; Owner: neondb_owner
 --
 
 ALTER TABLE ONLY public.ai_image_responses
@@ -880,7 +915,7 @@ ALTER TABLE ONLY public.ai_image_responses
 
 
 --
--- Name: ai_image_responses ai_image_responses_response_id_key; Type: CONSTRAINT; Schema: public; Owner: juta_owner
+-- Name: ai_image_responses ai_image_responses_response_id_key; Type: CONSTRAINT; Schema: public; Owner: neondb_owner
 --
 
 ALTER TABLE ONLY public.ai_image_responses
@@ -888,7 +923,7 @@ ALTER TABLE ONLY public.ai_image_responses
 
 
 --
--- Name: ai_tag_responses ai_tag_responses_pkey; Type: CONSTRAINT; Schema: public; Owner: juta_owner
+-- Name: ai_tag_responses ai_tag_responses_pkey; Type: CONSTRAINT; Schema: public; Owner: neondb_owner
 --
 
 ALTER TABLE ONLY public.ai_tag_responses
@@ -896,7 +931,7 @@ ALTER TABLE ONLY public.ai_tag_responses
 
 
 --
--- Name: ai_tag_responses ai_tag_responses_response_id_key; Type: CONSTRAINT; Schema: public; Owner: juta_owner
+-- Name: ai_tag_responses ai_tag_responses_response_id_key; Type: CONSTRAINT; Schema: public; Owner: neondb_owner
 --
 
 ALTER TABLE ONLY public.ai_tag_responses
@@ -904,7 +939,7 @@ ALTER TABLE ONLY public.ai_tag_responses
 
 
 --
--- Name: ai_video_responses ai_video_responses_pkey; Type: CONSTRAINT; Schema: public; Owner: juta_owner
+-- Name: ai_video_responses ai_video_responses_pkey; Type: CONSTRAINT; Schema: public; Owner: neondb_owner
 --
 
 ALTER TABLE ONLY public.ai_video_responses
@@ -912,7 +947,7 @@ ALTER TABLE ONLY public.ai_video_responses
 
 
 --
--- Name: ai_video_responses ai_video_responses_response_id_key; Type: CONSTRAINT; Schema: public; Owner: juta_owner
+-- Name: ai_video_responses ai_video_responses_response_id_key; Type: CONSTRAINT; Schema: public; Owner: neondb_owner
 --
 
 ALTER TABLE ONLY public.ai_video_responses
@@ -920,7 +955,7 @@ ALTER TABLE ONLY public.ai_video_responses
 
 
 --
--- Name: ai_voice_responses ai_voice_responses_pkey; Type: CONSTRAINT; Schema: public; Owner: juta_owner
+-- Name: ai_voice_responses ai_voice_responses_pkey; Type: CONSTRAINT; Schema: public; Owner: neondb_owner
 --
 
 ALTER TABLE ONLY public.ai_voice_responses
@@ -928,7 +963,7 @@ ALTER TABLE ONLY public.ai_voice_responses
 
 
 --
--- Name: ai_voice_responses ai_voice_responses_response_id_key; Type: CONSTRAINT; Schema: public; Owner: juta_owner
+-- Name: ai_voice_responses ai_voice_responses_response_id_key; Type: CONSTRAINT; Schema: public; Owner: neondb_owner
 --
 
 ALTER TABLE ONLY public.ai_voice_responses
@@ -936,7 +971,7 @@ ALTER TABLE ONLY public.ai_voice_responses
 
 
 --
--- Name: appointments appointments_appointment_id_key; Type: CONSTRAINT; Schema: public; Owner: juta_owner
+-- Name: appointments appointments_appointment_id_key; Type: CONSTRAINT; Schema: public; Owner: neondb_owner
 --
 
 ALTER TABLE ONLY public.appointments
@@ -944,7 +979,7 @@ ALTER TABLE ONLY public.appointments
 
 
 --
--- Name: appointments appointments_pkey; Type: CONSTRAINT; Schema: public; Owner: juta_owner
+-- Name: appointments appointments_pkey; Type: CONSTRAINT; Schema: public; Owner: neondb_owner
 --
 
 ALTER TABLE ONLY public.appointments
@@ -952,7 +987,7 @@ ALTER TABLE ONLY public.appointments
 
 
 --
--- Name: archived_messages archived_messages_pkey; Type: CONSTRAINT; Schema: public; Owner: juta_owner
+-- Name: archived_messages archived_messages_pkey; Type: CONSTRAINT; Schema: public; Owner: neondb_owner
 --
 
 ALTER TABLE ONLY public.archived_messages
@@ -960,7 +995,7 @@ ALTER TABLE ONLY public.archived_messages
 
 
 --
--- Name: assignments assignments_assignment_id_key; Type: CONSTRAINT; Schema: public; Owner: juta_owner
+-- Name: assignments assignments_assignment_id_key; Type: CONSTRAINT; Schema: public; Owner: neondb_owner
 --
 
 ALTER TABLE ONLY public.assignments
@@ -968,7 +1003,7 @@ ALTER TABLE ONLY public.assignments
 
 
 --
--- Name: assignments assignments_pkey; Type: CONSTRAINT; Schema: public; Owner: juta_owner
+-- Name: assignments assignments_pkey; Type: CONSTRAINT; Schema: public; Owner: neondb_owner
 --
 
 ALTER TABLE ONLY public.assignments
@@ -976,7 +1011,7 @@ ALTER TABLE ONLY public.assignments
 
 
 --
--- Name: batches batches_batch_id_key; Type: CONSTRAINT; Schema: public; Owner: juta_owner
+-- Name: batches batches_batch_id_key; Type: CONSTRAINT; Schema: public; Owner: neondb_owner
 --
 
 ALTER TABLE ONLY public.batches
@@ -984,7 +1019,7 @@ ALTER TABLE ONLY public.batches
 
 
 --
--- Name: batches batches_pkey; Type: CONSTRAINT; Schema: public; Owner: juta_owner
+-- Name: batches batches_pkey; Type: CONSTRAINT; Schema: public; Owner: neondb_owner
 --
 
 ALTER TABLE ONLY public.batches
@@ -992,7 +1027,7 @@ ALTER TABLE ONLY public.batches
 
 
 --
--- Name: bot_state bot_state_company_id_bot_name_key; Type: CONSTRAINT; Schema: public; Owner: juta_owner
+-- Name: bot_state bot_state_company_id_bot_name_key; Type: CONSTRAINT; Schema: public; Owner: neondb_owner
 --
 
 ALTER TABLE ONLY public.bot_state
@@ -1000,7 +1035,7 @@ ALTER TABLE ONLY public.bot_state
 
 
 --
--- Name: bot_state bot_state_pkey; Type: CONSTRAINT; Schema: public; Owner: juta_owner
+-- Name: bot_state bot_state_pkey; Type: CONSTRAINT; Schema: public; Owner: neondb_owner
 --
 
 ALTER TABLE ONLY public.bot_state
@@ -1008,7 +1043,7 @@ ALTER TABLE ONLY public.bot_state
 
 
 --
--- Name: companies companies_company_id_key; Type: CONSTRAINT; Schema: public; Owner: juta_owner
+-- Name: companies companies_company_id_key; Type: CONSTRAINT; Schema: public; Owner: neondb_owner
 --
 
 ALTER TABLE ONLY public.companies
@@ -1016,7 +1051,7 @@ ALTER TABLE ONLY public.companies
 
 
 --
--- Name: companies companies_pkey; Type: CONSTRAINT; Schema: public; Owner: juta_owner
+-- Name: companies companies_pkey; Type: CONSTRAINT; Schema: public; Owner: neondb_owner
 --
 
 ALTER TABLE ONLY public.companies
@@ -1024,7 +1059,7 @@ ALTER TABLE ONLY public.companies
 
 
 --
--- Name: contacts contacts_contact_id_company_id_key; Type: CONSTRAINT; Schema: public; Owner: juta_owner
+-- Name: contacts contacts_contact_id_company_id_key; Type: CONSTRAINT; Schema: public; Owner: neondb_owner
 --
 
 ALTER TABLE ONLY public.contacts
@@ -1032,7 +1067,7 @@ ALTER TABLE ONLY public.contacts
 
 
 --
--- Name: contacts contacts_pkey; Type: CONSTRAINT; Schema: public; Owner: juta_owner
+-- Name: contacts contacts_pkey; Type: CONSTRAINT; Schema: public; Owner: neondb_owner
 --
 
 ALTER TABLE ONLY public.contacts
@@ -1040,7 +1075,7 @@ ALTER TABLE ONLY public.contacts
 
 
 --
--- Name: duplicate_check_logs duplicate_check_logs_pkey; Type: CONSTRAINT; Schema: public; Owner: juta_owner
+-- Name: duplicate_check_logs duplicate_check_logs_pkey; Type: CONSTRAINT; Schema: public; Owner: neondb_owner
 --
 
 ALTER TABLE ONLY public.duplicate_check_logs
@@ -1048,7 +1083,7 @@ ALTER TABLE ONLY public.duplicate_check_logs
 
 
 --
--- Name: employees employees_employee_id_key; Type: CONSTRAINT; Schema: public; Owner: juta_owner
+-- Name: employees employees_employee_id_key; Type: CONSTRAINT; Schema: public; Owner: neondb_owner
 --
 
 ALTER TABLE ONLY public.employees
@@ -1056,7 +1091,7 @@ ALTER TABLE ONLY public.employees
 
 
 --
--- Name: employees employees_pkey; Type: CONSTRAINT; Schema: public; Owner: juta_owner
+-- Name: employees employees_pkey; Type: CONSTRAINT; Schema: public; Owner: neondb_owner
 --
 
 ALTER TABLE ONLY public.employees
@@ -1064,7 +1099,7 @@ ALTER TABLE ONLY public.employees
 
 
 --
--- Name: error_logs error_logs_pkey; Type: CONSTRAINT; Schema: public; Owner: juta_owner
+-- Name: error_logs error_logs_pkey; Type: CONSTRAINT; Schema: public; Owner: neondb_owner
 --
 
 ALTER TABLE ONLY public.error_logs
@@ -1072,7 +1107,7 @@ ALTER TABLE ONLY public.error_logs
 
 
 --
--- Name: feedback feedback_feedback_id_key; Type: CONSTRAINT; Schema: public; Owner: juta_owner
+-- Name: feedback feedback_feedback_id_key; Type: CONSTRAINT; Schema: public; Owner: neondb_owner
 --
 
 ALTER TABLE ONLY public.feedback
@@ -1080,7 +1115,7 @@ ALTER TABLE ONLY public.feedback
 
 
 --
--- Name: feedback feedback_pkey; Type: CONSTRAINT; Schema: public; Owner: juta_owner
+-- Name: feedback feedback_pkey; Type: CONSTRAINT; Schema: public; Owner: neondb_owner
 --
 
 ALTER TABLE ONLY public.feedback
@@ -1088,7 +1123,7 @@ ALTER TABLE ONLY public.feedback
 
 
 --
--- Name: followup_templates followup_templates_pkey; Type: CONSTRAINT; Schema: public; Owner: juta_owner
+-- Name: followup_templates followup_templates_pkey; Type: CONSTRAINT; Schema: public; Owner: neondb_owner
 --
 
 ALTER TABLE ONLY public.followup_templates
@@ -1096,7 +1131,7 @@ ALTER TABLE ONLY public.followup_templates
 
 
 --
--- Name: followup_templates followup_templates_template_id_key; Type: CONSTRAINT; Schema: public; Owner: juta_owner
+-- Name: followup_templates followup_templates_template_id_key; Type: CONSTRAINT; Schema: public; Owner: neondb_owner
 --
 
 ALTER TABLE ONLY public.followup_templates
@@ -1104,7 +1139,7 @@ ALTER TABLE ONLY public.followup_templates
 
 
 --
--- Name: merchants merchants_merchant_id_key; Type: CONSTRAINT; Schema: public; Owner: juta_owner
+-- Name: merchants merchants_merchant_id_key; Type: CONSTRAINT; Schema: public; Owner: neondb_owner
 --
 
 ALTER TABLE ONLY public.merchants
@@ -1112,7 +1147,7 @@ ALTER TABLE ONLY public.merchants
 
 
 --
--- Name: merchants merchants_pkey; Type: CONSTRAINT; Schema: public; Owner: juta_owner
+-- Name: merchants merchants_pkey; Type: CONSTRAINT; Schema: public; Owner: neondb_owner
 --
 
 ALTER TABLE ONLY public.merchants
@@ -1120,7 +1155,7 @@ ALTER TABLE ONLY public.merchants
 
 
 --
--- Name: messages messages_message_id_key; Type: CONSTRAINT; Schema: public; Owner: juta_owner
+-- Name: messages messages_message_id_key; Type: CONSTRAINT; Schema: public; Owner: neondb_owner
 --
 
 ALTER TABLE ONLY public.messages
@@ -1128,7 +1163,7 @@ ALTER TABLE ONLY public.messages
 
 
 --
--- Name: messages messages_pkey; Type: CONSTRAINT; Schema: public; Owner: juta_owner
+-- Name: messages messages_pkey; Type: CONSTRAINT; Schema: public; Owner: neondb_owner
 --
 
 ALTER TABLE ONLY public.messages
@@ -1136,7 +1171,7 @@ ALTER TABLE ONLY public.messages
 
 
 --
--- Name: notifications notifications_pkey; Type: CONSTRAINT; Schema: public; Owner: juta_owner
+-- Name: notifications notifications_pkey; Type: CONSTRAINT; Schema: public; Owner: neondb_owner
 --
 
 ALTER TABLE ONLY public.notifications
@@ -1144,7 +1179,7 @@ ALTER TABLE ONLY public.notifications
 
 
 --
--- Name: phone_status phone_status_company_id_phone_number_key; Type: CONSTRAINT; Schema: public; Owner: juta_owner
+-- Name: phone_status phone_status_company_id_phone_number_key; Type: CONSTRAINT; Schema: public; Owner: neondb_owner
 --
 
 ALTER TABLE ONLY public.phone_status
@@ -1152,7 +1187,7 @@ ALTER TABLE ONLY public.phone_status
 
 
 --
--- Name: phone_status phone_status_pkey; Type: CONSTRAINT; Schema: public; Owner: juta_owner
+-- Name: phone_status phone_status_pkey; Type: CONSTRAINT; Schema: public; Owner: neondb_owner
 --
 
 ALTER TABLE ONLY public.phone_status
@@ -1160,7 +1195,7 @@ ALTER TABLE ONLY public.phone_status
 
 
 --
--- Name: pinned_items pinned_items_pkey; Type: CONSTRAINT; Schema: public; Owner: juta_owner
+-- Name: pinned_items pinned_items_pkey; Type: CONSTRAINT; Schema: public; Owner: neondb_owner
 --
 
 ALTER TABLE ONLY public.pinned_items
@@ -1168,7 +1203,7 @@ ALTER TABLE ONLY public.pinned_items
 
 
 --
--- Name: pricing pricing_pkey; Type: CONSTRAINT; Schema: public; Owner: juta_owner
+-- Name: pricing pricing_pkey; Type: CONSTRAINT; Schema: public; Owner: neondb_owner
 --
 
 ALTER TABLE ONLY public.pricing
@@ -1176,7 +1211,7 @@ ALTER TABLE ONLY public.pricing
 
 
 --
--- Name: scheduled_messages scheduled_messages_pkey; Type: CONSTRAINT; Schema: public; Owner: juta_owner
+-- Name: scheduled_messages scheduled_messages_pkey; Type: CONSTRAINT; Schema: public; Owner: neondb_owner
 --
 
 ALTER TABLE ONLY public.scheduled_messages
@@ -1184,7 +1219,7 @@ ALTER TABLE ONLY public.scheduled_messages
 
 
 --
--- Name: scheduled_messages scheduled_messages_schedule_id_key; Type: CONSTRAINT; Schema: public; Owner: juta_owner
+-- Name: scheduled_messages scheduled_messages_schedule_id_key; Type: CONSTRAINT; Schema: public; Owner: neondb_owner
 --
 
 ALTER TABLE ONLY public.scheduled_messages
@@ -1192,7 +1227,7 @@ ALTER TABLE ONLY public.scheduled_messages
 
 
 --
--- Name: sent_followups sent_followups_pkey; Type: CONSTRAINT; Schema: public; Owner: juta_owner
+-- Name: sent_followups sent_followups_pkey; Type: CONSTRAINT; Schema: public; Owner: neondb_owner
 --
 
 ALTER TABLE ONLY public.sent_followups
@@ -1200,7 +1235,7 @@ ALTER TABLE ONLY public.sent_followups
 
 
 --
--- Name: sessions sessions_pkey; Type: CONSTRAINT; Schema: public; Owner: juta_owner
+-- Name: sessions sessions_pkey; Type: CONSTRAINT; Schema: public; Owner: neondb_owner
 --
 
 ALTER TABLE ONLY public.sessions
@@ -1208,7 +1243,7 @@ ALTER TABLE ONLY public.sessions
 
 
 --
--- Name: sessions sessions_session_id_key; Type: CONSTRAINT; Schema: public; Owner: juta_owner
+-- Name: sessions sessions_session_id_key; Type: CONSTRAINT; Schema: public; Owner: neondb_owner
 --
 
 ALTER TABLE ONLY public.sessions
@@ -1216,7 +1251,7 @@ ALTER TABLE ONLY public.sessions
 
 
 --
--- Name: settings settings_company_id_setting_type_setting_key_key; Type: CONSTRAINT; Schema: public; Owner: juta_owner
+-- Name: settings settings_company_id_setting_type_setting_key_key; Type: CONSTRAINT; Schema: public; Owner: neondb_owner
 --
 
 ALTER TABLE ONLY public.settings
@@ -1224,7 +1259,7 @@ ALTER TABLE ONLY public.settings
 
 
 --
--- Name: settings settings_pkey; Type: CONSTRAINT; Schema: public; Owner: juta_owner
+-- Name: settings settings_pkey; Type: CONSTRAINT; Schema: public; Owner: neondb_owner
 --
 
 ALTER TABLE ONLY public.settings
@@ -1232,7 +1267,7 @@ ALTER TABLE ONLY public.settings
 
 
 --
--- Name: system_config system_config_config_key_key; Type: CONSTRAINT; Schema: public; Owner: juta_owner
+-- Name: system_config system_config_config_key_key; Type: CONSTRAINT; Schema: public; Owner: neondb_owner
 --
 
 ALTER TABLE ONLY public.system_config
@@ -1240,7 +1275,7 @@ ALTER TABLE ONLY public.system_config
 
 
 --
--- Name: system_config system_config_pkey; Type: CONSTRAINT; Schema: public; Owner: juta_owner
+-- Name: system_config system_config_pkey; Type: CONSTRAINT; Schema: public; Owner: neondb_owner
 --
 
 ALTER TABLE ONLY public.system_config
@@ -1248,7 +1283,7 @@ ALTER TABLE ONLY public.system_config
 
 
 --
--- Name: threads threads_pkey; Type: CONSTRAINT; Schema: public; Owner: juta_owner
+-- Name: threads threads_pkey; Type: CONSTRAINT; Schema: public; Owner: neondb_owner
 --
 
 ALTER TABLE ONLY public.threads
@@ -1256,7 +1291,7 @@ ALTER TABLE ONLY public.threads
 
 
 --
--- Name: threads threads_thread_id_key; Type: CONSTRAINT; Schema: public; Owner: juta_owner
+-- Name: threads threads_thread_id_key; Type: CONSTRAINT; Schema: public; Owner: neondb_owner
 --
 
 ALTER TABLE ONLY public.threads
@@ -1264,7 +1299,7 @@ ALTER TABLE ONLY public.threads
 
 
 --
--- Name: usage_logs usage_logs_company_id_feature_date_key; Type: CONSTRAINT; Schema: public; Owner: juta_owner
+-- Name: usage_logs usage_logs_company_id_feature_date_key; Type: CONSTRAINT; Schema: public; Owner: neondb_owner
 --
 
 ALTER TABLE ONLY public.usage_logs
@@ -1272,7 +1307,7 @@ ALTER TABLE ONLY public.usage_logs
 
 
 --
--- Name: usage_logs usage_logs_pkey; Type: CONSTRAINT; Schema: public; Owner: juta_owner
+-- Name: usage_logs usage_logs_pkey; Type: CONSTRAINT; Schema: public; Owner: neondb_owner
 --
 
 ALTER TABLE ONLY public.usage_logs
@@ -1280,7 +1315,7 @@ ALTER TABLE ONLY public.usage_logs
 
 
 --
--- Name: users users_pkey; Type: CONSTRAINT; Schema: public; Owner: juta_owner
+-- Name: users users_pkey; Type: CONSTRAINT; Schema: public; Owner: neondb_owner
 --
 
 ALTER TABLE ONLY public.users
@@ -1288,7 +1323,7 @@ ALTER TABLE ONLY public.users
 
 
 --
--- Name: users users_user_id_key; Type: CONSTRAINT; Schema: public; Owner: juta_owner
+-- Name: users users_user_id_key; Type: CONSTRAINT; Schema: public; Owner: neondb_owner
 --
 
 ALTER TABLE ONLY public.users
@@ -1296,378 +1331,406 @@ ALTER TABLE ONLY public.users
 
 
 --
--- Name: idx_ai_assign_responses_company_id; Type: INDEX; Schema: public; Owner: juta_owner
+-- Name: idx_ai_assign_responses_company_id; Type: INDEX; Schema: public; Owner: neondb_owner
 --
 
 CREATE INDEX idx_ai_assign_responses_company_id ON public.ai_assign_responses USING btree (company_id);
 
 
 --
--- Name: idx_ai_document_responses_company_id; Type: INDEX; Schema: public; Owner: juta_owner
---
-
-CREATE INDEX idx_ai_document_responses_company_id ON public.ai_document_responses USING btree (company_id);
-
-
---
--- Name: idx_ai_image_responses_company_id; Type: INDEX; Schema: public; Owner: juta_owner
+-- Name: idx_ai_image_responses_company_id; Type: INDEX; Schema: public; Owner: neondb_owner
 --
 
 CREATE INDEX idx_ai_image_responses_company_id ON public.ai_image_responses USING btree (company_id);
 
 
 --
--- Name: idx_ai_tag_responses_company_id; Type: INDEX; Schema: public; Owner: juta_owner
+-- Name: idx_ai_tag_responses_company_id; Type: INDEX; Schema: public; Owner: neondb_owner
 --
 
 CREATE INDEX idx_ai_tag_responses_company_id ON public.ai_tag_responses USING btree (company_id);
 
 
 --
--- Name: idx_ai_video_responses_company_id; Type: INDEX; Schema: public; Owner: juta_owner
+-- Name: idx_ai_video_responses_company_id; Type: INDEX; Schema: public; Owner: neondb_owner
 --
 
 CREATE INDEX idx_ai_video_responses_company_id ON public.ai_video_responses USING btree (company_id);
 
 
 --
--- Name: idx_ai_voice_responses_company_id; Type: INDEX; Schema: public; Owner: juta_owner
+-- Name: idx_ai_voice_responses_company_id; Type: INDEX; Schema: public; Owner: neondb_owner
 --
 
 CREATE INDEX idx_ai_voice_responses_company_id ON public.ai_voice_responses USING btree (company_id);
 
 
 --
--- Name: idx_appointments_metadata; Type: INDEX; Schema: public; Owner: juta_owner
+-- Name: idx_appointments_metadata; Type: INDEX; Schema: public; Owner: neondb_owner
 --
 
 CREATE INDEX idx_appointments_metadata ON public.appointments USING gin (metadata);
 
 
 --
--- Name: idx_assignments_company_id; Type: INDEX; Schema: public; Owner: juta_owner
+-- Name: idx_assignments_company_id; Type: INDEX; Schema: public; Owner: neondb_owner
 --
 
 CREATE INDEX idx_assignments_company_id ON public.assignments USING btree (company_id);
 
 
 --
--- Name: idx_assignments_employee_id; Type: INDEX; Schema: public; Owner: juta_owner
+-- Name: idx_assignments_employee_id; Type: INDEX; Schema: public; Owner: neondb_owner
 --
 
 CREATE INDEX idx_assignments_employee_id ON public.assignments USING btree (employee_id);
 
 
 --
--- Name: idx_assignments_status; Type: INDEX; Schema: public; Owner: juta_owner
+-- Name: idx_assignments_status; Type: INDEX; Schema: public; Owner: neondb_owner
 --
 
 CREATE INDEX idx_assignments_status ON public.assignments USING btree (status);
 
 
 --
--- Name: idx_batches_company_id; Type: INDEX; Schema: public; Owner: juta_owner
+-- Name: idx_batches_company_id; Type: INDEX; Schema: public; Owner: neondb_owner
 --
 
 CREATE INDEX idx_batches_company_id ON public.batches USING btree (company_id);
 
 
 --
--- Name: idx_bot_state_company_id; Type: INDEX; Schema: public; Owner: juta_owner
+-- Name: idx_bot_state_company_id; Type: INDEX; Schema: public; Owner: neondb_owner
 --
 
 CREATE INDEX idx_bot_state_company_id ON public.bot_state USING btree (company_id);
 
 
 --
--- Name: idx_companies_company_id; Type: INDEX; Schema: public; Owner: juta_owner
+-- Name: idx_companies_company_id; Type: INDEX; Schema: public; Owner: neondb_owner
 --
 
 CREATE INDEX idx_companies_company_id ON public.companies USING btree (company_id);
 
 
 --
--- Name: idx_companies_email; Type: INDEX; Schema: public; Owner: juta_owner
+-- Name: idx_companies_email; Type: INDEX; Schema: public; Owner: neondb_owner
 --
 
 CREATE INDEX idx_companies_email ON public.companies USING btree (email);
 
 
 --
--- Name: idx_companies_profile; Type: INDEX; Schema: public; Owner: juta_owner
+-- Name: idx_companies_profile; Type: INDEX; Schema: public; Owner: neondb_owner
 --
 
 CREATE INDEX idx_companies_profile ON public.companies USING gin (profile);
 
 
 --
--- Name: idx_companies_status; Type: INDEX; Schema: public; Owner: juta_owner
+-- Name: idx_companies_status; Type: INDEX; Schema: public; Owner: neondb_owner
 --
 
 CREATE INDEX idx_companies_status ON public.companies USING btree (status);
 
 
 --
--- Name: idx_companies_tasks; Type: INDEX; Schema: public; Owner: juta_owner
+-- Name: idx_companies_tasks; Type: INDEX; Schema: public; Owner: neondb_owner
 --
 
 CREATE INDEX idx_companies_tasks ON public.companies USING gin (tasks);
 
 
 --
--- Name: idx_contacts_company_id; Type: INDEX; Schema: public; Owner: juta_owner
+-- Name: idx_contacts_company_created_at; Type: INDEX; Schema: public; Owner: neondb_owner
+--
+
+CREATE INDEX idx_contacts_company_created_at ON public.contacts USING btree (company_id, created_at);
+
+
+--
+-- Name: idx_contacts_company_id; Type: INDEX; Schema: public; Owner: neondb_owner
 --
 
 CREATE INDEX idx_contacts_company_id ON public.contacts USING btree (company_id);
 
 
 --
--- Name: idx_contacts_contact_id; Type: INDEX; Schema: public; Owner: juta_owner
+-- Name: idx_contacts_contact_id; Type: INDEX; Schema: public; Owner: neondb_owner
 --
 
 CREATE INDEX idx_contacts_contact_id ON public.contacts USING btree (contact_id);
 
 
 --
--- Name: idx_contacts_last_updated; Type: INDEX; Schema: public; Owner: juta_owner
+-- Name: idx_contacts_contact_name; Type: INDEX; Schema: public; Owner: neondb_owner
+--
+
+CREATE INDEX idx_contacts_contact_name ON public.contacts USING btree (contact_name);
+
+
+--
+-- Name: idx_contacts_created_at; Type: INDEX; Schema: public; Owner: neondb_owner
+--
+
+CREATE INDEX idx_contacts_created_at ON public.contacts USING btree (created_at);
+
+
+--
+-- Name: idx_contacts_last_updated; Type: INDEX; Schema: public; Owner: neondb_owner
 --
 
 CREATE INDEX idx_contacts_last_updated ON public.contacts USING btree (last_updated);
 
 
 --
--- Name: idx_contacts_phone; Type: INDEX; Schema: public; Owner: juta_owner
+-- Name: idx_contacts_name; Type: INDEX; Schema: public; Owner: neondb_owner
+--
+
+CREATE INDEX idx_contacts_name ON public.contacts USING btree (name);
+
+
+--
+-- Name: idx_contacts_phone; Type: INDEX; Schema: public; Owner: neondb_owner
 --
 
 CREATE INDEX idx_contacts_phone ON public.contacts USING btree (phone);
 
 
 --
--- Name: idx_contacts_phone_company; Type: INDEX; Schema: public; Owner: juta_owner
+-- Name: idx_contacts_phone_company; Type: INDEX; Schema: public; Owner: neondb_owner
 --
 
 CREATE INDEX idx_contacts_phone_company ON public.contacts USING btree (phone, company_id);
 
 
 --
--- Name: idx_contacts_profile; Type: INDEX; Schema: public; Owner: juta_owner
+-- Name: idx_contacts_profile; Type: INDEX; Schema: public; Owner: neondb_owner
 --
 
 CREATE INDEX idx_contacts_profile ON public.contacts USING gin (profile);
 
 
 --
--- Name: idx_contacts_tags; Type: INDEX; Schema: public; Owner: juta_owner
+-- Name: idx_contacts_tags; Type: INDEX; Schema: public; Owner: neondb_owner
 --
 
 CREATE INDEX idx_contacts_tags ON public.contacts USING gin (tags);
 
 
 --
--- Name: idx_employees_company_id; Type: INDEX; Schema: public; Owner: juta_owner
+-- Name: idx_employees_company_id; Type: INDEX; Schema: public; Owner: neondb_owner
 --
 
 CREATE INDEX idx_employees_company_id ON public.employees USING btree (company_id);
 
 
 --
--- Name: idx_employees_email; Type: INDEX; Schema: public; Owner: juta_owner
+-- Name: idx_employees_email; Type: INDEX; Schema: public; Owner: neondb_owner
 --
 
 CREATE INDEX idx_employees_email ON public.employees USING btree (email);
 
 
 --
--- Name: idx_error_logs_company_id; Type: INDEX; Schema: public; Owner: juta_owner
+-- Name: idx_error_logs_company_id; Type: INDEX; Schema: public; Owner: neondb_owner
 --
 
 CREATE INDEX idx_error_logs_company_id ON public.error_logs USING btree (company_id);
 
 
 --
--- Name: idx_error_logs_timestamp; Type: INDEX; Schema: public; Owner: juta_owner
+-- Name: idx_error_logs_timestamp; Type: INDEX; Schema: public; Owner: neondb_owner
 --
 
 CREATE INDEX idx_error_logs_timestamp ON public.error_logs USING btree ("timestamp");
 
 
 --
--- Name: idx_followup_templates_company_id; Type: INDEX; Schema: public; Owner: juta_owner
+-- Name: idx_followup_templates_company_id; Type: INDEX; Schema: public; Owner: neondb_owner
 --
 
 CREATE INDEX idx_followup_templates_company_id ON public.followup_templates USING btree (company_id);
 
 
 --
--- Name: idx_messages_company_id; Type: INDEX; Schema: public; Owner: juta_owner
+-- Name: idx_messages_company_id; Type: INDEX; Schema: public; Owner: neondb_owner
 --
 
 CREATE INDEX idx_messages_company_id ON public.messages USING btree (company_id);
 
 
 --
--- Name: idx_messages_contact_id; Type: INDEX; Schema: public; Owner: juta_owner
+-- Name: idx_messages_contact_id; Type: INDEX; Schema: public; Owner: neondb_owner
 --
 
 CREATE INDEX idx_messages_contact_id ON public.messages USING btree (contact_id);
 
 
 --
--- Name: idx_messages_logs; Type: INDEX; Schema: public; Owner: juta_owner
+-- Name: idx_messages_logs; Type: INDEX; Schema: public; Owner: neondb_owner
 --
 
 CREATE INDEX idx_messages_logs ON public.messages USING gin (logs);
 
 
 --
--- Name: idx_messages_message_type; Type: INDEX; Schema: public; Owner: juta_owner
+-- Name: idx_messages_message_type; Type: INDEX; Schema: public; Owner: neondb_owner
 --
 
 CREATE INDEX idx_messages_message_type ON public.messages USING btree (message_type);
 
 
 --
--- Name: idx_messages_tags; Type: INDEX; Schema: public; Owner: juta_owner
+-- Name: idx_messages_tags; Type: INDEX; Schema: public; Owner: neondb_owner
 --
 
 CREATE INDEX idx_messages_tags ON public.messages USING gin (tags);
 
 
 --
--- Name: idx_messages_thread_id; Type: INDEX; Schema: public; Owner: juta_owner
+-- Name: idx_messages_thread_id; Type: INDEX; Schema: public; Owner: neondb_owner
 --
 
 CREATE INDEX idx_messages_thread_id ON public.messages USING btree (thread_id);
 
 
 --
--- Name: idx_messages_timestamp; Type: INDEX; Schema: public; Owner: juta_owner
+-- Name: idx_messages_timestamp; Type: INDEX; Schema: public; Owner: neondb_owner
 --
 
 CREATE INDEX idx_messages_timestamp ON public.messages USING btree ("timestamp");
 
 
 --
--- Name: idx_notifications_company_id; Type: INDEX; Schema: public; Owner: juta_owner
+-- Name: idx_notifications_company_id; Type: INDEX; Schema: public; Owner: neondb_owner
 --
 
 CREATE INDEX idx_notifications_company_id ON public.notifications USING btree (company_id);
 
 
 --
--- Name: idx_notifications_read; Type: INDEX; Schema: public; Owner: juta_owner
+-- Name: idx_notifications_read; Type: INDEX; Schema: public; Owner: neondb_owner
 --
 
 CREATE INDEX idx_notifications_read ON public.notifications USING btree (read);
 
 
 --
--- Name: idx_phone_status_company_id; Type: INDEX; Schema: public; Owner: juta_owner
+-- Name: idx_phone_status_company_id; Type: INDEX; Schema: public; Owner: neondb_owner
 --
 
 CREATE INDEX idx_phone_status_company_id ON public.phone_status USING btree (company_id);
 
 
 --
--- Name: idx_scheduled_messages_company_id; Type: INDEX; Schema: public; Owner: juta_owner
+-- Name: idx_scheduled_messages_company_id; Type: INDEX; Schema: public; Owner: neondb_owner
 --
 
 CREATE INDEX idx_scheduled_messages_company_id ON public.scheduled_messages USING btree (company_id);
 
 
 --
--- Name: idx_scheduled_messages_scheduled_time; Type: INDEX; Schema: public; Owner: juta_owner
+-- Name: idx_scheduled_messages_scheduled_time; Type: INDEX; Schema: public; Owner: neondb_owner
 --
 
 CREATE INDEX idx_scheduled_messages_scheduled_time ON public.scheduled_messages USING btree (scheduled_time);
 
 
 --
--- Name: idx_scheduled_messages_status; Type: INDEX; Schema: public; Owner: juta_owner
+-- Name: idx_scheduled_messages_status; Type: INDEX; Schema: public; Owner: neondb_owner
 --
 
 CREATE INDEX idx_scheduled_messages_status ON public.scheduled_messages USING btree (status);
 
 
 --
--- Name: idx_sent_followups_company_id; Type: INDEX; Schema: public; Owner: juta_owner
+-- Name: idx_sent_followups_company_id; Type: INDEX; Schema: public; Owner: neondb_owner
 --
 
 CREATE INDEX idx_sent_followups_company_id ON public.sent_followups USING btree (company_id);
 
 
 --
--- Name: idx_sessions_expires_at; Type: INDEX; Schema: public; Owner: juta_owner
+-- Name: idx_sessions_expires_at; Type: INDEX; Schema: public; Owner: neondb_owner
 --
 
 CREATE INDEX idx_sessions_expires_at ON public.sessions USING btree (expires_at);
 
 
 --
--- Name: idx_sessions_session_id; Type: INDEX; Schema: public; Owner: juta_owner
+-- Name: idx_sessions_session_id; Type: INDEX; Schema: public; Owner: neondb_owner
 --
 
 CREATE INDEX idx_sessions_session_id ON public.sessions USING btree (session_id);
 
 
 --
--- Name: idx_settings_company_id; Type: INDEX; Schema: public; Owner: juta_owner
+-- Name: idx_settings_company_id; Type: INDEX; Schema: public; Owner: neondb_owner
 --
 
 CREATE INDEX idx_settings_company_id ON public.settings USING btree (company_id);
 
 
 --
--- Name: idx_settings_lookup; Type: INDEX; Schema: public; Owner: juta_owner
+-- Name: idx_settings_lookup; Type: INDEX; Schema: public; Owner: neondb_owner
 --
 
 CREATE INDEX idx_settings_lookup ON public.settings USING btree (company_id, setting_type, setting_key);
 
 
 --
--- Name: idx_settings_type_key; Type: INDEX; Schema: public; Owner: juta_owner
+-- Name: idx_settings_type_key; Type: INDEX; Schema: public; Owner: neondb_owner
 --
 
 CREATE INDEX idx_settings_type_key ON public.settings USING btree (setting_type, setting_key);
 
 
 --
--- Name: idx_usage_logs_company_id_date; Type: INDEX; Schema: public; Owner: juta_owner
+-- Name: idx_usage_logs_company_id_date; Type: INDEX; Schema: public; Owner: neondb_owner
 --
 
 CREATE INDEX idx_usage_logs_company_id_date ON public.usage_logs USING btree (company_id, date);
 
 
 --
--- Name: idx_users_company_id; Type: INDEX; Schema: public; Owner: juta_owner
+-- Name: idx_users_company_id; Type: INDEX; Schema: public; Owner: neondb_owner
 --
 
 CREATE INDEX idx_users_company_id ON public.users USING btree (company_id);
 
 
 --
--- Name: idx_users_email; Type: INDEX; Schema: public; Owner: juta_owner
+-- Name: idx_users_email; Type: INDEX; Schema: public; Owner: neondb_owner
 --
 
 CREATE INDEX idx_users_email ON public.users USING btree (email);
 
 
 --
--- Name: companies update_companies_updated_at; Type: TRIGGER; Schema: public; Owner: juta_owner
+-- Name: ai_assign_responses update_ai_assign_responses_updated_at; Type: TRIGGER; Schema: public; Owner: neondb_owner
+--
+
+CREATE TRIGGER update_ai_assign_responses_updated_at BEFORE UPDATE ON public.ai_assign_responses FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
+
+
+--
+-- Name: companies update_companies_updated_at; Type: TRIGGER; Schema: public; Owner: neondb_owner
 --
 
 CREATE TRIGGER update_companies_updated_at BEFORE UPDATE ON public.companies FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
 
 
 --
--- Name: followup_templates update_followup_templates_updated_at; Type: TRIGGER; Schema: public; Owner: juta_owner
+-- Name: followup_templates update_followup_templates_updated_at; Type: TRIGGER; Schema: public; Owner: neondb_owner
 --
 
 CREATE TRIGGER update_followup_templates_updated_at BEFORE UPDATE ON public.followup_templates FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
 
 
 --
--- Name: ai_assign_responses ai_assign_responses_company_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: juta_owner
+-- Name: ai_assign_responses ai_assign_responses_company_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: neondb_owner
 --
 
 ALTER TABLE ONLY public.ai_assign_responses
@@ -1675,7 +1738,7 @@ ALTER TABLE ONLY public.ai_assign_responses
 
 
 --
--- Name: ai_document_responses ai_document_responses_company_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: juta_owner
+-- Name: ai_document_responses ai_document_responses_company_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: neondb_owner
 --
 
 ALTER TABLE ONLY public.ai_document_responses
@@ -1683,7 +1746,7 @@ ALTER TABLE ONLY public.ai_document_responses
 
 
 --
--- Name: ai_image_responses ai_image_responses_company_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: juta_owner
+-- Name: ai_image_responses ai_image_responses_company_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: neondb_owner
 --
 
 ALTER TABLE ONLY public.ai_image_responses
@@ -1691,7 +1754,7 @@ ALTER TABLE ONLY public.ai_image_responses
 
 
 --
--- Name: ai_tag_responses ai_tag_responses_company_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: juta_owner
+-- Name: ai_tag_responses ai_tag_responses_company_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: neondb_owner
 --
 
 ALTER TABLE ONLY public.ai_tag_responses
@@ -1699,7 +1762,7 @@ ALTER TABLE ONLY public.ai_tag_responses
 
 
 --
--- Name: ai_video_responses ai_video_responses_company_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: juta_owner
+-- Name: ai_video_responses ai_video_responses_company_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: neondb_owner
 --
 
 ALTER TABLE ONLY public.ai_video_responses
@@ -1707,7 +1770,7 @@ ALTER TABLE ONLY public.ai_video_responses
 
 
 --
--- Name: ai_voice_responses ai_voice_responses_company_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: juta_owner
+-- Name: ai_voice_responses ai_voice_responses_company_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: neondb_owner
 --
 
 ALTER TABLE ONLY public.ai_voice_responses
@@ -1715,7 +1778,7 @@ ALTER TABLE ONLY public.ai_voice_responses
 
 
 --
--- Name: appointments appointments_company_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: juta_owner
+-- Name: appointments appointments_company_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: neondb_owner
 --
 
 ALTER TABLE ONLY public.appointments
@@ -1723,7 +1786,7 @@ ALTER TABLE ONLY public.appointments
 
 
 --
--- Name: appointments appointments_contact_id_company_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: juta_owner
+-- Name: appointments appointments_contact_id_company_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: neondb_owner
 --
 
 ALTER TABLE ONLY public.appointments
@@ -1731,7 +1794,7 @@ ALTER TABLE ONLY public.appointments
 
 
 --
--- Name: assignments assignments_company_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: juta_owner
+-- Name: assignments assignments_company_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: neondb_owner
 --
 
 ALTER TABLE ONLY public.assignments
@@ -1739,7 +1802,7 @@ ALTER TABLE ONLY public.assignments
 
 
 --
--- Name: assignments assignments_contact_id_company_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: juta_owner
+-- Name: assignments assignments_contact_id_company_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: neondb_owner
 --
 
 ALTER TABLE ONLY public.assignments
@@ -1747,7 +1810,7 @@ ALTER TABLE ONLY public.assignments
 
 
 --
--- Name: assignments assignments_employee_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: juta_owner
+-- Name: assignments assignments_employee_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: neondb_owner
 --
 
 ALTER TABLE ONLY public.assignments
@@ -1755,7 +1818,7 @@ ALTER TABLE ONLY public.assignments
 
 
 --
--- Name: batches batches_company_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: juta_owner
+-- Name: batches batches_company_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: neondb_owner
 --
 
 ALTER TABLE ONLY public.batches
@@ -1763,7 +1826,7 @@ ALTER TABLE ONLY public.batches
 
 
 --
--- Name: bot_state bot_state_company_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: juta_owner
+-- Name: bot_state bot_state_company_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: neondb_owner
 --
 
 ALTER TABLE ONLY public.bot_state
@@ -1771,7 +1834,7 @@ ALTER TABLE ONLY public.bot_state
 
 
 --
--- Name: contacts contacts_company_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: juta_owner
+-- Name: contacts contacts_company_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: neondb_owner
 --
 
 ALTER TABLE ONLY public.contacts
@@ -1779,7 +1842,7 @@ ALTER TABLE ONLY public.contacts
 
 
 --
--- Name: duplicate_check_logs duplicate_check_logs_company_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: juta_owner
+-- Name: duplicate_check_logs duplicate_check_logs_company_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: neondb_owner
 --
 
 ALTER TABLE ONLY public.duplicate_check_logs
@@ -1787,7 +1850,7 @@ ALTER TABLE ONLY public.duplicate_check_logs
 
 
 --
--- Name: employees employees_company_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: juta_owner
+-- Name: employees employees_company_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: neondb_owner
 --
 
 ALTER TABLE ONLY public.employees
@@ -1795,7 +1858,7 @@ ALTER TABLE ONLY public.employees
 
 
 --
--- Name: error_logs error_logs_company_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: juta_owner
+-- Name: error_logs error_logs_company_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: neondb_owner
 --
 
 ALTER TABLE ONLY public.error_logs
@@ -1803,7 +1866,7 @@ ALTER TABLE ONLY public.error_logs
 
 
 --
--- Name: feedback feedback_company_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: juta_owner
+-- Name: feedback feedback_company_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: neondb_owner
 --
 
 ALTER TABLE ONLY public.feedback
@@ -1811,7 +1874,7 @@ ALTER TABLE ONLY public.feedback
 
 
 --
--- Name: followup_templates followup_templates_company_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: juta_owner
+-- Name: followup_templates followup_templates_company_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: neondb_owner
 --
 
 ALTER TABLE ONLY public.followup_templates
@@ -1819,7 +1882,7 @@ ALTER TABLE ONLY public.followup_templates
 
 
 --
--- Name: merchants merchants_company_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: juta_owner
+-- Name: merchants merchants_company_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: neondb_owner
 --
 
 ALTER TABLE ONLY public.merchants
@@ -1827,7 +1890,7 @@ ALTER TABLE ONLY public.merchants
 
 
 --
--- Name: messages messages_company_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: juta_owner
+-- Name: messages messages_company_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: neondb_owner
 --
 
 ALTER TABLE ONLY public.messages
@@ -1835,7 +1898,7 @@ ALTER TABLE ONLY public.messages
 
 
 --
--- Name: messages messages_contact_id_company_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: juta_owner
+-- Name: messages messages_contact_id_company_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: neondb_owner
 --
 
 ALTER TABLE ONLY public.messages
@@ -1843,7 +1906,7 @@ ALTER TABLE ONLY public.messages
 
 
 --
--- Name: notifications notifications_company_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: juta_owner
+-- Name: notifications notifications_company_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: neondb_owner
 --
 
 ALTER TABLE ONLY public.notifications
@@ -1851,7 +1914,7 @@ ALTER TABLE ONLY public.notifications
 
 
 --
--- Name: phone_status phone_status_company_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: juta_owner
+-- Name: phone_status phone_status_company_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: neondb_owner
 --
 
 ALTER TABLE ONLY public.phone_status
@@ -1859,7 +1922,7 @@ ALTER TABLE ONLY public.phone_status
 
 
 --
--- Name: pinned_items pinned_items_company_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: juta_owner
+-- Name: pinned_items pinned_items_company_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: neondb_owner
 --
 
 ALTER TABLE ONLY public.pinned_items
@@ -1867,7 +1930,7 @@ ALTER TABLE ONLY public.pinned_items
 
 
 --
--- Name: scheduled_messages scheduled_messages_company_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: juta_owner
+-- Name: scheduled_messages scheduled_messages_company_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: neondb_owner
 --
 
 ALTER TABLE ONLY public.scheduled_messages
@@ -1875,7 +1938,7 @@ ALTER TABLE ONLY public.scheduled_messages
 
 
 --
--- Name: scheduled_messages scheduled_messages_contact_id_company_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: juta_owner
+-- Name: scheduled_messages scheduled_messages_contact_id_company_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: neondb_owner
 --
 
 ALTER TABLE ONLY public.scheduled_messages
@@ -1883,7 +1946,7 @@ ALTER TABLE ONLY public.scheduled_messages
 
 
 --
--- Name: sent_followups sent_followups_company_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: juta_owner
+-- Name: sent_followups sent_followups_company_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: neondb_owner
 --
 
 ALTER TABLE ONLY public.sent_followups
@@ -1891,7 +1954,7 @@ ALTER TABLE ONLY public.sent_followups
 
 
 --
--- Name: sent_followups sent_followups_contact_id_company_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: juta_owner
+-- Name: sent_followups sent_followups_contact_id_company_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: neondb_owner
 --
 
 ALTER TABLE ONLY public.sent_followups
@@ -1899,7 +1962,7 @@ ALTER TABLE ONLY public.sent_followups
 
 
 --
--- Name: sent_followups sent_followups_template_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: juta_owner
+-- Name: sent_followups sent_followups_template_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: neondb_owner
 --
 
 ALTER TABLE ONLY public.sent_followups
@@ -1907,7 +1970,7 @@ ALTER TABLE ONLY public.sent_followups
 
 
 --
--- Name: sessions sessions_company_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: juta_owner
+-- Name: sessions sessions_company_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: neondb_owner
 --
 
 ALTER TABLE ONLY public.sessions
@@ -1915,7 +1978,7 @@ ALTER TABLE ONLY public.sessions
 
 
 --
--- Name: settings settings_company_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: juta_owner
+-- Name: settings settings_company_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: neondb_owner
 --
 
 ALTER TABLE ONLY public.settings
@@ -1923,7 +1986,7 @@ ALTER TABLE ONLY public.settings
 
 
 --
--- Name: threads threads_company_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: juta_owner
+-- Name: threads threads_company_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: neondb_owner
 --
 
 ALTER TABLE ONLY public.threads
@@ -1931,7 +1994,7 @@ ALTER TABLE ONLY public.threads
 
 
 --
--- Name: threads threads_contact_id_company_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: juta_owner
+-- Name: threads threads_contact_id_company_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: neondb_owner
 --
 
 ALTER TABLE ONLY public.threads
@@ -1939,7 +2002,7 @@ ALTER TABLE ONLY public.threads
 
 
 --
--- Name: usage_logs usage_logs_company_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: juta_owner
+-- Name: usage_logs usage_logs_company_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: neondb_owner
 --
 
 ALTER TABLE ONLY public.usage_logs
@@ -1947,7 +2010,7 @@ ALTER TABLE ONLY public.usage_logs
 
 
 --
--- Name: users users_company_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: juta_owner
+-- Name: users users_company_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: neondb_owner
 --
 
 ALTER TABLE ONLY public.users
