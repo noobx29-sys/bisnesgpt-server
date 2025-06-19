@@ -18,6 +18,15 @@ SET client_min_messages = warning;
 SET row_security = off;
 
 --
+-- Name: neon_auth; Type: SCHEMA; Schema: -; Owner: neondb_owner
+--
+
+CREATE SCHEMA neon_auth;
+
+
+ALTER SCHEMA neon_auth OWNER TO neondb_owner;
+
+--
 -- Name: uuid-ossp; Type: EXTENSION; Schema: -; Owner: -
 --
 
@@ -50,6 +59,23 @@ ALTER FUNCTION public.update_updated_at_column() OWNER TO neondb_owner;
 SET default_tablespace = '';
 
 SET default_table_access_method = heap;
+
+--
+-- Name: users_sync; Type: TABLE; Schema: neon_auth; Owner: neondb_owner
+--
+
+CREATE TABLE neon_auth.users_sync (
+    raw_json jsonb NOT NULL,
+    id text GENERATED ALWAYS AS ((raw_json ->> 'id'::text)) STORED NOT NULL,
+    name text GENERATED ALWAYS AS ((raw_json ->> 'display_name'::text)) STORED,
+    email text GENERATED ALWAYS AS ((raw_json ->> 'primary_email'::text)) STORED,
+    created_at timestamp with time zone GENERATED ALWAYS AS (to_timestamp((trunc((((raw_json ->> 'signed_up_at_millis'::text))::bigint)::double precision) / (1000)::double precision))) STORED,
+    updated_at timestamp with time zone,
+    deleted_at timestamp with time zone
+);
+
+
+ALTER TABLE neon_auth.users_sync OWNER TO neondb_owner;
 
 --
 -- Name: companies; Type: TABLE; Schema: public; Owner: neondb_owner
@@ -401,7 +427,15 @@ CREATE TABLE public.contacts (
     unread_count integer DEFAULT 0,
     last_message jsonb,
     custom_fields jsonb,
-    company character varying(255)
+    company character varying(255),
+    multi_assign jsonb DEFAULT '[]'::jsonb,
+    not_spam boolean DEFAULT true,
+    profile_pic_url text,
+    pinned boolean DEFAULT false,
+    customer_message text,
+    storage_requirements jsonb,
+    form_submission jsonb,
+    phone_indexes jsonb DEFAULT '[]'::jsonb
 );
 
 
@@ -475,7 +509,7 @@ CREATE TABLE public.messages (
     author character varying(255),
     media_data text,
     media_metadata jsonb,
-    CONSTRAINT messages_direction_check CHECK (((direction)::text = ANY ((ARRAY['inbound'::character varying, 'outbound'::character varying])::text[])))
+    CONSTRAINT messages_direction_check CHECK (((direction)::text = ANY (ARRAY[('inbound'::character varying)::text, ('outbound'::character varying)::text])))
 );
 
 
@@ -887,7 +921,8 @@ CREATE TABLE public.users (
     profile jsonb,
     last_updated timestamp with time zone DEFAULT CURRENT_TIMESTAMP,
     created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP,
-    active boolean DEFAULT true
+    active boolean DEFAULT true,
+    password character varying(255)
 );
 
 
@@ -898,6 +933,14 @@ ALTER TABLE public.users OWNER TO neondb_owner;
 --
 
 COMMENT ON TABLE public.users IS 'System users with access permissions';
+
+
+--
+-- Name: users_sync users_sync_pkey; Type: CONSTRAINT; Schema: neon_auth; Owner: neondb_owner
+--
+
+ALTER TABLE ONLY neon_auth.users_sync
+    ADD CONSTRAINT users_sync_pkey PRIMARY KEY (id);
 
 
 --
@@ -1370,6 +1413,13 @@ ALTER TABLE ONLY public.users
 
 ALTER TABLE ONLY public.users
     ADD CONSTRAINT users_user_id_key UNIQUE (user_id);
+
+
+--
+-- Name: users_sync_deleted_at_idx; Type: INDEX; Schema: neon_auth; Owner: neondb_owner
+--
+
+CREATE INDEX users_sync_deleted_at_idx ON neon_auth.users_sync USING btree (deleted_at);
 
 
 --
@@ -2056,7 +2106,7 @@ ALTER TABLE ONLY public.threads
 --
 
 ALTER TABLE ONLY public.usage_logs
-    ADD CONSTRAINT usage_logs_company_id_fkey FOREIGN KEY (company_id) REFERENCES public.companies(company_id);
+    ADD CONSTRAINT usage_logs_company_id_fkey FOREIGN KEY (company_id) REFERENCES public.companies(company_id) ON DELETE CASCADE;
 
 
 --

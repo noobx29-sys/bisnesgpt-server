@@ -360,93 +360,6 @@ async function addTask(idSubstring, taskString, assignee, dueDate) {
   }
 }
 
-async function registerUser(
-  phoneNumber,
-  email,
-  username,
-  companyName,
-  password
-) {
-  try {
-    // Check if the contact already exists
-    const companiesSnapshot = await admin
-      .firestore()
-      .collection("companies")
-      .get();
-    let existingContact = null;
-    let existingCompanyId = null;
-
-    for (const doc of companiesSnapshot.docs) {
-      const contactsSnapshot = await doc.ref
-        .collection("contacts")
-        .where("phone", "==", phoneNumber)
-        .get();
-      if (!contactsSnapshot.empty) {
-        existingContact = contactsSnapshot.docs[0].data();
-        existingCompanyId = doc.id;
-        break;
-      }
-    }
-
-    let companyId;
-    if (existingCompanyId) {
-      companyId = existingCompanyId;
-    } else {
-      // Generate new company ID
-      const companyCount = companiesSnapshot.size;
-      companyId = `0${companyCount + 1}`;
-
-      // Create a new company
-      await admin.firestore().collection("companies").doc(companyId).set({
-        id: companyId,
-        name: companyName,
-        whapiToken: "",
-      });
-    }
-
-    // Create a new user in Firebase Authentication
-    const userRecord = await admin.auth().createUser({
-      email: email,
-      phoneNumber: phoneNumber,
-      password: password,
-      displayName: username,
-    });
-
-    // Save user data to Firestore
-    await admin.firestore().collection("user").doc(email).set({
-      name: username,
-      email: email,
-      phone: phoneNumber,
-      company: companyName,
-      role: "1",
-      companyId: companyId,
-    });
-
-    // Save user data under the company's employee collection
-    await admin
-      .firestore()
-      .collection(`companies/${companyId}/employee`)
-      .doc(userRecord.uid)
-      .set({
-        name: username,
-        email: email,
-        role: "1",
-        phone: phoneNumber,
-      });
-
-    // Create channel (if needed)
-    const response = await axios.post(
-      `https://juta.ngrok.app/api/channel/create/${companyId}`
-    );
-    console.log(response.data);
-
-    return { success: true, userId: userRecord.uid, companyId: companyId };
-  } catch (error) {
-    console.error("Error registering user:", error);
-    return { success: false, error: error.message };
-  }
-}
-
 async function listAssignedTasks(idSubstring, assignee) {
   try {
     const companyResult = await sql`
@@ -1697,9 +1610,9 @@ async function sendImage(client, phoneNumber, imageUrl, caption, idSubstring) {
   try {
     const formattedNumberForWhatsApp =
       formatPhoneNumber(phoneNumber).slice(1) + "@c.us";
-    const formattedNumberForFirebase = formatPhoneNumber(phoneNumber);
+    const formattedNumberForDatabase = formatPhoneNumber(phoneNumber);
 
-    if (!formattedNumberForWhatsApp || !formattedNumberForFirebase) {
+    if (!formattedNumberForWhatsApp || !formattedNumberForDatabase) {
       throw new Error("Invalid phone number");
     }
 
@@ -1708,31 +1621,7 @@ async function sendImage(client, phoneNumber, imageUrl, caption, idSubstring) {
       caption: caption,
     });
 
-    const messageData = {
-      chat_id: formattedNumberForWhatsApp,
-      from: client.info.wid._serialized,
-      from_me: true,
-      id: sent.id._serialized,
-      source: "web",
-      status: "sent",
-      image: {
-        mimetype: media.mimetype,
-        data: media.data,
-        filename: media.filename,
-        caption: caption,
-      },
-      timestamp: sent.timestamp,
-      type: "image",
-    };
-
-    const contactRef = db
-      .collection("companies")
-      .doc(idSubstring)
-      .collection("contacts")
-      .doc(formattedNumberForFirebase);
-    const messagesRef = contactRef.collection("messages");
-    const messageDoc = messagesRef.doc(sent.id._serialized);
-    await messageDoc.set(messageData, { merge: true });
+    await addMessagetoPostgres(sent, idSubstring, formattedNumberForDatabase);
 
     const response = {
       status: "success",
@@ -1789,11 +1678,33 @@ async function listAssignedContacts(companyId, assigneeName, limit = 10) {
 
     await client.query("COMMIT");
 
-    const contacts = result.rows.map((row) => ({
-      phoneNumber: row.phoneNumber,
-      contactName: row.contactName,
-      tags: row.tags,
-    }));
+    const contacts = result.rows.map((row) => {
+      if (!row.phoneNumber) {
+        return {
+          phoneNumber: null,
+          contactName: row.contactName,
+          tags: row.tags,
+        };
+      }
+
+      let phoneNumber = row.phoneNumber.trim();
+      
+      if (phoneNumber.includes('-')) {
+        phoneNumber = phoneNumber.split('-').pop();
+      }
+      
+      phoneNumber = phoneNumber.replace(/\D/g, '');
+      
+      if (phoneNumber.length > 0 && !phoneNumber.startsWith('+')) {
+        phoneNumber = '+' + phoneNumber;
+      }
+      
+      return {
+        phoneNumber: phoneNumber,
+        contactName: row.contactName,
+        tags: row.tags,
+      };
+    });
 
     return JSON.stringify(contacts);
   } catch (error) {
@@ -3591,8 +3502,8 @@ async function processMessage(
     if (msg.fromMe) {
       console.log(msg);
       if (idSubstring === "0128") {
-        const firebaseDC = "+" + msg.to.split("@")[0];
-        await addTagToPostgres(firebaseDC, "stop bot", idSubstring);
+        const contactIDDC = msg.to.split("@")[0];
+        await addTagToPostgres(contactIDDC, "stop bot", idSubstring);
       }
       return;
     }
@@ -4111,22 +4022,8 @@ async function handleSpecialCases({
       "+120363386875697540",
       "Group Chat"
     );
-
-    const data = {
-      phone: extractedNumber,
-      contactName: (contactInfoMTDC.contactName || contactName || "").trim(),
-      threadid: threadID,
-      customFields: {
-        Company: contactInfoMTDC.company || "[Not specified]",
-        "IC Number": contactInfoMTDC.ic || "[Not specified]",
-        Email: contactInfoMTDC.email || "[Not specified]",
-        "Program of Interest": contactInfoMTDC.program || "[Not specified]",
-        "Program Date & Time":
-          contactInfoMTDC.programDateTime || "[Not specified]",
-      },
-    };
-
-    await contactRef.set(removeUndefined(data), { merge: true });
+    
+    await saveSpecialCaseMTDC(contactInfoMTDC);
   }
 
   // Handle SKC case (0161)
@@ -4150,25 +4047,7 @@ async function handleSpecialCases({
       "Group Chat"
     );
 
-    const data = {
-      phone: extractedNumber,
-      contactName: (contactInfoSKC.contactName || contactName || "").trim(),
-      threadid: threadID,
-      customFields: {
-        "Highest Qualification":
-          contactInfoSKC.highestQualification || "[Not specified]",
-        "Years of Work Experience":
-          contactInfoSKC.yearsOfWorkExperience || "[Not specified]",
-        Age: contactInfoSKC.age || "[Not specified]",
-        "Program of Interest":
-          contactInfoSKC.programOfInterest || "[Not specified]",
-        "Current Occupation":
-          contactInfoSKC.currentOccupation || "[Not specified]",
-        "Current Industry": contactInfoSKC.currentIndustry || "[Not specified]",
-      },
-    };
-
-    await contactRef.set(removeUndefined(data), { merge: true });
+    await saveSpecialCaseSKC(contactInfoSKC);
   }
 
   // Handle Maha Aerospace case (080)
@@ -4197,25 +4076,7 @@ async function handleSpecialCases({
       console.error("Error updating Maha Aerospace Google Sheet:", error);
     }
 
-    const data = {
-      phone: extractedNumber,
-      contactName: `${contactInfo.firstName || ""} ${
-        contactInfo.lastName || ""
-      }`.trim(),
-      threadid: threadID,
-      customFields: {
-        "First Name": contactInfo.firstName || "[Not specified]",
-        "Last Name": contactInfo.lastName || "[Not specified]",
-        "Birth Date": contactInfo.birthDate || "[Not specified]",
-        Country: contactInfo.country || "[Not specified]",
-        "Education Level": contactInfo.educationLevel || "[Not specified]",
-        Courses: contactInfo.courses || "[Not specified]",
-        Sponsor: contactInfo.sponsor || "[Not specified]",
-        "Referral Source": contactInfo.referralSource || "[Not specified]",
-      },
-    };
-
-    await contactRef.set(removeUndefined(data), { merge: true });
+    await saveSpecialCaseMaha(contactInfo);
   }
 
   // Handle LKSSB case (0119)
@@ -4239,22 +4100,7 @@ async function handleSpecialCases({
       "Group Chat"
     );
 
-    const data = {
-      phone: extractedNumber,
-      contactName: (contactInfoLKSSB.contactName || contactName || "").trim(),
-      threadid: threadID,
-      customFields: {
-        "Company Name": contactInfoLKSSB.companyName || "[Not specified]",
-        "Company Address": contactInfoLKSSB.companyAddress || "[Not specified]",
-        "Length Of Construction":
-          contactInfoLKSSB.lengthOfConstruction || "[Not specified]",
-        "Height Of Construction":
-          contactInfoLKSSB.heightOfConstruction || "[Not specified]",
-        Location: contactInfoLKSSB.location || "[Not specified]",
-      },
-    };
-
-    await contactRef.set(removeUndefined(data), { merge: true });
+    await saveSpecialCaseLKSSB(contactInfoLKSSB);
   }
 
   // Handle BINA case (002)
@@ -4280,24 +4126,10 @@ async function handleSpecialCases({
       "Contact Chat"
     );
 
-    const data = {
-      phone: extractedNumber,
-      contactName: (contactInfoBINA.contactName || contactName || "").trim(),
-      threadid: threadID,
-      customFields: {
-        Email: contactInfoBINA.email || "[Not specified]",
-        Availability: contactInfoBINA.availability || "[Not specified]",
-        Issue: contactInfoBINA.issue || "[Not specified]",
-        "Photos/Video": contactInfoBINA.photosVideo || "[Not specified]",
-        "How Many Floor": contactInfoBINA.howManyFloor || "[Not specified]",
-        "Roof Tile/Slab": contactInfoBINA.roofTileSlab || "[Not specified]",
-      },
-    };
-
-    await contactRef.set(removeUndefined(data), { merge: true });
+    await saveSpecialCaseBINA(contactInfoBINA);
   }
 
-  // Handle case 095
+  // Handle Eduville case (095)
   if (idSubstring == "095") {
     if (part.includes("get back to you")) {
       const { reportMessage, contactInfo } = await generateSpecialReport(
@@ -4316,23 +4148,8 @@ async function handleSpecialCases({
         "+120363325228671809"
       );
 
-      const data = {
-        phone: extractedNumber,
-        contactName: contactName || null,
-        threadid: threadID,
-        ...removeUndefined({
-          contactName: contactInfo.contactName || contactName,
-          country: contactInfo.country,
-          highestEducation: contactInfo.highestEducation,
-          programOfStudy: contactInfo.programOfStudy,
-          intakePreference: contactInfo.intakePreference,
-          englishProficiency: contactInfo.englishProficiency,
-          passport: contactInfo.passport,
-          nationality: contactInfo.nationality,
-        }),
-      };
+      await saveSpecialCaseEduville(contactInfo);
 
-      await contactRef.set(data, { merge: true });
       await addTagToPostgres(extractedNumber, "stop bot", idSubstring);
     }
 
@@ -4356,44 +4173,457 @@ async function handleSpecialCases({
     }
   }
 
-  // Handle follow-up templates
-  for (const template of followUpTemplates) {
-    if (
-      template.triggerKeywords.some((kw) =>
-        part.toLowerCase().includes(kw.toLowerCase())
-      )
-    ) {
-      try {
-        const contactDoc = await contactRef.get();
-        const currentTags = contactDoc.data()?.tags || [];
+  async function saveSpecialCaseEduville(contactInfo) {
+    const sqlClient = await pool.connect();
+    try {
+      await sqlClient.query('BEGIN');
 
-        for (const otherTemplate of followUpTemplates) {
-          const tagToRemove = otherTemplate.triggerTags?.[0];
-          if (tagToRemove && currentTags.includes(tagToRemove)) {
-            try {
-              await fetch("https://juta.ngrok.app/api/tag/followup", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                  requestType: "removeTemplate",
-                  phone: extractedNumber,
-                  first_name: contactName || extractedNumber,
-                  phoneIndex: phoneIndex || 0,
-                  templateId: otherTemplate.id,
-                  idSubstring: idSubstring,
-                }),
-              });
-            } catch (error) {
-              console.error("Error removing template messages:", error);
-            }
-            await contactRef.update({
-              tags: admin.firestore.FieldValue.arrayRemove(tagToRemove),
-            });
-          }
+      const contactData = {
+        phone: extractedNumber,
+        contact_name: (contactInfo.contactName || contactName || "").trim(),
+        thread_id: threadID,
+        custom_fields: {
+          contactName: contactInfo.contactName || contactName,
+          country: contactInfo.country,
+          highestEducation: contactInfo.highestEducation,
+          programOfStudy: contactInfo.programOfStudy,
+          intakePreference: contactInfo.intakePreference,
+          englishProficiency: contactInfo.englishProficiency,
+          passport: contactInfo.passport,
+          nationality: contactInfo.nationality,
         }
-      } catch (error) {
-        console.error("Error handling follow-up template:", error);
+      };
+
+      Object.keys(contactData.custom_fields).forEach(key => {
+        if (contactData.custom_fields[key] === undefined) {
+          delete contactData.custom_fields[key];
+        }
+      });
+
+      // Check if contact exists
+      const checkResult = await sqlClient.query(
+        'SELECT contact_id FROM public.contacts WHERE phone = $1 AND company_id = $2',
+        [extractedNumber, idSubstring]
+      );
+
+      if (checkResult.rows.length > 0) {
+        await sqlClient.query(
+          `UPDATE public.contacts 
+            SET contact_name = $1, 
+                thread_id = $2, 
+                custom_fields = COALESCE(custom_fields, '{}'::jsonb) || $3::jsonb,
+                last_updated = CURRENT_TIMESTAMP
+            WHERE phone = $4 AND company_id = $5`,
+          [
+            contactData.contact_name,
+            contactData.thread_id,
+            JSON.stringify(contactData.custom_fields),
+            contactData.phone,
+            idSubstring
+          ]
+        );
+      } else {
+        const contactID = idSubstring + '-' + (extractedNumber.startsWith('+') ? extractedNumber.slice(1) : extractedNumber);
+
+        await sqlClient.query(
+          `INSERT INTO public.contacts 
+            (contact_id, company_id, name, contact_name, phone, thread_id, custom_fields)
+            VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+          [
+            contactID,
+            idSubstring,
+            contactData.contact_name,
+            contactData.contact_name,
+            contactData.phone,
+            contactData.thread_id,
+            JSON.stringify(contactData.custom_fields)
+          ]
+        );
       }
+
+      await sqlClient.query('COMMIT');
+    } catch (error) {
+      await sqlClient.query('ROLLBACK');
+      console.error('Error updating contact in PostgreSQL:', error);
+      throw error;
+    } finally {
+      sqlClient.release();
+    }
+  }
+
+  async function saveSpecialCaseBINA(contactInfoBINA) {
+    const sqlClient = await pool.connect();
+    try {
+      await sqlClient.query('BEGIN');
+
+      const contactData = {
+        phone: extractedNumber,
+        contact_name: (contactInfoBINA.contactName || contactName || "").trim(),
+        thread_id: threadID,
+        custom_fields: {
+          Email: contactInfoBINA.email || "[Not specified]",
+          Availability: contactInfoBINA.availability || "[Not specified]",
+          Issue: contactInfoBINA.issue || "[Not specified]",
+          "Photos/Video": contactInfoBINA.photosVideo || "[Not specified]",
+          "How Many Floor": contactInfoBINA.howManyFloor || "[Not specified]",
+          "Roof Tile/Slab": contactInfoBINA.roofTileSlab || "[Not specified]",
+        }
+      };
+
+      Object.keys(contactData.custom_fields).forEach(key => {
+        if (contactData.custom_fields[key] === undefined) {
+          delete contactData.custom_fields[key];
+        }
+      });
+
+      const checkResult = await sqlClient.query(
+        'SELECT contact_id FROM public.contacts WHERE phone = $1 AND company_id = $2',
+        [extractedNumber, idSubstring]
+      );
+
+      if (checkResult.rows.length > 0) {
+        await sqlClient.query(
+          `UPDATE public.contacts 
+          SET contact_name = $1, 
+              thread_id = $2, 
+              custom_fields = COALESCE(custom_fields, '{}'::jsonb) || $3::jsonb,
+              last_updated = CURRENT_TIMESTAMP
+          WHERE phone = $4 AND company_id = $5`,
+          [
+            contactData.contact_name,
+            contactData.thread_id,
+            JSON.stringify(contactData.custom_fields),
+            contactData.phone,
+            idSubstring
+          ]
+        );
+      } else {
+        const contactID = idSubstring + '-' + (extractedNumber.startsWith('+') ? extractedNumber.slice(1) : extractedNumber);
+
+        await sqlClient.query(
+          `INSERT INTO public.contacts 
+          (contact_id, company_id, name, contact_name, phone, thread_id, custom_fields)
+          VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+          [
+            contactID,
+            idSubstring,
+            contactData.contact_name,
+            contactData.contact_name,
+            contactData.phone,
+            contactData.thread_id,
+            JSON.stringify(contactData.custom_fields)
+          ]
+        );
+      }
+
+      await sqlClient.query('COMMIT');
+    } catch (error) {
+      await sqlClient.query('ROLLBACK');
+      console.error('Error updating contact in PostgreSQL:', error);
+      throw error;
+    } finally {
+      sqlClient.release();
+    }
+  }
+
+  async function saveSpecialCaseLKSSB(contactInfoLKSSB) {
+    const sqlClient = await pool.connect();
+    try {
+      await sqlClient.query('BEGIN');
+
+      const contactData = {
+        phone: extractedNumber,
+        contact_name: (contactInfoLKSSB.contactName || contactName || "").trim(),
+        thread_id: threadID,
+        custom_fields: {
+          "Company Name": contactInfoLKSSB.companyName || "[Not specified]",
+          "Company Address": contactInfoLKSSB.companyAddress || "[Not specified]",
+          "Length Of Construction": contactInfoLKSSB.lengthOfConstruction || "[Not specified]",
+          "Height Of Construction": contactInfoLKSSB.heightOfConstruction || "[Not specified]",
+          Location: contactInfoLKSSB.location || "[Not specified]",
+        }
+      };
+
+      Object.keys(contactData.custom_fields).forEach(key => {
+        if (contactData.custom_fields[key] === undefined) {
+          delete contactData.custom_fields[key];
+        }
+      });
+
+      const checkResult = await sqlClient.query(
+        'SELECT contact_id FROM public.contacts WHERE phone = $1 AND company_id = $2',
+        [extractedNumber, idSubstring]
+      );
+
+      if (checkResult.rows.length > 0) {
+        await sqlClient.query(
+          `UPDATE public.contacts 
+          SET contact_name = $1, 
+              thread_id = $2, 
+              custom_fields = COALESCE(custom_fields, '{}'::jsonb) || $3::jsonb,
+              last_updated = CURRENT_TIMESTAMP
+          WHERE phone = $4 AND company_id = $5`,
+          [
+            contactData.contact_name,
+            contactData.thread_id,
+            JSON.stringify(contactData.custom_fields),
+            contactData.phone,
+            idSubstring
+          ]
+        );
+      } else {
+        const contactID = idSubstring + '-' + (extractedNumber.startsWith('+') ? extractedNumber.slice(1) : extractedNumber);
+
+        await sqlClient.query(
+          `INSERT INTO public.contacts 
+          (contact_id, company_id, name, contact_name, phone, thread_id, custom_fields)
+          VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+          [
+            contactID,
+            idSubstring,
+            contactData.contact_name,
+            contactData.contact_name,
+            contactData.phone,
+            contactData.thread_id,
+            JSON.stringify(contactData.custom_fields)
+          ]
+        );
+      }
+
+      await sqlClient.query('COMMIT');
+    } catch (error) {
+      await sqlClient.query('ROLLBACK');
+      console.error('Error updating contact in PostgreSQL:', error);
+      throw error;
+    } finally {
+      sqlClient.release();
+    }
+  }
+
+  async function saveSpecialCaseMaha(contactInfo) {
+    const sqlClient = await pool.connect();
+    try {
+      await sqlClient.query('BEGIN');
+
+      const contactData = {
+        phone: extractedNumber,
+        contact_name: `${contactInfo.firstName || ""} ${contactInfo.lastName || ""}`.trim(),
+        thread_id: threadID,
+        custom_fields: {
+          "First Name": contactInfo.firstName || "[Not specified]",
+          "Last Name": contactInfo.lastName || "[Not specified]",
+          "Birth Date": contactInfo.birthDate || "[Not specified]",
+          Country: contactInfo.country || "[Not specified]",
+          "Education Level": contactInfo.educationLevel || "[Not specified]",
+          Courses: contactInfo.courses || "[Not specified]",
+          Sponsor: contactInfo.sponsor || "[Not specified]",
+          "Referral Source": contactInfo.referralSource || "[Not specified]",
+        }
+      };
+
+      Object.keys(contactData.custom_fields).forEach(key => {
+        if (contactData.custom_fields[key] === undefined) {
+          delete contactData.custom_fields[key];
+        }
+      });
+
+      const checkResult = await sqlClient.query(
+        'SELECT contact_id FROM public.contacts WHERE phone = $1 AND company_id = $2',
+        [extractedNumber, idSubstring]
+      );
+
+      if (checkResult.rows.length > 0) {
+        await sqlClient.query(
+          `UPDATE public.contacts 
+          SET contact_name = $1, 
+              thread_id = $2, 
+              custom_fields = COALESCE(custom_fields, '{}'::jsonb) || $3::jsonb,
+              last_updated = CURRENT_TIMESTAMP
+          WHERE phone = $4 AND company_id = $5`,
+          [
+            contactData.contact_name,
+            contactData.thread_id,
+            JSON.stringify(contactData.custom_fields),
+            contactData.phone,
+            idSubstring
+          ]
+        );
+      } else {
+        const contactID = idSubstring + '-' + (extractedNumber.startsWith('+') ? extractedNumber.slice(1) : extractedNumber);
+
+        await sqlClient.query(
+          `INSERT INTO public.contacts 
+          (contact_id, company_id, name, contact_name, phone, thread_id, custom_fields)
+          VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+          [
+            contactID,
+            idSubstring,
+            contactData.contact_name,
+            contactData.contact_name,
+            contactData.phone,
+            contactData.thread_id,
+            JSON.stringify(contactData.custom_fields)
+          ]
+        );
+      }
+
+      await sqlClient.query('COMMIT');
+    } catch (error) {
+      await sqlClient.query('ROLLBACK');
+      console.error('Error updating contact in PostgreSQL:', error);
+      throw error;
+    } finally {
+      sqlClient.release();
+    }
+  }
+
+  async function saveSpecialCaseSKC(contactInfoSKC) {
+    const sqlClient = await pool.connect();
+    try {
+      await sqlClient.query('BEGIN');
+
+      const contactData = {
+        phone: extractedNumber,
+        contact_name: (contactInfoSKC.contactName || contactName || "").trim(),
+        thread_id: threadID,
+        custom_fields: {
+          "Highest Qualification": contactInfoSKC.highestQualification || "[Not specified]",
+          "Years of Work Experience": contactInfoSKC.yearsOfWorkExperience || "[Not specified]",
+          "Age": contactInfoSKC.age || "[Not specified]",
+          "Program of Interest": contactInfoSKC.programOfInterest || "[Not specified]",
+          "Current Occupation": contactInfoSKC.currentOccupation || "[Not specified]",
+          "Current Industry": contactInfoSKC.currentIndustry || "[Not specified]"
+        }
+      };
+
+      Object.keys(contactData.custom_fields).forEach(key => {
+        if (contactData.custom_fields[key] === undefined) {
+          delete contactData.custom_fields[key];
+        }
+      });
+
+      const checkResult = await sqlClient.query(
+        'SELECT contact_id FROM public.contacts WHERE phone = $1 AND company_id = $2',
+        [extractedNumber, idSubstring]
+      );
+
+      if (checkResult.rows.length > 0) {
+        await sqlClient.query(
+          `UPDATE public.contacts 
+          SET contact_name = $1, 
+              thread_id = $2, 
+              custom_fields = COALESCE(custom_fields, '{}'::jsonb) || $3::jsonb,
+              last_updated = CURRENT_TIMESTAMP
+          WHERE phone = $4 AND company_id = $5`,
+          [
+            contactData.contact_name,
+            contactData.thread_id,
+            JSON.stringify(contactData.custom_fields),
+            contactData.phone,
+            idSubstring
+          ]
+        );
+      } else {
+        const contactID = idSubstring + '-' + (extractedNumber.startsWith('+') ? extractedNumber.slice(1) : extractedNumber);
+
+        await sqlClient.query(
+          `INSERT INTO public.contacts 
+          (contact_id, company_id, name, contact_name, phone, thread_id, custom_fields)
+          VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+          [
+            contactID,
+            idSubstring,
+            contactData.contact_name,
+            contactData.contact_name,
+            contactData.phone,
+            contactData.thread_id,
+            JSON.stringify(contactData.custom_fields)
+          ]
+        );
+      }
+
+      await sqlClient.query('COMMIT');
+    } catch (error) {
+      await sqlClient.query('ROLLBACK');
+      console.error('Error updating contact in PostgreSQL:', error);
+      throw error;
+    } finally {
+      sqlClient.release();
+    }
+  }
+
+  async function saveSpecialCaseMTDC(contactInfoMTDC) {
+    const sqlClient = await pool.connect();
+    try {
+      await sqlClient.query('BEGIN');
+
+      const contactData = {
+        phone: extractedNumber,
+        contact_name: (contactInfoMTDC.contactName || contactName || "").trim(),
+        thread_id: threadID,
+        custom_fields: {
+          FullName: contactInfoMTDC.contactName || "[Not specified]",
+          Company: contactInfoMTDC.company || "[Not specified]",
+          "IC Number": contactInfoMTDC.ic || "[Not specified]",
+          Email: contactInfoMTDC.email || "[Not specified]",
+          "Program of Interest": contactInfoMTDC.program || "[Not specified]",
+          "Program Date & Time": contactInfoMTDC.programDateTime || "[Not specified]"
+        }
+      };
+
+      Object.keys(contactData.custom_fields).forEach(key => {
+        if (contactData.custom_fields[key] === undefined) {
+          delete contactData.custom_fields[key];
+        }
+      });
+
+      const checkResult = await sqlClient.query(
+        'SELECT contact_id FROM public.contacts WHERE phone = $1 AND company_id = $2',
+        [extractedNumber, idSubstring]
+      );
+
+      if (checkResult.rows.length > 0) {
+        await sqlClient.query(
+          `UPDATE public.contacts 
+          SET contact_name = $1, 
+              thread_id = $2, 
+              custom_fields = COALESCE(custom_fields, '{}'::jsonb) || $3::jsonb,
+              last_updated = CURRENT_TIMESTAMP
+          WHERE phone = $4 AND company_id = $5`,
+          [
+            contactData.contact_name,
+            contactData.thread_id,
+            JSON.stringify(contactData.custom_fields),
+            contactData.phone,
+            idSubstring
+          ]
+        );
+      } else {
+        const contactID = idSubstring + '-' + (extractedNumber.startsWith('+') ? extractedNumber.slice(1) : extractedNumber);
+
+        await sqlClient.query(
+          `INSERT INTO public.contacts 
+          (contact_id, company_id, name, contact_name, phone, thread_id, custom_fields)
+          VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+          [
+            contactID,
+            idSubstring,
+            contactData.contact_name,
+            contactData.contact_name,
+            contactData.phone,
+            contactData.thread_id,
+            JSON.stringify(contactData.custom_fields)
+          ]
+        );
+      }
+
+      await sqlClient.query('COMMIT');
+    } catch (error) {
+      await sqlClient.query('ROLLBACK');
+      console.error('Error updating contact in PostgreSQL:', error);
+      throw error;
+    } finally {
+      sqlClient.release();
     }
   }
 }
@@ -5632,6 +5862,7 @@ async function addContactToPostgres(groupId, groupTitle, idSubstring) {
   if (idSubstring !== "002") return;
 
   const extractedNumber = groupId.split("@")[0];
+  const contactID = idSubstring + '-' + (extractedNumber.startsWith('+') ? extractedNumber.slice(1) : extractedNumber);
 
   const sqlClient = await pool.connect();
 
@@ -5658,11 +5889,10 @@ async function addContactToPostgres(groupId, groupTitle, idSubstring) {
           phone, 
           tags, 
           is_group,
-          thread_id,
           chat_data,
           unread_count,
           last_message
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10,)
       `;
 
       const chatData = {
@@ -5688,14 +5918,13 @@ async function addContactToPostgres(groupId, groupTitle, idSubstring) {
       };
 
       const insertValues = [
-        extractedNumber,
+        contactID,
         idSubstring,
         groupTitle,
         groupTitle,
         extractedNumber,
         JSON.stringify([""]),
         true,
-        groupId,
         JSON.stringify(chatData),
         0,
         JSON.stringify(lastMessage),
@@ -5747,7 +5976,7 @@ async function addContactToPostgres(groupId, groupTitle, idSubstring) {
         groupId,
         JSON.stringify(chatData),
         JSON.stringify(lastMessage),
-        extractedNumber,
+        contactID,
         idSubstring,
       ];
 
@@ -5901,6 +6130,8 @@ async function addMessagetoPostgres(
     return;
   }
 
+  const contactID = idSubstring + '-' + (extractedNumber.startsWith('+') ? extractedNumber.slice(1) : extractedNumber);
+
   let messageBody = msg.body;
   let audioData = null;
   let type = "";
@@ -6011,7 +6242,7 @@ async function addMessagetoPostgres(
       const messageValues = [
         msg.id._serialized,
         idSubstring,
-        extractedNumber,
+        contactID,
         messageBody,
         type,
         mediaUrl,
@@ -6034,7 +6265,7 @@ async function addMessagetoPostgres(
       `;
 
       const contactResult = await client.query(contactCheckQuery, [
-        extractedNumber,
+        contactID,
         idSubstring,
       ]);
 
@@ -6046,7 +6277,7 @@ async function addMessagetoPostgres(
         `;
 
         await client.query(contactQuery, [
-          extractedNumber,
+          contactID,
           idSubstring,
           extractedNumber,
           extractedNumber,
@@ -6555,15 +6786,13 @@ async function countContactsCreatedToday(idSubstring) {
 }
 
 async function assignNewContactToEmployee(
-  contactID,
+  extractedNumber,
   idSubstring,
   client,
   contactName,
   triggerKeyword = ""
 ) {
-  if (employees.length === 0) {
-    await fetchEmployeesFromFirebase(idSubstring);
-  }
+  const employees = await fetchEmployeesFromDatabase(idSubstring);
 
   console.log("Employees:", employees);
 
@@ -6574,7 +6803,7 @@ async function assignNewContactToEmployee(
 
   const tags = [];
   const contactData = await getContactDataFromDatabaseByPhone(
-    contactID,
+    extractedNumber,
     idSubstring
   );
   const updatedContactName =
@@ -6594,7 +6823,7 @@ async function assignNewContactToEmployee(
     await assignToEmployee(
       assignedManager,
       "Manager",
-      contactID,
+      extractedNumber,
       updatedContactName,
       client,
       idSubstring,
@@ -6625,7 +6854,7 @@ async function assignNewContactToEmployee(
       await assignToEmployee(
         assignedSales,
         "Sales",
-        contactID,
+        extractedNumber,
         updatedContactName,
         client,
         idSubstring,
@@ -6641,7 +6870,7 @@ async function assignNewContactToEmployee(
     await assignToEmployee(
       assignedAdmin,
       "Admin",
-      contactID,
+      extractedNumber,
       updatedContactName,
       client,
       idSubstring,
@@ -6704,132 +6933,6 @@ Thank you.`;
   await client.sendMessage(employeeID, message);
   await addTagToPostgres(contactID, employee.name, idSubstring);
   console.log(`Assigned ${role}: ${employee.name}`);
-}
-
-async function checkAndScheduleDailyReport(client, idSubstring) {
-  try {
-    // Get a connection from the pool
-    const sqlClient = await pool.connect();
-
-    try {
-      // Begin transaction
-      await sqlClient.query("BEGIN");
-
-      // Query settings table for reporting settings
-      const settingsQuery = `
-        SELECT setting_value 
-        FROM public.settings 
-        WHERE company_id = $1 
-        AND setting_type = 'reporting' 
-        AND setting_key = 'dailyReport'
-      `;
-
-      const settingsResult = await sqlClient.query(settingsQuery, [
-        idSubstring,
-      ]);
-      const settings =
-        settingsResult.rows.length > 0
-          ? settingsResult.rows[0].setting_value
-          : null;
-
-      // Check if daily report is enabled and settings exist
-      if (settings?.enabled) {
-        const reportTime = settings.time || "09:00";
-        const groupId = settings.groupId;
-        const lastRun = settings.lastRun ? new Date(settings.lastRun) : null;
-        const [hours, minutes] = reportTime.split(":");
-
-        // Clear any existing cron jobs for this company
-        const cronJobName = `dailyReport_${idSubstring}`;
-        if (schedule.scheduledJobs[cronJobName]) {
-          schedule.scheduledJobs[cronJobName].cancel();
-        }
-
-        // Check if report was already sent today
-        const now = moment().tz("Asia/Kuala_Lumpur");
-        const wasRunToday =
-          lastRun && moment(lastRun).tz("Asia/Kuala_Lumpur").isSame(now, "day");
-
-        // If not run today and it's past the scheduled time, send report immediately
-        if (
-          !wasRunToday &&
-          now.hours() >= parseInt(hours) &&
-          now.minutes() >= parseInt(minutes)
-        ) {
-          console.log(
-            `[${idSubstring}] Daily report not sent yet today and it's past scheduled time. Sending now...`
-          );
-          await sendDailyContactReport(client, idSubstring);
-
-          // Update the lastRun timestamp in the database
-          const updateQuery = `
-            UPDATE public.settings 
-            SET setting_value = jsonb_set(setting_value, '{lastRun}', to_jsonb($1::text))
-            WHERE company_id = $2 
-            AND setting_type = 'reporting' 
-            AND setting_key = 'dailyReport'
-          `;
-
-          await sqlClient.query(updateQuery, [now.toISOString(), idSubstring]);
-        }
-
-        // Schedule for next run
-        console.log(
-          `[${idSubstring}] Scheduling daily report for ${reportTime}`
-        );
-        schedule.scheduleJob(
-          cronJobName,
-          `0 ${minutes} ${hours} * * *`,
-          async function () {
-            console.log(`[${idSubstring}] Running scheduled daily report`);
-            await sendDailyContactReport(client, idSubstring);
-
-            // Update lastRun in the database after scheduled run
-            const sqlClientForCron = await pool.connect();
-            try {
-              await sqlClientForCron.query("BEGIN");
-              const updateQuery = `
-              UPDATE public.settings 
-              SET setting_value = jsonb_set(setting_value, '{lastRun}', to_jsonb($1::text))
-              WHERE company_id = $2 
-              AND setting_type = 'reporting' 
-              AND setting_key = 'dailyReport'
-            `;
-
-              await sqlClientForCron.query(updateQuery, [
-                new Date().toISOString(),
-                idSubstring,
-              ]);
-              await sqlClientForCron.query("COMMIT");
-            } catch (cronError) {
-              await sqlClientForCron.query("ROLLBACK");
-              console.error(
-                `[${idSubstring}] Error updating lastRun after scheduled report:`,
-                cronError
-              );
-            } finally {
-              sqlClientForCron.release();
-            }
-          }
-        );
-      }
-
-      await sqlClient.query("COMMIT");
-    } catch (error) {
-      await sqlClient.query("ROLLBACK");
-      console.error(
-        `[${idSubstring}] Error in checkAndScheduleDailyReport:`,
-        error
-      );
-    } finally {
-      sqlClient.release();
-    }
-  } catch (connectionError) {
-    console.error(
-      `[${idSubstring}] Database connection error:`,
-      connectionError
-    );
-  }
 }
 
 async function sendDailyContactReport(client, idSubstring) {
@@ -7692,41 +7795,6 @@ async function handleToolCalls(
             "Error in handleToolCalls for addPointsForBottlesBought:",
             error
           );
-          toolOutputs.push({
-            tool_call_id: toolCall.id,
-            output: JSON.stringify({ error: error.message }),
-          });
-        }
-        break;
-      case "registerUser":
-        try {
-          console.log("Registering user...");
-          const args = JSON.parse(toolCall.function.arguments);
-
-          // Ensure all required fields are provided
-          if (
-            !args.phoneNumber ||
-            !args.email ||
-            !args.username ||
-            !args.companyName ||
-            !args.password
-          ) {
-            throw new Error("Missing required fields for user registration");
-          }
-
-          const result = await registerUser(
-            args.phoneNumber,
-            args.email,
-            args.username,
-            args.companyName,
-            args.password
-          );
-          toolOutputs.push({
-            tool_call_id: toolCall.id,
-            output: JSON.stringify(result),
-          });
-        } catch (error) {
-          console.error("Error in handleToolCalls for registerUser:", error);
           toolOutputs.push({
             tool_call_id: toolCall.id,
             output: JSON.stringify({ error: error.message }),
@@ -8722,6 +8790,7 @@ async function addTagToPostgres(contactID, tag, companyID, remove = false) {
       remove ? "from" : "to"
     } PostgreSQL for contact ${contactID}`
   );
+  const contactID = companyID + '-' + (contactID.startsWith('+') ? contactID.slice(1) : contactID);
 
   const sqlClient = await pool.connect();
 
@@ -8988,46 +9057,6 @@ async function handleOpenAIAssistant(
               description: "The caption for the image",
             },
           },
-        },
-      },
-    },
-    {
-      type: "function",
-      function: {
-        name: "registerUser",
-        description:
-          "Register a new user with their details and create a new company",
-        parameters: {
-          type: "object",
-          properties: {
-            phoneNumber: {
-              type: "string",
-              description: "The phone number of the user to register",
-            },
-            email: {
-              type: "string",
-              description: "The email address of the user",
-            },
-            password: {
-              type: "string",
-              description: "The password for the new user",
-            },
-            username: {
-              type: "string",
-              description: "The username for the new user",
-            },
-            companyName: {
-              type: "string",
-              description: "The name of the company to create",
-            },
-          },
-          required: [
-            "phoneNumber",
-            "email",
-            "password",
-            "username",
-            "companyName",
-          ],
         },
       },
     },

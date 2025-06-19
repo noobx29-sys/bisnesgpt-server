@@ -3,7 +3,9 @@ const { Client, LocalAuth, RemoteAuth} = require('whatsapp-web.js');
 const { Queue, Worker, QueueScheduler} = require('bullmq');
 const Redis = require('ioredis');
 const { google } = require('googleapis');
-const cron = require('node-cron');
+const moment = require("moment-timezone");
+const cron = require("node-cron");
+const schedule = require("node-schedule");
 //const qrcode = require('qrcode-terminal');
 const FirebaseWWebJS = require('./firebaseWweb.js');
 const qrcode = require('qrcode');
@@ -22,7 +24,7 @@ const db = admin.firestore();
 const OpenAI = require('openai');
 const { MessageMedia } = require('whatsapp-web.js');
 const { v4: uuidv4 } = require('uuid');
-const fs = require('fs');
+const fs = require('fs').promises;
 const util = require('util');  // We'll use this to promisify fs functions
 const path = require('path');
 const stream = require('stream');
@@ -41,6 +43,21 @@ const sqlDb = require('./db');
 require('events').EventEmitter.defaultMaxListeners = 100;  // Increase from 70
 require('events').EventEmitter.prototype._maxListeners = 100;  // Increase from 70
 require('events').defaultMaxListeners = 100;  // Increase from 70
+
+const { neon, neonConfig } = require("@neondatabase/serverless");
+const { Pool } = require('pg');
+
+// Configure Neon for WebSocket pooling
+neonConfig.webSocketConstructor = require('ws');
+
+// For direct SQL queries (single connection)
+const sql = neon(process.env.DATABASE_URL);
+
+// For connection pooling (multiple concurrent connections)
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  max: 2000
+});
 
 
 const botMap = new Map();
@@ -3699,7 +3716,7 @@ async function main(reinitialize = false) {
   const automationInstances = {
     //skcSpreadsheet: new SKCSpreadsheet(botMap),
     //bhqSpreadsheet: new bhqSpreadsheet(botMap),
-    //constantcoSpreadsheet: new constantcoSpreadsheet(botMap)
+    //constantcoSpreadsheet: new constantcoSpreadsheet(botMap),
   };
 
   // 7. Initialize automation systems in parallel
@@ -3722,9 +3739,239 @@ function initializeAutomations(botMap) {
    // automationInstances.bhqSpreadsheet.initialize(),
    // automationInstances.constantcoSpreadsheet.initialize(),
    // automationInstances.skcSpreadsheet.initialize(),
+   checkAndScheduleDailyReport(),
   ];
 }
-// ... existing code ...
+
+async function checkAndScheduleDailyReport() {
+  try {
+    const sqlClient = await pool.connect();
+
+    try {
+      await sqlClient.query("BEGIN");
+
+      const companiesQuery = `
+        SELECT company_id 
+        FROM public.companies
+      `;
+      
+      const companiesResult = await sqlClient.query(companiesQuery);
+      const companies = companiesResult.rows;
+      
+      console.log(`Found ${companies.length} companies to check for daily reports`);
+      
+      for (const company of companies) {
+        const companyId = company.company_id;
+        
+        try {
+          const settingsQuery = `
+            SELECT setting_value 
+            FROM public.settings 
+            WHERE company_id = $1 
+            AND setting_type = 'reporting' 
+            AND setting_key = 'dailyReport'
+          `;
+
+          const settingsResult = await sqlClient.query(settingsQuery, [companyId]);
+          const settings = settingsResult.rows.length > 0 ? settingsResult.rows[0].setting_value : null;
+
+          if (settings?.enabled) {
+            const reportTime = settings.time || "09:00";
+            const groupId = settings.groupId;
+            const lastRun = settings.lastRun ? new Date(settings.lastRun) : null;
+            const [hours, minutes] = reportTime.split(":");
+
+            const cronJobName = `dailyReport_${companyId}`;
+            if (schedule.scheduledJobs[cronJobName]) {
+              schedule.scheduledJobs[cronJobName].cancel();
+            }
+
+            const now = moment().tz("Asia/Kuala_Lumpur");
+            const wasRunToday = lastRun && moment(lastRun).tz("Asia/Kuala_Lumpur").isSame(now, "day");
+
+            if (!wasRunToday && 
+                now.hours() >= parseInt(hours) && 
+                now.minutes() >= parseInt(minutes)) {
+              console.log(`[${companyId}] Daily report not sent yet today and it's past scheduled time. Sending now...`);
+              
+              const botData = botMap.get(companyId);
+              if (botData && botData[0]?.client) {
+                await sendDailyContactReport(botData[0].client, companyId);
+
+                const updateQuery = `
+                  UPDATE public.settings 
+                  SET setting_value = jsonb_set(setting_value, '{lastRun}', to_jsonb($1::text))
+                  WHERE company_id = $2 
+                  AND setting_type = 'reporting' 
+                  AND setting_key = 'dailyReport'
+                `;
+
+                await sqlClient.query(updateQuery, [now.toISOString(), companyId]);
+              } else {
+                console.log(`[${companyId}] No WhatsApp client found for immediate report`);
+              }
+            }
+
+            console.log(`[${companyId}] Scheduling daily report for ${reportTime}`);
+            schedule.scheduleJob(
+              cronJobName,
+              `0 ${minutes} ${hours} * * *`,
+              async function () {
+                console.log(`[${companyId}] Running scheduled daily report`);
+                
+                const botData = botMap.get(companyId);
+                if (botData && botData[0]?.client) {
+                  await sendDailyContactReport(botData[0].client, companyId);
+
+                  const sqlClientForCron = await pool.connect();
+                  try {
+                    await sqlClientForCron.query("BEGIN");
+                    const updateQuery = `
+                      UPDATE public.settings 
+                      SET setting_value = jsonb_set(setting_value, '{lastRun}', to_jsonb($1::text))
+                      WHERE company_id = $2 
+                      AND setting_type = 'reporting' 
+                      AND setting_key = 'dailyReport'
+                    `;
+
+                    await sqlClientForCron.query(updateQuery, [
+                      new Date().toISOString(),
+                      companyId,
+                    ]);
+                    await sqlClientForCron.query("COMMIT");
+                  } catch (cronError) {
+                    await sqlClientForCron.query("ROLLBACK");
+                    console.error(
+                      `[${companyId}] Error updating lastRun after scheduled report:`,
+                      cronError
+                    );
+                  } finally {
+                    sqlClientForCron.release();
+                  }
+                } else {
+                  console.log(`[${companyId}] No WhatsApp client found for scheduled report`);
+                }
+              }
+            );
+            
+            console.log(`[${companyId}] Daily report scheduled successfully`);
+          } else {
+            console.log(`[${companyId}] Daily reporting not enabled, skipping`);
+          }
+        } catch (companyError) {
+          console.error(`[${companyId}] Error setting up daily report:`, companyError);
+          console.log(`Continuing with next company...`);
+        }
+      }
+
+      await sqlClient.query("COMMIT");
+      console.log("All daily reports have been set up successfully");
+      
+    } catch (error) {
+      await sqlClient.query("ROLLBACK");
+      console.error(`Error in checkAndScheduleDailyReport:`, error);
+    } finally {
+      sqlClient.release();
+    }
+  } catch (connectionError) {
+    console.error(`Database connection error:`, connectionError);
+  }
+}
+
+async function sendDailyContactReport(client, idSubstring) {
+  const sqlClient = await pool.connect();
+
+  try {
+    const { count, contacts } = await getContactsAddedToday(
+      idSubstring,
+      sqlClient
+    );
+
+    const currentNow = moment().tz("Asia/Kuala_Lumpur");
+
+    const message =
+      `📊 *Daily Contact Report*\n\n` +
+      `📅 Date: ${currentNow.format("DD/MM/YYYY")}\n` +
+      `🔔 New Leads Today: ${count}\n\n` +
+      (contacts.length > 0
+        ? `*New Contacts:*\n${contacts
+            .map((c) => `- ${c.contactName} (${c.phoneNumber})`)
+            .join("\n")}\n\n`
+        : "") +
+      `Generated by Juta AI`;
+
+    const settingsQuery = `
+      SELECT setting_value->>'groupId' as group_id
+      FROM public.settings 
+      WHERE company_id = $1 
+      AND setting_type = 'reporting' 
+      AND setting_key = 'dailyReport'
+    `;
+
+    const settingsResult = await sqlClient.query(settingsQuery, [idSubstring]);
+    const groupId =
+      settingsResult.rows.length > 0 ? settingsResult.rows[0].group_id : null;
+
+    if (groupId) {
+      await client.sendMessage(groupId, message);
+      console.log(
+        `Daily report sent to group ${groupId} for company ${idSubstring} at ${currentNow.format(
+          "HH:mm"
+        )}`
+      );
+    } else {
+      console.log(
+        `No group ID configured for daily report for company ${idSubstring}`
+      );
+    }
+
+    return { success: true, message: "Report sent successfully" };
+  } catch (error) {
+    console.error(
+      `Error sending daily contact report for ${idSubstring}:`,
+      error
+    );
+    return { success: false, error: error.message };
+  } finally {
+    sqlClient.release();
+  }
+}
+
+async function getContactsAddedToday(idSubstring) {
+  try {
+    const today = moment()
+      .tz("Asia/Kuala_Lumpur")
+      .startOf("day")
+      .format("YYYY-MM-DD");
+
+    const result = await sql`
+      SELECT 
+        phone as "phoneNumber",
+        contact_name as "contactName",
+        created_at as "createdAt",
+        tags
+      FROM public.contacts 
+      WHERE company_id = ${idSubstring}
+      AND DATE(created_at AT TIME ZONE 'Asia/Kuala_Lumpur') = ${today}
+    `;
+
+    const contacts = result.map((contact) => ({
+      phoneNumber: contact.phoneNumber,
+      contactName: contact.contactName || "Unknown",
+      createdAt: contact.createdAt.toISOString(),
+      tags: contact.tags || [],
+    }));
+
+    return {
+      count: contacts.length,
+      contacts: contacts,
+    };
+  } catch (error) {
+    console.error("Error getting contacts added today:", error);
+    return { count: 0, contacts: [], error: error.message };
+  }
+}
+
 async function getPhoneStatus(companyId, phoneIndex) {
   try {
     const phoneStatusRef = db.collection('companies')
