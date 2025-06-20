@@ -853,24 +853,15 @@ app.post("/zakat", async (req, res) => {
     });
   }
 });
-// Add this near other cron jobs
-let dailyReportCron = null;
 
-// Add this API endpoint
+const dailyReportCrons = new Map();
+
 app.post("/api/daily-report/:companyId", async (req, res) => {
   const { companyId } = req.params;
-  const { enabled, time, groupId } = req.body; // time format: "HH:mm"
+  const { enabled, time, groupId } = req.body;
 
   try {
-    // Get reference to company settings
-    const settingsRef = db
-      .collection("companies")
-      .doc(companyId)
-      .collection("settings")
-      .doc("reporting");
-
     if (enabled) {
-      // Validate required fields
       if (!time || !groupId) {
         return res.status(400).json({
           success: false,
@@ -878,27 +869,40 @@ app.post("/api/daily-report/:companyId", async (req, res) => {
         });
       }
 
-      // Save settings to Firebase
-      await settingsRef.set(
-        {
-          dailyReport: {
-            enabled: true,
-            time,
-            groupId,
-            lastRun: null,
-          },
-        },
-        { merge: true }
-      );
+      const settingValue = {
+        enabled: true,
+        time,
+        groupId,
+        lastRun: null,
+      };
 
-      // Stop existing cron if running
-      if (dailyReportCron) {
-        dailyReportCron.stop();
+      const checkQuery = `
+        SELECT id FROM public.settings 
+        WHERE company_id = $1 AND setting_type = 'reporting' AND setting_key = 'dailyReport'
+      `;
+      const checkResult = await sqlDb.query(checkQuery, [companyId]);
+      
+      if (checkResult.rows.length > 0) {
+        const updateQuery = `
+          UPDATE public.settings 
+          SET setting_value = $1, updated_at = CURRENT_TIMESTAMP
+          WHERE company_id = $2 AND setting_type = 'reporting' AND setting_key = 'dailyReport'
+        `;
+        await sqlDb.query(updateQuery, [JSON.stringify(settingValue), companyId]);
+      } else {
+        const insertQuery = `
+          INSERT INTO public.settings (company_id, setting_type, setting_key, setting_value, created_at, updated_at)
+          VALUES ($1, 'reporting', 'dailyReport', $2, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        `;
+        await sqlDb.query(insertQuery, [companyId, JSON.stringify(settingValue)]);
       }
 
-      // Start new cron job
+      if (dailyReportCrons.has(companyId)) {
+        dailyReportCrons.get(companyId).stop();
+      }
+
       const [hour, minute] = time.split(":");
-      dailyReportCron = cron.schedule(`${minute} ${hour}   `, async () => {
+      const cronJob = cron.schedule(`${minute} ${hour} * * *`, async () => {
         try {
           const botData = botMap.get(companyId);
           if (!botData || !botData[0]?.client) {
@@ -911,14 +915,21 @@ app.post("/api/daily-report/:companyId", async (req, res) => {
 
           await botData[0].client.sendMessage(groupId, message);
 
-          // Update last run time
-          await settingsRef.update({
-            "dailyReport.lastRun": admin.firestore.FieldValue.serverTimestamp(),
-          });
+          const updateLastRunQuery = `
+            UPDATE public.settings 
+            SET setting_value = jsonb_set(setting_value, '{lastRun}', to_jsonb($1::text), true),
+                updated_at = CURRENT_TIMESTAMP
+            WHERE company_id = $2 AND setting_type = 'reporting' AND setting_key = 'dailyReport'
+          `;
+          await sqlDb.query(updateLastRunQuery, [new Date().toISOString(), companyId]);
         } catch (error) {
-          console.error("Error sending daily report:", error);
+          console.error(`Error sending daily report for company ${companyId}:`, error);
         }
+      }, {
+        timezone: "Asia/Kuala_Lumpur"
       });
+
+      dailyReportCrons.set(companyId, cronJob);
 
       res.json({
         success: true,
@@ -926,22 +937,24 @@ app.post("/api/daily-report/:companyId", async (req, res) => {
         nextRun: `${hour}:${minute}`,
       });
     } else {
-      // Disable reporting
-      if (dailyReportCron) {
-        dailyReportCron.stop();
-        dailyReportCron = null;
+      if (dailyReportCrons.has(companyId)) {
+        dailyReportCrons.get(companyId).stop();
+        dailyReportCrons.delete(companyId);
       }
 
-      await settingsRef.set(
-        {
-          dailyReport: {
-            enabled: false,
-            time: null,
-            groupId: null,
-          },
-        },
-        { merge: true }
-      );
+      const settingValue = {
+        enabled: false,
+        time: null,
+        groupId: null,
+      };
+
+      const updateQuery = `
+        UPDATE public.settings 
+        SET setting_value = $1, updated_at = CURRENT_TIMESTAMP
+        WHERE company_id = $2 AND setting_type = 'reporting' AND setting_key = 'dailyReport'
+      `;
+      
+      await sqlDb.query(updateQuery, [JSON.stringify(settingValue), companyId]);
 
       res.json({
         success: true,
@@ -957,24 +970,88 @@ app.post("/api/daily-report/:companyId", async (req, res) => {
   }
 });
 
-// Helper function to count today's leads
 async function countTodayLeads(companyId) {
   try {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-
-    const contactsRef = db
-      .collection("companies")
-      .doc(companyId)
-      .collection("contacts");
-    const snapshot = await contactsRef.where("createdAt", ">=", today).get();
-
-    return snapshot.size;
+    const today = moment().tz('Asia/Kuala_Lumpur').startOf('day').format('YYYY-MM-DD HH:mm:ss');
+    
+    const query = `
+      SELECT COUNT(*) as count 
+      FROM public.contacts 
+      WHERE company_id = $1 AND created_at >= $2
+    `;
+    
+    const result = await sqlDb.query(query, [companyId, today]);
+    return parseInt(result.rows[0].count, 10);
   } catch (error) {
     console.error("Error counting leads:", error);
     return 0;
   }
 }
+
+app.post("/api/daily-report/:companyId/trigger", async (req, res) => {
+  const { companyId } = req.params;
+
+  try {
+    const settingsQuery = `
+      SELECT setting_value 
+      FROM public.settings 
+      WHERE company_id = $1 
+      AND setting_type = 'reporting' 
+      AND setting_key = 'dailyReport'
+    `;
+    
+    const settingsResult = await sqlDb.query(settingsQuery, [companyId]);
+    
+    if (settingsResult.rows.length === 0) {
+      return res.status(400).json({
+        success: false,
+        error: "Daily reporting is not configured for this company",
+      });
+    }
+    
+    const settings = settingsResult.rows[0].setting_value;
+
+    if (!settings || !settings.enabled) {
+      return res.status(400).json({
+        success: false,
+        error: "Daily reporting is not enabled for this company",
+      });
+    }
+
+    const { groupId } = settings;
+    const botData = botMap.get(companyId);
+
+    if (!botData || !botData[0]?.client) {
+      throw new Error("WhatsApp client not found");
+    }
+
+    const count = await countTodayLeads(companyId);
+    const message = `📊 Daily Lead Report (Manual Trigger)\n\nNew Leads Today: ${count}\nDate: ${new Date().toLocaleDateString()}`;
+
+    await botData[0].client.sendMessage(groupId, message);
+
+    const updateLastRunQuery = `
+      UPDATE public.settings 
+      SET setting_value = jsonb_set(setting_value, '{lastRun}', to_jsonb($1::text), true),
+          updated_at = CURRENT_TIMESTAMP
+      WHERE company_id = $2 AND setting_type = 'reporting' AND setting_key = 'dailyReport'
+    `;
+    await sqlDb.query(updateLastRunQuery, [new Date().toISOString(), companyId]);
+
+    res.json({
+      success: true,
+      message: "Report triggered successfully",
+      count,
+    });
+  } catch (error) {
+    console.error("Error triggering daily report:", error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+    });
+  }
+});
+
 app.get("/api/check-constantco-spreadsheet", async (req, res) => {
   try {
     // Get the spreadsheet handler instance
@@ -996,50 +1073,7 @@ app.get("/api/check-constantco-spreadsheet", async (req, res) => {
     });
   }
 });
-// Add this endpoint to manually trigger a report
-app.post("/api/daily-report/:companyId/trigger", async (req, res) => {
-  const { companyId } = req.params;
 
-  try {
-    const settingsRef = db
-      .collection("companies")
-      .doc(companyId)
-      .collection("settings")
-      .doc("reporting");
-    const settings = await settingsRef.get();
-
-    if (!settings.exists || !settings.data()?.dailyReport?.enabled) {
-      return res.status(400).json({
-        success: false,
-        error: "Daily reporting is not enabled for this company",
-      });
-    }
-
-    const { groupId } = settings.data().dailyReport;
-    const botData = botMap.get(companyId);
-
-    if (!botData || !botData[0]?.client) {
-      throw new Error("WhatsApp client not found");
-    }
-
-    const count = await countTodayLeads(companyId);
-    const message = `📊 Daily Lead Report (Manual Trigger)\n\nNew Leads Today: ${count}\nDate: ${new Date().toLocaleDateString()}`;
-
-    await botData[0].client.sendMessage(groupId, message);
-
-    res.json({
-      success: true,
-      message: "Report triggered successfully",
-      count,
-    });
-  } catch (error) {
-    console.error("Error triggering daily report:", error);
-    res.status(500).json({
-      success: false,
-      error: error.message,
-    });
-  }
-});
 async function createUserInFirebase(userData) {
   try {
     const userRecord = await admin.auth().createUser(userData);
@@ -4302,6 +4336,8 @@ async function main(reinitialize = false) {
     //automationInstances.bhqSpreadsheet.initialize(),
     //automationInstances.skcSpreadsheet.initialize(),
     //automationInstances.constantcoSpreadsheet.initialize(),
+    checkAndScheduleDailyReport(),
+    initializeDailyReports(),
   ];
   await Promise.all(automationPromises);
 
@@ -4317,7 +4353,64 @@ function initializeAutomations(botMap) {
     // automationInstances.constantcoSpreadsheet.initialize(),
     // automationInstances.skcSpreadsheet.initialize(),
     checkAndScheduleDailyReport(),
+    initializeDailyReports(),
   ];
+}
+
+async function initializeDailyReports() {
+  try {
+    const settingsQuery = `
+      SELECT company_id, setting_value 
+      FROM public.settings 
+      WHERE setting_type = 'reporting' 
+      AND setting_key = 'dailyReport'
+    `;
+    
+    const settingsResult = await sqlDb.query(settingsQuery);
+    
+    for (const row of settingsResult.rows) {
+      const companyId = row.company_id;
+      const settings = row.setting_value;
+      
+      if (settings && settings.enabled && settings.time && settings.groupId) {
+        const [hour, minute] = settings.time.split(":");
+        
+        const cronJob = cron.schedule(`${minute} ${hour} * * *`, async () => {
+          try {
+            const botData = botMap.get(companyId);
+            if (!botData || !botData[0]?.client) {
+              console.error(`No WhatsApp client found for company ${companyId}`);
+              return;
+            }
+
+            const count = await countTodayLeads(companyId);
+            const message = `📊 Daily Lead Report\n\nNew Leads Today: ${count}\nDate: ${new Date().toLocaleDateString()}`;
+
+            await botData[0].client.sendMessage(settings.groupId, message);
+
+            const updateLastRunQuery = `
+              UPDATE public.settings 
+              SET setting_value = jsonb_set(setting_value, '{lastRun}', to_jsonb($1::text), true),
+                  updated_at = CURRENT_TIMESTAMP
+              WHERE company_id = $2 AND setting_type = 'reporting' AND setting_key = 'dailyReport'
+            `;
+            await sqlDb.query(updateLastRunQuery, [new Date().toISOString(), companyId]);
+          } catch (error) {
+            console.error(`Error sending daily report for company ${companyId}:`, error);
+          }
+        }, {
+          timezone: "Asia/Kuala_Lumpur"
+        });
+        
+        dailyReportCrons.set(companyId, cronJob);
+        console.log(`Daily report scheduled for company ${companyId} at ${settings.time}`);
+      }
+    }
+    
+    console.log(`Initialized ${dailyReportCrons.size} daily report cron jobs`);
+  } catch (error) {
+    console.error("Error initializing daily reports:", error);
+  }
 }
 
 async function checkAndScheduleDailyReport() {
