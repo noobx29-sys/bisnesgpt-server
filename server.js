@@ -18,14 +18,16 @@ const app = express();
 const admin = require('./firebase.js');
 const axios = require('axios');
 const WebSocket = require('ws');
+
 const server = require('http').createServer(app);
 const wss = new WebSocket.Server({ server });
 const db = admin.firestore();
 const OpenAI = require('openai');
 const { MessageMedia } = require('whatsapp-web.js');
-const { v4: uuidv4 } = require('uuid');
-const fs = require('fs').promises;
+
 const util = require('util');  // We'll use this to promisify fs functions
+const fs = require('fs'); // Add this line for synchronous fs functions
+
 const path = require('path');
 const stream = require('stream');
 const { promisify } = require('util');
@@ -39,6 +41,7 @@ const CryptoJS = require("crypto-js");
 const AutomatedMessaging = require('./blast/automatedMessaging');
 const qrcodeTerminal = require('qrcode-terminal');
 const sqlDb = require('./db');
+const { v4: uuidv4 } = require('uuid');
 // Add this near the top of the file, after your require statements
 require('events').EventEmitter.defaultMaxListeners = 100;  // Increase from 70
 require('events').EventEmitter.prototype._maxListeners = 100;  // Increase from 70
@@ -1108,25 +1111,73 @@ async function createUserInFirebase(userData) {
          res.status(500).json({ error: 'Failed to update user' });
     }
 }); 
-  app.post('/api/create-user/:email/:phoneNumber/:password', async (req, res) => {
+async function createNeonAuthUser(email, name) {
+  const response = await axios.post(
+    'https://console.neon.tech/api/v2/projects/auth/user',
+    {
+      auth_provider: 'stack',
+      project_id: 'calm-math-47167505', // or your project id string
+      email,
+      name
+    },
+    {
+      headers: {
+        'accept': 'application/json',
+        'authorization': `Bearer ${process.env.NEON_API_KEY}`,
+        'content-type': 'application/json'
+      }
+    }
+  );
+  return response.data;
+}
+  app.post('/api/create-user/:email/:phoneNumber/:password/:role', async (req, res) => {
     try {
-      // Extract user data from URL parameters
+      const decodedEmail = decodeURIComponent(req.params.email);
+      if (!decodedEmail || !decodedEmail.includes('@')) {
+        return res.status(400).json({ error: 'Invalid email format' });
+      }
+
       const userData = {
-        email: req.params.email,
+        email: decodedEmail,
         phoneNumber: req.params.phoneNumber,
         password: req.params.password,
+        role: req.params.role
       };
-  
-      // Call the function to create a user
-      const uid = await createUserInFirebase(userData);
-  
-      // Send success response
-      res.json({ message: 'User created successfully', uid });
+      const name = decodedEmail.split('@')[0];
+      // Create user in Neon Auth (only required fields)
+    // Create user in Neon Auth
+    const neonUser = await createNeonAuthUser(decodedEmail, name);
+
+      // Generate a unique user ID and company ID
+      const userId = uuidv4();
+      const companyId = `0${Date.now()}`;
+
+      // Create company in database
+      await sqlDb.query(
+        `INSERT INTO companies (company_id, name, email, phone, status, enabled, created_at) 
+        VALUES ($1, $2, $3, $4, $5, $6, CURRENT_TIMESTAMP)`,
+        [companyId, userData.email.split('@')[0], userData.email, userData.phoneNumber, 'active', true]
+      );
+
+      await sqlDb.query(
+        `INSERT INTO users (user_id, company_id, email, phone, role, active, created_at, password) 
+         VALUES ($1, $2, $3, $4, $5, $6, CURRENT_TIMESTAMP, $7)`,
+        [userId, companyId, userData.email, userData.phoneNumber, userData.role, true, userData.password]
+      );
+      res.json({ 
+        message: 'User created successfully', 
+        userId,
+        companyId,
+        neonUserId: neonUser.id,
+        role: userData.role,
+        email: userData.email
+      });
     } catch (error) {
-      // Handle errors
       console.error('Error creating user:', error);
-      
-      res.status(500).json({ error: error.code});
+      res.status(500).json({ 
+        error: error.code || 'Failed to create user',
+        details: error.message 
+      });
     }
   });
 
@@ -2891,124 +2942,146 @@ function setupMessageHandler(client, botName, phoneIndex) {
   });
 }
 
+// ... existing code ...
 function setupMessageCreateHandler(client, botName, phoneIndex) {
   client.on('message_create', async (msg) => {
-   // console.log(`DEBUG: Message created for bot ${botName}`);
-    //console.log('message created:', JSON.stringify(msg, null, 2)); // Changed this line
     broadcastBotActivity(botName, true);
     try {
+      console.log('My WhatsApp number:', client.info.wid.user);
       const isFromHuman = msg.fromMe && msg.author;
-      // Check if the message is from the current user (sent from another device)
       if (msg.fromMe) {
         const extractedNumber = '+' + msg.to.split('@')[0];
-        
-        let existingContact = await getContactDataFromDatabaseByPhone(extractedNumber, botName);
-        const contactRef = db.collection('companies').doc(botName).collection('contacts').doc(extractedNumber);
+        const myNumber = '+' + client.info.wid.user;
+        if (extractedNumber === myNumber) {
+          // Don't process messages to yourself
+          return;
+        }
+        // ..
+        const companyId = botName;
+        const chatId = msg.to;
+        const phoneNumber = extractedNumber;
 
-        if (!existingContact) {
-        //  console.log('Creating new contact');
-          const newContact = {
-            additionalEmails: [],
-            address1: null,
-            assignedTo: null,
-            businessId: null,
-            chat: {
-              contact_id: extractedNumber,
-              id: msg.to,
-              name: msg.to.split('@')[0],
-              not_spam: true,
-              tags: [],
-              timestamp: Math.floor(Date.now() / 1000),
-              type: 'contact',
-              unreadCount: 0,
-            },
-            chat_id: msg.to,
-            city: null,
-            companyName: null,
-            contactName: msg.to.split('@')[0],
-            createdAt: admin.firestore.Timestamp.now(),
-            id: extractedNumber,
-            name: '',
-            not_spam: false,
-            phone: extractedNumber,
-            phoneIndex: phoneIndex,
-            pinned: false,
-            profilePicUrl: '',
-            tags: [],
-            threadid: '',
-            timestamp: 0,
-            type: '',
-            unreadCount: 0
-          };
-
-          await contactRef.set(newContact);
-          existingContact = newContact;
-         // console.log(`Created new contact for ${extractedNumber}`);
+        // 1. Ensure contact exists in SQL
+        let contactResult;
+        try {
+          contactResult = await sqlDb.query(
+            `INSERT INTO contacts (contact_id, phone, company_id, last_updated)
+             VALUES ($1, $2, $3, CURRENT_TIMESTAMP)
+             RETURNING *`,
+            [extractedNumber, phoneNumber, companyId]
+          );
+        } catch (err) {
+          if (err.code === '23505') { // Unique violation
+            contactResult = await sqlDb.query(
+              `UPDATE contacts 
+               SET last_updated = CURRENT_TIMESTAMP
+               WHERE contact_id = $1 AND company_id = $2
+               RETURNING *`,
+              [extractedNumber, companyId]
+            );
+          } else {
+            throw err;
+          }
         }
 
-        // Add the message to Firebase
-        await addMessagetoFirebase(msg, botName, extractedNumber, phoneIndex);
- // Handle AI thread
-       
-       
-        // Update last_message for the contact
-        const lastMessage = {
-          chat_id: msg.to,
-          from: msg.from,
-          from_me: true,
-          id: msg.id._serialized,
-          phoneIndex: phoneIndex,
-          source: "",
-          status: "sent",
-          text: {
-            body: msg.body
-          },
-          timestamp: Math.floor(Date.now() / 1000),
-          phoneIndex:phoneIndex,
-          type: msg.type === 'chat' ? 'text' : msg.type
-        };
+        // 2. Save the message to SQL
+        const type2 = msg.type === 'chat' ? 'text' : msg.type;
+        const messageId = msg.id._serialized;
+        const timestamp = new Date((msg.timestamp || Math.floor(Date.now() / 1000)) * 1000);
 
-        // Update the contact document with the new last_message
-        await contactRef.update({
-          last_message: lastMessage,
-          timestamp: lastMessage.timestamp
-        });
-        if(isFromHuman){
-          if (existingContact.threadid) {
-           // console.log('Adding message to existing AI thread');
-            await handleOpenAIMyMessage(msg.body, existingContact.threadid);
-          }else {
-           // console.log('Creating new AI thread for contact');
+        await sqlDb.query(
+          `INSERT INTO messages (
+            message_id, company_id, contact_id, thread_id, customer_phone, content, 
+            message_type, media_url, timestamp, direction, status, from_me, chat_id, author
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+          ON CONFLICT (message_id) DO UPDATE
+          SET status = EXCLUDED.status,
+              timestamp = EXCLUDED.timestamp`,
+          [
+            messageId,
+            companyId,
+            extractedNumber,
+            chatId,
+            phoneNumber,
+            msg.body,
+            type2,
+            null, // media_url
+            timestamp,
+            'outbound',
+            'delivered',
+            true,
+            chatId,
+            msg.author || ''
+          ]
+        );
+
+        // 3. Update contact's last_message in SQL
+        await sqlDb.query(
+          `UPDATE contacts 
+           SET last_message = $1, last_updated = CURRENT_TIMESTAMP
+           WHERE contact_id = $2 AND company_id = $3`,
+          [
+            JSON.stringify({
+              chat_id: chatId,
+              from: msg.from,
+              from_me: true,
+              id: messageId,
+              phoneIndex: phoneIndex,
+              source: "",
+              status: "sent",
+              text: { body: msg.body },
+              timestamp: Math.floor(Date.now() / 1000),
+              type: type2
+            }),
+            extractedNumber,
+            companyId
+          ]
+        );
+
+        // 4. Handle OpenAI thread logic
+        let threadId = contactResult.rows[0]?.thread_id;
+        if (isFromHuman) {
+          if (threadId) {
+            await handleOpenAIMyMessage(msg.body, threadId);
+          } else {
             try {
               const thread = await createThread();
-              const threadID = thread.id;
-              
-              // Save thread ID to contact
-              await contactRef.update({ threadid: threadID });
-              await handleOpenAIMyMessage(msg.body, threadID);
-           //   console.log('Created new AI thread and added message');
+              threadId = thread.id;
+              await sqlDb.query(
+                `UPDATE contacts SET thread_id = $1 WHERE contact_id = $2 AND company_id = $3`,
+                [threadId, extractedNumber, companyId]
+              );
+              await handleOpenAIMyMessage(msg.body, threadId);
             } catch (error) {
               console.error('Error creating AI thread:', error);
             }
           }
         }
-        if(isFromHuman && (botName ==="0100" || botName === '0145'||botName === '0128' ||botName === '020'||botName === '001'||botName === '0123' || botName === '0119'|| botName === '0102')){
-          await contactRef.update({
-            tags: admin.firestore.FieldValue.arrayUnion('stop bot')
-          });
+
+        // 5. Handle bot tags for certain companies
+        if (
+          isFromHuman &&
+          ["0100", "0145", "0128", "020", "001", "0123", "0119", "0102"].includes(companyId)
+        ) {
+          await sqlDb.query(
+            `UPDATE contacts 
+             SET tags = COALESCE(tags, '[]'::jsonb) || '"stop bot"'::jsonb
+             WHERE contact_id = $1 AND company_id = $2`,
+            [extractedNumber, companyId]
+          );
         }
 
-      //  console.log(`Updated last_message for contact ${extractedNumber}`);
-       // Clear the "active" status after 30 seconds of no messages
-       setTimeout(() => {
-        broadcastBotActivity(botName, false);
-    }, 10000);
+        // Clear the "active" status after 10 seconds of no messages
+        setTimeout(() => {
+          broadcastBotActivity(botName, false);
+        }, 10000);
       }
     } catch (error) {
       console.error(`ERROR in message_create handling for bot ${botName}:`, error);
     }
   });
-}// Add this new endpoint
+}
+// ... existing code ...
 app.get('/api/storage-pricing', async (req, res) => {
   try {
     const pricingRef = db.collection('companies').doc('0123').collection('pricing').doc('storage');
@@ -3551,22 +3624,27 @@ async function processChats(client, botName, phoneIndex) {
 
 app.post('/api/login', async (req, res) => {
   const { email, password } = req.body;
-  console.log('Login attempt:', { email, password }); // Temporarily log password for debugging
+  console.log('Login attempt:', { email }); // Removed password logging for security
 
   try {
-    // Find user by email
-    const user = await sqlDb.getRow('SELECT * FROM users WHERE email = $1', [email]);
-    console.log('Database query result:', user);
-
-    if (!user) {
-      console.log('No user found with email:', email);
+    // Get user data from database
+    const userData = await sqlDb.getRow('SELECT * FROM users WHERE email = $1 AND password = $2', [email, password]);
+    
+    if (!userData) {
+      console.log('Invalid credentials for email:', email);
       return res.status(401).json({ error: 'Invalid email or password' });
     }
 
-
     // Success
     console.log('Login successful for:', email);
-    res.json({ success: true, user: { email: user.email, name: user.name, role: user.role } });
+    res.json({ 
+      success: true, 
+      user: { 
+        email: userData.email, 
+        name: userData.name, 
+        role: userData.role 
+      }
+    });
   } catch (error) {
     console.error('Login error:', error);
     res.status(500).json({ error: 'Internal server error' });
@@ -3641,7 +3719,7 @@ async function main(reinitialize = false) {
   console.log('Initialization starting...');
 
   // 1. Fetch companies in parallel with other initialization tasks
-  const companiesPromise = sqlDb.query('SELECT * FROM companies WHERE company_id = $1', ['company_10']);
+  const companiesPromise = sqlDb.query('SELECT * FROM companies WHERE company_id = $1', ['0145']);
 
   // 2. If reinitializing, start cleanup early
   const cleanupPromise = reinitialize ? (async () => {
@@ -6067,21 +6145,47 @@ app.get('/api/update-phone-indices/:companyId', async (req, res) => {
   }
 });
 app.post('/api/channel/create/:companyID', async (req, res) => {
-    const { companyID } = req.params;
-    const phoneCount = 1;
-//
-    try {
-        // Create the assistant
-        await createAssistant(companyID);
+  const { companyID } = req.params;
+  const phoneCount = 1;
 
-        // Initialize only the new bot
-        await initializeBot(companyID, phoneCount);
+  try {
+      // Optionally, fetch company info from the database
+      const companyResult = await sqlDb.query(
+          'SELECT * FROM companies WHERE company_id = $1',
+          [companyID]
+      );
+      const company = companyResult.rows[0];
 
-        res.json({ message: 'Channel created successfully and new bot initialized', newBotId: companyID });
-    } catch (error) {
-        console.error('Error creating channel and initializing new bot:', error);
-        res.status(500).json({ error: 'Failed to create channel and initialize new bot', details: error.message });
-    }
+      // Create the assistant
+      await createAssistant(companyID);
+
+      // Respond to the client immediately
+      res.json({
+          success: true,
+          message: 'Channel created successfully. Bot initialization in progress.',
+          companyId: companyID,
+          company: company || null,
+          botStatus: 'initializing'
+      });
+
+      // Now initialize the bot in the background
+      initializeBot(companyID, phoneCount)
+          .then(() => {
+              console.log(`Bot initialized for company ${companyID}`);
+          })
+          .catch((error) => {
+              console.error(`Error initializing bot for company ${companyID}:`, error);
+              // Optionally: log to DB or notify admin
+          });
+
+  } catch (error) {
+      console.error('Error creating channel and initializing new bot:', error);
+      res.status(500).json({
+          success: false,
+          error: 'Failed to create channel and initialize new bot',
+          details: error.message
+      });
+  }
 });
 async function copyDirectory(source, target) {
   // Remove existing backup if it exists
@@ -6569,6 +6673,8 @@ async function createAssistant(companyID) {
   res.status(500).json({ error: 'Failed to create assistant' });
 }
 }
+
+
 
 main().catch(error => {
   console.error('Error during initialization:', error);
@@ -7122,7 +7228,7 @@ app.get('/api/user-company-data', async (req, res) => {
         [companyId]
       );
 
-      const employeeNames = employeeList.map(emp => emp.name.trim().toLowerCase());
+   const employeeNames = employeeList.map(emp => (emp.name ? emp.name.trim().toLowerCase() : ''));
       tags = contactsResult
         .map(row => ({ id: row.tag_name, name: row.tag_name }))
         .filter(tag => !employeeNames.includes(tag.name.toLowerCase()));
@@ -7234,7 +7340,7 @@ app.get('/api/user-config', async (req, res) => {
         [companyId]
       );
 
-      const employeeNames = employeeList.map(emp => emp.name.trim().toLowerCase());
+      const employeeNames = employeeList.map(emp => (emp.name ? emp.name.trim().toLowerCase() : ''));
       tags = contactsResult
         .map(row => ({ id: row.tag_name, name: row.tag_name }))
         .filter(tag => !employeeNames.includes(tag.name.toLowerCase()));
@@ -7303,6 +7409,7 @@ app.get('/api/companies/:companyId/contacts', async (req, res) => {
         c.email,
         c.thread_id,
         c.profile,
+        c.profile_pic_url,
         c.tags,
         c.created_at,
         c.last_updated,
@@ -7344,6 +7451,7 @@ app.get('/api/companies/:companyId/contacts', async (req, res) => {
 
     // Process contacts to match frontend expectations
     const processedContacts = contacts.map(contact => {
+
       // Parse tags from JSONB if they are a string, or use empty array if null/undefined
       let tags = contact.tags;
       try {
@@ -7377,6 +7485,7 @@ app.get('/api/companies/:companyId/contacts', async (req, res) => {
         phone: contact.phone || '',
         email: contact.email || '',
         chat_id: contact.thread_id || '',
+        profileUrl:contact.profile_pic_url||'',
         profile: contact.profile || {},
         tags: tags,
         assignedTo: assignedTo,

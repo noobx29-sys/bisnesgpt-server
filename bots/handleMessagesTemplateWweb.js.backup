@@ -473,7 +473,6 @@ async function customWait(milliseconds) {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
-// ... existing code ...
 async function addNotificationToUser(companyId, message, contactName) {
   console.log("Adding notification and sending FCM");
   try {
@@ -490,17 +489,9 @@ async function addNotificationToUser(companyId, message, contactName) {
         return;
       }
 
-      // Fix: Handle both string and object message types
-      let cleanMessage;
-      if (typeof message === 'string') {
-        cleanMessage = { text: { body: message }, type: "text" };
-      } else if (message && typeof message === 'object') {
-        cleanMessage = Object.fromEntries(
-          Object.entries(message).filter(([_, value]) => value !== undefined)
-        );
-      } else {
-        cleanMessage = { text: { body: "New message received" }, type: "text" };
-      }
+      const cleanMessage = Object.fromEntries(
+        Object.entries(message).filter(([_, value]) => value !== undefined)
+      );
 
       let notificationText = cleanMessage.text?.body || "New message received";
       if (cleanMessage.hasMedia) {
@@ -519,7 +510,7 @@ async function addNotificationToUser(companyId, message, contactName) {
             userId,
             contactName,
             notificationText,
-            cleanMessage.type || "message",
+            message.type || "message",
             false,
             JSON.stringify(cleanMessage),
           ]
@@ -538,7 +529,6 @@ async function addNotificationToUser(companyId, message, contactName) {
     console.error("Error adding notification or sending FCM: ", error);
   }
 }
-// ... existing code ...
 
 const messageQueue = new Map();
 const processingQueue = new Map();
@@ -2406,7 +2396,7 @@ async function prepareContactData(
 
   const contactTags = contactData?.tags || [];
   const profilePicUrl = await getProfilePicUrl(contact);
-console.log("profile pic:",profilePicUrl);
+
   const data = {
     additional_emails: [],
     address1: null,
@@ -3060,140 +3050,6 @@ async function callFollowUpAPI(
     console.error(`Error in ${action} follow-up sequence:`, error);
   }
 }
-// ... existing code ...
-async function updateContactInDatabase(idSubstring, phoneNumber, contactData) {
-  console.log(`Updating contact for company ${idSubstring}...`);
-  const sqlClient = await pool.connect();
-
-  try {
-    await sqlClient.query("BEGIN");
-
-    // Updated query to only include columns that exist in your database
-    const updateQuery = `
-      UPDATE public.contacts 
-      SET 
-        name = $1,
-        phone = $2,
-        tags = $3,
-        unread_count = $4,
-        last_updated = $5,
-        chat_data = $6,
-        company = $7,
-        thread_id = $8,
-        last_message = $9,
-        profile_pic_url = $10,
-        additional_emails = $11,
-        address1 = $12,
-        assigned_to = $13,
-        business_id = $14
-      WHERE phone = $15 AND company_id = $16
-    `;
-
-    await sqlClient.query(updateQuery, [
-      contactData.name,
-      contactData.phone,
-      JSON.stringify(contactData.tags || []),
-      contactData.unread_count || 0,
-      contactData.last_updated,
-      JSON.stringify(contactData.chat_data || {}),
-      contactData.company,
-      contactData.thread_id,
-      JSON.stringify(contactData.last_message || {}),
-      contactData.profile_pic_url,
-      JSON.stringify(contactData.additional_emails || []),
-      contactData.address1,
-      contactData.assigned_to,
-      contactData.business_id,
-      phoneNumber,
-      idSubstring,
-    ]);
-
-    await sqlClient.query("COMMIT");
-
-    console.log(
-      `Successfully updated contact for Company ${idSubstring} at ID ${phoneNumber}`
-    );
-
-    return "Contact updated successfully";
-  } catch (error) {
-    await sqlClient.query("ROLLBACK");
-    console.error(
-      `Error updating contact in database for Company ${idSubstring} at ID ${phoneNumber}:`,
-      error
-    );
-    return "Failed to update contact.";
-  } finally {
-    sqlClient.release();
-  }
-}
-
-async function createContactInDatabase(idSubstring, contactData) {
-  console.log(`Creating contact for company ${idSubstring}...`);
-  const sqlClient = await pool.connect();
-
-  try {
-    await sqlClient.query("BEGIN");
-
-    // Updated query to only include columns that exist in your database
-    const insertQuery = `
-      INSERT INTO public.contacts (
-        company_id,
-        name,
-        phone,
-        tags,
-        unread_count,
-        created_at,
-        last_updated,
-        chat_data,
-        company,
-        thread_id,
-        last_message,
-        profile_pic_url,
-        additional_emails,
-        address1,
-        assigned_to,
-        business_id
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
-    `;
-
-    await sqlClient.query(insertQuery, [
-      idSubstring,
-      contactData.name,
-      contactData.phone,
-      JSON.stringify(contactData.tags || []),
-      contactData.unread_count || 0,
-      contactData.created_at || new Date(),
-      contactData.last_updated,
-      JSON.stringify(contactData.chat_data || {}),
-      contactData.company,
-      contactData.thread_id,
-      JSON.stringify(contactData.last_message || {}),
-      contactData.profile_pic_url,
-      JSON.stringify(contactData.additional_emails || []),
-      contactData.address1,
-      contactData.assigned_to,
-      contactData.business_id,
-    ]);
-
-    await sqlClient.query("COMMIT");
-
-    console.log(
-      `Successfully created contact for Company ${idSubstring} at ID ${contactData.phone}`
-    );
-
-    return "Contact created successfully";
-  } catch (error) {
-    await sqlClient.query("ROLLBACK");
-    console.error(
-      `Error creating contact in database for Company ${idSubstring} at ID ${contactData.phone}:`,
-      error
-    );
-    return "Failed to create contact.";
-  } finally {
-    sqlClient.release();
-  }
-}
-// ... existing code ...
 
 async function processImmediateActions(client, msg, botName, phoneIndex) {
   const idSubstring = botName;
@@ -3203,7 +3059,7 @@ async function processImmediateActions(client, msg, botName, phoneIndex) {
     `Processing immediate actions for bot companyID ${botName} for chatId ${chatId}`
   );
   const messageBody = msg.body;
-     
+
   // Handle special cases first
   if (
     messageBody.includes("<Confirmed Appointment>") &&
@@ -3249,11 +3105,6 @@ async function processImmediateActions(client, msg, botName, phoneIndex) {
 
     // Prepare contact and message data using utility functions
     const extractedNumber = "+" + msg.from.split("@")[0];
-    const myNumber = '+' + client.info.wid.user;
-    if (extractedNumber === myNumber) {
-      // Don't process messages to yourself
-      return;
-    }
     const contactData = await getContactDataFromDatabaseByPhone(
       extractedNumber,
       idSubstring
@@ -6259,7 +6110,6 @@ async function listContactsWithTag(idSubstring, tag, limit = 10) {
   }
 }
 
-// ... existing code ...
 async function addMessagetoPostgres(
   msg,
   idSubstring,
@@ -6280,29 +6130,14 @@ async function addMessagetoPostgres(
     return;
   }
 
-  // Use just the phone number as contact_id (without company prefix)
-  const contactID = extractedNumber.startsWith('+') ? extractedNumber.slice(1) : extractedNumber;
+  const contactID = idSubstring + '-' + (extractedNumber.startsWith('+') ? extractedNumber.slice(1) : extractedNumber);
 
-  // Get message content from the correct property
-  let messageBody = "";
-  if (msg.text && msg.text.body) {
-    messageBody = msg.text.body;
-  } else if (msg.body) {
-    messageBody = msg.body;
-  } else {
-    messageBody = "";
-  }
-
-  console.log("Extracted messageBody:", messageBody);
-
+  let messageBody = msg.body;
   let audioData = null;
-  let type = msg.type || "chat"; // Default to "chat" like sync-contacts
+  let type = "";
 
-  // Handle different message types
   if (msg.type === "chat") {
-    type = "chat";
-  } else if (msg.type === "text") {
-    type = "chat"; // Use "chat" for text messages like sync-contacts
+    type = "text";
   } else {
     type = msg.type;
   }
@@ -6368,7 +6203,7 @@ async function addMessagetoPostgres(
       }
     } catch (error) {
       console.error(
-        `Error handling media for message ${msg.id}:`,
+        `Error handling media for message ${msg.id._serialized}:`,
         error
       );
     }
@@ -6395,7 +6230,35 @@ async function addMessagetoPostgres(
     try {
       await client.query("BEGIN");
 
-      // FIRST: Create/update contact BEFORE inserting message
+      const messageQuery = `
+        INSERT INTO public.messages (
+          message_id, company_id, contact_id, content, message_type, 
+          media_url, media_data, media_metadata, timestamp, direction, 
+          status, from_me, chat_id, author
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+        RETURNING id
+      `;
+
+      const messageValues = [
+        msg.id._serialized,
+        idSubstring,
+        contactID,
+        messageBody,
+        type,
+        mediaUrl,
+        mediaData,
+        mediaMetadata ? JSON.stringify(mediaMetadata) : null,
+        new Date(msg.timestamp * 1000),
+        msg.fromMe ? "outbound" : "inbound",
+        "delivered",
+        msg.fromMe || false,
+        msg.from,
+        author,
+      ];
+
+      const messageResult = await client.query(messageQuery, messageValues);
+      const messageDbId = messageResult.rows[0].id;
+
       const contactCheckQuery = `
         SELECT id FROM public.contacts 
         WHERE contact_id = $1 AND company_id = $2
@@ -6407,81 +6270,19 @@ async function addMessagetoPostgres(
       ]);
 
       if (contactResult.rows.length === 0) {
-        console.log(`Creating new contact: ${contactID} for company: ${idSubstring}`);
         const contactQuery = `
           INSERT INTO public.contacts (
-            contact_id, company_id, name, contact_name, phone, email,
-            thread_id, profile, points, tags, reaction, reaction_timestamp,
-            last_updated, edited, edited_at, whapi_token, created_at
-          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
-          ON CONFLICT (contact_id, company_id) DO UPDATE
-          SET name = EXCLUDED.name,
-              contact_name = EXCLUDED.contact_name,
-              phone = EXCLUDED.phone,
-              last_updated = EXCLUDED.last_updated
+            contact_id, company_id, phone, name
+          ) VALUES ($1, $2, $3, $4)
         `;
 
         await client.query(contactQuery, [
           contactID,
           idSubstring,
-          contactName || extractedNumber,
-          contactName || extractedNumber,
           extractedNumber,
-          '', // email
-          msg.from, // thread_id
-          {}, // profile
-          0, // points
-          [], // tags
-          null, // reaction
-          null, // reaction_timestamp
-          new Date(), // last_updated
-          false, // edited
-          null, // edited_at
-          null, // whapi_token
-          new Date(), // created_at
+          extractedNumber,
         ]);
-        console.log(`Contact created successfully: ${contactID}`);
-      } else {
-        console.log(`Contact already exists: ${contactID}`);
       }
-
-      // SECOND: Now insert the message with correct field mappings
-      const messageQuery = `
-        INSERT INTO public.messages (
-          message_id, company_id, contact_id, thread_id, customer_phone,
-          content, message_type, media_url, timestamp, direction,
-          status, from_me, chat_id, author
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
-        ON CONFLICT (message_id) DO NOTHING
-        RETURNING id
-      `;
-
-      const messageValues = [
-        msg.id, // message_id - use msg.id directly (not _serialized)
-        idSubstring, // company_id
-        contactID, // contact_id - just the phone number
-        msg.from, // thread_id - chat ID
-        contactID, // customer_phone - just the phone number (without +)
-        messageBody, // content - from msg.text.body
-        type, // message_type - "chat" for text messages
-        mediaUrl, // media_url
-        new Date(msg.timestamp * 1000), // timestamp
-        msg.fromMe ? "outbound" : "inbound", // direction
-        "delivered", // status
-        msg.fromMe || false, // from_me
-        msg.from, // chat_id - chat ID
-        author || contactID, // author
-      ];
-
-      console.log("Final message values:", {
-        message_id: msg.id,
-        content: messageBody,
-        message_type: type,
-        customer_phone: contactID
-      });
-
-      const messageResult = await client.query(messageQuery, messageValues);
-      const messageDbId = messageResult.rows[0]?.id;
 
       await client.query("COMMIT");
       console.log(
@@ -6499,7 +6300,7 @@ async function addMessagetoPostgres(
         );
         if (
           contactData &&
-          contactData.contact_name &&
+          contactData.contact_Name &&
           contactData.contact_name !== extractedNumber &&
           !contactData.contact_name.includes(extractedNumber.replace("+", ""))
         ) {
@@ -6519,7 +6320,6 @@ async function addMessagetoPostgres(
     throw error;
   }
 }
-// ... existing code ...
 
 async function testDailyReminders(client, idSubstring) {
   console.log("Testing daily reminders...");
