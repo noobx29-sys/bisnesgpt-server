@@ -3264,7 +3264,7 @@ function setupMessageCreateHandler(client, botName, phoneIndex) {
       const isFromHuman = msg.fromMe && msg.author;
       if (msg.fromMe) {
         const extractedNumber = "+" + msg.to.split("@")[0];
-        const contactID = botname + "-" + msg.to.split("@")[0];
+        const contactID = botName + "-" + msg.to.split("@")[0];
         const myNumber = "+" + client.info.wid.user;
         if (extractedNumber === myNumber) {
           return;
@@ -3315,7 +3315,7 @@ function setupMessageCreateHandler(client, botName, phoneIndex) {
               chat_id: chatId,
               from: msg.from,
               from_me: true,
-              id: msgDBId,
+              id: msg.id._serialized,
               phoneIndex: phoneIndex,
               source: "",
               status: "sent",
@@ -3423,7 +3423,8 @@ async function addMessagetoPostgres(
   idSubstring,
   extractedNumber,
   contactName,
-  phoneIndex = 0
+  phoneIndex = 0,
+  userName,
 ) {
   console.log("Adding message to PostgreSQL");
   console.log("idSubstring:", idSubstring);
@@ -3466,6 +3467,10 @@ async function addMessagetoPostgres(
     type = msg.type;
   }
 
+  let mediaMetadata = {};
+  let mediaUrl = null;
+  let mediaData = null;
+
   if (msg.hasMedia && (msg.type === "audio" || msg.type === "ptt")) {
     console.log("Voice message detected during saving to NeonDB");
     const media = await msg.downloadMedia();
@@ -3481,12 +3486,27 @@ async function addMessagetoPostgres(
         "I couldn't transcribe the audio. Could you please type your message instead?";
     }
 
-    audioData = media.data;
+    mediaData = media.data;
   }
 
-  let mediaMetadata = {};
-  let mediaUrl = null;
-  let mediaData = null;
+  let quotedMessage = {};
+  if (msg.hasQuotedMsg) {
+    const quotedMsg = await msg.getQuotedMessage();
+    const authorNumber = "+" + quotedMsg.from.split("@")[0];
+    const authorData = await getContactDataFromDatabaseByPhone(
+      authorNumber,
+      idSubstring
+    );
+
+    quotedMessage = {
+      quoted_content: {
+        body: quotedMsg.body || '',
+      },
+      quoted_author: authorData ? authorData.name : authorNumber,
+      message_id: quotedMsg.id._serialized,
+      message_type: quotedMsg.type,
+    };
+  }
 
   if (msg.hasMedia) {
     try {
@@ -3584,8 +3604,8 @@ async function addMessagetoPostgres(
         await client.query(contactQuery, [
           contactID,
           idSubstring,
-          contactName || extractedNumber,
-          contactName || extractedNumber,
+          extractedNumber,
+          extractedNumber,
           extractedNumber,
           "",
           msg.from,
@@ -3610,8 +3630,8 @@ async function addMessagetoPostgres(
         INSERT INTO public.messages (
           message_id, company_id, contact_id, content, message_type, 
           media_url, media_data, media_metadata, timestamp, direction, 
-          status, from_me, chat_id, author, phone_index
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+          status, from_me, chat_id, author, phone_index, quoted_message, media_data, media_metadata, thread_id, customer_phone
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
         RETURNING id
       `;
 
@@ -3629,8 +3649,13 @@ async function addMessagetoPostgres(
         "delivered",
         msg.fromMe || false,
         msg.from,
-        author,
+        userName || author,
         phoneIndex,
+        quotedMessage ? JSON.stringify(quotedMessage) : null,
+        mediaData || null,
+        mediaMetadata? JSON.stringify(mediaMetadata) : null,
+        msg.to,
+        extractedNumber,
       ];
 
       const messageResult = await client.query(messageQuery, messageValues);
@@ -6076,92 +6101,11 @@ app.post("/api/v2/messages/text/:companyId/:chatId", async (req, res) => {
     // 3. Process response and save to SQL
     console.log("\n=== Saving to Database ===");
     const phoneNumber = "+" + chatId.split("@")[0];
-    const type2 = sentMessage.type === "chat" ? "text" : sentMessage.type;
-
-    const messageData = {
-      message_id: sentMessage.id._serialized,
-      company_id: companyId,
-      contact_id: contactID,
-      thread_id: chatId,
-      customer_phone: chatId.split("@")[0],
-      content: message,
-      message_type: type2,
-      media_url: null,
-      timestamp: new Date(sentMessage.timestamp * 1000),
-      direction: "outbound",
-      status: "delivered",
-      from_me: true,
-      chat_id: chatId,
-      author: userName,
-    };
-
-    console.log("Message data prepared:", {
-      messageId: messageData.message_id,
-      type: messageData.message_type,
-      timestamp: messageData.timestamp,
-    });
 
     // 4. Save to SQL
     try {
       let contactResult; // Declare the variable first
-      // First, ensure contact exists for the receiver
-      try {
-        contactResult = await sqlDb.query(
-          `INSERT INTO contacts (contact_id, phone, company_id, last_updated)
-             VALUES ($1, $2, $3, CURRENT_TIMESTAMP)
-             RETURNING *`,
-          [contactID, phoneNumber, companyId]
-        );
-      } catch (err) {
-        if (err.code === "23505") {
-          // Unique violation
-          contactResult = await sqlDb.query(
-            `UPDATE contacts 
-               SET last_updated = CURRENT_TIMESTAMP
-               WHERE contact_id = $1 AND company_id = $2
-               RETURNING *`,
-            [contactID, companyId]
-          );
-        } else {
-          throw err;
-        }
-      }
-
-      // Then save message
-      await sqlDb.query(
-        `INSERT INTO messages (
-            message_id, company_id, contact_id, thread_id, customer_phone, content, 
-            message_type, media_url, timestamp, direction, status, from_me, chat_id, author
-          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
-          ON CONFLICT (message_id) DO UPDATE
-          SET status = EXCLUDED.status,
-              timestamp = EXCLUDED.timestamp`,
-        [
-          messageData.message_id,
-          messageData.company_id,
-          messageData.contact_id,
-          messageData.thread_id,
-          messageData.customer_phone,
-          messageData.content,
-          messageData.message_type,
-          messageData.media_url,
-          messageData.timestamp,
-          messageData.direction,
-          messageData.status,
-          messageData.from_me,
-          messageData.chat_id,
-          messageData.author,
-        ]
-      );
-
-      // Update contact data for the receiver
-      contactResult = await sqlDb.query(
-        `UPDATE contacts 
-           SET last_updated = CURRENT_TIMESTAMP
-           WHERE contact_id = $1 AND company_id = $2
-           RETURNING *`,
-        [contactID, companyId]
-      );
+      addMessagetoPostgres(sentMessage, companyId, phoneNumber, '', requestedPhoneIndex, userName)
 
       // 5. Handle OpenAI integration for the receiver's contact
       if (contactResult.rows[0]?.thread_id) {

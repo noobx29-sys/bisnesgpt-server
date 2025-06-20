@@ -2175,7 +2175,8 @@ async function handleNewMessagesTemplateWweb(client, msg, botName, phoneIndex) {
 
 async function extractBasicMessageInfo(msg) {
   return {
-    id: msg.id._serialized ?? "",
+    id: msg.id ?? "",
+    idSerialized: msg.id._serialized?? "",
     from: msg.from ?? "",
     fromMe: msg.fromMe ?? false,
     body: msg.body ?? "",
@@ -2450,19 +2451,6 @@ async function prepareContactData(
       contact.pushname ||
       extractedNumber,
     thread_id: threadID ?? "",
-    last_message: {
-      chat_id: msg.from,
-      from: msg.from ?? "",
-      from_me: msg.fromMe ?? false,
-      id: msg.id._serialized ?? "",
-      source: chat.deviceType ?? "",
-      status: "delivered",
-      text: {
-        body: msg.body ?? "",
-      },
-      timestamp: msg.timestamp ?? 0,
-      type: msg.type === "chat" ? "text" : msg.type,
-    },
     profile_pic_url: profilePicUrl,
   };
 
@@ -6277,6 +6265,11 @@ async function addMessagetoPostgres(
     messageBody = "";
   }
 
+  let quotedMessage = {};
+  if(msg.hasQuotedMsg){
+    quotedMessage = msg.text.context;
+  }
+
   let audioData = null;
   let type = msg.type || "chat";
 
@@ -6287,6 +6280,10 @@ async function addMessagetoPostgres(
   } else {
     type = msg.type;
   }
+  
+  let mediaMetadata = {};
+  let mediaUrl = null;
+  let mediaData = null;
 
   if (msg.hasMedia && (msg.type === "audio" || msg.type === "ptt")) {
     console.log("Voice message detected during saving to NeonDB");
@@ -6303,12 +6300,8 @@ async function addMessagetoPostgres(
         "I couldn't transcribe the audio. Could you please type your message instead?";
     }
 
-    audioData = media.data;
+    mediaData = media.data;
   }
-
-  let mediaMetadata = {};
-  let mediaUrl = null;
-  let mediaData = null;
 
   if (msg.hasMedia) {
     try {
@@ -6432,18 +6425,18 @@ async function addMessagetoPostgres(
         INSERT INTO public.messages (
           message_id, company_id, contact_id, thread_id, customer_phone,
           content, message_type, media_url, timestamp, direction,
-          status, from_me, chat_id, author
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+          status, from_me, chat_id, author, quoted_message, media_data, media_metadata
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
         ON CONFLICT (message_id) DO NOTHING
         RETURNING id
       `;
 
       const messageValues = [
-        msg.id._serialized,
+        msg.idSerialized || msg.id._serialized,
         idSubstring,
         contactID,
         msg.from,
-        contactID,
+        extractedNumber,
         messageBody,
         type,
         mediaUrl,
@@ -6453,13 +6446,16 @@ async function addMessagetoPostgres(
         msg.fromMe || false,
         msg.from,
         author || contactID,
+        quotedMessage ? JSON.stringify(quotedMessage) : null,
+        mediaData || null,
+        mediaMetadata ? JSON.stringify(mediaMetadata) : null,
       ];
 
       console.log("Final message values:", {
         message_id: msg.id._serialized,
         content: messageBody,
         message_type: type,
-        customer_phone: contactID,
+        customer_phone: extractedNumber,
       });
 
       const messageResult = await client.query(messageQuery, messageValues);
@@ -6474,8 +6470,8 @@ async function addMessagetoPostgres(
             chat_id: msg.to,
             from: msg.from,
             from_me: true,
-            id: messageDbId,
-            status: "sent",
+            id: msg.id._serialized,
+            status: "delivered",
             text: { body: messageBody },
             timestamp: Math.floor(Date.now() / 1000),
             type: type,
