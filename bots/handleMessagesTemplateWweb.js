@@ -473,7 +473,6 @@ async function customWait(milliseconds) {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
-// ... existing code ...
 async function addNotificationToUser(companyId, message, contactName) {
   console.log("Adding notification and sending FCM");
   try {
@@ -492,9 +491,9 @@ async function addNotificationToUser(companyId, message, contactName) {
 
       // Fix: Handle both string and object message types
       let cleanMessage;
-      if (typeof message === 'string') {
+      if (typeof message === "string") {
         cleanMessage = { text: { body: message }, type: "text" };
-      } else if (message && typeof message === 'object') {
+      } else if (message && typeof message === "object") {
         cleanMessage = Object.fromEntries(
           Object.entries(message).filter(([_, value]) => value !== undefined)
         );
@@ -538,12 +537,11 @@ async function addNotificationToUser(companyId, message, contactName) {
     console.error("Error adding notification or sending FCM: ", error);
   }
 }
-// ... existing code ...
 
 const messageQueue = new Map();
 const processingQueue = new Map();
 const MAX_QUEUE_SIZE = 5;
-const RATE_LIMIT_DELAY = 5000; // 5 seconds
+const RATE_LIMIT_DELAY = 5000;
 
 async function generateSpecialReportMTDC(
   threadID,
@@ -1698,17 +1696,17 @@ async function listAssignedContacts(companyId, assigneeName, limit = 10) {
       }
 
       let phoneNumber = row.phoneNumber.trim();
-      
-      if (phoneNumber.includes('-')) {
-        phoneNumber = phoneNumber.split('-').pop();
+
+      if (phoneNumber.includes("-")) {
+        phoneNumber = phoneNumber.split("-").pop();
       }
-      
-      phoneNumber = phoneNumber.replace(/\D/g, '');
-      
-      if (phoneNumber.length > 0 && !phoneNumber.startsWith('+')) {
-        phoneNumber = '+' + phoneNumber;
+
+      phoneNumber = phoneNumber.replace(/\D/g, "");
+
+      if (phoneNumber.length > 0 && !phoneNumber.startsWith("+")) {
+        phoneNumber = "+" + phoneNumber;
       }
-      
+
       return {
         phoneNumber: phoneNumber,
         contactName: row.contactName,
@@ -2406,7 +2404,7 @@ async function prepareContactData(
 
   const contactTags = contactData?.tags || [];
   const profilePicUrl = await getProfilePicUrl(contact);
-console.log("profile pic:",profilePicUrl);
+
   const data = {
     additional_emails: [],
     address1: null,
@@ -3060,7 +3058,7 @@ async function callFollowUpAPI(
     console.error(`Error in ${action} follow-up sequence:`, error);
   }
 }
-// ... existing code ...
+
 async function updateContactInDatabase(idSubstring, phoneNumber, contactData) {
   console.log(`Updating contact for company ${idSubstring}...`);
   const sqlClient = await pool.connect();
@@ -3133,10 +3131,17 @@ async function createContactInDatabase(idSubstring, contactData) {
 
   try {
     await sqlClient.query("BEGIN");
+    const contactID =
+      idSubstring +
+      "-" +
+      (contactData.phone.startsWith("+")
+        ? contactData.phone.slice(1)
+        : contactData.phone);
 
     // Updated query to only include columns that exist in your database
     const insertQuery = `
       INSERT INTO public.contacts (
+        contact_id,
         company_id,
         name,
         phone,
@@ -3153,10 +3158,11 @@ async function createContactInDatabase(idSubstring, contactData) {
         address1,
         assigned_to,
         business_id
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
     `;
 
     await sqlClient.query(insertQuery, [
+      contactID,
       idSubstring,
       contactData.name,
       contactData.phone,
@@ -3193,7 +3199,6 @@ async function createContactInDatabase(idSubstring, contactData) {
     sqlClient.release();
   }
 }
-// ... existing code ...
 
 async function processImmediateActions(client, msg, botName, phoneIndex) {
   const idSubstring = botName;
@@ -3203,7 +3208,7 @@ async function processImmediateActions(client, msg, botName, phoneIndex) {
     `Processing immediate actions for bot companyID ${botName} for chatId ${chatId}`
   );
   const messageBody = msg.body;
-     
+
   // Handle special cases first
   if (
     messageBody.includes("<Confirmed Appointment>") &&
@@ -3249,11 +3254,6 @@ async function processImmediateActions(client, msg, botName, phoneIndex) {
 
     // Prepare contact and message data using utility functions
     const extractedNumber = "+" + msg.from.split("@")[0];
-    const myNumber = '+' + client.info.wid.user;
-    if (extractedNumber === myNumber) {
-      // Don't process messages to yourself
-      return;
-    }
     const contactData = await getContactDataFromDatabaseByPhone(
       extractedNumber,
       idSubstring
@@ -4171,7 +4171,7 @@ async function handleSpecialCases({
       "+120363386875697540",
       "Group Chat"
     );
-    
+
     await saveSpecialCaseMTDC(contactInfoMTDC);
   }
 
@@ -4325,7 +4325,7 @@ async function handleSpecialCases({
   async function saveSpecialCaseEduville(contactInfo) {
     const sqlClient = await pool.connect();
     try {
-      await sqlClient.query('BEGIN');
+      await sqlClient.query("BEGIN");
 
       const contactData = {
         phone: extractedNumber,
@@ -4340,10 +4340,10 @@ async function handleSpecialCases({
           englishProficiency: contactInfo.englishProficiency,
           passport: contactInfo.passport,
           nationality: contactInfo.nationality,
-        }
+        },
       };
 
-      Object.keys(contactData.custom_fields).forEach(key => {
+      Object.keys(contactData.custom_fields).forEach((key) => {
         if (contactData.custom_fields[key] === undefined) {
           delete contactData.custom_fields[key];
         }
@@ -4351,7 +4351,7 @@ async function handleSpecialCases({
 
       // Check if contact exists
       const checkResult = await sqlClient.query(
-        'SELECT contact_id FROM public.contacts WHERE phone = $1 AND company_id = $2',
+        "SELECT contact_id FROM public.contacts WHERE phone = $1 AND company_id = $2",
         [extractedNumber, idSubstring]
       );
 
@@ -4368,11 +4368,16 @@ async function handleSpecialCases({
             contactData.thread_id,
             JSON.stringify(contactData.custom_fields),
             contactData.phone,
-            idSubstring
+            idSubstring,
           ]
         );
       } else {
-        const contactID = idSubstring + '-' + (extractedNumber.startsWith('+') ? extractedNumber.slice(1) : extractedNumber);
+        const contactID =
+          idSubstring +
+          "-" +
+          (extractedNumber.startsWith("+")
+            ? extractedNumber.slice(1)
+            : extractedNumber);
 
         await sqlClient.query(
           `INSERT INTO public.contacts 
@@ -4385,15 +4390,15 @@ async function handleSpecialCases({
             contactData.contact_name,
             contactData.phone,
             contactData.thread_id,
-            JSON.stringify(contactData.custom_fields)
+            JSON.stringify(contactData.custom_fields),
           ]
         );
       }
 
-      await sqlClient.query('COMMIT');
+      await sqlClient.query("COMMIT");
     } catch (error) {
-      await sqlClient.query('ROLLBACK');
-      console.error('Error updating contact in PostgreSQL:', error);
+      await sqlClient.query("ROLLBACK");
+      console.error("Error updating contact in PostgreSQL:", error);
       throw error;
     } finally {
       sqlClient.release();
@@ -4403,7 +4408,7 @@ async function handleSpecialCases({
   async function saveSpecialCaseBINA(contactInfoBINA) {
     const sqlClient = await pool.connect();
     try {
-      await sqlClient.query('BEGIN');
+      await sqlClient.query("BEGIN");
 
       const contactData = {
         phone: extractedNumber,
@@ -4416,17 +4421,17 @@ async function handleSpecialCases({
           "Photos/Video": contactInfoBINA.photosVideo || "[Not specified]",
           "How Many Floor": contactInfoBINA.howManyFloor || "[Not specified]",
           "Roof Tile/Slab": contactInfoBINA.roofTileSlab || "[Not specified]",
-        }
+        },
       };
 
-      Object.keys(contactData.custom_fields).forEach(key => {
+      Object.keys(contactData.custom_fields).forEach((key) => {
         if (contactData.custom_fields[key] === undefined) {
           delete contactData.custom_fields[key];
         }
       });
 
       const checkResult = await sqlClient.query(
-        'SELECT contact_id FROM public.contacts WHERE phone = $1 AND company_id = $2',
+        "SELECT contact_id FROM public.contacts WHERE phone = $1 AND company_id = $2",
         [extractedNumber, idSubstring]
       );
 
@@ -4443,11 +4448,16 @@ async function handleSpecialCases({
             contactData.thread_id,
             JSON.stringify(contactData.custom_fields),
             contactData.phone,
-            idSubstring
+            idSubstring,
           ]
         );
       } else {
-        const contactID = idSubstring + '-' + (extractedNumber.startsWith('+') ? extractedNumber.slice(1) : extractedNumber);
+        const contactID =
+          idSubstring +
+          "-" +
+          (extractedNumber.startsWith("+")
+            ? extractedNumber.slice(1)
+            : extractedNumber);
 
         await sqlClient.query(
           `INSERT INTO public.contacts 
@@ -4460,15 +4470,15 @@ async function handleSpecialCases({
             contactData.contact_name,
             contactData.phone,
             contactData.thread_id,
-            JSON.stringify(contactData.custom_fields)
+            JSON.stringify(contactData.custom_fields),
           ]
         );
       }
 
-      await sqlClient.query('COMMIT');
+      await sqlClient.query("COMMIT");
     } catch (error) {
-      await sqlClient.query('ROLLBACK');
-      console.error('Error updating contact in PostgreSQL:', error);
+      await sqlClient.query("ROLLBACK");
+      console.error("Error updating contact in PostgreSQL:", error);
       throw error;
     } finally {
       sqlClient.release();
@@ -4478,29 +4488,36 @@ async function handleSpecialCases({
   async function saveSpecialCaseLKSSB(contactInfoLKSSB) {
     const sqlClient = await pool.connect();
     try {
-      await sqlClient.query('BEGIN');
+      await sqlClient.query("BEGIN");
 
       const contactData = {
         phone: extractedNumber,
-        contact_name: (contactInfoLKSSB.contactName || contactName || "").trim(),
+        contact_name: (
+          contactInfoLKSSB.contactName ||
+          contactName ||
+          ""
+        ).trim(),
         thread_id: threadID,
         custom_fields: {
           "Company Name": contactInfoLKSSB.companyName || "[Not specified]",
-          "Company Address": contactInfoLKSSB.companyAddress || "[Not specified]",
-          "Length Of Construction": contactInfoLKSSB.lengthOfConstruction || "[Not specified]",
-          "Height Of Construction": contactInfoLKSSB.heightOfConstruction || "[Not specified]",
+          "Company Address":
+            contactInfoLKSSB.companyAddress || "[Not specified]",
+          "Length Of Construction":
+            contactInfoLKSSB.lengthOfConstruction || "[Not specified]",
+          "Height Of Construction":
+            contactInfoLKSSB.heightOfConstruction || "[Not specified]",
           Location: contactInfoLKSSB.location || "[Not specified]",
-        }
+        },
       };
 
-      Object.keys(contactData.custom_fields).forEach(key => {
+      Object.keys(contactData.custom_fields).forEach((key) => {
         if (contactData.custom_fields[key] === undefined) {
           delete contactData.custom_fields[key];
         }
       });
 
       const checkResult = await sqlClient.query(
-        'SELECT contact_id FROM public.contacts WHERE phone = $1 AND company_id = $2',
+        "SELECT contact_id FROM public.contacts WHERE phone = $1 AND company_id = $2",
         [extractedNumber, idSubstring]
       );
 
@@ -4517,11 +4534,16 @@ async function handleSpecialCases({
             contactData.thread_id,
             JSON.stringify(contactData.custom_fields),
             contactData.phone,
-            idSubstring
+            idSubstring,
           ]
         );
       } else {
-        const contactID = idSubstring + '-' + (extractedNumber.startsWith('+') ? extractedNumber.slice(1) : extractedNumber);
+        const contactID =
+          idSubstring +
+          "-" +
+          (extractedNumber.startsWith("+")
+            ? extractedNumber.slice(1)
+            : extractedNumber);
 
         await sqlClient.query(
           `INSERT INTO public.contacts 
@@ -4534,15 +4556,15 @@ async function handleSpecialCases({
             contactData.contact_name,
             contactData.phone,
             contactData.thread_id,
-            JSON.stringify(contactData.custom_fields)
+            JSON.stringify(contactData.custom_fields),
           ]
         );
       }
 
-      await sqlClient.query('COMMIT');
+      await sqlClient.query("COMMIT");
     } catch (error) {
-      await sqlClient.query('ROLLBACK');
-      console.error('Error updating contact in PostgreSQL:', error);
+      await sqlClient.query("ROLLBACK");
+      console.error("Error updating contact in PostgreSQL:", error);
       throw error;
     } finally {
       sqlClient.release();
@@ -4552,11 +4574,13 @@ async function handleSpecialCases({
   async function saveSpecialCaseMaha(contactInfo) {
     const sqlClient = await pool.connect();
     try {
-      await sqlClient.query('BEGIN');
+      await sqlClient.query("BEGIN");
 
       const contactData = {
         phone: extractedNumber,
-        contact_name: `${contactInfo.firstName || ""} ${contactInfo.lastName || ""}`.trim(),
+        contact_name: `${contactInfo.firstName || ""} ${
+          contactInfo.lastName || ""
+        }`.trim(),
         thread_id: threadID,
         custom_fields: {
           "First Name": contactInfo.firstName || "[Not specified]",
@@ -4567,17 +4591,17 @@ async function handleSpecialCases({
           Courses: contactInfo.courses || "[Not specified]",
           Sponsor: contactInfo.sponsor || "[Not specified]",
           "Referral Source": contactInfo.referralSource || "[Not specified]",
-        }
+        },
       };
 
-      Object.keys(contactData.custom_fields).forEach(key => {
+      Object.keys(contactData.custom_fields).forEach((key) => {
         if (contactData.custom_fields[key] === undefined) {
           delete contactData.custom_fields[key];
         }
       });
 
       const checkResult = await sqlClient.query(
-        'SELECT contact_id FROM public.contacts WHERE phone = $1 AND company_id = $2',
+        "SELECT contact_id FROM public.contacts WHERE phone = $1 AND company_id = $2",
         [extractedNumber, idSubstring]
       );
 
@@ -4594,11 +4618,16 @@ async function handleSpecialCases({
             contactData.thread_id,
             JSON.stringify(contactData.custom_fields),
             contactData.phone,
-            idSubstring
+            idSubstring,
           ]
         );
       } else {
-        const contactID = idSubstring + '-' + (extractedNumber.startsWith('+') ? extractedNumber.slice(1) : extractedNumber);
+        const contactID =
+          idSubstring +
+          "-" +
+          (extractedNumber.startsWith("+")
+            ? extractedNumber.slice(1)
+            : extractedNumber);
 
         await sqlClient.query(
           `INSERT INTO public.contacts 
@@ -4611,15 +4640,15 @@ async function handleSpecialCases({
             contactData.contact_name,
             contactData.phone,
             contactData.thread_id,
-            JSON.stringify(contactData.custom_fields)
+            JSON.stringify(contactData.custom_fields),
           ]
         );
       }
 
-      await sqlClient.query('COMMIT');
+      await sqlClient.query("COMMIT");
     } catch (error) {
-      await sqlClient.query('ROLLBACK');
-      console.error('Error updating contact in PostgreSQL:', error);
+      await sqlClient.query("ROLLBACK");
+      console.error("Error updating contact in PostgreSQL:", error);
       throw error;
     } finally {
       sqlClient.release();
@@ -4629,30 +4658,35 @@ async function handleSpecialCases({
   async function saveSpecialCaseSKC(contactInfoSKC) {
     const sqlClient = await pool.connect();
     try {
-      await sqlClient.query('BEGIN');
+      await sqlClient.query("BEGIN");
 
       const contactData = {
         phone: extractedNumber,
         contact_name: (contactInfoSKC.contactName || contactName || "").trim(),
         thread_id: threadID,
         custom_fields: {
-          "Highest Qualification": contactInfoSKC.highestQualification || "[Not specified]",
-          "Years of Work Experience": contactInfoSKC.yearsOfWorkExperience || "[Not specified]",
-          "Age": contactInfoSKC.age || "[Not specified]",
-          "Program of Interest": contactInfoSKC.programOfInterest || "[Not specified]",
-          "Current Occupation": contactInfoSKC.currentOccupation || "[Not specified]",
-          "Current Industry": contactInfoSKC.currentIndustry || "[Not specified]"
-        }
+          "Highest Qualification":
+            contactInfoSKC.highestQualification || "[Not specified]",
+          "Years of Work Experience":
+            contactInfoSKC.yearsOfWorkExperience || "[Not specified]",
+          Age: contactInfoSKC.age || "[Not specified]",
+          "Program of Interest":
+            contactInfoSKC.programOfInterest || "[Not specified]",
+          "Current Occupation":
+            contactInfoSKC.currentOccupation || "[Not specified]",
+          "Current Industry":
+            contactInfoSKC.currentIndustry || "[Not specified]",
+        },
       };
 
-      Object.keys(contactData.custom_fields).forEach(key => {
+      Object.keys(contactData.custom_fields).forEach((key) => {
         if (contactData.custom_fields[key] === undefined) {
           delete contactData.custom_fields[key];
         }
       });
 
       const checkResult = await sqlClient.query(
-        'SELECT contact_id FROM public.contacts WHERE phone = $1 AND company_id = $2',
+        "SELECT contact_id FROM public.contacts WHERE phone = $1 AND company_id = $2",
         [extractedNumber, idSubstring]
       );
 
@@ -4669,11 +4703,16 @@ async function handleSpecialCases({
             contactData.thread_id,
             JSON.stringify(contactData.custom_fields),
             contactData.phone,
-            idSubstring
+            idSubstring,
           ]
         );
       } else {
-        const contactID = idSubstring + '-' + (extractedNumber.startsWith('+') ? extractedNumber.slice(1) : extractedNumber);
+        const contactID =
+          idSubstring +
+          "-" +
+          (extractedNumber.startsWith("+")
+            ? extractedNumber.slice(1)
+            : extractedNumber);
 
         await sqlClient.query(
           `INSERT INTO public.contacts 
@@ -4686,15 +4725,15 @@ async function handleSpecialCases({
             contactData.contact_name,
             contactData.phone,
             contactData.thread_id,
-            JSON.stringify(contactData.custom_fields)
+            JSON.stringify(contactData.custom_fields),
           ]
         );
       }
 
-      await sqlClient.query('COMMIT');
+      await sqlClient.query("COMMIT");
     } catch (error) {
-      await sqlClient.query('ROLLBACK');
-      console.error('Error updating contact in PostgreSQL:', error);
+      await sqlClient.query("ROLLBACK");
+      console.error("Error updating contact in PostgreSQL:", error);
       throw error;
     } finally {
       sqlClient.release();
@@ -4704,7 +4743,7 @@ async function handleSpecialCases({
   async function saveSpecialCaseMTDC(contactInfoMTDC) {
     const sqlClient = await pool.connect();
     try {
-      await sqlClient.query('BEGIN');
+      await sqlClient.query("BEGIN");
 
       const contactData = {
         phone: extractedNumber,
@@ -4716,18 +4755,19 @@ async function handleSpecialCases({
           "IC Number": contactInfoMTDC.ic || "[Not specified]",
           Email: contactInfoMTDC.email || "[Not specified]",
           "Program of Interest": contactInfoMTDC.program || "[Not specified]",
-          "Program Date & Time": contactInfoMTDC.programDateTime || "[Not specified]"
-        }
+          "Program Date & Time":
+            contactInfoMTDC.programDateTime || "[Not specified]",
+        },
       };
 
-      Object.keys(contactData.custom_fields).forEach(key => {
+      Object.keys(contactData.custom_fields).forEach((key) => {
         if (contactData.custom_fields[key] === undefined) {
           delete contactData.custom_fields[key];
         }
       });
 
       const checkResult = await sqlClient.query(
-        'SELECT contact_id FROM public.contacts WHERE phone = $1 AND company_id = $2',
+        "SELECT contact_id FROM public.contacts WHERE phone = $1 AND company_id = $2",
         [extractedNumber, idSubstring]
       );
 
@@ -4744,11 +4784,16 @@ async function handleSpecialCases({
             contactData.thread_id,
             JSON.stringify(contactData.custom_fields),
             contactData.phone,
-            idSubstring
+            idSubstring,
           ]
         );
       } else {
-        const contactID = idSubstring + '-' + (extractedNumber.startsWith('+') ? extractedNumber.slice(1) : extractedNumber);
+        const contactID =
+          idSubstring +
+          "-" +
+          (extractedNumber.startsWith("+")
+            ? extractedNumber.slice(1)
+            : extractedNumber);
 
         await sqlClient.query(
           `INSERT INTO public.contacts 
@@ -4761,15 +4806,15 @@ async function handleSpecialCases({
             contactData.contact_name,
             contactData.phone,
             contactData.thread_id,
-            JSON.stringify(contactData.custom_fields)
+            JSON.stringify(contactData.custom_fields),
           ]
         );
       }
 
-      await sqlClient.query('COMMIT');
+      await sqlClient.query("COMMIT");
     } catch (error) {
-      await sqlClient.query('ROLLBACK');
-      console.error('Error updating contact in PostgreSQL:', error);
+      await sqlClient.query("ROLLBACK");
+      console.error("Error updating contact in PostgreSQL:", error);
       throw error;
     } finally {
       sqlClient.release();
@@ -6011,7 +6056,12 @@ async function addContactToPostgres(groupId, groupTitle, idSubstring) {
   if (idSubstring !== "002") return;
 
   const extractedNumber = groupId.split("@")[0];
-  const contactID = idSubstring + '-' + (extractedNumber.startsWith('+') ? extractedNumber.slice(1) : extractedNumber);
+  const contactID =
+    idSubstring +
+    "-" +
+    (extractedNumber.startsWith("+")
+      ? extractedNumber.slice(1)
+      : extractedNumber);
 
   const sqlClient = await pool.connect();
 
@@ -6142,74 +6192,6 @@ async function addContactToPostgres(groupId, groupTitle, idSubstring) {
   }
 }
 
-async function sendMessage(client, phoneNumber, message, idSubstring) {
-  console.log("Sending message to:", phoneNumber);
-  console.log("Message content:", message);
-  console.log("idSubstring:", idSubstring);
-
-  if (phoneNumber.includes("60193668776") && idSubstring === "002") {
-    const response = {
-      status: "success",
-      message: "Message not sent to Mr Lim ",
-    };
-    return response;
-  }
-
-  try {
-    // Format the phone number for WhatsApp
-    const formattedNumberForWhatsApp =
-      formatPhoneNumber(phoneNumber).slice(1) + "@c.us"; // Remove '+' and add '@c.us'
-    console.log("Formatted number for WhatsApp:", formattedNumberForWhatsApp);
-
-    // Format the phone number for Firebase
-    const formattedNumberForFirebase = formatPhoneNumber(phoneNumber);
-    console.log("Formatted number for Database:", formattedNumberForFirebase);
-
-    if (!formattedNumberForWhatsApp || !formattedNumberForFirebase) {
-      throw new Error("Invalid phone number");
-    }
-
-    // Send the message
-    const sent = await client.sendMessage(formattedNumberForWhatsApp, message);
-    console.log("Message sent:", sent);
-
-    // Prepare the messageData for Firebase
-    const messageData = {
-      chat_id: formattedNumberForWhatsApp,
-      from: client.info.wid._serialized,
-      from_me: true,
-      id: sent.id._serialized,
-      source: "web",
-      status: "sent",
-      text: {
-        body: message,
-      },
-      timestamp: sent.timestamp,
-      type: "text",
-    };
-    console.log("Message data:", messageData);
-
-    // Add the message to Firebase
-
-    // Prepare the response
-    const response = {
-      status: "success",
-      message: "Message sent successfully and added to Database",
-      messageId: sent.id._serialized,
-      timestamp: sent.timestamp,
-    };
-
-    return JSON.stringify(response);
-  } catch (error) {
-    console.error("Error in sendMessage:", error);
-    return JSON.stringify({
-      status: "error",
-      error: "Failed to send message or add to Database",
-      details: error.message,
-    });
-  }
-}
-
 async function listContactsWithTag(idSubstring, tag, limit = 10) {
   const sqlClient = await pool.connect();
 
@@ -6259,7 +6241,6 @@ async function listContactsWithTag(idSubstring, tag, limit = 10) {
   }
 }
 
-// ... existing code ...
 async function addMessagetoPostgres(
   msg,
   idSubstring,
@@ -6280,10 +6261,13 @@ async function addMessagetoPostgres(
     return;
   }
 
-  // Use just the phone number as contact_id (without company prefix)
-  const contactID = extractedNumber.startsWith('+') ? extractedNumber.slice(1) : extractedNumber;
+  const contactID =
+    idSubstring +
+    "-" +
+    (extractedNumber.startsWith("+")
+      ? extractedNumber.slice(1)
+      : extractedNumber);
 
-  // Get message content from the correct property
   let messageBody = "";
   if (msg.text && msg.text.body) {
     messageBody = msg.text.body;
@@ -6293,16 +6277,13 @@ async function addMessagetoPostgres(
     messageBody = "";
   }
 
-  console.log("Extracted messageBody:", messageBody);
-
   let audioData = null;
-  let type = msg.type || "chat"; // Default to "chat" like sync-contacts
+  let type = msg.type || "chat";
 
-  // Handle different message types
   if (msg.type === "chat") {
     type = "chat";
   } else if (msg.type === "text") {
-    type = "chat"; // Use "chat" for text messages like sync-contacts
+    type = "chat";
   } else {
     type = msg.type;
   }
@@ -6316,13 +6297,12 @@ async function addMessagetoPostgres(
       transcription &&
       transcription !== "Audio transcription failed. Please try again."
     ) {
-      messageBody = transcription;
+      messageBody += transcription;
     } else {
-      messageBody =
+      messageBody +=
         "I couldn't transcribe the audio. Could you please type your message instead?";
     }
 
-    combinedMessage = messageBody;
     audioData = media.data;
   }
 
@@ -6368,7 +6348,7 @@ async function addMessagetoPostgres(
       }
     } catch (error) {
       console.error(
-        `Error handling media for message ${msg.id}:`,
+        `Error handling media for message ${msg.id._serialized}:`,
         error
       );
     }
@@ -6407,7 +6387,9 @@ async function addMessagetoPostgres(
       ]);
 
       if (contactResult.rows.length === 0) {
-        console.log(`Creating new contact: ${contactID} for company: ${idSubstring}`);
+        console.log(
+          `Creating new contact: ${contactID} for company: ${idSubstring}`
+        );
         const contactQuery = `
           INSERT INTO public.contacts (
             contact_id, company_id, name, contact_name, phone, email,
@@ -6427,18 +6409,18 @@ async function addMessagetoPostgres(
           contactName || extractedNumber,
           contactName || extractedNumber,
           extractedNumber,
-          '', // email
-          msg.from, // thread_id
-          {}, // profile
-          0, // points
-          [], // tags
-          null, // reaction
-          null, // reaction_timestamp
-          new Date(), // last_updated
-          false, // edited
-          null, // edited_at
-          null, // whapi_token
-          new Date(), // created_at
+          "",
+          msg.from,
+          {},
+          0,
+          [],
+          null,
+          null,
+          new Date(),
+          false,
+          null,
+          null,
+          new Date(),
         ]);
         console.log(`Contact created successfully: ${contactID}`);
       } else {
@@ -6457,31 +6439,51 @@ async function addMessagetoPostgres(
       `;
 
       const messageValues = [
-        msg.id, // message_id - use msg.id directly (not _serialized)
-        idSubstring, // company_id
-        contactID, // contact_id - just the phone number
-        msg.from, // thread_id - chat ID
-        contactID, // customer_phone - just the phone number (without +)
-        messageBody, // content - from msg.text.body
-        type, // message_type - "chat" for text messages
-        mediaUrl, // media_url
-        new Date(msg.timestamp * 1000), // timestamp
-        msg.fromMe ? "outbound" : "inbound", // direction
-        "delivered", // status
-        msg.fromMe || false, // from_me
-        msg.from, // chat_id - chat ID
-        author || contactID, // author
+        msg.id._serialized,
+        idSubstring,
+        contactID,
+        msg.from,
+        contactID,
+        messageBody,
+        type,
+        mediaUrl,
+        new Date(msg.timestamp * 1000),
+        msg.fromMe ? "outbound" : "inbound",
+        "delivered",
+        msg.fromMe || false,
+        msg.from,
+        author || contactID,
       ];
 
       console.log("Final message values:", {
-        message_id: msg.id,
+        message_id: msg.id._serialized,
         content: messageBody,
         message_type: type,
-        customer_phone: contactID
+        customer_phone: contactID,
       });
 
       const messageResult = await client.query(messageQuery, messageValues);
       const messageDbId = messageResult.rows[0]?.id;
+
+      await client.query(
+        `UPDATE public.contacts 
+          SET last_message = $1, last_updated = CURRENT_TIMESTAMP
+          WHERE contact_id = $2 AND company_id = $3`,
+        [
+          JSON.stringify({
+            chat_id: msg.to,
+            from: msg.from,
+            from_me: true,
+            id: messageDbId,
+            status: "sent",
+            text: { body: messageBody },
+            timestamp: Math.floor(Date.now() / 1000),
+            type: type,
+          }),
+          contactID,
+          idSubstring,
+        ]
+      );
 
       await client.query("COMMIT");
       console.log(
@@ -6519,7 +6521,6 @@ async function addMessagetoPostgres(
     throw error;
   }
 }
-// ... existing code ...
 
 async function testDailyReminders(client, idSubstring) {
   console.log("Testing daily reminders...");
@@ -8990,7 +8991,10 @@ async function addTagToPostgres(contactID, tag, companyID, remove = false) {
       remove ? "from" : "to"
     } PostgreSQL for contact ${contactID}`
   );
-   contactID = companyID + '-' + (contactID.startsWith('+') ? contactID.slice(1) : contactID);
+  contactID =
+    companyID +
+    "-" +
+    (contactID.startsWith("+") ? contactID.slice(1) : contactID);
 
   const sqlClient = await pool.connect();
 
