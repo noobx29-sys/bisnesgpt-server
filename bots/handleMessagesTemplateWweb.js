@@ -1629,7 +1629,7 @@ async function sendImage(client, phoneNumber, imageUrl, caption, idSubstring) {
       caption: caption,
     });
 
-    await addMessagetoPostgres(sent, idSubstring, formattedNumberForDatabase);
+    await addMessageToPostgres(sent, idSubstring, formattedNumberForDatabase);
 
     const response = {
       status: "success",
@@ -2022,7 +2022,7 @@ async function sendFeedbackToGroupNewTown(
       feedbackGroupId,
       feedbackMessage
     );
-    await addMessagetoPostgres(sentMessage, idSubstring, "+120363107024888999");
+    await addMessageToPostgres(sentMessage, idSubstring, "+120363107024888999");
     // Log feedback to Firebase
     await logFeedbackToPostgres(idSubstring, customerPhone, feedback);
 
@@ -2173,145 +2173,6 @@ async function handleNewMessagesTemplateWweb(client, msg, botName, phoneIndex) {
   );
 }
 
-async function extractBasicMessageInfo(msg) {
-  return {
-    id: msg.id ?? "",
-    idSerialized: msg.id._serialized?? "",
-    from: msg.from ?? "",
-    fromMe: msg.fromMe ?? false,
-    body: msg.body ?? "",
-    timestamp: msg.timestamp ?? 0,
-    type: msg.type === "chat" ? "text" : msg.type,
-    deviceType: msg.deviceType ?? "",
-    notifyName: msg.notifyName ?? "",
-    chatId: msg.from,
-    author: msg.author ? "+" + msg.author.split("@")[0] : null,
-  };
-}
-
-async function processMessageMedia(msg) {
-  if (!msg.hasMedia || msg.type === "audio" || msg.type === "ptt") {
-    return null;
-  }
-
-  try {
-    const media = await msg.downloadMedia();
-    if (!media) {
-      console.log(
-        `Failed to download media for message: ${msg.id._serialized}`
-      );
-      return null;
-    }
-
-    const mediaData = {
-      mimetype: media.mimetype,
-      data: media.data,
-      filename: msg._data.filename || "",
-      caption: msg._data.caption || "",
-    };
-
-    // Add type-specific fields
-    switch (msg.type) {
-      case "image":
-        mediaData.width = msg._data.width;
-        mediaData.height = msg._data.height;
-        break;
-      case "document":
-        mediaData.page_count = msg._data.pageCount;
-        mediaData.file_size = msg._data.size;
-        break;
-      case "video":
-        // Store video data separately or use a cloud storage solution
-        mediaData.link = await storeVideoData(media.data, msg._data.filename);
-        break;
-    }
-
-    // Add thumbnail information if available
-    if (msg._data.thumbnailHeight && msg._data.thumbnailWidth) {
-      mediaData.thumbnail = {
-        height: msg._data.thumbnailHeight,
-        width: msg._data.thumbnailWidth,
-      };
-    }
-
-    // Add media key if available
-    if (msg.mediaKey) {
-      mediaData.media_key = msg.mediaKey;
-    }
-
-    return mediaData;
-  } catch (error) {
-    console.error(
-      `Error handling media for message ${msg.id._serialized}:`,
-      error
-    );
-    return null;
-  }
-}
-
-async function processAudioMessage(msg) {
-  if (msg.type !== "audio" && msg.type !== "ptt") {
-    return null;
-  }
-
-  return {
-    mimetype: "audio/ogg; codecs=opus",
-    data: null,
-  };
-}
-
-async function processLocationMessage(msg) {
-  if (msg.type !== "location") {
-    return null;
-  }
-
-  return {
-    latitude: msg.location.latitude,
-    longitude: msg.location.longitude,
-    description: msg.location.description || "",
-    timestamp: new Date(),
-  };
-}
-
-async function processQuotedMessage(msg, idSubstring) {
-  if (!msg.hasQuotedMsg) {
-    return null;
-  }
-
-  const quotedMsg = await msg.getQuotedMessage();
-  const authorNumber = "+" + quotedMsg.from.split("@")[0];
-  const authorData = await getContactDataFromDatabaseByPhone(
-    authorNumber,
-    idSubstring
-  );
-
-  return {
-    quoted_content: {
-      body: quotedMsg.body,
-    },
-    quoted_author: authorData ? authorData.name : authorNumber,
-    message_id: quotedMsg.id._serialized,
-    message_type: quotedMsg.type,
-  };
-}
-
-async function processOrderMessage(msg) {
-  if (msg.type !== "order") {
-    return null;
-  }
-
-  return {
-    order_id: msg?.orderId,
-    token: msg?.token,
-    seller_jid: msg?._data?.sellerJid,
-    item_count: msg?._data?.itemCount,
-    order_title: msg?._data?.orderTitle,
-    total_amount: msg?._data?.totalAmount1000,
-    total_currency_code: msg?._data?.totalCurrencyCode,
-    thumbnail: msg?._data?.thumbnail,
-  };
-}
-
 async function getProfilePicUrl(contact) {
   if (!contact.getProfilePicUrl) {
     return "";
@@ -2326,70 +2187,6 @@ async function getProfilePicUrl(contact) {
     );
     return "";
   }
-}
-
-async function prepareMessageData(msg, idSubstring, phoneIndex) {
-  const basicInfo = await extractBasicMessageInfo(msg);
-  const contact = await msg.getContact();
-  const chat = await msg.getChat();
-
-  const messageData = {
-    chat_id: basicInfo.chatId,
-    from: basicInfo.from,
-    from_me: basicInfo.fromMe,
-    id: basicInfo.id,
-    source: basicInfo.deviceType,
-    status: "delivered",
-    text: {
-      body: basicInfo.body,
-    },
-    timestamp: basicInfo.timestamp,
-    type: basicInfo.type,
-    phone_index: phoneIndex,
-  };
-
-  // Process media if present
-  if (msg.hasMedia) {
-    const mediaData = await processMessageMedia(msg);
-    if (mediaData) {
-      messageData[msg.type] = mediaData;
-    }
-  }
-
-  // Process audio separately
-  const audioData = await processAudioMessage(msg);
-  if (audioData) {
-    messageData.audio = audioData;
-  }
-
-  // Process location
-  const locationData = await processLocationMessage(msg);
-  if (locationData) {
-    messageData.location = locationData;
-  }
-
-  // Process quoted message
-  const quotedData = await processQuotedMessage(msg, idSubstring);
-  if (quotedData) {
-    messageData.text.context = quotedData;
-  }
-
-  // Process order message
-  const orderData = await processOrderMessage(msg);
-  if (orderData) {
-    messageData.order = orderData;
-  }
-
-  // Handle group messages
-  if (basicInfo.from.includes("@g.us") && basicInfo.author) {
-    const authorData = await getContactDataFromDatabaseByPhone(
-      basicInfo.author,
-      idSubstring
-    );
-    messageData.author = authorData ? authorData.name : basicInfo.author;
-  }
-
-  return messageData;
 }
 
 async function prepareContactData(
@@ -2503,7 +2300,7 @@ async function handleAIVideoResponses({
             sendVideoAsGif: false,
           });
 
-          await addMessagetoPostgres(
+          await addMessageToPostgres(
             videoMessage,
             idSubstring,
             extractedNumber,
@@ -2547,7 +2344,7 @@ async function handleAIVoiceResponses({
             response.voiceUrls[i],
             caption
           );
-          await addMessagetoPostgres(
+          await addMessageToPostgres(
             voiceMessage,
             idSubstring,
             extractedNumber,
@@ -2589,7 +2386,7 @@ async function handleAIImageResponses({
         try {
           const media = await MessageMedia.fromUrl(imageUrl);
           const imageMessage = await client.sendMessage(from, media);
-          await addMessagetoPostgres(
+          await addMessageToPostgres(
             imageMessage,
             idSubstring,
             extractedNumber,
@@ -2640,7 +2437,7 @@ async function handleAIDocumentResponses({
             sendMediaAsDocument: true,
           });
 
-          await addMessagetoPostgres(
+          await addMessageToPostgres(
             documentMessage,
             idSubstring,
             extractedNumber,
@@ -3269,7 +3066,6 @@ async function processImmediateActions(client, msg, botName, phoneIndex) {
 
     // Prepare contact and message data
     const contactTags = contactData?.tags || [];
-    const messageData = await prepareMessageData(msg, idSubstring, phoneIndex);
     const contactDataForDB = await prepareContactData(
       msg,
       idSubstring,
@@ -3289,19 +3085,12 @@ async function processImmediateActions(client, msg, botName, phoneIndex) {
       await createContactInDatabase(idSubstring, contactDataForDB);
     }
 
-    await addMessagetoPostgres(
-      messageData,
+    await addMessageToPostgres(
+      msg,
       idSubstring,
       extractedNumber,
       contactDataForDB.name
     );
-    await addNotificationToUser(
-      idSubstring,
-      messageData,
-      contactDataForDB.name
-    );
-
-    const followUpTemplates = await getFollowUpTemplates(idSubstring);
 
     const handlerParams = {
       client: client,
@@ -3395,7 +3184,7 @@ async function sendFeedbackToGroup(
       feedbackGroupId,
       feedbackMessage
     );
-    await addMessagetoPostgres(sentMessage, idSubstring, "+120363107024888999");
+    await addMessageToPostgres(sentMessage, idSubstring, "+120363107024888999");
     await logFeedbackToPostgres(idSubstring, customerPhone, feedback);
 
     return JSON.stringify({
@@ -3488,7 +3277,7 @@ async function mtdcAttendance(extractedNumber, msg, idSubstring, client) {
 
     const chatID = extractedNumber.slice(1) + "@c.us";
     const sentMessage = await client.sendMessage(chatID, confirmationMessage);
-    await addMessagetoPostgres(sentMessage, idSubstring, extractedNumber);
+    await addMessageToPostgres(sentMessage, idSubstring, extractedNumber);
 
     return true;
   } catch (error) {
@@ -3565,7 +3354,7 @@ async function mtdcConfirmAttendance(
 
     const chatID = extractedNumber.slice(1) + "@c.us";
     const sentMessage = await client.sendMessage(chatID, confirmationMessage);
-    await addMessagetoPostgres(sentMessage, idSubstring, extractedNumber);
+    await addMessageToPostgres(sentMessage, idSubstring, extractedNumber);
 
     return true;
   } catch (error) {
@@ -3997,7 +3786,7 @@ async function processBotResponse({
     const sentMessage = await client.sendMessage(msg.from, part);
 
     // Save message to PostgreSQL
-    await addMessagetoPostgres({
+    await addMessageToPostgres({
       msg: sentMessage,
       idSubstring: idSubstring,
       extractedNumber: extractedNumber,
@@ -4073,7 +3862,7 @@ async function handleProductResponse({
             sendMediaAsDocument: true,
           });
 
-          await addMessagetoPostgres({
+          await addMessageToPostgres({
             msg: documentMessage,
             idSubstring: idSubstring,
             extractedNumber: extractedNumber,
@@ -4153,7 +3942,7 @@ async function handleSpecialCases({
       reportMessage
     );
     await insertSpreadsheetMTDC(reportMessage);
-    await addMessagetoPostgres(
+    await addMessageToPostgres(
       sentMessage,
       idSubstring,
       "+120363386875697540",
@@ -4177,7 +3966,7 @@ async function handleSpecialCases({
       reportMessage
     );
     await updateGoogleSheet(reportMessage);
-    await addMessagetoPostgres(
+    await addMessageToPostgres(
       sentMessage,
       idSubstring,
       "+120363386875697540",
@@ -4200,7 +3989,7 @@ async function handleSpecialCases({
       "120363318433286839@g.us",
       reportMessage
     );
-    await addMessagetoPostgres(
+    await addMessageToPostgres(
       sentMessage,
       idSubstring,
       "+120363318433286839",
@@ -4230,7 +4019,7 @@ async function handleSpecialCases({
       "120363374300897170@g.us",
       reportMessage
     );
-    await addMessagetoPostgres(
+    await addMessageToPostgres(
       sentMessage,
       idSubstring,
       "+120363374300897170",
@@ -4256,7 +4045,7 @@ async function handleSpecialCases({
       "60182786776@c.us",
       reportMessage
     );
-    await addMessagetoPostgres(
+    await addMessageToPostgres(
       sentMessage,
       idSubstring,
       "+60182786776",
@@ -4279,7 +4068,7 @@ async function handleSpecialCases({
         "120363325228671809@g.us",
         reportMessage
       );
-      await addMessagetoPostgres(
+      await addMessageToPostgres(
         sentMessage,
         idSubstring,
         "+120363325228671809"
@@ -4301,7 +4090,7 @@ async function handleSpecialCases({
         "120363325228671809@g.us",
         reportMessage
       );
-      await addMessagetoPostgres(
+      await addMessageToPostgres(
         sentMessage,
         idSubstring,
         "+120363325228671809"
@@ -5896,7 +5685,7 @@ async function handleConfirmedAppointment(client, msg, idSubstring) {
         result.gid._serialized,
         initialMessage
       );
-      await addMessagetoPostgres(
+      await addMessageToPostgres(
         message,
         idSubstring,
         "+" + result.gid._serialized.split("@")[0],
@@ -5910,7 +5699,7 @@ async function handleConfirmedAppointment(client, msg, idSubstring) {
         result.gid._serialized,
         media
       );
-      await addMessagetoPostgres(
+      await addMessageToPostgres(
         documentMessage,
         idSubstring,
         "+" + result.gid._serialized.split("@")[0],
@@ -5929,7 +5718,7 @@ async function handleConfirmedAppointment(client, msg, idSubstring) {
         result.gid._serialized,
         finalMessage
       );
-      await addMessagetoPostgres(
+      await addMessageToPostgres(
         message2,
         idSubstring,
         "+" + result.gid._serialized.split("@")[0],
@@ -6229,17 +6018,12 @@ async function listContactsWithTag(idSubstring, tag, limit = 10) {
   }
 }
 
-async function addMessagetoPostgres(
-  msg,
-  idSubstring,
-  extractedNumber,
-  contactName
-) {
+async function addMessageToPostgres(msg, idSubstring, extractedNumber, contactName) {
   console.log("Adding message to PostgreSQL");
   console.log("idSubstring:", idSubstring);
   console.log("extractedNumber:", extractedNumber);
 
-  if (!extractedNumber || !extractedNumber.startsWith("+60" || "+65")) {
+  if (!extractedNumber || !extractedNumber.startsWith("+60") && !extractedNumber.startsWith("+65")) {
     console.error("Invalid extractedNumber for database:", extractedNumber);
     return;
   }
@@ -6249,140 +6033,74 @@ async function addMessagetoPostgres(
     return;
   }
 
-  const contactID =
-    idSubstring +
-    "-" +
-    (extractedNumber.startsWith("+")
-      ? extractedNumber.slice(1)
-      : extractedNumber);
+  const contactID = idSubstring + "-" + (extractedNumber.startsWith("+") ? extractedNumber.slice(1) : extractedNumber);
 
-  let messageBody = "";
-  if (msg.text && msg.text.body) {
-    messageBody = msg.text.body;
-  } else if (msg.body) {
-    messageBody = msg.body;
-  } else {
-    messageBody = "";
-  }
+  const basicInfo = await extractBasicMessageInfo(msg);
+  const messageData = await prepareMessageData(msg, idSubstring, null);
 
-  let quotedMessage = {};
-  if(msg.hasQuotedMsg){
-    quotedMessage = msg.text.context;
-  }
-
-  let audioData = null;
-  let type = msg.type || "chat";
-
-  if (msg.type === "chat") {
-    type = "chat";
-  } else if (msg.type === "text") {
-    type = "chat";
-  } else {
-    type = msg.type;
-  }
-  
-  let mediaMetadata = {};
-  let mediaUrl = null;
-  let mediaData = null;
+  let messageBody = messageData.text?.body || "";
 
   if (msg.hasMedia && (msg.type === "audio" || msg.type === "ptt")) {
     console.log("Voice message detected during saving to NeonDB");
     const media = await msg.downloadMedia();
     const transcription = await transcribeAudio(media.data);
 
-    if (
-      transcription &&
-      transcription !== "Audio transcription failed. Please try again."
-    ) {
+    if (transcription && transcription !== "Audio transcription failed. Please try again.") {
       messageBody += transcription;
     } else {
-      messageBody +=
-        "I couldn't transcribe the audio. Could you please type your message instead?";
+      messageBody += "I couldn't transcribe the audio. Could you please type your message instead?";
     }
-
-    mediaData = media.data;
   }
+
+  let mediaUrl = null;
+  let mediaData = null;
+  let mediaMetadata = {};
 
   if (msg.hasMedia) {
-    try {
-      const media = await msg.downloadMedia();
+    if (msg.type === "video") {
+      mediaUrl = messageData.video?.link || null;
+    } else if (msg.type !== "audio" && msg.type !== "ptt") {
+      mediaData = messageData[msg.type]?.data || null;
+      mediaMetadata = {
+        mimetype: messageData[msg.type]?.mimetype,
+        filename: messageData[msg.type]?.filename || "",
+        caption: messageData[msg.type]?.caption || "",
+        thumbnail: messageData[msg.type]?.thumbnail || null,
+        mediaKey: messageData[msg.type]?.media_key || null,
+      };
 
-      if (media) {
-        mediaMetadata = {
-          mimetype: media.mimetype,
-          filename: msg._data.filename || "",
-          caption: msg._data.caption || "",
-        };
-
-        if (msg._data.thumbnailHeight && msg._data.thumbnailWidth) {
-          mediaMetadata.thumbnail = {
-            height: msg._data.thumbnailHeight,
-            width: msg._data.thumbnailWidth,
-          };
-        }
-
-        if (msg.mediaKey) {
-          mediaMetadata.mediaKey = msg.mediaKey;
-        }
-
-        if (msg.type === "image" && msg._data.width && msg._data.height) {
-          mediaMetadata.width = msg._data.width;
-          mediaMetadata.height = msg._data.height;
-        } else if (msg.type === "document") {
-          mediaMetadata.pageCount = msg._data.pageCount;
-          mediaMetadata.fileSize = msg._data.size;
-        }
-
-        if (msg.type === "video") {
-          mediaUrl = await storeVideoData(media.data, msg._data.filename);
-        } else {
-          mediaData = media.data;
-        }
+      if (msg.type === "image") {
+        mediaMetadata.width = messageData.image?.width;
+        mediaMetadata.height = messageData.image?.height;
+      } else if (msg.type === "document") {
+        mediaMetadata.pageCount = messageData.document?.page_count;
+        mediaMetadata.fileSize = messageData.document?.file_size;
       }
-    } catch (error) {
-      console.error(
-        `Error handling media for message ${msg.id._serialized}:`,
-        error
-      );
     }
   }
 
-  let author = null;
-  if (msg.from.includes("@g.us")) {
-    const authorNumber = "+" + msg.author.split("@")[0];
-    const authorData = await getContactDataFromDatabaseByPhone(
-      authorNumber,
-      idSubstring
-    );
+  const quotedMessage = messageData.text?.context || null;
 
-    if (authorData) {
-      author = authorData.contactName;
-    } else {
-      author = msg.author;
-    }
+  let author = null;
+  if (msg.from.includes("@g.us") && basicInfo.author) {
+    const authorData = await getContactDataFromDatabaseByPhone(basicInfo.author, idSubstring);
+    author = authorData ? authorData.contactName : basicInfo.author;
   }
 
   try {
     const client = await pool.connect();
-
     try {
       await client.query("BEGIN");
 
-      // FIRST: Create/update contact BEFORE inserting message
+      // Create/update contact
       const contactCheckQuery = `
         SELECT id FROM public.contacts 
         WHERE contact_id = $1 AND company_id = $2
       `;
-
-      const contactResult = await client.query(contactCheckQuery, [
-        contactID,
-        idSubstring,
-      ]);
+      const contactResult = await client.query(contactCheckQuery, [contactID, idSubstring]);
 
       if (contactResult.rows.length === 0) {
-        console.log(
-          `Creating new contact: ${contactID} for company: ${idSubstring}`
-        );
+        console.log(`Creating new contact: ${contactID} for company: ${idSubstring}`);
         const contactQuery = `
           INSERT INTO public.contacts (
             contact_id, company_id, name, contact_name, phone, email,
@@ -6395,7 +6113,6 @@ async function addMessagetoPostgres(
               phone = EXCLUDED.phone,
               last_updated = EXCLUDED.last_updated
         `;
-
         await client.query(contactQuery, [
           contactID,
           idSubstring,
@@ -6416,11 +6133,9 @@ async function addMessagetoPostgres(
           new Date(),
         ]);
         console.log(`Contact created successfully: ${contactID}`);
-      } else {
-        console.log(`Contact already exists: ${contactID}`);
       }
 
-      // SECOND: Now insert the message with correct field mappings
+      // Insert the message
       const messageQuery = `
         INSERT INTO public.messages (
           message_id, company_id, contact_id, thread_id, customer_phone,
@@ -6430,17 +6145,16 @@ async function addMessagetoPostgres(
         ON CONFLICT (message_id) DO NOTHING
         RETURNING id
       `;
-
       const messageValues = [
-        msg.idSerialized || msg.id._serialized,
+        basicInfo.idSerialized,
         idSubstring,
         contactID,
         msg.from,
         extractedNumber,
         messageBody,
-        type,
+        basicInfo.type,
         mediaUrl,
-        new Date(msg.timestamp * 1000),
+        new Date(basicInfo.timestamp * 1000),
         msg.fromMe ? "outbound" : "inbound",
         "delivered",
         msg.fromMe || false,
@@ -6448,33 +6162,27 @@ async function addMessagetoPostgres(
         author || contactID,
         quotedMessage ? JSON.stringify(quotedMessage) : null,
         mediaData || null,
-        mediaMetadata ? JSON.stringify(mediaMetadata) : null,
+        Object.keys(mediaMetadata).length > 0 ? JSON.stringify(mediaMetadata) : null,
       ];
-
-      console.log("Final message values:", {
-        message_id: msg.id._serialized,
-        content: messageBody,
-        message_type: type,
-        customer_phone: extractedNumber,
-      });
 
       const messageResult = await client.query(messageQuery, messageValues);
       const messageDbId = messageResult.rows[0]?.id;
 
+      // Update contact's last message
       await client.query(
         `UPDATE public.contacts 
-          SET last_message = $1, last_updated = CURRENT_TIMESTAMP
-          WHERE contact_id = $2 AND company_id = $3`,
+         SET last_message = $1, last_updated = CURRENT_TIMESTAMP
+         WHERE contact_id = $2 AND company_id = $3`,
         [
           JSON.stringify({
             chat_id: msg.to,
             from: msg.from,
             from_me: true,
-            id: msg.id._serialized,
+            id: basicInfo.idSerialized,
             status: "delivered",
             text: { body: messageBody },
             timestamp: Math.floor(Date.now() / 1000),
-            type: type,
+            type: basicInfo.type,
           }),
           contactID,
           idSubstring,
@@ -6482,40 +6190,218 @@ async function addMessagetoPostgres(
       );
 
       await client.query("COMMIT");
-      console.log(
-        `Message successfully added to PostgreSQL with ID: ${messageDbId}`
-      );
+      console.log(`Message successfully added to PostgreSQL with ID: ${messageDbId}`);
     } catch (error) {
       await client.query("ROLLBACK");
       console.error("Error in PostgreSQL transaction:", error);
       throw error;
     } finally {
-      try {
-        const contactData = await getContactDataFromDatabaseByPhone(
-          extractedNumber,
-          idSubstring
-        );
-        if (
-          contactData &&
-          contactData.contact_name &&
-          contactData.contact_name !== extractedNumber &&
-          !contactData.contact_name.includes(extractedNumber.replace("+", ""))
-        ) {
-          contactName = contactData.contact_name;
-          console.log(`Using saved contact name: ${contactName}`);
-        } else {
-          console.log(`No saved name found, using number: ${extractedNumber}`);
-        }
-      } catch (contactError) {
-        console.error("Error fetching contact data:", contactError);
-      }
-      await addNotificationToUser(idSubstring, messageBody, contactName);
       client.release();
+      await addNotificationToUser(idSubstring, messageBody, contactName);
     }
   } catch (error) {
     console.error("PostgreSQL connection error:", error);
     throw error;
   }
+}
+
+async function extractBasicMessageInfo(msg) {
+  return {
+    id: msg.id ?? "",
+    idSerialized: msg.id._serialized?? "",
+    from: msg.from ?? "",
+    fromMe: msg.fromMe ?? false,
+    body: msg.body ?? "",
+    timestamp: msg.timestamp ?? 0,
+    type: msg.type === "chat" ? "text" : msg.type,
+    deviceType: msg.deviceType ?? "",
+    notifyName: msg.notifyName ?? "",
+    chatId: msg.from,
+    author: msg.author ? "+" + msg.author.split("@")[0] : null,
+  };
+}
+
+async function processMessageMedia(msg) {
+  if (!msg.hasMedia || msg.type === "audio" || msg.type === "ptt") {
+    return null;
+  }
+
+  try {
+    const media = await msg.downloadMedia();
+    if (!media) {
+      console.log(
+        `Failed to download media for message: ${msg.id._serialized}`
+      );
+      return null;
+    }
+
+    const mediaData = {
+      mimetype: media.mimetype,
+      data: media.data,
+      filename: msg._data.filename || "",
+      caption: msg._data.caption || "",
+    };
+
+    switch (msg.type) {
+      case "image":
+        mediaData.width = msg._data.width;
+        mediaData.height = msg._data.height;
+        break;
+      case "document":
+        mediaData.page_count = msg._data.pageCount;
+        mediaData.file_size = msg._data.size;
+        break;
+      case "video":
+        mediaData.link = await storeVideoData(media.data, msg._data.filename);
+        break;
+    }
+
+    if (msg._data.thumbnailHeight && msg._data.thumbnailWidth) {
+      mediaData.thumbnail = {
+        height: msg._data.thumbnailHeight,
+        width: msg._data.thumbnailWidth,
+      };
+    }
+
+    if (msg.mediaKey) {
+      mediaData.media_key = msg.mediaKey;
+    }
+
+    return mediaData;
+  } catch (error) {
+    console.error(
+      `Error handling media for message ${msg.id._serialized}:`,
+      error
+    );
+    return null;
+  }
+}
+
+async function processAudioMessage(msg) {
+  if (msg.type !== "audio" && msg.type !== "ptt") {
+    return null;
+  }
+
+  return {
+    mimetype: "audio/ogg; codecs=opus",
+    data: null,
+  };
+}
+
+async function processLocationMessage(msg) {
+  if (msg.type !== "location") {
+    return null;
+  }
+
+  return {
+    latitude: msg.location.latitude,
+    longitude: msg.location.longitude,
+    description: msg.location.description || "",
+    timestamp: new Date(),
+  };
+}
+
+async function processQuotedMessage(msg, idSubstring) {
+  if (!msg.hasQuotedMsg) {
+    return null;
+  }
+
+  const quotedMsg = await msg.getQuotedMessage();
+  const authorNumber = "+" + quotedMsg.from.split("@")[0];
+  const authorData = await getContactDataFromDatabaseByPhone(
+    authorNumber,
+    idSubstring
+  );
+
+  return {
+    quoted_content: {
+      body: quotedMsg.body,
+    },
+    quoted_author: authorData ? authorData.name : authorNumber,
+    message_id: quotedMsg.id._serialized,
+    message_type: quotedMsg.type,
+  };
+}
+
+async function processOrderMessage(msg) {
+  if (msg.type !== "order") {
+    return null;
+  }
+
+  return {
+    order_id: msg?.orderId,
+    token: msg?.token,
+    seller_jid: msg?._data?.sellerJid,
+    item_count: msg?._data?.itemCount,
+    order_title: msg?._data?.orderTitle,
+    total_amount: msg?._data?.totalAmount1000,
+    total_currency_code: msg?._data?.totalCurrencyCode,
+    thumbnail: msg?._data?.thumbnail,
+  };
+}
+
+async function prepareMessageData(msg, idSubstring, phoneIndex) {
+  const basicInfo = await extractBasicMessageInfo(msg);
+  const contact = await msg.getContact();
+  const chat = await msg.getChat();
+
+  const messageData = {
+    chat_id: basicInfo.chatId,
+    from: basicInfo.from,
+    from_me: basicInfo.fromMe,
+    id: basicInfo.id,
+    source: basicInfo.deviceType,
+    status: "delivered",
+    text: {
+      body: basicInfo.body,
+    },
+    timestamp: basicInfo.timestamp,
+    type: basicInfo.type,
+    phone_index: phoneIndex,
+  };
+
+  // Process media if present
+  if (msg.hasMedia) {
+    const mediaData = await processMessageMedia(msg);
+    if (mediaData) {
+      messageData[msg.type] = mediaData;
+    }
+  }
+
+  // Process audio separately
+  const audioData = await processAudioMessage(msg);
+  if (audioData) {
+    messageData.audio = audioData;
+  }
+
+  // Process location
+  const locationData = await processLocationMessage(msg);
+  if (locationData) {
+    messageData.location = locationData;
+  }
+
+  // Process quoted message
+  const quotedData = await processQuotedMessage(msg, idSubstring);
+  if (quotedData) {
+    messageData.text.context = quotedData;
+  }
+
+  // Process order message
+  const orderData = await processOrderMessage(msg);
+  if (orderData) {
+    messageData.order = orderData;
+  }
+
+  // Handle group messages
+  if (basicInfo.from.includes("@g.us") && basicInfo.author) {
+    const authorData = await getContactDataFromDatabaseByPhone(
+      basicInfo.author,
+      idSubstring
+    );
+    messageData.author = authorData ? authorData.name : basicInfo.author;
+  }
+
+  return messageData;
 }
 
 async function testDailyReminders(client, idSubstring) {
@@ -8536,7 +8422,7 @@ async function handleToolCalls(
             "120363107024888999@g.us",
             report
           );
-          await addMessagetoPostgres(
+          await addMessageToPostgres(
             sentMessage,
             idSubstring,
             "+120363107024888999"
@@ -8571,7 +8457,7 @@ async function handleToolCalls(
             "120363107024888999@g.us",
             report
           );
-          await addMessagetoPostgres(
+          await addMessageToPostgres(
             sentMessage,
             idSubstring,
             "+120363107024888999"

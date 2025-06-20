@@ -881,20 +881,26 @@ app.post("/api/daily-report/:companyId", async (req, res) => {
         WHERE company_id = $1 AND setting_type = 'reporting' AND setting_key = 'dailyReport'
       `;
       const checkResult = await sqlDb.query(checkQuery, [companyId]);
-      
+
       if (checkResult.rows.length > 0) {
         const updateQuery = `
           UPDATE public.settings 
           SET setting_value = $1, updated_at = CURRENT_TIMESTAMP
           WHERE company_id = $2 AND setting_type = 'reporting' AND setting_key = 'dailyReport'
         `;
-        await sqlDb.query(updateQuery, [JSON.stringify(settingValue), companyId]);
+        await sqlDb.query(updateQuery, [
+          JSON.stringify(settingValue),
+          companyId,
+        ]);
       } else {
         const insertQuery = `
           INSERT INTO public.settings (company_id, setting_type, setting_key, setting_value, created_at, updated_at)
           VALUES ($1, 'reporting', 'dailyReport', $2, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
         `;
-        await sqlDb.query(insertQuery, [companyId, JSON.stringify(settingValue)]);
+        await sqlDb.query(insertQuery, [
+          companyId,
+          JSON.stringify(settingValue),
+        ]);
       }
 
       if (dailyReportCrons.has(companyId)) {
@@ -902,32 +908,44 @@ app.post("/api/daily-report/:companyId", async (req, res) => {
       }
 
       const [hour, minute] = time.split(":");
-      const cronJob = cron.schedule(`${minute} ${hour} * * *`, async () => {
-        try {
-          const botData = botMap.get(companyId);
-          if (!botData || !botData[0]?.client) {
-            console.error(`No WhatsApp client found for company ${companyId}`);
-            return;
-          }
+      const cronJob = cron.schedule(
+        `${minute} ${hour} * * *`,
+        async () => {
+          try {
+            const botData = botMap.get(companyId);
+            if (!botData || !botData[0]?.client) {
+              console.error(
+                `No WhatsApp client found for company ${companyId}`
+              );
+              return;
+            }
 
-          const count = await countTodayLeads(companyId);
-          const message = `📊 Daily Lead Report\n\nNew Leads Today: ${count}\nDate: ${new Date().toLocaleDateString()}`;
+            const count = await countTodayLeads(companyId);
+            const message = `📊 Daily Lead Report\n\nNew Leads Today: ${count}\nDate: ${new Date().toLocaleDateString()}`;
 
-          await botData[0].client.sendMessage(groupId, message);
+            await botData[0].client.sendMessage(groupId, message);
 
-          const updateLastRunQuery = `
+            const updateLastRunQuery = `
             UPDATE public.settings 
             SET setting_value = jsonb_set(setting_value, '{lastRun}', to_jsonb($1::text), true),
                 updated_at = CURRENT_TIMESTAMP
             WHERE company_id = $2 AND setting_type = 'reporting' AND setting_key = 'dailyReport'
           `;
-          await sqlDb.query(updateLastRunQuery, [new Date().toISOString(), companyId]);
-        } catch (error) {
-          console.error(`Error sending daily report for company ${companyId}:`, error);
+            await sqlDb.query(updateLastRunQuery, [
+              new Date().toISOString(),
+              companyId,
+            ]);
+          } catch (error) {
+            console.error(
+              `Error sending daily report for company ${companyId}:`,
+              error
+            );
+          }
+        },
+        {
+          timezone: "Asia/Kuala_Lumpur",
         }
-      }, {
-        timezone: "Asia/Kuala_Lumpur"
-      });
+      );
 
       dailyReportCrons.set(companyId, cronJob);
 
@@ -953,7 +971,7 @@ app.post("/api/daily-report/:companyId", async (req, res) => {
         SET setting_value = $1, updated_at = CURRENT_TIMESTAMP
         WHERE company_id = $2 AND setting_type = 'reporting' AND setting_key = 'dailyReport'
       `;
-      
+
       await sqlDb.query(updateQuery, [JSON.stringify(settingValue), companyId]);
 
       res.json({
@@ -972,14 +990,17 @@ app.post("/api/daily-report/:companyId", async (req, res) => {
 
 async function countTodayLeads(companyId) {
   try {
-    const today = moment().tz('Asia/Kuala_Lumpur').startOf('day').format('YYYY-MM-DD HH:mm:ss');
-    
+    const today = moment()
+      .tz("Asia/Kuala_Lumpur")
+      .startOf("day")
+      .format("YYYY-MM-DD HH:mm:ss");
+
     const query = `
       SELECT COUNT(*) as count 
       FROM public.contacts 
       WHERE company_id = $1 AND created_at >= $2
     `;
-    
+
     const result = await sqlDb.query(query, [companyId, today]);
     return parseInt(result.rows[0].count, 10);
   } catch (error) {
@@ -999,16 +1020,16 @@ app.post("/api/daily-report/:companyId/trigger", async (req, res) => {
       AND setting_type = 'reporting' 
       AND setting_key = 'dailyReport'
     `;
-    
+
     const settingsResult = await sqlDb.query(settingsQuery, [companyId]);
-    
+
     if (settingsResult.rows.length === 0) {
       return res.status(400).json({
         success: false,
         error: "Daily reporting is not configured for this company",
       });
     }
-    
+
     const settings = settingsResult.rows[0].setting_value;
 
     if (!settings || !settings.enabled) {
@@ -1036,7 +1057,10 @@ app.post("/api/daily-report/:companyId/trigger", async (req, res) => {
           updated_at = CURRENT_TIMESTAMP
       WHERE company_id = $2 AND setting_type = 'reporting' AND setting_key = 'dailyReport'
     `;
-    await sqlDb.query(updateLastRunQuery, [new Date().toISOString(), companyId]);
+    await sqlDb.query(updateLastRunQuery, [
+      new Date().toISOString(),
+      companyId,
+    ]);
 
     res.json({
       success: true,
@@ -1052,37 +1076,6 @@ app.post("/api/daily-report/:companyId/trigger", async (req, res) => {
   }
 });
 
-app.get("/api/check-constantco-spreadsheet", async (req, res) => {
-  try {
-    // Get the spreadsheet handler instance
-    const constantcoSpreadsheet = require("./spreadsheet/constantcoSpreadsheet");
-    const spreadsheetHandler = new constantcoSpreadsheet(botMap);
-
-    // Run the check
-    await spreadsheetHandler.checkAndProcessNewRows();
-
-    res.json({
-      success: true,
-      message: "Spreadsheet check triggered successfully",
-    });
-  } catch (error) {
-    console.error("Error triggering spreadsheet check:", error);
-    res.status(500).json({
-      success: false,
-      error: error.message,
-    });
-  }
-});
-
-async function createUserInFirebase(userData) {
-  try {
-    const userRecord = await admin.auth().createUser(userData);
-
-    return userRecord.uid;
-  } catch (error) {
-    throw error;
-  }
-}
 app.get("/assignments", async (req, res) => {
   try {
     const companyId = "072";
@@ -1150,6 +1143,7 @@ app.get("/assignments", async (req, res) => {
     });
   }
 });
+
 app.get("/api/facebook-lead-webhook", (req, res) => {
   const VERIFY_TOKEN = "test"; // Use the token you entered in the Facebook dashboard
 
@@ -1168,6 +1162,7 @@ app.get("/api/facebook-lead-webhook", (req, res) => {
     res.sendStatus(404);
   }
 });
+
 app.put("/api/update-user", async (req, res) => {
   try {
     const { uid, email, phoneNumber, password, displayName } = req.body;
@@ -1193,6 +1188,7 @@ app.put("/api/update-user", async (req, res) => {
     res.status(500).json({ error: "Failed to update user" });
   }
 });
+
 async function createNeonAuthUser(email, name) {
   const response = await axios.post(
     "https://console.neon.tech/api/v2/projects/auth/user",
@@ -1212,6 +1208,7 @@ async function createNeonAuthUser(email, name) {
   );
   return response.data;
 }
+
 app.post(
   "/api/create-user/:email/:phoneNumber/:password/:role",
   async (req, res) => {
@@ -1554,442 +1551,440 @@ const PRIORITY = {
   BULK: 5, // Lowest priority
 };
 
-// Add timezone handling and validation
-app.post("/api/schedule-message/:companyId", async (req, res) => {
+function toPgTimestamp(firestoreTimestamp) {
+  if (!firestoreTimestamp) return null;
+  return new Date(firestoreTimestamp.seconds * 1000 + firestoreTimestamp.nanoseconds / 1000000);
+}
+
+// POST endpoint to schedule a message
+app.post('/api/schedule-message/:companyId', async (req, res) => {
   const { companyId } = req.params;
   const scheduledMessage = req.body;
   const phoneIndex = scheduledMessage.phoneIndex || 0;
-  console.log("Received scheduling request:", {
+
+  console.log('Received scheduling request:', {
     companyId,
-    messageFormat: scheduledMessage.message ? "single" : "sequence",
+    messageFormat: scheduledMessage.message ? 'single' : 'sequence',
     hasAdditionalMessages: Boolean(scheduledMessage.messages?.length),
     infiniteLoop: Boolean(scheduledMessage.infiniteLoop),
+    hasMedia: Boolean(scheduledMessage.mediaUrl || scheduledMessage.documentUrl),
+    hasCaption: Boolean(scheduledMessage.caption)
   });
 
   try {
-    // Get or create company-specific queue
-    const queue = getQueueForBot(companyId);
-
-    // Add createdAt timestamp
-    scheduledMessage.createdAt = admin.firestore.Timestamp.now();
-    scheduledMessage.scheduledTime = new admin.firestore.Timestamp(
-      scheduledMessage.scheduledTime.seconds,
-      scheduledMessage.scheduledTime.nanoseconds
-    );
-
-    // Generate a unique ID for the message
-    const messageId = uuidv4();
-
-    // Process chatIds into individual message objects
-    let processedMessages = [];
-
-    if (
-      scheduledMessage.messages &&
-      Array.isArray(scheduledMessage.messages) &&
-      scheduledMessage.messages.length > 0
-    ) {
-      // If we have an array of messages, use those
-      scheduledMessage.chatIds.forEach((chatId) => {
-        scheduledMessage.messages.forEach((msg, index) => {
-          processedMessages.push({
-            chatId: chatId,
-            message: msg.text || "",
-            delay: scheduledMessage.messageDelays?.[index] || 0,
-            phoneIndex: phoneIndex,
-          });
-        });
-      });
-    } else {
-      // Otherwise use the single message field
-      processedMessages = scheduledMessage.chatIds.map((chatId) => ({
-        chatId: chatId,
-        message: scheduledMessage.message || "",
-        phoneIndex: phoneIndex,
-        delay: 0,
-      }));
-    }
-
-    console.log("Processed messages:", {
-      totalMessages: processedMessages.length,
-      sampleMessage: processedMessages[0],
-    });
-
-    // Calculate batches
-    const totalMessages = processedMessages.length;
-    const batchSize = scheduledMessage.batchQuantity || totalMessages;
-    const numberOfBatches = Math.ceil(totalMessages / batchSize);
-
-    // Create batches and save them to Firebase
-    const batchesRef = db
-      .collection("companies")
-      .doc(companyId)
-      .collection("scheduledMessages")
-      .doc(messageId)
-      .collection("batches");
-    const batches = [];
-
-    for (let batchIndex = 0; batchIndex < numberOfBatches; batchIndex++) {
-      const startIndex = batchIndex * batchSize;
-      const endIndex = Math.min((batchIndex + 1) * batchSize, totalMessages);
-      const batchMessages = processedMessages.slice(startIndex, endIndex);
-
-      const batchDelay =
-        batchIndex *
-        scheduledMessage.repeatInterval *
-        getMillisecondsForUnit(scheduledMessage.repeatUnit);
-      const batchScheduledTime = new Date(
-        scheduledMessage.scheduledTime.toDate().getTime() + batchDelay
-      );
-
-      const batchData = {
-        ...scheduledMessage,
-        messages: batchMessages,
-        batchIndex,
-        batchScheduledTime:
-          admin.firestore.Timestamp.fromDate(batchScheduledTime),
-        // Add sequence-specific settings
-        infiniteLoop: scheduledMessage.infiniteLoop || false,
-        messageDelays: scheduledMessage.messageDelays || [],
-        // Existing settings
-        minDelay: scheduledMessage.minDelay || null,
-        maxDelay: scheduledMessage.maxDelay || null,
-        activateSleep: scheduledMessage.activateSleep || false,
-        sleepAfterMessages: scheduledMessage.activateSleep
-          ? scheduledMessage.sleepAfterMessages
-          : null,
-        sleepDuration: scheduledMessage.activateSleep
-          ? scheduledMessage.sleepDuration
-          : null,
-        activeHours: scheduledMessage.activeHours || null,
-      };
-
-      // Remove unnecessary fields
-      delete batchData.chatIds;
-      delete batchData.message;
-
-      const batchId = `${messageId}_batch_${batchIndex}`;
-      await batchesRef.doc(batchId).set(batchData);
-      batches.push({ id: batchId, scheduledTime: batchScheduledTime });
-    }
-
-    // Save the main scheduled message document
-    const mainMessageData = {
-      ...scheduledMessage,
-      numberOfBatches,
-      status: "scheduled",
-      infiniteLoop: scheduledMessage.infiniteLoop || false,
-      messageDelays: scheduledMessage.messageDelays || [],
-      minDelay: scheduledMessage.minDelay || null,
-      maxDelay: scheduledMessage.maxDelay || null,
-      activateSleep: scheduledMessage.activateSleep || false,
-      sleepAfterMessages: scheduledMessage.activateSleep
-        ? scheduledMessage.sleepAfterMessages
-        : null,
-      sleepDuration: scheduledMessage.activateSleep
-        ? scheduledMessage.sleepDuration
-        : null,
-      activeHours: scheduledMessage.activeHours || null,
-    };
-
-    await db
-      .collection("companies")
-      .doc(companyId)
-      .collection("scheduledMessages")
-      .doc(messageId)
-      .set(mainMessageData);
-
-    // Schedule all batches in the company-specific queue
-    for (const batch of batches) {
-      const delay = Math.max(batch.scheduledTime.getTime() - Date.now(), 0);
-      await queue.add(
-        "send-message-batch",
-        {
-          companyId,
+    const client = await pool.connect();
+    
+    try {
+      await client.query('BEGIN');
+      
+      const messageId = uuidv4();
+      const isMediaMessage = Boolean(scheduledMessage.mediaUrl || scheduledMessage.documentUrl);
+      const messageCaption = scheduledMessage.caption || scheduledMessage.message || '';
+      
+      const chatIds = scheduledMessage.chatIds || [];
+      const totalMessages = scheduledMessage.messages?.length > 0 ? 
+        chatIds.length * scheduledMessage.messages.length : 
+        chatIds.length;
+      
+      const batchSize = scheduledMessage.batchQuantity || totalMessages;
+      const numberOfBatches = Math.ceil(totalMessages / batchSize);
+      
+      const mainMessageQuery = `
+        INSERT INTO scheduled_messages (
+          id, schedule_id, company_id, contact_id, message_content, media_url, 
+          scheduled_time, status, created_at, chat_id, phone_index, is_media,
+          document_url, file_name, caption, chat_ids, batch_quantity, repeat_interval,
+          repeat_unit, message_delays, infinite_loop, min_delay, max_delay, activate_sleep,
+          sleep_after_messages, sleep_duration, active_hours, from_me
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, 
+          $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28)
+      `;
+      
+      await client.query(mainMessageQuery, [
+        messageId,
+        messageId,
+        companyId,
+        scheduledMessage.contactId || null,
+        scheduledMessage.message || null,
+        scheduledMessage.mediaUrl || null,
+        toPgTimestamp(scheduledMessage.scheduledTime),
+        'scheduled',
+        new Date(),
+        chatIds[0] || null,
+        phoneIndex,
+        isMediaMessage,
+        scheduledMessage.documentUrl || null,
+        scheduledMessage.fileName || null,
+        messageCaption,
+        JSON.stringify(chatIds),
+        scheduledMessage.batchQuantity || null,
+        scheduledMessage.repeatInterval || null,
+        scheduledMessage.repeatUnit || null,
+        scheduledMessage.messageDelays ? JSON.stringify(scheduledMessage.messageDelays) : null,
+        scheduledMessage.infiniteLoop || false,
+        scheduledMessage.minDelay || null,
+        scheduledMessage.maxDelay || null,
+        scheduledMessage.activateSleep || false,
+        scheduledMessage.sleepAfterMessages || null,
+        scheduledMessage.sleepDuration || null,
+        scheduledMessage.activeHours ? JSON.stringify(scheduledMessage.activeHours) : null,
+        true
+      ]);
+      
+      const queue = getQueueForBot(companyId);
+      const batches = [];
+      
+      for (let batchIndex = 0; batchIndex < numberOfBatches; batchIndex++) {
+        const startIndex = batchIndex * batchSize;
+        const endIndex = Math.min((batchIndex + 1) * batchSize, totalMessages);
+        
+        const batchDelay = batchIndex * scheduledMessage.repeatInterval *
+          getMillisecondsForUnit(scheduledMessage.repeatUnit);
+        const batchScheduledTime = new Date(
+          toPgTimestamp(scheduledMessage.scheduledTime).getTime() + batchDelay
+        );
+        
+        const batchId = `${messageId}_batch_${batchIndex}`;
+        const batchQuery = `
+          INSERT INTO scheduled_messages (
+            id, schedule_id, company_id, scheduled_time, status, created_at,
+            batch_index, chat_ids, phone_index, from_me
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+        `;
+        
+        await client.query(batchQuery, [
+          batchId,
           messageId,
-          batchId: batch.id,
-        },
-        {
-          removeOnComplete: false,
-          removeOnFail: false,
-          delay,
-          jobId: batch.id,
-        }
-      );
-    }
-
-    // Get queue status for logging
-    const queueStatus = await queue.getJobCounts();
-    console.log(`Queue status for company ${companyId}:`, queueStatus);
-
-    res.status(201).json({
-      id: messageId,
-      message: "Message scheduled successfully",
-      batches: batches.length,
-      success: true,
-      queueStatus,
-    });
-  } catch (error) {
-    console.error("Error scheduling message:", error);
-    res.status(500).json({ error: "Failed to schedule message" });
-  }
-});
-
-app.put("/api/schedule-message/:companyId/:messageId", async (req, res) => {
-  const { companyId, messageId } = req.params;
-  const updatedMessage = req.body;
-  const phoneIndex = updatedMessage.phoneIndex || 0;
-  console.log("Received update request:", {
-    companyId,
-    messageId,
-    messageFormat: updatedMessage.message ? "single" : "sequence",
-    hasAdditionalMessages: Boolean(updatedMessage.messages?.length),
-    infiniteLoop: Boolean(updatedMessage.infiniteLoop),
-  });
-
-  try {
-    // Delete existing jobs and batches
-    const jobs = await messageQueue.getJobs([
-      "active",
-      "waiting",
-      "delayed",
-      "paused",
-    ]);
-    for (const job of jobs) {
-      if (job.id.startsWith(messageId)) {
-        await job.remove();
+          companyId,
+          batchScheduledTime,
+          'pending',
+          new Date(),
+          batchIndex,
+          JSON.stringify(chatIds.slice(startIndex, endIndex)),
+          phoneIndex,
+          true
+        ]);
+        
+        batches.push({ id: batchId, scheduledTime: batchScheduledTime });
       }
-    }
+      
+      await client.query('COMMIT');
+      
 
-    // Process chatIds into individual message objects
-    let processedMessages = [];
-
-    if (
-      updatedMessage.messages &&
-      Array.isArray(updatedMessage.messages) &&
-      updatedMessage.messages.length > 0
-    ) {
-      // If we have an array of messages, use those
-      updatedMessage.chatIds.forEach((chatId) => {
-        updatedMessage.messages.forEach((msg, index) => {
-          processedMessages.push({
-            chatId: chatId,
-            message: msg.text || "",
-            delay: updatedMessage.messageDelays?.[index] || 0,
-            phoneIndex: phoneIndex,
-          });
-        });
-      });
-    } else {
-      // Otherwise use the single message field
-      processedMessages = updatedMessage.chatIds.map((chatId) => ({
-        chatId: chatId,
-        message: updatedMessage.message || "",
-        phoneIndex: phoneIndex,
-        delay: 0,
-      }));
-    }
-
-    // Calculate batches
-    const totalMessages = processedMessages.length;
-    const batchSize = updatedMessage.batchQuantity || totalMessages;
-    const numberOfBatches = Math.ceil(totalMessages / batchSize);
-
-    // Create batches and save them to Firebase
-    const batchesRef = db
-      .collection("companies")
-      .doc(companyId)
-      .collection("scheduledMessages")
-      .doc(messageId)
-      .collection("batches");
-    const batches = [];
-
-    // Delete existing batches
-    const existingBatches = await batchesRef.get();
-    const deleteBatch = db.batch();
-    existingBatches.docs.forEach((doc) => deleteBatch.delete(doc.ref));
-    await deleteBatch.commit();
-
-    // Create new batches
-    for (let batchIndex = 0; batchIndex < numberOfBatches; batchIndex++) {
-      const startIndex = batchIndex * batchSize;
-      const endIndex = Math.min((batchIndex + 1) * batchSize, totalMessages);
-      const batchMessages = processedMessages.slice(startIndex, endIndex);
-
-      const batchDelay =
-        batchIndex *
-        updatedMessage.repeatInterval *
-        getMillisecondsForUnit(updatedMessage.repeatUnit);
-      const batchScheduledTime = new Date(
-        updatedMessage.scheduledTime.toDate().getTime() + batchDelay
-      );
-
-      const batchData = {
-        ...updatedMessage,
-        messages: batchMessages,
-        batchIndex,
-        batchScheduledTime:
-          admin.firestore.Timestamp.fromDate(batchScheduledTime),
-        infiniteLoop: updatedMessage.infiniteLoop || false,
-        messageDelays: updatedMessage.messageDelays || [],
-        minDelay: updatedMessage.minDelay || null,
-        maxDelay: updatedMessage.maxDelay || null,
-        activateSleep: updatedMessage.activateSleep || false,
-        sleepAfterMessages: updatedMessage.activateSleep
-          ? updatedMessage.sleepAfterMessages
-          : null,
-        sleepDuration: updatedMessage.activateSleep
-          ? updatedMessage.sleepDuration
-          : null,
-        activeHours: updatedMessage.activeHours || null,
-      };
-
-      delete batchData.chatIds;
-      delete batchData.message;
-
-      const batchId = `${messageId}_batch_${batchIndex}`;
-      await batchesRef.doc(batchId).set(batchData);
-      batches.push({ id: batchId, scheduledTime: batchScheduledTime });
-    }
-
-    // Update main message document
-    const mainMessageData = {
-      ...updatedMessage,
-      numberOfBatches,
-      status: updatedMessage.status || "scheduled",
-      infiniteLoop: updatedMessage.infiniteLoop || false,
-      messageDelays: updatedMessage.messageDelays || [],
-      minDelay: updatedMessage.minDelay || null,
-      maxDelay: updatedMessage.maxDelay || null,
-      activateSleep: updatedMessage.activateSleep || false,
-      sleepAfterMessages: updatedMessage.activateSleep
-        ? updatedMessage.sleepAfterMessages
-        : null,
-      sleepDuration: updatedMessage.activateSleep
-        ? updatedMessage.sleepDuration
-        : null,
-      activeHours: updatedMessage.activeHours || null,
-    };
-
-    await db
-      .collection("companies")
-      .doc(companyId)
-      .collection("scheduledMessages")
-      .doc(messageId)
-      .set(mainMessageData);
-
-    // Schedule new batches
-    if (mainMessageData.status === "scheduled") {
       for (const batch of batches) {
         const delay = Math.max(batch.scheduledTime.getTime() - Date.now(), 0);
-        await messageQueue.add(
-          "send-message-batch",
+        await queue.add('send-message-batch',
           {
             companyId,
             messageId,
-            batchId: batch.id,
+            batchId: batch.id
           },
           {
             removeOnComplete: false,
             removeOnFail: false,
             delay,
-            jobId: batch.id,
+            jobId: batch.id
           }
         );
       }
+      
+      res.status(201).json({
+        id: messageId,
+        message: 'Message scheduled successfully',
+        batches: batches.length,
+        success: true
+      });
+      
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
     }
-
-    res.json({
-      id: messageId,
-      message: "Message updated successfully",
-      success: true,
-      batches: batches.length,
-    });
   } catch (error) {
-    console.error("Error updating scheduled message:", error);
-    res.status(500).json({ error: "Failed to update scheduled message" });
+    console.error('Error scheduling message:', error);
+    res.status(500).json({ error: 'Failed to schedule message' });
   }
 });
 
-app.delete("/api/schedule-message/:companyId/:messageId", async (req, res) => {
+// PUT endpoint to update a scheduled message
+app.put('/api/schedule-message/:companyId/:messageId', async (req, res) => {
+  const { companyId, messageId } = req.params;
+  const updatedMessage = req.body;
+  const phoneIndex = updatedMessage.phoneIndex || 0;
+
+  try {
+    const client = await pool.connect();
+    
+    try {
+      await client.query('BEGIN');
+      
+      await client.query(
+        'DELETE FROM scheduled_messages WHERE schedule_id = $1 AND id != $1',
+        [messageId]
+      );
+      
+      const updateQuery = `
+        UPDATE scheduled_messages SET
+          message_content = $1,
+          media_url = $2,
+          scheduled_time = $3,
+          status = $4,
+          phone_index = $5,
+          is_media = $6,
+          document_url = $7,
+          file_name = $8,
+          caption = $9,
+          chat_ids = $10,
+          batch_quantity = $11,
+          repeat_interval = $12,
+          repeat_unit = $13,
+          message_delays = $14,
+          infinite_loop = $15,
+          min_delay = $16,
+          max_delay = $17,
+          activate_sleep = $18,
+          sleep_after_messages = $19,
+          sleep_duration = $20,
+          active_hours = $21
+        WHERE id = $22 AND company_id = $23
+      `;
+      
+      const isMediaMessage = Boolean(updatedMessage.mediaUrl || updatedMessage.documentUrl);
+      const messageCaption = updatedMessage.caption || updatedMessage.message || '';
+      
+      await client.query(updateQuery, [
+        updatedMessage.message || null,
+        updatedMessage.mediaUrl || null,
+        toPgTimestamp(updatedMessage.scheduledTime),
+        updatedMessage.status || 'scheduled',
+        phoneIndex,
+        isMediaMessage,
+        updatedMessage.documentUrl || null,
+        updatedMessage.fileName || null,
+        messageCaption,
+        JSON.stringify(updatedMessage.chatIds || []),
+        updatedMessage.batchQuantity || null,
+        updatedMessage.repeatInterval || null,
+        updatedMessage.repeatUnit || null,
+        updatedMessage.messageDelays ? JSON.stringify(updatedMessage.messageDelays) : null,
+        updatedMessage.infiniteLoop || false,
+        updatedMessage.minDelay || null,
+        updatedMessage.maxDelay || null,
+        updatedMessage.activateSleep || false,
+        updatedMessage.sleepAfterMessages || null,
+        updatedMessage.sleepDuration || null,
+        updatedMessage.activeHours ? JSON.stringify(updatedMessage.activeHours) : null,
+        messageId,
+        companyId
+      ]);
+      
+      if (updatedMessage.status === 'scheduled') {
+        const chatIds = updatedMessage.chatIds || [];
+        const totalMessages = updatedMessage.messages?.length > 0 ? 
+          chatIds.length * updatedMessage.messages.length : 
+          chatIds.length;
+        
+        const batchSize = updatedMessage.batchQuantity || totalMessages;
+        const numberOfBatches = Math.ceil(totalMessages / batchSize);
+        const queue = getQueueForBot(companyId);
+        const batches = [];
+        
+        for (let batchIndex = 0; batchIndex < numberOfBatches; batchIndex++) {
+          const startIndex = batchIndex * batchSize;
+          const endIndex = Math.min((batchIndex + 1) * batchSize, totalMessages);
+          
+          const batchDelay = batchIndex * updatedMessage.repeatInterval *
+            getMillisecondsForUnit(updatedMessage.repeatUnit);
+          const batchScheduledTime = new Date(
+            toPgTimestamp(updatedMessage.scheduledTime).getTime() + batchDelay
+          );
+          
+          const batchId = `${messageId}_batch_${batchIndex}`;
+          const batchQuery = `
+            INSERT INTO scheduled_messages (
+              id, schedule_id, company_id, scheduled_time, status, created_at,
+              batch_index, chat_ids, phone_index, from_me
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+          `;
+          
+          await client.query(batchQuery, [
+            batchId,
+            messageId,
+            companyId,
+            batchScheduledTime,
+            'pending',
+            new Date(),
+            batchIndex,
+            JSON.stringify(chatIds.slice(startIndex, endIndex)),
+            phoneIndex,
+            true
+          ]);
+          
+          batches.push({ id: batchId, scheduledTime: batchScheduledTime });
+        }
+        
+        for (const batch of batches) {
+          const delay = Math.max(batch.scheduledTime.getTime() - Date.now(), 0);
+          await queue.add('send-message-batch',
+            {
+              companyId,
+              messageId,
+              batchId: batch.id
+            },
+            {
+              removeOnComplete: false,
+              removeOnFail: false,
+              delay,
+              jobId: batch.id
+            }
+          );
+        }
+      }
+      
+      await client.query('COMMIT');
+      
+      res.json({
+        id: messageId,
+        message: 'Message updated successfully',
+        success: true
+      });
+      
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+  } catch (error) {
+    console.error('Error updating scheduled message:', error);
+    res.status(500).json({ error: 'Failed to update scheduled message' });
+  }
+});
+
+// DELETE endpoint to remove a scheduled message
+app.delete('/api/schedule-message/:companyId/:messageId', async (req, res) => {
   const { companyId, messageId } = req.params;
 
   try {
-    console.log("Received delete request:", { companyId, messageId });
-
-    // Check if message exists
-    const messageRef = db
-      .collection("companies")
-      .doc(companyId)
-      .collection("scheduledMessages")
-      .doc(messageId);
-    const messageDoc = await messageRef.get();
-
-    if (!messageDoc.exists) {
-      return res.status(404).json({
-        success: false,
-        error: "Scheduled message not found",
+    const client = await pool.connect();
+    
+    try {
+      await client.query('BEGIN');
+      
+      const checkQuery = 'SELECT id FROM scheduled_messages WHERE id = $1 AND company_id = $2';
+      const checkResult = await client.query(checkQuery, [messageId, companyId]);
+      
+      if (checkResult.rowCount === 0) {
+        return res.status(404).json({
+          success: false,
+          error: 'Scheduled message not found'
+        });
+      }
+      
+      const deleteQuery = 'DELETE FROM scheduled_messages WHERE (id = $1 OR schedule_id = $1) AND company_id = $2';
+      const deleteResult = await client.query(deleteQuery, [messageId, companyId]);
+      
+      await client.query('COMMIT');
+      
+      res.json({
+        id: messageId,
+        message: 'Message deleted successfully',
+        success: true,
+        batchesDeleted: deleteResult.rowCount - 1
       });
+      
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
     }
-
-    // Delete batches first
-    const batchesRef = messageRef.collection("batches");
-    const batchesSnapshot = await batchesRef.get();
-
-    // Use a Firestore batch for atomic operation
-    const batch = db.batch();
-
-    // Add batch deletions
-    batchesSnapshot.docs.forEach((doc) => {
-      batch.delete(doc.ref);
+  } catch (error) {
+    console.error('Error deleting scheduled message:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message || 'Failed to delete scheduled message'
     });
+  }
+});
 
-    // Add main document deletion to the same batch
-    batch.delete(messageRef);
+app.post("/api/schedule-message/:companyId/:messageId/stop", async (req, res) => {
+  const { companyId, messageId } = req.params;
 
-    // Execute the batch
-    await batch.commit();
+  try {
+    const client = await pool.connect();
+    
+    try {
+      await client.query('BEGIN');
+      
+      const updateQuery = `
+        UPDATE scheduled_messages 
+        SET 
+          status = 'stopped',
+          stopped_at = NOW()
+        WHERE id = $1 AND company_id = $2
+        RETURNING id
+      `;
+      
+      const result = await client.query(updateQuery, [messageId, companyId]);
 
-    // Remove jobs from queue - make sure to check all possible states
-    const jobStates = ["active", "waiting", "delayed", "paused", "failed"];
-    for (const state of jobStates) {
-      const jobs = await messageQueue.getJobs([state]);
+      if (result.rowCount === 0) {
+        return res.status(404).json({
+          success: false,
+          error: "Scheduled message not found"
+        });
+      }
+
+      const updateBatchesQuery = `
+        UPDATE scheduled_messages 
+        SET 
+          status = 'stopped',
+          stopped_at = NOW()
+        WHERE schedule_id = $1 
+          AND company_id = $2
+          AND status = 'pending'
+      `;
+      
+      await client.query(updateBatchesQuery, [messageId, companyId]);
+      
+      await client.query('COMMIT');
+
+      const queue = getQueueForBot(companyId);
+      const jobs = await queue.getJobs(['waiting', 'delayed', 'active']);
+      
       for (const job of jobs) {
-        if (job.id.startsWith(messageId) || job.data.messageId === messageId) {
+        if (job.data.messageId === messageId) {
           try {
             await job.remove();
-            console.log(`Removed job ${job.id} in state ${state}`);
+            console.log(`Removed job ${job.id} for message ${messageId}`);
           } catch (err) {
             console.error(`Failed to remove job ${job.id}:`, err);
           }
         }
       }
-    }
 
-    // Double check the deletion
-    const verifyDoc = await messageRef.get();
-    if (verifyDoc.exists) {
-      throw new Error("Message document still exists after deletion");
+      res.json({
+        success: true,
+        message: "Message stopped successfully",
+      });
+      
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
     }
-
-    res.json({
-      id: messageId,
-      message: "Message deleted successfully",
-      success: true,
-      batchesDeleted: batchesSnapshot.size,
-    });
   } catch (error) {
-    console.error("Error deleting scheduled message:", error);
+    console.error("Error stopping message:", error);
     res.status(500).json({
       success: false,
-      error: error.message || "Failed to delete scheduled message",
-      details: {
-        companyId,
-        messageId,
-        errorCode: error.code,
-      },
+      error: "Failed to stop message",
+      details: error.message
     });
   }
 });
+
 // New route for syncing contacts
 app.post("/api/sync-contacts/:companyId", async (req, res) => {
   const { companyId } = req.params;
@@ -2019,11 +2014,9 @@ app.post("/api/sync-contacts/:companyId", async (req, res) => {
       }
       const client = botData[phoneIndex].client;
       if (!client) {
-        return res
-          .status(404)
-          .json({
-            error: `WhatsApp client not found for phone index ${phoneIndex}`,
-          });
+        return res.status(404).json({
+          error: `WhatsApp client not found for phone index ${phoneIndex}`,
+        });
       }
       syncPromises.push(syncContacts(client, companyId, phoneIndex));
     } else {
@@ -2638,165 +2631,240 @@ async function verifyMessageDocument(messageId, companyId) {
     return null;
   }
 }
-// Create a worker factory function
+
+// Store queues and workers
+const botQueues = new Map();
+const botWorkers = new Map();
+const processingChatIds = new Map();
+
+// Create a worker factory function with duplicate message prevention
 const createQueueAndWorker = (botId) => {
-  const isWithinAllowedHours = () => {
-    const now = new Date();
-    const hour = now.getHours();
-    // Allow messages between 6 AM and 2 AM (next day)
-    return hour >= 6 || hour < 2;
-  };
   const queue = new Queue(`scheduled-messages-${botId}`, {
-    connection,
-    defaultJobOptions: {
-      removeOnComplete: false, // Keep completed jobs
-      removeOnFail: false, // Keep failed jobs
-      attempts: 3, // Number of retry attempts
+    connection: {
+      host: process.env.REDIS_HOST,
+      port: process.env.REDIS_PORT,
+      password: process.env.REDIS_PASSWORD
     },
+    defaultJobOptions: {
+      removeOnComplete: false,
+      removeOnFail: false,
+      attempts: 3,
+    }
+  });
+
+  queue.on('active', async (job) => {
+    if (job.name === 'send-message-batch') {
+      const { companyId, messageId, batchId } = job.data;
+
+      try {
+        const client = await pool.connect();
+        try {
+          const batchQuery = `
+            SELECT * FROM scheduled_messages 
+            WHERE id = $1 AND company_id = $2
+          `;
+          const batchResult = await client.query(batchQuery, [batchId, companyId]);
+
+          if (batchResult.rowCount === 0) {
+            console.error(`Bot ${botId} - Batch ${batchId} not found`);
+            return;
+          }
+
+          const batchData = batchResult.rows[0];
+          const messages = batchData.messages ? JSON.parse(batchData.messages) : [];
+
+          if (messages.length > 0) {
+            const chatId = `${companyId}_${messages[0].chatId}`;
+
+            if (processingChatIds.has(chatId)) {
+              const processingStartTime = processingChatIds.get(chatId);
+              const currentTime = Date.now();
+              const processingTime = (currentTime - processingStartTime) / 1000;
+
+              console.log(`Bot ${botId} - Detected duplicate message for chatId ${chatId} (already processing for ${processingTime}s)`);
+
+              if (processingTime < 300) {
+                job.data.isDuplicate = true;
+                await job.updateData(job.data);
+
+                await client.query(
+                  `UPDATE scheduled_messages SET 
+                    status = $1, 
+                    skipped_reason = $2, 
+                    skipped_at = NOW() 
+                   WHERE id = $3`,
+                  ['skipped', 'Duplicate message for same chatId', batchId]
+                );
+
+                console.log(`Bot ${botId} - Marked job ${job.id} as duplicate for chatId ${chatId}`);
+              }
+            } else {
+              processingChatIds.set(chatId, Date.now());
+              console.log(`Bot ${botId} - Reserved chatId ${chatId} for processing`);
+            }
+          }
+        } finally {
+          client.release();
+        }
+      } catch (error) {
+        console.error(`Bot ${botId} - Error in pre-processing check:`, error);
+      }
+    }
   });
 
   const worker = new Worker(
     `scheduled-messages-${botId}`,
     async (job) => {
-      if (job.name === "send-message-batch") {
-        if (!isWithinAllowedHours()) {
-          console.log(
-            `Bot ${botId} - Message delayed: Outside allowed hours (2 AM - 6 AM)`
-          );
-          // Calculate delay until 6 AM
-          const now = new Date();
-          const nextAllowed = new Date();
-          nextAllowed.setHours(6, 0, 0, 0);
-          if (now.getHours() >= 2) {
-            nextAllowed.setDate(nextAllowed.getDate() + 1);
-          }
-          const delay = nextAllowed - now;
+      if (job.name === 'send-message-batch') {
+        const { companyId, messageId, batchId, isDuplicate } = job.data;
+        console.log(`Bot ${botId} - Processing scheduled message batch:`, { messageId, batchId });
 
-          // Re-add the job with a delay
-          await queue.add("send-message-batch", job.data, {
-            ...job.opts,
-            delay,
-            jobId: `${job.id}_delayed`,
-          });
-          return;
+        if (isDuplicate) {
+          console.log(`Bot ${botId} - Skipping duplicate job ${job.id} for batch ${batchId}`);
+          return { skipped: true, reason: 'Duplicate message' };
         }
-        const { companyId, messageId, batchId } = job.data;
-        console.log(`Bot ${botId} - Processing scheduled message batch:`, {
-          messageId,
-          batchId,
-        });
 
+        const client = await pool.connect();
         try {
-          // Fetch the batch data from Firebase
-          const batchRef = db
-            .collection("companies")
-            .doc(companyId)
-            .collection("scheduledMessages")
-            .doc(messageId)
-            .collection("batches")
-            .doc(batchId);
-          const batchSnapshot = await batchRef.get();
+          await client.query('BEGIN');
 
-          if (!batchSnapshot.exists) {
+          const batchQuery = `
+            SELECT * FROM scheduled_messages 
+            WHERE id = $1 AND company_id = $2
+            FOR UPDATE
+          `;
+          const batchResult = await client.query(batchQuery, [batchId, companyId]);
+
+          if (batchResult.rowCount === 0) {
             console.error(`Bot ${botId} - Batch ${batchId} not found`);
             return;
           }
 
-          const batchData = batchSnapshot.data();
+          const batchData = batchResult.rows[0];
+
+          if (batchData.status === 'skipped') {
+            console.log(`Bot ${botId} - Batch ${batchId} was already marked as skipped, not processing`);
+            return { skipped: true, reason: batchData.skipped_reason || 'Already skipped' };
+          }
 
           try {
-            console.log(
-              `Bot ${botId} - Sending scheduled message batch:`,
-              batchData
-            );
+            console.log(`Bot ${botId} - Sending scheduled message batch:`, batchData);
             const result = await sendScheduledMessage(batchData);
 
             if (result.success) {
-              await batchRef.update({ status: "sent" });
-              // Check if all batches are processed
-              const batchesRef = db
-                .collection("companies")
-                .doc(companyId)
-                .collection("scheduledMessages")
-                .doc(messageId)
-                .collection("batches");
-              const batchesSnapshot = await batchesRef.get();
-              const allBatchesSent = batchesSnapshot.docs.every(
-                (doc) => doc.data().status === "sent"
+              await client.query(
+                'UPDATE scheduled_messages SET status = $1, sent_at = NOW() WHERE id = $2',
+                ['sent', batchId]
               );
 
-              if (allBatchesSent) {
-                // Update main scheduled message status
-                await db
-                  .collection("companies")
-                  .doc(companyId)
-                  .collection("scheduledMessages")
-                  .doc(messageId)
-                  .update({ status: "completed" });
+              const batchesCheckQuery = `
+                SELECT COUNT(*) as pending_count 
+                FROM scheduled_messages 
+                WHERE schedule_id = $1 
+                AND company_id = $2 
+                AND status != 'sent'
+                AND id != schedule_id  // Exclude the main message
+              `;
+              const batchesCheck = await client.query(batchesCheckQuery, [messageId, companyId]);
+
+              if (batchesCheck.rows[0].pending_count === 0) {
+                await client.query(
+                  'UPDATE scheduled_messages SET status = $1 WHERE id = $2',
+                  ['completed', messageId]
+                );
               }
             } else {
-              console.error(
-                `Bot ${botId} - Failed to send batch ${batchId}:`,
-                result.error
+              console.error(`Bot ${botId} - Failed to send batch ${batchId}:`, result.error);
+              await client.query(
+                'UPDATE scheduled_messages SET status = $1 WHERE id = $2',
+                ['failed', batchId]
               );
-              await batchRef.update({ status: "failed" });
-              await db
-                .collection("companies")
-                .doc(companyId)
-                .collection("scheduledMessages")
-                .doc(messageId)
-                .update({ status: "failed" });
+              await client.query(
+                'UPDATE scheduled_messages SET status = $1 WHERE id = $2',
+                ['failed', messageId]
+              );
             }
+
+            await client.query('COMMIT');
           } catch (error) {
-            console.error(
-              `Bot ${botId} - Error processing scheduled message batch:`,
-              error
-            );
-            throw error; // This will cause the job to be retried
+            await client.query('ROLLBACK');
+            console.error(`Bot ${botId} - Error processing scheduled message batch:`, error);
+            throw error;
           }
         } catch (error) {
-          console.error(
-            `Bot ${botId} - Error processing scheduled message batch:`,
-            error
-          );
-          throw error; // This will cause the job to be retried
+          console.error(`Bot ${botId} - Error processing scheduled message batch:`, error);
+          throw error;
+        } finally {
+          client.release();
         }
       }
     },
     {
-      connection,
-      concurrency: 100,
+      connection: {
+        host: process.env.REDIS_HOST,
+        port: process.env.REDIS_PORT,
+        password: process.env.REDIS_PASSWORD
+      },
+      concurrency: 50,
       limiter: {
         max: 100,
-        duration: 1000,
+        duration: 1000
       },
       lockDuration: 30000,
       maxStalledCount: 1,
       settings: {
         stalledInterval: 15000,
-        lockRenewTime: 10000,
-      },
+        lockRenewTime: 10000
+      }
     }
-  ); // Add error handling
-  worker.on("completed", async (job) => {
+  );
+
+  worker.on('completed', async (job) => {
     console.log(`Bot ${botId} - Job ${job.id} completed successfully`);
-    // Keep the job data in Redis
+
+    if (job.name === 'send-message-batch' && job.data.companyId && job.data.batchId) {
+      try {
+        const client = await pool.connect();
+        try {
+          const batchQuery = `
+            SELECT messages FROM scheduled_messages 
+            WHERE id = $1 AND company_id = $2
+          `;
+          const batchResult = await client.query(batchQuery, [job.data.batchId, job.data.companyId]);
+
+          if (batchResult.rowCount > 0 && batchResult.rows[0].messages) {
+            const messages = JSON.parse(batchResult.rows[0].messages);
+            if (messages.length > 0) {
+              const chatId = `${job.data.companyId}_${messages[0].chatId}`;
+              if (processingChatIds.has(chatId)) {
+                processingChatIds.delete(chatId);
+                console.log(`Bot ${botId} - Released chatId ${chatId} after processing`);
+              }
+            }
+          }
+        } finally {
+          client.release();
+        }
+      } catch (error) {
+        console.error(`Bot ${botId} - Error releasing chatId:`, error);
+      }
+    }
+
     await job.updateProgress(100);
     await job.updateData({
       ...job.data,
       completedAt: new Date(),
-      status: "completed",
+      status: 'completed'
     });
   });
 
-  worker.on("failed", async (job, err) => {
+  worker.on('failed', async (job, err) => {
     console.error(`Bot ${botId} - Job ${job.id} failed:`, err);
-    // Keep the job data in Redis
     await job.updateData({
       ...job.data,
       failedAt: new Date(),
       error: err.message,
-      status: "failed",
+      status: 'failed'
     });
   });
 
@@ -2806,9 +2874,15 @@ const createQueueAndWorker = (botId) => {
   return { queue, worker };
 };
 
-// Store queues and workers
-const botQueues = new Map();
-const botWorkers = new Map();
+setInterval(() => {
+  const now = Date.now();
+  for (const [chatId, timestamp] of processingChatIds.entries()) {
+    if (now - timestamp > 300000) {
+      console.log(`Releasing stale chatId reservation: ${chatId} (processing for ${(now - timestamp) / 1000}s)`);
+      processingChatIds.delete(chatId);
+    }
+  }
+}, 60000);
 
 // Function to get or create a bot's queue
 const getQueueForBot = (botId) => {
@@ -2820,95 +2894,98 @@ const getQueueForBot = (botId) => {
   return botQueues.get(botId);
 };
 
-// Add more detailed logging to sendScheduledMessage
 async function sendScheduledMessage(message) {
-  const companyId = message.companyId;
+  const companyId = message.company_id;
+  const client = await pool.connect();
+  
   try {
-    console.log(
-      `\n=== [Company ${companyId}] Starting sendScheduledMessage ===`
-    );
-    console.log(`[Company ${companyId}] Message config:`, {
-      messageId: message.messageId,
-      batchId: message.batchId,
-      v2: message.v2,
-      totalMessages: message.messages?.length,
-      hasMedia: Boolean(message.mediaUrl || message.documentUrl),
-      phoneIndex: message.phoneIndex,
-    });
-    // Add time check function
-    const isWithinAllowedHours = () => {
-      const now = new Date();
-      const hour = now.getHours();
-      return hour >= 6 || hour < 2; // Allow messages between 6 AM and 2 AM
-    };
-    if (!isWithinAllowedHours()) {
-      console.log(
-        `[Company ${companyId}] Message delayed: Outside allowed hours (2 AM - 6 AM)`
-      );
-      // Calculate delay until 6 AM
-      const now = new Date();
-      const nextAllowed = new Date();
-      nextAllowed.setHours(6, 0, 0, 0);
-      if (now.getHours() >= 2) {
-        nextAllowed.setDate(nextAllowed.getDate() + 1);
-      }
-      const delay = nextAllowed - now;
+    console.log(`\n=== [Company ${companyId}] Starting sendScheduledMessage ===`);
 
-      console.log(
-        `[Company ${companyId}] Waiting ${Math.round(
-          delay / 1000 / 60
-        )} minutes until 6 AM`
-      );
-      await new Promise((resolve) => setTimeout(resolve, delay));
+    if (message.phone_index === null || message.phone_index === undefined) {
+      message.phone_index = 0;
     }
-    if (message.v2 == true) {
+    message.phone_index = parseInt(message.phone_index);
+    if (isNaN(message.phone_index)) {
+      message.phone_index = 0;
+    }
+
+    const botData = botMap.get(companyId);
+    console.log('Available phone indices:', botData ? botData.map((_, i) => i) : []);
+    console.log('Client status:', {
+      phoneIndex: message.phone_index,
+      hasClient: Boolean(botData?.[message.phone_index]?.client),
+      clientInfo: botData?.[message.phone_index]?.client ? 'Client exists' : null
+    });
+
+    if (!botData?.[message.phone_index]?.client) {
+      throw new Error(`No active WhatsApp client found for phone index: ${message.phone_index}`);
+    }
+
+    if (message.v2 === true) {
       console.log(`\n=== [Company ${companyId}] Processing V2 Message ===`);
 
-      // Initialize messages array if empty
-      if (!message.messages || message.messages.length === 0) {
-        message.messages = message.chatIds.map((chatId) => ({
+      let messages = [];
+      const chatIds = message.chat_ids ? JSON.parse(message.chat_ids) : [];
+      
+      if (!message.messages || JSON.parse(message.messages).length === 0) {
+        messages = chatIds.map(chatId => ({
           chatId: chatId,
-          message: message.message, // Use the message from parent object
+          message: message.message_content,
           delay: Math.floor(
-            Math.random() * (message.maxDelay - message.minDelay + 1) +
-              message.minDelay
+            Math.random() * (message.max_delay - message.min_delay + 1) + message.min_delay
           ),
+          mediaUrl: message.media_url || '',
+          documentUrl: message.document_url || '',
+          fileName: message.file_name || ''
         }));
+      } else {
+        messages = JSON.parse(message.messages);
       }
 
       console.log(`[Company ${companyId}] Batch details:`, {
-        messageId: message.messageId,
-        infiniteLoop: message.infiniteLoop,
-        activeHours: message.activeHours,
-        messages: message.messages.map((m) => ({
+        messageId: message.id,
+        infiniteLoop: message.infinite_loop,
+        activeHours: message.active_hours ? JSON.parse(message.active_hours) : null,
+        messages: messages.map(m => ({
           chatId: m.chatId,
           messageLength: m.message?.length,
           delay: m.delay,
-        })),
+          hasMedia: Boolean(m.mediaUrl || m.documentUrl)
+        }))
       });
 
       const processMessage = (messageText, contact) => {
+        if (!messageText) return '';
+        
         let processedMessage = messageText;
         const placeholders = {
-          contactName: contact.contactName || "",
-          firstName: contact.firstName || "",
-          lastName: contact.lastName || "",
-          email: contact.email || "",
-          phone: contact.phone || "",
-          vehicleNumber: contact.vehicleNumber || "",
-          branch: contact.branch || "",
-          expiryDate: contact.expiryDate || "",
-          ic: contact.ic || "",
+          contactName: contact?.contact_name || '',
+          firstName: contact?.first_name || '',
+          lastName: contact?.last_name || '',
+          email: contact?.email || '',
+          phone: contact?.phone || '',
+          vehicleNumber: contact?.vehicle_number || '',
+          branch: contact?.branch || '',
+          expiryDate: contact?.expiry_date || '',
+          ic: contact?.ic || ''
         };
 
-        // Replace all placeholders in the message
         Object.entries(placeholders).forEach(([key, value]) => {
           const placeholder = `@{${key}}`;
-          processedMessage = processedMessage.replace(
-            new RegExp(placeholder, "g"),
-            value
-          );
+          processedMessage = processedMessage.replace(new RegExp(placeholder, 'g'), value);
         });
+
+        if (contact?.custom_fields) {
+          const customFields = typeof contact.custom_fields === 'string' 
+            ? JSON.parse(contact.custom_fields) 
+            : contact.custom_fields;
+            
+          Object.entries(customFields).forEach(([key, value]) => {
+            const customPlaceholder = `@{${key}}`;
+            const stringValue = value !== null && value !== undefined ? String(value) : '';
+            processedMessage = processedMessage.replace(new RegExp(customPlaceholder, 'g'), stringValue);
+          });
+        }
 
         return processedMessage;
       };
@@ -2920,25 +2997,19 @@ async function sendScheduledMessage(message) {
         tomorrow.setHours(0, 0, 0, 0);
 
         const timeUntilTomorrow = tomorrow - now;
-        console.log(
-          `Waiting ${timeUntilTomorrow / 1000 / 60} minutes until next day`
+        console.log(`Waiting ${timeUntilTomorrow / 1000 / 60} minutes until next day`);
+
+        const messageCheck = await client.query(
+          'SELECT status FROM scheduled_messages WHERE id = $1',
+          [message.id]
         );
 
-        // Check if the message sequence should be stopped
-        const messageDoc = await db
-          .collection("companies")
-          .doc(companyId)
-          .collection("scheduledMessages")
-          .doc(message.messageId)
-          .get();
-
-        if (!messageDoc.exists || messageDoc.data().status === "stopped") {
-          console.log("Message sequence stopped");
+        if (messageCheck.rowCount === 0 || messageCheck.rows[0].status === 'stopped') {
+          console.log('Message sequence stopped');
           return true;
         }
 
-        // Wait until midnight
-        await new Promise((resolve) => setTimeout(resolve, timeUntilTomorrow));
+        await new Promise(resolve => setTimeout(resolve, timeUntilTomorrow));
         return false;
       };
 
@@ -2947,57 +3018,47 @@ async function sendScheduledMessage(message) {
 
       while (true) {
         console.log(`\n=== [Company ${companyId}] Processing Message Item ===`);
-        const messageItem = message.messages[currentMessageIndex];
+        const messageItem = messages[currentMessageIndex];
         console.log(`[Company ${companyId}] Current message item:`, {
           index: currentMessageIndex,
           chatId: messageItem.chatId,
           messageLength: messageItem.message?.length,
-          delay: messageItem.delay,
+          delay: messageItem.delay
         });
 
         const { chatId, message: messageText, delay } = messageItem;
-        const phone = chatId.split("@")[0];
+        const phone = chatId.split('@')[0];
 
         console.log(`[Company ${companyId}] Fetching contact data for:`, phone);
-        const contactRef = db
-          .collection("companies")
-          .doc(companyId)
-          .collection("contacts")
-          .doc("+" + phone);
-        const contactDoc = await contactRef.get();
-        console.log(
-          `[Company ${companyId}] Contact exists:`,
-          contactDoc.exists
-        );
+        const contactQuery = `
+          SELECT * FROM contacts 
+          WHERE company_id = $1 AND phone = $2
+        `;
+        const contactResult = await client.query(contactQuery, [companyId, phone]);
+        console.log(`[Company ${companyId}] Contact exists:`, contactResult.rowCount > 0);
 
-        const contactData = contactDoc.exists ? contactDoc.data() : {};
-        const processedMessageText = processMessage(
-          messageText || message.message,
-          contactData
-        );
+        const contactData = contactResult.rowCount > 0 ? contactResult.rows[0] : {};
+        
+        if (companyId === '0128' && contactData.tags && contactData.tags.includes('stop bot')) {
+          console.log(`[Company ${companyId}] Skipping message - contact has 'stop bot' tag`);
+          currentMessageIndex++;
+          continue;
+        }
 
-        const sendCheckRef = db
-          .collection("companies")
-          .doc(companyId)
-          .collection("sentFollowups")
-          .doc(chatId)
-          .collection("messages");
-        const sendCheckSnapshot = await sendCheckRef.get();
+        const processedMessageText = processMessage(messageText || message.message_content, contactData);
 
-        const today = new Date().toISOString().split("T")[0];
-        const contentHash = Buffer.from(processedMessageText)
-          .toString("base64")
-          .substring(0, 20);
+        const today = new Date().toISOString().split('T')[0];
+        const contentHash = Buffer.from(processedMessageText).toString('base64').substring(0, 20);
         const messageIdentifier = `${today}_${currentMessageIndex}_${contentHash}`;
 
-        const messageAlreadySent = sendCheckSnapshot.docs.some(
-          (doc) => doc.id === messageIdentifier
-        );
+        const sentCheckQuery = `
+          SELECT 1 FROM sent_messages 
+          WHERE company_id = $1 AND chat_id = $2 AND identifier = $3
+        `;
+        const sentCheck = await client.query(sentCheckQuery, [companyId, chatId, messageIdentifier]);
 
-        if (messageAlreadySent) {
-          console.log(
-            `[Company ${companyId}] Message already sent to ${chatId}, skipping...`
-          );
+        if (sentCheck.rowCount > 0) {
+          console.log(`[Company ${companyId}] Message already sent to ${chatId}, skipping...`);
           currentMessageIndex++;
           continue;
         }
@@ -3005,148 +3066,124 @@ async function sendScheduledMessage(message) {
         console.log(`[Company ${companyId}] Message prepared:`, {
           originalLength: messageText?.length,
           processedLength: processedMessageText?.length,
-          hasPlaceholders: messageText !== processedMessageText,
-          finalMessage: processedMessageText, // Log the final message for debugging
+          hasPlaceholders: messageText !== processedMessageText
         });
 
         if (delay > 0) {
-          console.log(
-            `[Company ${companyId}] Adding delay of ${delay} seconds`
-          );
-          await new Promise((resolve) => setTimeout(resolve, delay * 1000));
+          console.log(`[Company ${companyId}] Adding delay of ${delay} seconds`);
+          await new Promise(resolve => setTimeout(resolve, delay * 1000));
         }
 
         try {
           console.log(`\n=== [Company ${companyId}] Sending Message ===`);
-          const endpoint = message.mediaUrl
-            ? "image"
-            : message.documentUrl
-            ? "document"
-            : "text";
+          
+          const mediaUrl = messageItem.mediaUrl || message.media_url || '';
+          const documentUrl = messageItem.documentUrl || message.document_url || '';
+          const fileName = messageItem.fileName || message.file_name || '';
+          
+          const endpoint = mediaUrl ? 'image' : 
+                          documentUrl ? 'document' : 'text';
+          
           const url = `${process.env.URL}api/v2/messages/${endpoint}/${companyId}/${chatId}`;
-
+          
           console.log(`[Company ${companyId}] Request details:`, {
             endpoint,
             url,
-            phoneIndex: message.phoneIndex,
-            hasMedia: Boolean(message.mediaUrl || message.documentUrl),
-            messageText: processedMessageText, // Log the message being sent
+            phoneIndex: message.phone_index,
+            hasMedia: Boolean(mediaUrl || documentUrl)
           });
 
           const response = await fetch(url, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(
-              message.mediaUrl
-                ? {
-                    imageUrl: message.mediaUrl,
-                    caption: processedMessageText,
-                    phoneIndex: message.phoneIndex,
-                  }
-                : message.documentUrl
-                ? {
-                    documentUrl: message.documentUrl,
-                    filename: message.fileName,
-                    caption: processedMessageText,
-                    phoneIndex: message.phoneIndex,
-                  }
-                : {
-                    message: processedMessageText || message.message, // Fallback to original message
-                    phoneIndex: message.phoneIndex,
-                  }
-            ),
+              mediaUrl ? { 
+                imageUrl: mediaUrl, 
+                caption: processedMessageText, 
+                phoneIndex: message.phone_index 
+              } : documentUrl ? { 
+                documentUrl: documentUrl, 
+                filename: fileName, 
+                caption: processedMessageText,
+                phoneIndex: message.phone_index
+              } : { 
+                message: processedMessageText || message.message_content,
+                phoneIndex: message.phone_index
+              }
+            )
           });
 
           console.log(`[Company ${companyId}] Send response:`, {
             status: response.status,
-            ok: response.ok,
+            ok: response.ok
           });
 
           if (!response.ok) {
             throw new Error(`Failed to send message: ${response.status}`);
           }
 
-          await sendCheckRef.doc(messageIdentifier).set({
-            sentAt: admin.firestore.Timestamp.now(),
-            messageIndex: currentMessageIndex,
-            messageContent: processedMessageText,
-            messageType: endpoint,
-          });
-
-          console.log(
-            `[Company ${companyId}] Recorded message as sent with ID: ${messageIdentifier}`
+          await client.query(
+            `INSERT INTO sent_messages (
+              company_id, chat_id, identifier, sent_at, 
+              message_index, message_content, message_type,
+              media_url, document_url
+            ) VALUES ($1, $2, $3, NOW(), $4, $5, $6, $7, $8)`,
+            [
+              companyId,
+              chatId,
+              messageIdentifier,
+              currentMessageIndex,
+              processedMessageText,
+              endpoint,
+              mediaUrl || null,
+              documentUrl || null
+            ]
           );
 
-          if (companyId === "0148") {
-            const messageTemplate =
-              "Good day {customerName}!!! Will you be interested in giving try for our first trial session (60 minutes!!) for just RM99?? One step closer to achieving your goals 😊";
-
-            const regexPattern = messageTemplate.replace(
-              "{customerName}",
-              ".*"
-            );
-            const regex = new RegExp(`^${regexPattern}$`);
-
-            if (regex.test(processedMessageText)) {
-              console.log(
-                `[Company ${companyId}] Final message matches template. Adding 'Done Followup' tag.`
-              );
-              const phone = chatId.split("@")[0];
-              const contactRef = db
-                .collection("companies")
-                .doc(companyId)
-                .collection("contacts")
-                .doc("+" + phone);
-
-              await contactRef.update({
-                tags: admin.firestore.FieldValue.arrayUnion("Done Followup"),
-              });
-
-              console.log(
-                `[Company ${companyId}] Added 'Done Followup' tag to contact ${phone}`
-              );
-            } else {
-              console.log(
-                `[Company ${companyId}] Final message does not match template. Skipping tag addition.`
-              );
-            }
-          }
+          console.log(`[Company ${companyId}] Recorded message as sent with ID: ${messageIdentifier}`);
         } catch (error) {
           console.error(`\n=== [Company ${companyId}] Message Send Error ===`);
-          console.error(`[Company ${companyId}] Error Type:`, error.name);
-          console.error(`[Company ${companyId}] Error Message:`, error.message);
-          console.error(`[Company ${companyId}] Stack:`, error.stack);
-          throw error; // Propagate error to trigger job retry
+          console.error(`[Company ${companyId}] Error:`, error);
+          
+          await client.query(
+            `INSERT INTO error_logs (
+              company_id, message_id, error_type, 
+              error_message, stack_trace, timestamp
+            ) VALUES ($1, $2, $3, $4, $5, NOW())`,
+            [
+              companyId,
+              message.id || 'No messageId',
+              error.name,
+              error.message,
+              error.stack
+            ]
+          );
+          
+          throw error;
         }
 
         currentMessageIndex++;
         console.log(`\n=== [Company ${companyId}] Sequence Status ===`);
         console.log({
           currentIndex: currentMessageIndex,
-          totalMessages: message.messages.length,
+          totalMessages: messages.length,
           dayCount,
-          willContinue:
-            currentMessageIndex < message.messages.length ||
-            message.infiniteLoop,
+          willContinue: currentMessageIndex < messages.length || message.infinite_loop
         });
 
-        if (currentMessageIndex >= message.messages.length) {
-          if (!message.infiniteLoop) {
-            console.log(`[Company ${companyId}] Sequence complete - ending`);
+        if (currentMessageIndex >= messages.length) {
+          if (!message.infinite_loop) {
+            console.log(`[Company ${companyId}] Sequence complete - ending`);              
             break;
           }
-
-          console.log(
-            `[Company ${companyId}] Day ${dayCount} complete - preparing for next day`
-          );
+          
+          console.log(`[Company ${companyId}] Day ${dayCount} complete - preparing for next day`);
           const shouldStop = await waitUntilNextDay();
           if (shouldStop) {
-            console.log(
-              `[Company ${companyId}] Sequence stopped during day transition`
-            );
+            console.log(`[Company ${companyId}] Sequence stopped during day transition`);
             break;
           }
-
+          
           currentMessageIndex = 0;
           dayCount++;
           console.log(`[Company ${companyId}] Starting day ${dayCount}`);
@@ -3155,111 +3192,89 @@ async function sendScheduledMessage(message) {
     } else {
       console.log(`[Company ${companyId}] Message is not V2 - skipping`);
     }
-
-    console.log(
-      `\n=== [Company ${companyId}] sendScheduledMessage Complete ===`
-    );
+    
+    console.log(`\n=== [Company ${companyId}] sendScheduledMessage Complete ===`);
     return { success: true };
   } catch (error) {
-    console.error(
-      `\n=== [Company ${companyId}] sendScheduledMessage Error ===`
-    );
-    console.error(`[Company ${companyId}] Error Type:`, error.name);
-    console.error(`[Company ${companyId}] Error Message:`, error.message);
-    console.error(`[Company ${companyId}] Stack:`, error.stack);
+    console.error(`\n=== [Company ${companyId}] sendScheduledMessage Error ===`);
+    console.error(`[Company ${companyId}] Error:`, error);
     return { success: false, error };
+  } finally {
+    client.release();
   }
 }
 
-app.post(
-  "/api/schedule-message/:companyId/:messageId/stop",
-  async (req, res) => {
-    const { companyId, messageId } = req.params;
-
-    try {
-      await db
-        .collection("companies")
-        .doc(companyId)
-        .collection("scheduledMessages")
-        .doc(messageId)
-        .update({
-          status: "stopped",
-          stoppedAt: admin.firestore.Timestamp.now(),
-        });
-
-      res.json({
-        success: true,
-        message: "Message stopped successfully",
-      });
-    } catch (error) {
-      console.error("Error stopping message:", error);
-      res.status(500).json({
-        error: "Failed to stop message",
-      });
-    }
-  }
-);
-
-// Modify the scheduleAllMessages function
-async function obiliterateAllJobs() {
-  // Clear all existing jobs from the queue
-  await messageQueue.obliterate({ force: true });
-  console.log("Queue cleared successfully");
-}
-
-// Modify the scheduleAllMessages function
-// Modify the scheduleAllMessages function
 async function scheduleAllMessages() {
-  const companiesSnapshot = await db.collection("companies").get();
-  console.log("scheduleAllMessages");
-  for (const companyDoc of companiesSnapshot.docs) {
-    const companyId = companyDoc.id;
-    const scheduledMessagesSnapshot = await companyDoc.ref
-      .collection("scheduledMessages")
-      .get();
+  const client = await pool.connect();
+  try {
+    console.log("scheduleAllMessages");
+    
+    const companiesQuery = `
+      SELECT DISTINCT company_id FROM scheduled_messages
+      WHERE status != 'completed'
+    `;
+    const companiesResult = await client.query(companiesQuery);
 
-    for (const messageDoc of scheduledMessagesSnapshot.docs) {
-      const messageId = messageDoc.id;
-      const message = messageDoc.data();
+    for (const companyRow of companiesResult.rows) {
+      const companyId = companyRow.company_id;
+      const queue = getQueueForBot(companyId);
+      
+      const messagesQuery = `
+        SELECT * FROM scheduled_messages 
+        WHERE company_id = $1 
+        AND status != 'completed'
+        AND id = schedule_id  // This ensures we only get main messages, not batches
+      `;
+      const messagesResult = await client.query(messagesQuery, [companyId]);
 
-      if (message.status === "completed") {
-        continue; // Skip completed messages
-      }
+      for (const message of messagesResult.rows) {
+        const messageId = message.id;
 
-      const batchesSnapshot = await messageDoc.ref.collection("batches").get();
+        const batchesQuery = `
+          SELECT * FROM scheduled_messages 
+          WHERE company_id = $1 
+          AND schedule_id = $2
+          AND status != 'sent'
+          AND id != schedule_id  // This ensures we only get batches, not the main message
+        `;
+        const batchesResult = await client.query(batchesQuery, [companyId, messageId]);
 
-      for (const batchDoc of batchesSnapshot.docs) {
-        const batchId = batchDoc.id;
-        const batchData = batchDoc.data();
+        for (const batch of batchesResult.rows) {
+          const batchId = batch.id;
+          const delay = new Date(batch.scheduled_time).getTime() - Date.now();
 
-        if (batchData.status === "sent") {
-          continue; // Skip sent batches
-        }
-
-        const delay =
-          batchData.batchScheduledTime.toDate().getTime() - Date.now();
-
-        // Check if the job already exists in the queue
-        const existingJob = await messageQueue.getJob(batchId);
-        if (!existingJob) {
-          await messageQueue.add(
-            "send-message-batch",
-            {
-              companyId,
-              messageId,
-              batchId,
-            },
-            {
-              removeOnComplete: false,
-              removeOnFail: false,
-              delay: Math.max(delay, 0),
-              jobId: batchId,
-              priority: batchData.priority || PRIORITY.BULK,
-            }
-          );
+          const existingJob = await queue.getJob(batchId);
+          if (!existingJob) {
+            await queue.add(
+              "send-message-batch",
+              {
+                companyId,
+                messageId,
+                batchId,
+              },
+              {
+                removeOnComplete: false,
+                removeOnFail: false,
+                delay: Math.max(delay, 0),
+                jobId: batchId,
+              }
+            );
+          }
         }
       }
     }
+  } catch (error) {
+    console.error("Error in scheduleAllMessages:", error);
+  } finally {
+    client.release();
+  }
+}
+
+// Function to clear all jobs from all queues
+async function obliterateAllJobs() {
+  for (const [botId, queue] of botQueues) {
+    await queue.obliterate({ force: true });
+    console.log(`Queue cleared for bot ${botId}`);
   }
 }
 
@@ -3331,7 +3346,7 @@ function setupMessageCreateHandler(client, botName, phoneIndex) {
         }
 
         // 2. Save the message to SQL
-        const { msgDBId, type } = addMessagetoPostgres(
+        const { msgDBId, type } = addMessageToPostgres(
           msg,
           companyId,
           extractedNumber,
@@ -3452,19 +3467,19 @@ async function addMessageAssistant(threadId, message) {
   return response;
 }
 
-async function addMessagetoPostgres(
+async function addMessageToPostgres(
   msg,
   idSubstring,
   extractedNumber,
   contactName,
   phoneIndex = 0,
-  userName,
+  userName
 ) {
   console.log("Adding message to PostgreSQL");
   console.log("idSubstring:", idSubstring);
   console.log("extractedNumber:", extractedNumber);
 
-  if (!extractedNumber || !extractedNumber.startsWith("+60" || "+65")) {
+  if (!extractedNumber || !(extractedNumber.startsWith("+60") || extractedNumber.startsWith("+65"))) {
     console.error("Invalid extractedNumber for database:", extractedNumber);
     return;
   }
@@ -3474,154 +3489,77 @@ async function addMessagetoPostgres(
     return;
   }
 
-  const contactID =
-    idSubstring +
-    "-" +
-    (extractedNumber.startsWith("+")
-      ? extractedNumber.slice(1)
-      : extractedNumber);
+  const contactID = idSubstring + "-" + 
+    (extractedNumber.startsWith("+") ? extractedNumber.slice(1) : extractedNumber);
 
-  let messageBody = "";
-  if (msg.text && msg.text.body) {
-    messageBody = msg.text.body;
-  } else if (msg.body) {
-    messageBody = msg.body;
-  } else {
-    messageBody = "";
-  }
+  const basicInfo = await extractBasicMessageInfo(msg);
+  const messageData = await prepareMessageData(msg, idSubstring, phoneIndex);
 
-  let audioData = null;
-  let type = msg.type || "chat";
-
-  if (msg.type === "chat") {
-    type = "chat";
-  } else if (msg.type === "text") {
-    type = "chat";
-  } else {
-    type = msg.type;
-  }
-
-  let mediaMetadata = {};
-  let mediaUrl = null;
-  let mediaData = null;
-
+  let messageBody = messageData.text?.body || "";
   if (msg.hasMedia && (msg.type === "audio" || msg.type === "ptt")) {
     console.log("Voice message detected during saving to NeonDB");
     const media = await msg.downloadMedia();
     const transcription = await transcribeAudio(media.data);
 
-    if (
-      transcription &&
-      transcription !== "Audio transcription failed. Please try again."
-    ) {
+    if (transcription && transcription !== "Audio transcription failed. Please try again.") {
       messageBody += transcription;
     } else {
-      messageBody +=
-        "I couldn't transcribe the audio. Could you please type your message instead?";
+      messageBody += "I couldn't transcribe the audio. Could you please type your message instead?";
     }
-
-    mediaData = media.data;
   }
 
-  let quotedMessage = {};
-  if (msg.hasQuotedMsg) {
-    const quotedMsg = await msg.getQuotedMessage();
-    const authorNumber = "+" + quotedMsg.from.split("@")[0];
-    const authorData = await getContactDataFromDatabaseByPhone(
-      authorNumber,
-      idSubstring
-    );
-
-    quotedMessage = {
-      quoted_content: {
-        body: quotedMsg.body || '',
-      },
-      quoted_author: authorData ? authorData.name : authorNumber,
-      message_id: quotedMsg.id._serialized,
-      message_type: quotedMsg.type,
-    };
-  }
+  // Prepare media data
+  let mediaUrl = null;
+  let mediaData = null;
+  let mediaMetadata = {};
 
   if (msg.hasMedia) {
-    try {
-      const media = await msg.downloadMedia();
-
-      if (media) {
+    if (msg.type === "video") {
+      mediaUrl = messageData.video?.link || null;
+    } else if (msg.type !== "audio" && msg.type !== "ptt") {
+      const mediaTypeData = messageData[msg.type];
+      if (mediaTypeData) {
+        mediaData = mediaTypeData.data || null;
         mediaMetadata = {
-          mimetype: media.mimetype,
-          filename: msg._data.filename || "",
-          caption: msg._data.caption || "",
+          mimetype: mediaTypeData.mimetype,
+          filename: mediaTypeData.filename || "",
+          caption: mediaTypeData.caption || "",
+          thumbnail: mediaTypeData.thumbnail || null,
+          mediaKey: mediaTypeData.media_key || null,
+          ...(msg.type === "image" && {
+            width: mediaTypeData.width,
+            height: mediaTypeData.height
+          }),
+          ...(msg.type === "document" && {
+            pageCount: mediaTypeData.page_count,
+            fileSize: mediaTypeData.file_size
+          })
         };
-
-        if (msg._data.thumbnailHeight && msg._data.thumbnailWidth) {
-          mediaMetadata.thumbnail = {
-            height: msg._data.thumbnailHeight,
-            width: msg._data.thumbnailWidth,
-          };
-        }
-
-        if (msg.mediaKey) {
-          mediaMetadata.mediaKey = msg.mediaKey;
-        }
-
-        if (msg.type === "image" && msg._data.width && msg._data.height) {
-          mediaMetadata.width = msg._data.width;
-          mediaMetadata.height = msg._data.height;
-        } else if (msg.type === "document") {
-          mediaMetadata.pageCount = msg._data.pageCount;
-          mediaMetadata.fileSize = msg._data.size;
-        }
-
-        if (msg.type === "video") {
-          mediaUrl = await storeVideoData(media.data, msg._data.filename);
-        } else {
-          mediaData = media.data;
-        }
       }
-    } catch (error) {
-      console.error(
-        `Error handling media for message ${msg.id._serialized}:`,
-        error
-      );
     }
   }
 
-  let author = null;
-  if (msg.from.includes("@g.us")) {
-    const authorNumber = "+" + msg.author.split("@")[0];
-    const authorData = await getContactDataFromDatabaseByPhone(
-      authorNumber,
-      idSubstring
-    );
+  const quotedMessage = messageData.text?.context || null;
 
-    if (authorData) {
-      author = authorData.contactName;
-    } else {
-      author = msg.author;
-    }
+  let author = userName;
+  if (!author && msg.from.includes("@g.us") && basicInfo.author) {
+    const authorData = await getContactDataFromDatabaseByPhone(basicInfo.author, idSubstring);
+    author = authorData ? authorData.contactName : basicInfo.author;
   }
 
   try {
     const client = await pool.connect();
-
     try {
       await client.query("BEGIN");
 
-      // FIRST: Create/update contact BEFORE inserting message
       const contactCheckQuery = `
         SELECT id FROM public.contacts 
         WHERE contact_id = $1 AND company_id = $2
       `;
-
-      const contactResult = await client.query(contactCheckQuery, [
-        contactID,
-        idSubstring,
-      ]);
+      const contactResult = await client.query(contactCheckQuery, [contactID, idSubstring]);
 
       if (contactResult.rows.length === 0) {
-        console.log(
-          `Creating new contact: ${contactID} for company: ${idSubstring}`
-        );
+        console.log(`Creating new contact: ${contactID} for company: ${idSubstring}`);
         const contactQuery = `
           INSERT INTO public.contacts (
             contact_id, company_id, name, contact_name, phone, email,
@@ -3634,7 +3572,6 @@ async function addMessagetoPostgres(
               phone = EXCLUDED.phone,
               last_updated = EXCLUDED.last_updated
         `;
-
         await client.query(contactQuery, [
           contactID,
           idSubstring,
@@ -3655,82 +3592,256 @@ async function addMessagetoPostgres(
           new Date(),
         ]);
         console.log(`Contact created successfully: ${contactID}`);
-      } else {
-        console.log(`Contact already exists: ${contactID}`);
       }
 
-      // SECOND: Now insert the message with correct field mappings
+      // Insert message
       const messageQuery = `
         INSERT INTO public.messages (
-          message_id, company_id, contact_id, content, message_type, 
-          media_url, media_data, media_metadata, timestamp, direction, 
-          status, from_me, chat_id, author, phone_index, quoted_message, media_data, media_metadata, thread_id, customer_phone
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
+          message_id, company_id, contact_id, content, message_type,
+          media_url, media_data, media_metadata, timestamp, direction,
+          status, from_me, chat_id, author, phone_index, quoted_message,
+          thread_id, customer_phone
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
         RETURNING id
       `;
-
       const messageValues = [
-        msg.id._serialized,
+        basicInfo.idSerialized,
         idSubstring,
         contactID,
         messageBody,
-        type,
+        basicInfo.type,
         mediaUrl,
         mediaData,
-        mediaMetadata ? JSON.stringify(mediaMetadata) : null,
-        new Date(msg.timestamp * 1000),
+        Object.keys(mediaMetadata).length > 0 ? JSON.stringify(mediaMetadata) : null,
+        new Date(basicInfo.timestamp * 1000),
         msg.fromMe ? "outbound" : "inbound",
         "delivered",
         msg.fromMe || false,
         msg.from,
-        userName || author,
+        author || contactID,
         phoneIndex,
         quotedMessage ? JSON.stringify(quotedMessage) : null,
-        mediaData || null,
-        mediaMetadata? JSON.stringify(mediaMetadata) : null,
         msg.to,
-        extractedNumber,
+        extractedNumber
       ];
 
       const messageResult = await client.query(messageQuery, messageValues);
       const messageDbId = messageResult.rows[0].id;
 
       await client.query("COMMIT");
-      console.log(
-        `Message successfully added to PostgreSQL with ID: ${messageDbId}`
-      );
-      return messageDbId, type;
+      console.log(`Message successfully added to PostgreSQL with ID: ${messageDbId}`);
+      return { messageDbId, type: basicInfo.type };
     } catch (error) {
       await client.query("ROLLBACK");
       console.error("Error in PostgreSQL transaction:", error);
       throw error;
     } finally {
-      try {
-        const contactData = await getContactDataFromDatabaseByPhone(
-          extractedNumber,
-          idSubstring
-        );
-        if (
-          contactData &&
-          contactData.contact_name &&
-          contactData.contact_name !== extractedNumber &&
-          !contactData.contact_name.includes(extractedNumber.replace("+", ""))
-        ) {
-          contactName = contactData.contact_name;
-          console.log(`Using saved contact name: ${contactName}`);
-        } else {
-          console.log(`No saved name found, using number: ${extractedNumber}`);
-        }
-      } catch (contactError) {
-        console.error("Error fetching contact data:", contactError);
-      }
-      await addNotificationToUser(idSubstring, messageBody, contactName);
       client.release();
+      await addNotificationToUser(idSubstring, messageBody, contactName);
     }
   } catch (error) {
     console.error("PostgreSQL connection error:", error);
     throw error;
   }
+}
+
+async function extractBasicMessageInfo(msg) {
+  return {
+    id: msg.id ?? "",
+    idSerialized: msg.id._serialized?? "",
+    from: msg.from ?? "",
+    fromMe: msg.fromMe ?? false,
+    body: msg.body ?? "",
+    timestamp: msg.timestamp ?? 0,
+    type: msg.type === "chat" ? "text" : msg.type,
+    deviceType: msg.deviceType ?? "",
+    notifyName: msg.notifyName ?? "",
+    chatId: msg.from,
+    author: msg.author ? "+" + msg.author.split("@")[0] : null,
+  };
+}
+
+async function processMessageMedia(msg) {
+  if (!msg.hasMedia || msg.type === "audio" || msg.type === "ptt") {
+    return null;
+  }
+
+  try {
+    const media = await msg.downloadMedia();
+    if (!media) {
+      console.log(
+        `Failed to download media for message: ${msg.id._serialized}`
+      );
+      return null;
+    }
+
+    const mediaData = {
+      mimetype: media.mimetype,
+      data: media.data,
+      filename: msg._data.filename || "",
+      caption: msg._data.caption || "",
+    };
+
+    switch (msg.type) {
+      case "image":
+        mediaData.width = msg._data.width;
+        mediaData.height = msg._data.height;
+        break;
+      case "document":
+        mediaData.page_count = msg._data.pageCount;
+        mediaData.file_size = msg._data.size;
+        break;
+      case "video":
+        mediaData.link = await storeVideoData(media.data, msg._data.filename);
+        break;
+    }
+
+    if (msg._data.thumbnailHeight && msg._data.thumbnailWidth) {
+      mediaData.thumbnail = {
+        height: msg._data.thumbnailHeight,
+        width: msg._data.thumbnailWidth,
+      };
+    }
+
+    if (msg.mediaKey) {
+      mediaData.media_key = msg.mediaKey;
+    }
+
+    return mediaData;
+  } catch (error) {
+    console.error(
+      `Error handling media for message ${msg.id._serialized}:`,
+      error
+    );
+    return null;
+  }
+}
+
+async function processAudioMessage(msg) {
+  if (msg.type !== "audio" && msg.type !== "ptt") {
+    return null;
+  }
+
+  return {
+    mimetype: "audio/ogg; codecs=opus",
+    data: null,
+  };
+}
+
+async function processLocationMessage(msg) {
+  if (msg.type !== "location") {
+    return null;
+  }
+
+  return {
+    latitude: msg.location.latitude,
+    longitude: msg.location.longitude,
+    description: msg.location.description || "",
+    timestamp: new Date(),
+  };
+}
+
+async function processQuotedMessage(msg, idSubstring) {
+  if (!msg.hasQuotedMsg) {
+    return null;
+  }
+
+  const quotedMsg = await msg.getQuotedMessage();
+  const authorNumber = "+" + quotedMsg.from.split("@")[0];
+  const authorData = await getContactDataFromDatabaseByPhone(
+    authorNumber,
+    idSubstring
+  );
+
+  return {
+    quoted_content: {
+      body: quotedMsg.body,
+    },
+    quoted_author: authorData ? authorData.name : authorNumber,
+    message_id: quotedMsg.id._serialized,
+    message_type: quotedMsg.type,
+  };
+}
+
+async function processOrderMessage(msg) {
+  if (msg.type !== "order") {
+    return null;
+  }
+
+  return {
+    order_id: msg?.orderId,
+    token: msg?.token,
+    seller_jid: msg?._data?.sellerJid,
+    item_count: msg?._data?.itemCount,
+    order_title: msg?._data?.orderTitle,
+    total_amount: msg?._data?.totalAmount1000,
+    total_currency_code: msg?._data?.totalCurrencyCode,
+    thumbnail: msg?._data?.thumbnail,
+  };
+}
+
+async function prepareMessageData(msg, idSubstring, phoneIndex) {
+  const basicInfo = await extractBasicMessageInfo(msg);
+  const contact = await msg.getContact();
+  const chat = await msg.getChat();
+
+  const messageData = {
+    chat_id: basicInfo.chatId,
+    from: basicInfo.from,
+    from_me: basicInfo.fromMe,
+    id: basicInfo.id,
+    source: basicInfo.deviceType,
+    status: "delivered",
+    text: {
+      body: basicInfo.body,
+    },
+    timestamp: basicInfo.timestamp,
+    type: basicInfo.type,
+    phone_index: phoneIndex,
+  };
+
+  // Process media if present
+  if (msg.hasMedia) {
+    const mediaData = await processMessageMedia(msg);
+    if (mediaData) {
+      messageData[msg.type] = mediaData;
+    }
+  }
+
+  // Process audio separately
+  const audioData = await processAudioMessage(msg);
+  if (audioData) {
+    messageData.audio = audioData;
+  }
+
+  // Process location
+  const locationData = await processLocationMessage(msg);
+  if (locationData) {
+    messageData.location = locationData;
+  }
+
+  // Process quoted message
+  const quotedData = await processQuotedMessage(msg, idSubstring);
+  if (quotedData) {
+    messageData.text.context = quotedData;
+  }
+
+  // Process order message
+  const orderData = await processOrderMessage(msg);
+  if (orderData) {
+    messageData.order = orderData;
+  }
+
+  // Handle group messages
+  if (basicInfo.from.includes("@g.us") && basicInfo.author) {
+    const authorData = await getContactDataFromDatabaseByPhone(
+      basicInfo.author,
+      idSubstring
+    );
+    messageData.author = authorData ? authorData.name : basicInfo.author;
+  }
+
+  return messageData;
 }
 
 async function transcribeAudio(audioData) {
@@ -4365,48 +4476,62 @@ async function initializeDailyReports() {
       WHERE setting_type = 'reporting' 
       AND setting_key = 'dailyReport'
     `;
-    
+
     const settingsResult = await sqlDb.query(settingsQuery);
-    
+
     for (const row of settingsResult.rows) {
       const companyId = row.company_id;
       const settings = row.setting_value;
-      
+
       if (settings && settings.enabled && settings.time && settings.groupId) {
         const [hour, minute] = settings.time.split(":");
-        
-        const cronJob = cron.schedule(`${minute} ${hour} * * *`, async () => {
-          try {
-            const botData = botMap.get(companyId);
-            if (!botData || !botData[0]?.client) {
-              console.error(`No WhatsApp client found for company ${companyId}`);
-              return;
-            }
 
-            const count = await countTodayLeads(companyId);
-            const message = `📊 Daily Lead Report\n\nNew Leads Today: ${count}\nDate: ${new Date().toLocaleDateString()}`;
+        const cronJob = cron.schedule(
+          `${minute} ${hour} * * *`,
+          async () => {
+            try {
+              const botData = botMap.get(companyId);
+              if (!botData || !botData[0]?.client) {
+                console.error(
+                  `No WhatsApp client found for company ${companyId}`
+                );
+                return;
+              }
 
-            await botData[0].client.sendMessage(settings.groupId, message);
+              const count = await countTodayLeads(companyId);
+              const message = `📊 Daily Lead Report\n\nNew Leads Today: ${count}\nDate: ${new Date().toLocaleDateString()}`;
 
-            const updateLastRunQuery = `
+              await botData[0].client.sendMessage(settings.groupId, message);
+
+              const updateLastRunQuery = `
               UPDATE public.settings 
               SET setting_value = jsonb_set(setting_value, '{lastRun}', to_jsonb($1::text), true),
                   updated_at = CURRENT_TIMESTAMP
               WHERE company_id = $2 AND setting_type = 'reporting' AND setting_key = 'dailyReport'
             `;
-            await sqlDb.query(updateLastRunQuery, [new Date().toISOString(), companyId]);
-          } catch (error) {
-            console.error(`Error sending daily report for company ${companyId}:`, error);
+              await sqlDb.query(updateLastRunQuery, [
+                new Date().toISOString(),
+                companyId,
+              ]);
+            } catch (error) {
+              console.error(
+                `Error sending daily report for company ${companyId}:`,
+                error
+              );
+            }
+          },
+          {
+            timezone: "Asia/Kuala_Lumpur",
           }
-        }, {
-          timezone: "Asia/Kuala_Lumpur"
-        });
-        
+        );
+
         dailyReportCrons.set(companyId, cronJob);
-        console.log(`Daily report scheduled for company ${companyId} at ${settings.time}`);
+        console.log(
+          `Daily report scheduled for company ${companyId} at ${settings.time}`
+        );
       }
     }
-    
+
     console.log(`Initialized ${dailyReportCrons.size} daily report cron jobs`);
   } catch (error) {
     console.error("Error initializing daily reports:", error);
@@ -5324,6 +5449,7 @@ async function handleOpenAIAssistant(message, threadID, assistantid) {
   const answer = await runAssistant(assistantId, threadID);
   return answer;
 }
+
 app.get("/api/assistant-test/", async (req, res) => {
   const message = req.query.message;
   const email = req.query.email;
@@ -5816,11 +5942,9 @@ app.post("/api/create-contact", async (req, res) => {
       .json({ message: "Contact added successfully!", contact: contactData });
   } catch (error) {
     console.error("Error adding contact:", error);
-    res
-      .status(500)
-      .json({
-        error: "An error occurred while adding the contact: " + error.message,
-      });
+    res.status(500).json({
+      error: "An error occurred while adding the contact: " + error.message,
+    });
   }
 });
 
@@ -5959,6 +6083,7 @@ function broadcastBotActivity(botName, isActive) {
     }
   });
 }
+
 // New endpoint to delete trial end date
 app.delete("/api/bots/:botId/trial-end-date", async (req, res) => {
   try {
@@ -5992,8 +6117,6 @@ app.delete("/api/bots/:botId/trial-end-date", async (req, res) => {
   }
 });
 
-// ... existing code ...
-// Modify the API route to get the QR code or authentication status
 app.get("/api/bot-status/:companyId", async (req, res) => {
   const { companyId } = req.params;
   console.log("Calling bot-status");
@@ -6097,6 +6220,7 @@ app.get("/api/bot-status/:companyId", async (req, res) => {
     res.status(500).json({ error: "Failed to get status" });
   }
 });
+
 app.post("/api/v2/messages/text/:companyId/:chatId", async (req, res) => {
   console.log("\n=== New Text Message Request ===");
   const companyId = req.params.companyId;
@@ -6120,7 +6244,7 @@ app.post("/api/v2/messages/text/:companyId/:chatId", async (req, res) => {
   const phoneIndex =
     requestedPhoneIndex !== undefined ? parseInt(requestedPhoneIndex) : 0;
   const userName = requestedUserName !== undefined ? requestedUserName : "";
-  const contactID = companyId + '-' + chatId.split('@')[0];
+  const contactID = companyId + "-" + chatId.split("@")[0];
 
   try {
     // 1. Get the client for this company from botMap
@@ -6198,7 +6322,14 @@ app.post("/api/v2/messages/text/:companyId/:chatId", async (req, res) => {
     // 4. Save to SQL
     try {
       let contactResult; // Declare the variable first
-      addMessagetoPostgres(sentMessage, companyId, phoneNumber, '', requestedPhoneIndex, userName)
+      addMessageToPostgres(
+        sentMessage,
+        companyId,
+        phoneNumber,
+        "",
+        phoneIndex,
+        userName
+      );
 
       // 5. Handle OpenAI integration for the receiver's contact
       if (contactResult.rows[0]?.thread_id) {
@@ -6392,6 +6523,7 @@ app.put("/api/v2/messages/:companyId/:chatId/:messageId", async (req, res) => {
     res.status(500).send("Internal Server Error");
   }
 });
+
 // Delete message route
 app.delete(
   "/api/v2/messages/:companyId/:chatId/:messageId",
@@ -6425,7 +6557,7 @@ app.delete(
       const message = messages[0];
 
       // Delete the message
-      await message.delete(deleteForEveryone);
+      await message.delete(true);
 
       // Delete the message from Firebase
       let phoneNumber = "+" + chatId.split("@")[0];
@@ -6495,6 +6627,8 @@ app.post("/api/v2/messages/image/:companyId/:chatId", async (req, res) => {
       type: "image",
       ack: sentMessage.ack ?? 0,
     };
+
+    addMessageToPostgres(sentMessage, companyId, phoneNumber, '', phoneIndex, userName);
 
     const contactRef = db
       .collection("companies")
@@ -6663,12 +6797,10 @@ app.post("/api/request-pairing-code/:botName", async (req, res) => {
     res.json({ pairingCode });
   } catch (error) {
     console.error(`Error requesting pairing code for ${botName}:`, error);
-    res
-      .status(500)
-      .json({
-        error: "Failed to request pairing code",
-        details: error.message,
-      });
+    res.status(500).json({
+      error: "Failed to request pairing code",
+      details: error.message,
+    });
   }
 });
 
