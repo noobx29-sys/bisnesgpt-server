@@ -22,6 +22,7 @@ const pdf = require("pdf-parse");
 const { fromPath } = require("pdf2pic");
 const SKCSpreadsheet = require("../spreadsheet/SKCSpreadsheet");
 const CarCareSpreadsheet = require("../blast/bookingCarCareGroup");
+const { broadcastNewMessageToChat } = require('../server.js'); // Adjust path as needed
 
 const { neon, neonConfig } = require("@neondatabase/serverless");
 const { Pool } = require("pg");
@@ -530,6 +531,7 @@ async function addNotificationToUser(companyId, message, contactName) {
       });
 
       await Promise.all(promises);
+   
     } finally {
       client.release();
     }
@@ -2209,11 +2211,12 @@ async function prepareContactData(
     assigned_to: null,
     business_id: null,
     phone: extractedNumber,
+    contact_id: idSubstring + "-" + (extractedNumber.startsWith("+") ? extractedNumber.slice(1) : extractedNumber),
     tags: contactTags,
     unread_count: (contactData?.unread_count || 0) + 1,
     last_updated: new Date(msg.timestamp * 1000),
     chat_data: {
-      contact_id: extractedNumber,
+      contact_id: idSubstring + "-" + (extractedNumber.startsWith("+") ? extractedNumber.slice(1) : extractedNumber),
       id: msg.from,
       name:
         contactData?.contact_name ||
@@ -2984,23 +2987,58 @@ async function createContactInDatabase(idSubstring, contactData) {
     sqlClient.release();
   }
 }
-
+// Add this after the imports at the top of the file (around line 50-100)
+async function logContactCreationAttempt(contactID, companyID, name, phone, source, stackTrace = null) {
+  const timestamp = new Date().toISOString();
+  
+  console.log(`🔍 [CONTACT_CREATION_TRACKING] Attempt to create contact:`, {
+    contact_id: contactID,
+    company_id: companyID,
+    name: name,
+    phone: phone,
+    source: source,
+    timestamp: timestamp,
+    is_duplicate_format: contactID === phone || contactID === `+${phone}` || contactID === phone.replace('+', ''),
+    is_phone_as_name: name === phone || name === `+${phone}` || name === phone.replace('+', ''),
+    stack_trace: stackTrace ? stackTrace.split('\n').slice(0, 3).join('\n') : null
+  });
+  
+  if (contactID === phone || contactID === `+${phone}` || contactID === phone.replace('+', '')) {
+    console.log(`⚠️ [CONTACT_CREATION_TRACKING] WARNING: Contact ID is just phone number! This will cause duplicates!`);
+  }
+  
+  if (name === phone || name === `+${phone}` || name === phone.replace('+', '')) {
+    console.log(`⚠️ [CONTACT_CREATION_TRACKING] WARNING: Name is just phone number! This indicates a problem!`);
+  }
+}
 async function processImmediateActions(client, msg, botName, phoneIndex) {
   const idSubstring = botName;
   const chatId = msg.from;
   const contact = await msg.getContact();
   console.log(
-    `Processing immediate actions for bot companyID ${botName} for chatId ${chatId}`
+    `�� [IMMEDIATE_ACTIONS] Processing immediate actions for bot companyID ${botName} for chatId ${chatId}`
   );
   const messageBody = msg.body;
-
+  const extractedNumber = "+" + msg.from.split("@")[0];
+  console.log(`�� [IMMEDIATE_ACTIONS] Extracted number: ${extractedNumber}`);
+  const contactID = idSubstring + "-" + (extractedNumber.startsWith("+") ? extractedNumber.slice(1) : extractedNumber);
+  if (contactID) {
+    broadcastNewMessageToChat(contactID, {
+      type: "new_message",
+      chatId,
+      message: messageBody,
+      extractedNumber,
+      // Optionally add more fields, e.g. whapiToken
+    });
+  }
+  
   // Handle special cases first
   if (
     messageBody.includes("<Confirmed Appointment>") &&
     idSubstring === "002" &&
     msg.from === "120363323247156210@g.us"
   ) {
-    console.log("🎯 Detected confirmed appointment message");
+    console.log("�� Detected confirmed appointment message");
     try {
       await handleConfirmedAppointment(client, msg, idSubstring);
       console.log("✅ Appointment handled successfully");
@@ -3038,24 +3076,51 @@ async function processImmediateActions(client, msg, botName, phoneIndex) {
     await fetchConfigFromDatabase(idSubstring, phoneIndex);
 
     // Prepare contact and message data using utility functions
-    const extractedNumber = "+" + msg.from.split("@")[0];
+   
+    const myNumber = '+' + client.info.wid.user;
+    if (extractedNumber === myNumber) {
+      // Don't process messages to yourself
+      console.log(`�� [IMMEDIATE_ACTIONS] Skipping message to self: ${extractedNumber}`);
+      return;
+    }
+    
+    console.log(`�� [IMMEDIATE_ACTIONS] Fetching contact data for phone: ${extractedNumber}, company: ${idSubstring}`);
     const contactData = await getContactDataFromDatabaseByPhone(
       extractedNumber,
       idSubstring
     );
+    
+    if (contactData) {
+      console.log(`�� [IMMEDIATE_ACTIONS] Found existing contact:`, {
+        contact_id: contactData.contact_id,
+        contact_name: contactData.contact_name,
+        name: contactData.name,
+        phone: contactData.phone,
+        company_id: contactData.company_id
+      });
+    } else {
+      console.log(`�� [IMMEDIATE_ACTIONS] No existing contact found for phone: ${extractedNumber}, company: ${idSubstring}`);
+    }
+    
     const chat = await msg.getChat();
     const companyName = contactData?.company || null;
 
     // Handle thread creation/retrieval
     let threadID = contactData?.thread_id;
     if (!threadID) {
+      console.log(`�� [IMMEDIATE_ACTIONS] Creating new thread for contact: ${extractedNumber}`);
       const thread = await createThread();
       threadID = thread.id;
+      console.log(`�� [IMMEDIATE_ACTIONS] Saving thread ID: ${threadID} for contact: ${extractedNumber}`);
       await saveThreadIDPostgres(extractedNumber, threadID, idSubstring);
+    } else {
+      console.log(`�� [IMMEDIATE_ACTIONS] Using existing thread ID: ${threadID}`);
     }
+        
 
     // Handle messages from me
     if (msg.fromMe) {
+      console.log(`�� [IMMEDIATE_ACTIONS] Processing message from me`);
       if (idSubstring === "0128") {
         const firebaseDC = "+" + msg.to.split("@")[0];
         await addTagToPostgres(firebaseDC, "stop bot", idSubstring);
@@ -3066,6 +3131,7 @@ async function processImmediateActions(client, msg, botName, phoneIndex) {
 
     // Prepare contact and message data
     const contactTags = contactData?.tags || [];
+    console.log(`�� [IMMEDIATE_ACTIONS] Preparing contact data for: ${extractedNumber}`);
     const contactDataForDB = await prepareContactData(
       msg,
       idSubstring,
@@ -3073,18 +3139,44 @@ async function processImmediateActions(client, msg, botName, phoneIndex) {
       contactData,
       companyName
     );
+    
+    console.log(`�� [IMMEDIATE_ACTIONS] Contact data prepared:`, {
+      contact_id: contactDataForDB.contact_id,
+      name: contactDataForDB.name,
+      contact_name: contactDataForDB.contact_name,
+      phone: contactDataForDB.phone
+    });
 
     // Save to database
     if (contactData) {
+      console.log(`�� [IMMEDIATE_ACTIONS] Updating existing contact in database`);
+      await logContactCreationAttempt(
+        contactDataForDB.contact_id || extractedNumber,
+        idSubstring,
+        contactDataForDB.name || contactDataForDB.contact_name,
+        extractedNumber,
+        "processImmediateActions_updateContact",
+        new Error().stack
+      );
       await updateContactInDatabase(
         idSubstring,
         extractedNumber,
         contactDataForDB
       );
     } else {
+      console.log(`�� [IMMEDIATE_ACTIONS] Creating new contact in database`);
+      await logContactCreationAttempt(
+        contactDataForDB.contact_id || extractedNumber,
+        idSubstring,
+        contactDataForDB.name || contactDataForDB.contact_name,
+        extractedNumber,
+        "processImmediateActions_createContact",
+        new Error().stack
+      );
       await createContactInDatabase(idSubstring, contactDataForDB);
     }
 
+    console.log(`�� [IMMEDIATE_ACTIONS] Adding message to PostgreSQL`);
     await addMessageToPostgres(
       msg,
       idSubstring,
@@ -3122,6 +3214,7 @@ async function processImmediateActions(client, msg, botName, phoneIndex) {
 
     // Reset bot command
     if (msg.body.includes("/resetbot")) {
+      console.log(`�� [IMMEDIATE_ACTIONS] Reset bot command detected`);
       const thread = await createThread();
       threadID = thread.id;
       await saveThreadIDPostgres(extractedNumber, threadID, idSubstring);
@@ -3155,9 +3248,10 @@ async function processImmediateActions(client, msg, botName, phoneIndex) {
       return;
     }
 
-    console.log("Message processed immediately:", msg.id._serialized);
+    console.log("�� [IMMEDIATE_ACTIONS] Message processed immediately:", msg.id._serialized);
   } catch (error) {
-    console.error("Error in immediate processing:", error);
+    console.error("❌ [IMMEDIATE_ACTIONS] Error in immediate processing:", error);
+    console.error("❌ [IMMEDIATE_ACTIONS] Full error stack:", error.stack);
   }
 }
 
@@ -3383,6 +3477,7 @@ async function processBufferedMessages(client, chatId, botName, phoneIndex) {
   );
 }
 
+// Add this enhanced logging to your processMessage function
 async function processMessage(
   client,
   msg,
@@ -3393,7 +3488,7 @@ async function processMessage(
   const idSubstring = botName;
   const chatId = msg.from;
   console.log(
-    `Processing immediate actions for Company ${botName} from chat ${chatId}`
+    `�� [CONTACT_TRACKING] Processing immediate actions for Company ${botName} from chat ${chatId}`
   );
 
   try {
@@ -3424,6 +3519,7 @@ async function processMessage(
     };
 
     const extractedNumber = "+" + sender.to.split("@")[0];
+    console.log(`�� [CONTACT_TRACKING] Extracted number: ${extractedNumber}`);
 
     if (msg.fromMe) {
       console.log(msg);
@@ -3438,10 +3534,25 @@ async function processMessage(
     let threadID;
     let query = combinedMessage;
     const chat = await msg.getChat();
+    
+    console.log(`�� [CONTACT_TRACKING] Fetching contact data for phone: ${extractedNumber}, company: ${idSubstring}`);
     const contactData = await getContactDataFromDatabaseByPhone(
       extractedNumber,
       idSubstring
     );
+    
+    if (contactData) {
+      console.log(`�� [CONTACT_TRACKING] Found existing contact:`, {
+        contact_id: contactData.contact_id,
+        contact_name: contactData.contact_name,
+        name: contactData.name,
+        phone: contactData.phone,
+        company_id: contactData.company_id
+      });
+    } else {
+      console.log(`�� [CONTACT_TRACKING] No existing contact found for phone: ${extractedNumber}, company: ${idSubstring}`);
+    }
+    
     let stopTag = contactData?.tags || [];
     const contact = await chat.getContact();
 
@@ -3466,11 +3577,16 @@ async function processMessage(
     // Get or create thread ID
     if (contactData?.threadid) {
       threadID = contactData.threadid;
+      console.log(`�� [CONTACT_TRACKING] Using existing thread ID: ${threadID}`);
     } else {
       const thread = await createThread();
       threadID = thread.id;
+      console.log(`�� [CONTACT_TRACKING] Created new thread ID: ${threadID}`);
+      
+      const contactIDForThread = contactData?.contact_id || extractedNumber;
+      console.log(`�� [CONTACT_TRACKING] Saving thread ID for contact: ${contactIDForThread}`);
       await saveThreadIDPostgres(
-        contactData?.contact_id || extractedNumber,
+        contactIDForThread,
         threadID,
         idSubstring
       );
@@ -3622,6 +3738,279 @@ async function processMessage(
   } catch (e) {
     console.error("Error:", e.message);
     return e.message;
+  }
+}
+
+// Enhanced getContactDataFromDatabaseByPhone function
+async function getContactDataFromDatabaseByPhone(phoneNumber, idSubstring) {
+  const sqlClient = await pool.connect();
+
+  try {
+    if (!phoneNumber) {
+      throw new Error("Phone number is undefined or null");
+    }
+
+    console.log(`�� [CONTACT_TRACKING] Searching for contact - Phone: ${phoneNumber}, Company: ${idSubstring}`);
+
+    await sqlClient.query("BEGIN");
+
+    const query = `
+      SELECT * FROM public.contacts
+      WHERE phone = $1 AND company_id = $2
+      LIMIT 1
+    `;
+
+    const result = await sqlClient.query(query, [phoneNumber, idSubstring]);
+
+    await sqlClient.query("COMMIT");
+
+    if (result.rows.length === 0) {
+      console.log(`�� [CONTACT_TRACKING] No contact found for phone: ${phoneNumber}, company: ${idSubstring}`);
+      return null;
+    } else {
+      const contactData = result.rows[0];
+      const contactName = contactData.contact_name || contactData.name;
+      const threadID = contactData.thread_id;
+
+      console.log(`�� [CONTACT_TRACKING] Found contact:`, {
+        contact_id: contactData.contact_id,
+        contact_name: contactData.contact_name,
+        name: contactData.name,
+        phone: contactData.phone,
+        company_id: contactData.company_id,
+        thread_id: threadID
+      });
+
+      return {
+        ...contactData,
+        contactName,
+        threadID,
+      };
+    }
+  } catch (error) {
+    await sqlClient.query("ROLLBACK");
+    console.error("Error fetching contact data:", error);
+    throw error;
+  } finally {
+    sqlClient.release();
+  }
+}
+
+// Enhanced addMessageToPostgres function
+async function addMessageToPostgres(msg, idSubstring, extractedNumber, contactName) {
+  console.log(`�� [CONTACT_TRACKING] Adding message to PostgreSQL`);
+  console.log(`�� [CONTACT_TRACKING] idSubstring: ${idSubstring}`);
+  console.log(`�� [CONTACT_TRACKING] extractedNumber: ${extractedNumber}`);
+  console.log(`�� [CONTACT_TRACKING] contactName: ${contactName}`);
+
+  if (!extractedNumber || !extractedNumber.startsWith("+60") && !extractedNumber.startsWith("+65")) {
+    console.error("Invalid extractedNumber for database:", extractedNumber);
+    return;
+  }
+
+  if (!idSubstring) {
+    console.error("Invalid idSubstring for database");
+    return;
+  }
+
+  const contactID = idSubstring + "-" + (extractedNumber.startsWith("+") ? extractedNumber.slice(1) : extractedNumber);
+  console.log(`�� [CONTACT_TRACKING] Generated contactID: ${contactID}`);
+
+  const basicInfo = await extractBasicMessageInfo(msg);
+  const messageData = await prepareMessageData(msg, idSubstring, null);
+
+  let messageBody = messageData.text?.body || "";
+
+  if (msg.hasMedia && (msg.type === "audio" || msg.type === "ptt")) {
+    console.log("Voice message detected during saving to NeonDB");
+    const media = await msg.downloadMedia();
+    const transcription = await transcribeAudio(media.data);
+
+    if (transcription && transcription !== "Audio transcription failed. Please try again.") {
+      messageBody += transcription;
+    } else {
+      messageBody += "I couldn't transcribe the audio. Could you please type your message instead?";
+    }
+  }
+
+  let mediaUrl = null;
+  let mediaData = null;
+  let mediaMetadata = {};
+
+  if (msg.hasMedia) {
+    if (msg.type === "video") {
+      mediaUrl = messageData.video?.link || null;
+    } else if (msg.type !== "audio" && msg.type !== "ptt") {
+      mediaData = messageData[msg.type]?.data || null;
+      mediaMetadata = {
+        mimetype: messageData[msg.type]?.mimetype,
+        filename: messageData[msg.type]?.filename || "",
+        caption: messageData[msg.type]?.caption || "",
+        thumbnail: messageData[msg.type]?.thumbnail || null,
+        mediaKey: messageData[msg.type]?.media_key || null,
+      };
+
+      if (msg.type === "image") {
+        mediaMetadata.width = messageData.image?.width;
+        mediaMetadata.height = messageData.image?.height;
+      } else if (msg.type === "document") {
+        mediaMetadata.pageCount = messageData.document?.page_count;
+        mediaMetadata.fileSize = messageData.document?.file_size;
+      }
+    }
+  }
+
+  const quotedMessage = messageData.text?.context || null;
+
+  let author = null;
+  if (msg.from.includes("@g.us") && basicInfo.author) {
+    const authorData = await getContactDataFromDatabaseByPhone(basicInfo.author, idSubstring);
+    author = authorData ? authorData.contactName : basicInfo.author;
+  }
+
+  try {
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+
+      // Create/update contact
+      const contactCheckQuery = `
+        SELECT id, contact_id, phone, company_id, name, contact_name FROM public.contacts 
+        WHERE contact_id = $1 AND company_id = $2
+      `;
+      console.log(`�� [CONTACT_TRACKING] Checking for existing contact with contact_id: ${contactID}, company_id: ${idSubstring}`);
+      const contactResult = await client.query(contactCheckQuery, [contactID, idSubstring]);
+
+      if (contactResult.rows.length === 0) {
+        console.log(`�� [CONTACT_TRACKING] ⚠️ CREATING NEW CONTACT: ${contactID} for company: ${idSubstring}`);
+        console.log(`�� [CONTACT_TRACKING] Contact details:`, {
+          contact_id: contactID,
+          company_id: idSubstring,
+          name: contactName || extractedNumber,
+          contact_name: contactName || extractedNumber,
+          phone: extractedNumber
+        });
+        
+        const contactQuery = `
+          INSERT INTO public.contacts (
+            contact_id, company_id, name, contact_name, phone, email,
+            thread_id, profile, points, tags, reaction, reaction_timestamp,
+            last_updated, edited, edited_at, whapi_token, created_at
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+          ON CONFLICT (contact_id, company_id) DO UPDATE
+          SET name = EXCLUDED.name,
+              contact_name = EXCLUDED.contact_name,
+              phone = EXCLUDED.phone,
+              last_updated = EXCLUDED.last_updated
+        `;
+        await client.query(contactQuery, [
+          contactID,
+          idSubstring,
+          contactName || extractedNumber,
+          contactName || extractedNumber,
+          extractedNumber,
+          "",
+          msg.from,
+          {},
+          0,
+          [],
+          null,
+          null,
+          new Date(),
+          false,
+          null,
+          null,
+          new Date(),
+        ]);
+        console.log(`�� [CONTACT_TRACKING] ✅ Contact created successfully: ${contactID}`);
+      } else {
+        const existingContact = contactResult.rows[0];
+        console.log(`�� [CONTACT_TRACKING] ✅ Contact already exists:`, {
+          id: existingContact.id,
+          contact_id: existingContact.contact_id,
+          name: existingContact.name,
+          contact_name: existingContact.contact_name,
+          phone: existingContact.phone,
+          company_id: existingContact.company_id
+        });
+        
+        // Check if name is just the phone number (potential duplicate indicator)
+        if (existingContact.name === extractedNumber || existingContact.name === extractedNumber.slice(1)) {
+          console.log(`�� [CONTACT_TRACKING] ⚠️ WARNING: Contact name is phone number - potential duplicate:`, {
+            contact_id: existingContact.contact_id,
+            name: existingContact.name,
+            phone: existingContact.phone
+          });
+        }
+      }
+
+      // Insert the message
+      const messageQuery = `
+        INSERT INTO public.messages (
+          message_id, company_id, contact_id, thread_id, customer_phone,
+          content, message_type, media_url, timestamp, direction,
+          status, from_me, chat_id, author, quoted_message, media_data, media_metadata
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+        ON CONFLICT (message_id) DO NOTHING
+        RETURNING id
+      `;
+      const messageValues = [
+        basicInfo.idSerialized,
+        idSubstring,
+        contactID,
+        msg.from,
+        extractedNumber,
+        messageBody,
+        basicInfo.type,
+        mediaUrl,
+        new Date(basicInfo.timestamp * 1000),
+        msg.fromMe ? "outbound" : "inbound",
+        "delivered",
+        msg.fromMe || false,
+        msg.from,
+        author || contactID,
+        quotedMessage ? JSON.stringify(quotedMessage) : null,
+        mediaData || null,
+        Object.keys(mediaMetadata).length > 0 ? JSON.stringify(mediaMetadata) : null,
+      ];
+
+      const messageResult = await client.query(messageQuery, messageValues);
+      const messageDbId = messageResult.rows[0]?.id;
+
+      // Update contact's last message
+      await client.query(
+        `UPDATE public.contacts 
+         SET last_message = $1, last_updated = CURRENT_TIMESTAMP
+         WHERE contact_id = $2 AND company_id = $3`,
+        [
+          JSON.stringify({
+            chat_id: msg.to,
+            from: msg.from,
+            from_me: true,
+            id: basicInfo.idSerialized,
+            status: "delivered",
+            text: { body: messageBody },
+            timestamp: Math.floor(Date.now() / 1000),
+            type: basicInfo.type,
+          }),
+          contactID,
+          idSubstring,
+        ]
+      );
+
+      await client.query("COMMIT");
+      console.log(`�� [CONTACT_TRACKING] Message successfully added to PostgreSQL with ID: ${messageDbId}`);
+    } catch (error) {
+      await client.query("ROLLBACK");
+      console.error("Error in PostgreSQL transaction:", error);
+      throw error;
+    } finally {
+      client.release();
+      await addNotificationToUser(idSubstring, messageBody, contactName);
+    }
+  } catch (error) {
+    console.error("PostgreSQL connection error:", error);
+    throw error;
   }
 }
 
@@ -5872,7 +6261,7 @@ async function addContactToPostgres(groupId, groupTitle, idSubstring) {
       `;
 
       const chatData = {
-        contact_id: extractedNumber,
+        contact_id: idSubstring + "-" + (extractedNumber.startsWith("+") ? extractedNumber.slice(1) : extractedNumber),
         id: groupId,
         name: groupTitle,
         not_spam: true,
@@ -5925,7 +6314,7 @@ async function addContactToPostgres(groupId, groupTitle, idSubstring) {
       `;
 
       const chatData = {
-        contact_id: extractedNumber,
+        contact_id: idSubstring + "-" + (extractedNumber.startsWith("+") ? extractedNumber.slice(1) : extractedNumber),
         id: groupId,
         name: groupTitle,
         not_spam: true,
@@ -6018,192 +6407,7 @@ async function listContactsWithTag(idSubstring, tag, limit = 10) {
   }
 }
 
-async function addMessageToPostgres(msg, idSubstring, extractedNumber, contactName) {
-  console.log("Adding message to PostgreSQL");
-  console.log("idSubstring:", idSubstring);
-  console.log("extractedNumber:", extractedNumber);
 
-  if (!extractedNumber || !extractedNumber.startsWith("+60") && !extractedNumber.startsWith("+65")) {
-    console.error("Invalid extractedNumber for database:", extractedNumber);
-    return;
-  }
-
-  if (!idSubstring) {
-    console.error("Invalid idSubstring for database");
-    return;
-  }
-
-  const contactID = idSubstring + "-" + (extractedNumber.startsWith("+") ? extractedNumber.slice(1) : extractedNumber);
-
-  const basicInfo = await extractBasicMessageInfo(msg);
-  const messageData = await prepareMessageData(msg, idSubstring, null);
-
-  let messageBody = messageData.text?.body || "";
-
-  if (msg.hasMedia && (msg.type === "audio" || msg.type === "ptt")) {
-    console.log("Voice message detected during saving to NeonDB");
-    const media = await msg.downloadMedia();
-    const transcription = await transcribeAudio(media.data);
-
-    if (transcription && transcription !== "Audio transcription failed. Please try again.") {
-      messageBody += transcription;
-    } else {
-      messageBody += "I couldn't transcribe the audio. Could you please type your message instead?";
-    }
-  }
-
-  let mediaUrl = null;
-  let mediaData = null;
-  let mediaMetadata = {};
-
-  if (msg.hasMedia) {
-    if (msg.type === "video") {
-      mediaUrl = messageData.video?.link || null;
-    } else if (msg.type !== "audio" && msg.type !== "ptt") {
-      mediaData = messageData[msg.type]?.data || null;
-      mediaMetadata = {
-        mimetype: messageData[msg.type]?.mimetype,
-        filename: messageData[msg.type]?.filename || "",
-        caption: messageData[msg.type]?.caption || "",
-        thumbnail: messageData[msg.type]?.thumbnail || null,
-        mediaKey: messageData[msg.type]?.media_key || null,
-      };
-
-      if (msg.type === "image") {
-        mediaMetadata.width = messageData.image?.width;
-        mediaMetadata.height = messageData.image?.height;
-      } else if (msg.type === "document") {
-        mediaMetadata.pageCount = messageData.document?.page_count;
-        mediaMetadata.fileSize = messageData.document?.file_size;
-      }
-    }
-  }
-
-  const quotedMessage = messageData.text?.context || null;
-
-  let author = null;
-  if (msg.from.includes("@g.us") && basicInfo.author) {
-    const authorData = await getContactDataFromDatabaseByPhone(basicInfo.author, idSubstring);
-    author = authorData ? authorData.contactName : basicInfo.author;
-  }
-
-  try {
-    const client = await pool.connect();
-    try {
-      await client.query("BEGIN");
-
-      // Create/update contact
-      const contactCheckQuery = `
-        SELECT id FROM public.contacts 
-        WHERE contact_id = $1 AND company_id = $2
-      `;
-      const contactResult = await client.query(contactCheckQuery, [contactID, idSubstring]);
-
-      if (contactResult.rows.length === 0) {
-        console.log(`Creating new contact: ${contactID} for company: ${idSubstring}`);
-        const contactQuery = `
-          INSERT INTO public.contacts (
-            contact_id, company_id, name, contact_name, phone, email,
-            thread_id, profile, points, tags, reaction, reaction_timestamp,
-            last_updated, edited, edited_at, whapi_token, created_at
-          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
-          ON CONFLICT (contact_id, company_id) DO UPDATE
-          SET name = EXCLUDED.name,
-              contact_name = EXCLUDED.contact_name,
-              phone = EXCLUDED.phone,
-              last_updated = EXCLUDED.last_updated
-        `;
-        await client.query(contactQuery, [
-          contactID,
-          idSubstring,
-          contactName || extractedNumber,
-          contactName || extractedNumber,
-          extractedNumber,
-          "",
-          msg.from,
-          {},
-          0,
-          [],
-          null,
-          null,
-          new Date(),
-          false,
-          null,
-          null,
-          new Date(),
-        ]);
-        console.log(`Contact created successfully: ${contactID}`);
-      }
-
-      // Insert the message
-      const messageQuery = `
-        INSERT INTO public.messages (
-          message_id, company_id, contact_id, thread_id, customer_phone,
-          content, message_type, media_url, timestamp, direction,
-          status, from_me, chat_id, author, quoted_message, media_data, media_metadata
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
-        ON CONFLICT (message_id) DO NOTHING
-        RETURNING id
-      `;
-      const messageValues = [
-        basicInfo.idSerialized,
-        idSubstring,
-        contactID,
-        msg.from,
-        extractedNumber,
-        messageBody,
-        basicInfo.type,
-        mediaUrl,
-        new Date(basicInfo.timestamp * 1000),
-        msg.fromMe ? "outbound" : "inbound",
-        "delivered",
-        msg.fromMe || false,
-        msg.from,
-        author || contactID,
-        quotedMessage ? JSON.stringify(quotedMessage) : null,
-        mediaData || null,
-        Object.keys(mediaMetadata).length > 0 ? JSON.stringify(mediaMetadata) : null,
-      ];
-
-      const messageResult = await client.query(messageQuery, messageValues);
-      const messageDbId = messageResult.rows[0]?.id;
-
-      // Update contact's last message
-      await client.query(
-        `UPDATE public.contacts 
-         SET last_message = $1, last_updated = CURRENT_TIMESTAMP
-         WHERE contact_id = $2 AND company_id = $3`,
-        [
-          JSON.stringify({
-            chat_id: msg.to,
-            from: msg.from,
-            from_me: true,
-            id: basicInfo.idSerialized,
-            status: "delivered",
-            text: { body: messageBody },
-            timestamp: Math.floor(Date.now() / 1000),
-            type: basicInfo.type,
-          }),
-          contactID,
-          idSubstring,
-        ]
-      );
-
-      await client.query("COMMIT");
-      console.log(`Message successfully added to PostgreSQL with ID: ${messageDbId}`);
-    } catch (error) {
-      await client.query("ROLLBACK");
-      console.error("Error in PostgreSQL transaction:", error);
-      throw error;
-    } finally {
-      client.release();
-      await addNotificationToUser(idSubstring, messageBody, contactName);
-    }
-  } catch (error) {
-    console.error("PostgreSQL connection error:", error);
-    throw error;
-  }
-}
 
 async function extractBasicMessageInfo(msg) {
   return {
@@ -7077,50 +7281,7 @@ async function sendDailyContactReport(client, idSubstring) {
   }
 }
 
-async function getContactDataFromDatabaseByPhone(phoneNumber, idSubstring) {
-  const sqlClient = await pool.connect();
 
-  try {
-    if (!phoneNumber) {
-      throw new Error("Phone number is undefined or null");
-    }
-
-    await sqlClient.query("BEGIN");
-
-    const query = `
-      SELECT * FROM public.contacts
-      WHERE phone = $1 AND company_id = $2
-      LIMIT 1
-    `;
-
-    const result = await sqlClient.query(query, [phoneNumber, idSubstring]);
-
-    await sqlClient.query("COMMIT");
-
-    if (result.rows.length === 0) {
-      console.log(
-        "No matching documents for contact in company." + idSubstring
-      );
-      return null;
-    } else {
-      const contactData = result.rows[0];
-      const contactName = contactData.contact_name || contactData.name;
-      const threadID = contactData.thread_id;
-
-      return {
-        ...contactData,
-        contactName,
-        threadID,
-      };
-    }
-  } catch (error) {
-    await sqlClient.query("ROLLBACK");
-    console.error("Error fetching contact data:", error);
-    throw error;
-  } finally {
-    sqlClient.release();
-  }
-}
 
 async function waitForCompletion(
   threadId,
@@ -9822,13 +9983,16 @@ async function saveThreadIDPostgres(contactID, threadID, idSubstring) {
 
     await sqlClient.query("BEGIN");
 
+    // ✅ FIX: Generate proper contact_id format
+    const properContactID = idSubstring + "-" + (contactID.startsWith("+") ? contactID.slice(1) : contactID);
+
     const checkQuery = `
       SELECT id FROM public.contacts
       WHERE contact_id = $1 AND company_id = $2
     `;
 
     const checkResult = await sqlClient.query(checkQuery, [
-      contactID,
+      properContactID,  // ✅ Use proper format
       idSubstring,
     ]);
 
@@ -9842,14 +10006,14 @@ async function saveThreadIDPostgres(contactID, threadID, idSubstring) {
       `;
 
       await sqlClient.query(insertQuery, [
-        contactID,
+        properContactID,  // ✅ Proper contact_id format
         idSubstring,
         threadID,
-        contactID,
-        contactID,
+        contactID,        // ✅ Use phone number as fallback name
+        contactID,        // ✅ Phone number
       ]);
       console.log(
-        `New contact created with Thread ID in PostgreSQL for contact ${contactID}`
+        `New contact created with Thread ID in PostgreSQL for contact ${properContactID}`
       );
     } else {
       const updateQuery = `
@@ -9858,9 +10022,9 @@ async function saveThreadIDPostgres(contactID, threadID, idSubstring) {
         WHERE contact_id = $2 AND company_id = $3
       `;
 
-      await sqlClient.query(updateQuery, [threadID, contactID, idSubstring]);
+      await sqlClient.query(updateQuery, [threadID, properContactID, idSubstring]);
       console.log(
-        `Thread ID updated in PostgreSQL for existing contact ${contactID}`
+        `Thread ID updated in PostgreSQL for existing contact ${properContactID}`
       );
     }
 

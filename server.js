@@ -48,8 +48,8 @@ require("events").EventEmitter.prototype._maxListeners = 100; // Increase from 7
 require("events").defaultMaxListeners = 100; // Increase from 70
 
 const { neon, neonConfig } = require("@neondatabase/serverless");
-const { Pool } = require("pg");
-
+const { Pool } = require('pg');
+const chatSubscriptions = new Map();
 // Configure Neon for WebSocket pooling
 neonConfig.webSocketConstructor = require("ws");
 
@@ -216,7 +216,22 @@ app.get("/api/bot-status/:companyId", async (req, res) => {
     res.status(500).json({ error: "Failed to get status" });
   }
 });
+function broadcastNewMessageToChat(chatId, message, whapiToken) {
+  if (chatSubscriptions.has(chatId)) {
+    for (const ws of chatSubscriptions.get(chatId)) {
+      if (ws.readyState === ws.OPEN) {
+        ws.send(JSON.stringify({
+          type: 'new_message',
+          chatId,
+          message,
+          whapiToken
+        }));
+      }
+    }
+  }
+}
 
+module.exports = { broadcastNewMessageToChat };
 // Handle WebSocket connections
 wss.on("connection", (ws, req) => {
   // The URL parsing here might be simplified if you only have a single client type
@@ -229,13 +244,27 @@ wss.on("connection", (ws, req) => {
   // Add these two lines to set the properties
   ws.pathname = req.url.startsWith("/status") ? "/status" : "/ws";
   ws.companyId = companyId;
+  ws.subscribedChatId = null;
 
   // Handle messages from client
   ws.on("message", async (message) => {
     try {
       const data = JSON.parse(message);
+           // Handle chat subscription
+           if (data.type === 'subscribe' && data.chatId) {
+            ws.subscribedChatId = data.chatId;
+    
+            if (!chatSubscriptions.has(data.chatId)) {
+              chatSubscriptions.set(data.chatId, new Set());
+            }
+            chatSubscriptions.get(data.chatId).add(ws);
+    
+            ws.send(JSON.stringify({ type: 'subscribed', chatId: data.chatId }));
+            return;
+          }
 
-      if (data.action === "fetch_chats") {
+      if (data.action === 'fetch_chats') {
+
         // Start fetching chats
         const totalChats = await sqlDb.getRow(
           "SELECT COUNT(*) as count FROM contacts WHERE company_id = $1",
@@ -296,7 +325,14 @@ wss.on("connection", (ws, req) => {
     }
   });
 
-  ws.on("close", () => {
+  ws.on('close', () => {
+    // Remove ws from any chat subscriptions
+    if (ws.subscribedChatId && chatSubscriptions.has(ws.subscribedChatId)) {
+      chatSubscriptions.get(ws.subscribedChatId).delete(ws);
+      if (chatSubscriptions.get(ws.subscribedChatId).size === 0) {
+        chatSubscriptions.delete(ws.subscribedChatId);
+      }
+    }
     console.log(`WebSocket closed for ${email}`);
   });
 });
@@ -1553,7 +1589,35 @@ const PRIORITY = {
 
 function toPgTimestamp(firestoreTimestamp) {
   if (!firestoreTimestamp) return null;
-  return new Date(firestoreTimestamp.seconds * 1000 + firestoreTimestamp.nanoseconds / 1000000);
+
+  // If it's already a JS Date
+  if (firestoreTimestamp instanceof Date) return firestoreTimestamp;
+
+  // If it's a string, try to parse it
+  if (typeof firestoreTimestamp === 'string') {
+    const date = new Date(firestoreTimestamp);
+    if (!isNaN(date.getTime())) return date;
+    return null;
+  }
+
+  // If it's a Firestore timestamp object
+  if (
+    typeof firestoreTimestamp === 'object' &&
+    typeof firestoreTimestamp.seconds === 'number' &&
+    typeof firestoreTimestamp.nanoseconds === 'number'
+  ) {
+    return new Date(
+      firestoreTimestamp.seconds * 1000 + firestoreTimestamp.nanoseconds / 1000000
+    );
+  }
+
+  // If it's a number (milliseconds since epoch)
+  if (typeof firestoreTimestamp === 'number') {
+    return new Date(firestoreTimestamp);
+  }
+
+  // Fallback
+  return null;
 }
 
 // POST endpoint to schedule a message
@@ -1599,7 +1663,9 @@ app.post('/api/schedule-message/:companyId', async (req, res) => {
         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, 
           $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28)
       `;
-      
+      console.log('scheduledTime received:', scheduledMessage.scheduledTime);
+const scheduledTime = toPgTimestamp(scheduledMessage.scheduledTime);
+console.log('scheduledTime parsed:', scheduledTime);
       await client.query(mainMessageQuery, [
         messageId,
         messageId,
@@ -1607,7 +1673,7 @@ app.post('/api/schedule-message/:companyId', async (req, res) => {
         scheduledMessage.contactId || null,
         scheduledMessage.message || null,
         scheduledMessage.mediaUrl || null,
-        toPgTimestamp(scheduledMessage.scheduledTime),
+        scheduledTime,
         'scheduled',
         new Date(),
         chatIds[0] || null,
@@ -1644,27 +1710,31 @@ app.post('/api/schedule-message/:companyId', async (req, res) => {
           toPgTimestamp(scheduledMessage.scheduledTime).getTime() + batchDelay
         );
         
-        const batchId = `${messageId}_batch_${batchIndex}`;
+        const batchId = uuidv4(); // generate a valid UUID for each batch
+
         const batchQuery = `
-          INSERT INTO scheduled_messages (
-            id, schedule_id, company_id, scheduled_time, status, created_at,
-            batch_index, chat_ids, phone_index, from_me
-          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-        `;
-        
-        await client.query(batchQuery, [
-          batchId,
-          messageId,
-          companyId,
-          batchScheduledTime,
-          'pending',
-          new Date(),
-          batchIndex,
-          JSON.stringify(chatIds.slice(startIndex, endIndex)),
-          phoneIndex,
-          true
-        ]);
-        
+        INSERT INTO scheduled_messages (
+          id, schedule_id, company_id, scheduled_time, status, created_at,
+          batch_index, chat_ids, phone_index, from_me, message_content, media_url, document_url, file_name, caption
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+      `;
+      await client.query(batchQuery, [
+        batchId,
+        messageId,
+        companyId,
+        batchScheduledTime,
+        'pending',
+        new Date(),
+        batchIndex,
+        JSON.stringify(chatIds.slice(startIndex, endIndex)),
+        phoneIndex,
+        true,
+        scheduledMessage.message || null,
+        scheduledMessage.mediaUrl || null,
+        scheduledMessage.documentUrl || null,
+        scheduledMessage.fileName || null,
+        scheduledMessage.caption || null
+      ]);
         batches.push({ id: batchId, scheduledTime: batchScheduledTime });
       }
       
@@ -1800,7 +1870,8 @@ app.put('/api/schedule-message/:companyId/:messageId', async (req, res) => {
             toPgTimestamp(updatedMessage.scheduledTime).getTime() + batchDelay
           );
           
-          const batchId = `${messageId}_batch_${batchIndex}`;
+          const batchId = uuidv4(); // generate a valid UUID for each batch
+
           const batchQuery = `
             INSERT INTO scheduled_messages (
               id, schedule_id, company_id, scheduled_time, status, created_at,
@@ -2072,78 +2143,67 @@ app.get("/api/search-messages/:companyId", async (req, res) => {
     messageType,
     fromMe,
     page = 1,
-    limit = 50, // Number of results per page
+    limit = 50,
   } = req.query;
 
+  if (!query) {
+    return res.status(400).json({ error: "Search query is required" });
+  }
+
+  // Build SQL WHERE conditions
+  let whereClauses = ["company_id = $1", "content ILIKE $2"];
+  let values = [companyId, `%${query}%`];
+  let idx = 3;
+
+  if (contactId) {
+    whereClauses.push(`contact_id = $${idx++}`);
+    values.push(contactId);
+  }
+  if (dateFrom) {
+    whereClauses.push(`timestamp >= to_timestamp($${idx++})`);
+    values.push(dateFrom);
+  }
+  if (dateTo) {
+    whereClauses.push(`timestamp <= to_timestamp($${idx++})`);
+    values.push(dateTo);
+  }
+  if (messageType) {
+    whereClauses.push(`type = $${idx++}`);
+    values.push(messageType);
+  }
+  if (fromMe !== undefined) {
+    whereClauses.push(`from_me = $${idx++}`);
+    values.push(fromMe === "true");
+  }
+
+  const offset = (page - 1) * limit;
+
+  const whereSQL = whereClauses.length ? "WHERE " + whereClauses.join(" AND ") : "";
+
   try {
-    if (!query) {
-      return res.status(400).json({ error: "Search query is required" });
-    }
+    // Get total count for pagination
+    const countResult = await sqlDb.query(
+      `SELECT COUNT(*) FROM messages ${whereSQL}`,
+      values
+    );
+    const total = parseInt(countResult.rows[0].count, 10);
 
-    const startAt = (page - 1) * limit;
-    const contactsRef = db
-      .collection("companies")
-      .doc(companyId)
-      .collection("contacts");
-
-    // Create a query that uses indexes
-    let messagesQuery;
-
-    if (contactId) {
-      messagesQuery = contactsRef.doc(contactId).collection("messages");
-    } else {
-      // Use collectionGroup to search across all message subcollections
-      messagesQuery = db
-        .collectionGroup("messages")
-        .where("companyId", "==", companyId);
-    }
-
-    // Apply filters using compound indexes
-    if (dateFrom) {
-      messagesQuery = messagesQuery.where(
-        "timestamp",
-        ">=",
-        parseInt(dateFrom)
-      );
-    }
-    if (dateTo) {
-      messagesQuery = messagesQuery.where("timestamp", "<=", parseInt(dateTo));
-    }
-    if (messageType) {
-      messagesQuery = messagesQuery.where("type", "==", messageType);
-    }
-    if (fromMe !== undefined) {
-      messagesQuery = messagesQuery.where("from_me", "==", fromMe === "true");
-    }
-
-    // Use text-based index for searching
-    // Note: You'll need to set up a text index in Firestore
-    messagesQuery = messagesQuery
-      .where("searchableText", ">=", query.toLowerCase())
-      .where("searchableText", "<=", query.toLowerCase() + "\uf8ff")
-      .orderBy("searchableText")
-      .orderBy("timestamp", "desc")
-      .limit(limit)
-      .offset(startAt);
-
-    const snapshot = await messagesQuery.get();
-
-    // Get total count (for pagination)
-    const totalQuery = messagesQuery.count();
-    const [totalSnapshot] = await Promise.all([totalQuery.get()]);
-    const total = totalSnapshot.data().count;
-
-    const results = snapshot.docs.map((doc) => ({
-      id: doc.id,
-      contactId: doc.ref.parent.parent.id,
-      ...doc.data(),
-    }));
+    // Get paginated results
+    const resultsResult = await sqlDb.query(
+      `
+      SELECT * FROM messages
+      ${whereSQL}
+      ORDER BY timestamp DESC
+      LIMIT $${idx++} OFFSET $${idx}
+      `,
+      [...values, limit, offset]
+    );
 
     res.json({
       total,
       page: parseInt(page),
       totalPages: Math.ceil(total / limit),
-      results,
+      results: resultsResult.rows,
     });
   } catch (error) {
     console.error("Error searching messages:", error);
@@ -2309,197 +2369,93 @@ async function searchContactMessages(
 }
 const MAX_RETRIES = 3;
 async function syncContacts(client, companyId, phoneIndex = 0) {
-  // TODO: Remove this limit when ready for production
-  const CHAT_LIMIT = 10; // Set to null to process all chats
-
   try {
     const chats = await client.getChats();
-    const totalChats = CHAT_LIMIT
-      ? Math.min(chats.length, CHAT_LIMIT)
-      : chats.length;
-    let processedChats = 0;
-    let failedChats = [];
-
     console.log(
-      `Found ${chats.length} chats for company ${companyId}, phone ${phoneIndex}. Processing ${totalChats} chats.`
+      `Found ${chats.length} chats for company ${companyId}, phone ${phoneIndex}. Processing all chats.`
     );
 
-    // Process chats sequentially
-    for (let i = 0; i < totalChats; i++) {
-      const chat = chats[i];
-      let success = false;
-      let retries = 0;
+    for (const chat of chats) {
+      try {
+        const contact = await chat.getContact();
+        const contactPhone = contact.id.user;
+        const contactID = `${companyId}-${contactPhone}`;
 
-      while (!success && retries < MAX_RETRIES) {
-        try {
-          const contact = await chat.getContact();
+        const profilePicUrl = await contact.getProfilePicUrl();
 
-          // Format contact data for SQL
-          const contactData = {
-            contact_id: contact.id.user,
-            company_id: companyId,
-            name: contact.name || contact.pushname || "",
-            contact_name: contact.name || contact.pushname || "",
-            phone: contact.id.user,
-            email: contact.email || "",
-            thread_id: chat.id._serialized,
-            profile: contact.profile || {},
-            points: 0,
-            tags: [],
-            reaction: null,
-            reaction_timestamp: null,
-            last_updated: new Date(),
-            edited: false,
-            edited_at: null,
-            whapi_token: null,
-            created_at: new Date(),
-          };
+        // Upsert contact
+        const contactQuery = `
+          INSERT INTO public.contacts (
+            contact_id, company_id, name, phone, tags, unread_count, created_at, last_updated, 
+            chat_data, company, thread_id, last_message, profile_pic_url
+          ) VALUES ($1, $2, $3, $4, '[]'::jsonb, $5, NOW(), NOW(), $6, $7, $8, '{}'::jsonb, $9)
+          ON CONFLICT (contact_id, company_id) DO UPDATE SET
+            name = EXCLUDED.name,
+            last_updated = NOW(),
+            profile_pic_url = EXCLUDED.profile_pic_url,
+            unread_count = EXCLUDED.unread_count;
+        `;
+        await sqlDb.query(contactQuery, [
+          contactID,
+          companyId,
+          contact.name || contact.pushname || contact.shortName || contactPhone,
+          contactPhone,
+          chat.unreadCount,
+          JSON.stringify(chat),
+          contact.name,
+          chat.id._serialized,
+          profilePicUrl,
+        ]);
 
-          // Save contact to SQL database
-          const savedContact = await sqlDb.query(
-            `INSERT INTO contacts (
-              contact_id, company_id, name, contact_name, phone, email, 
-              thread_id, profile, points, tags, reaction, reaction_timestamp,
-              last_updated, edited, edited_at, whapi_token, created_at
-            )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
-            ON CONFLICT (contact_id, company_id) DO UPDATE
-            SET name = EXCLUDED.name,
-                contact_name = EXCLUDED.contact_name,
-                phone = EXCLUDED.phone,
-                email = EXCLUDED.email,
-                thread_id = EXCLUDED.thread_id,
-                profile = EXCLUDED.profile,
-                tags = EXCLUDED.tags,
-                last_updated = EXCLUDED.last_updated
-            RETURNING *`,
-            [
-              contactData.contact_id,
-              contactData.company_id,
-              contactData.name,
-              contactData.contact_name,
-              contactData.phone,
-              contactData.email,
-              contactData.thread_id,
-              contactData.profile,
-              contactData.points,
-              contactData.tags,
-              contactData.reaction,
-              contactData.reaction_timestamp,
-              contactData.last_updated,
-              contactData.edited,
-              contactData.edited_at,
-              contactData.whapi_token,
-              contactData.created_at,
-            ]
-          );
+        // Fetch and insert messages
+        const messages = await chat.fetchMessages({ limit: 10 }); // Adjust limit as needed
 
-          // Sync messages for this contact
-          const messages = await chat.fetchMessages({ limit: 10 });
-          for (const message of messages) {
-            try {
-              const messageData = {
-                message_id: message.id._serialized,
-                company_id: companyId,
-                contact_id: contact.id.user,
-                thread_id: chat.id._serialized,
-                customer_phone: contact.id.user,
-                content: message.body || "",
-                message_type: message.type,
-                media_url: message.hasMedia ? message.downloadMedia() : null,
-                timestamp: new Date(message.timestamp * 1000),
-                direction: message.fromMe ? "outbound" : "inbound",
-                status: "delivered",
-                from_me: message.fromMe,
-                chat_id: chat.id._serialized,
-                author: message.author || contact.id.user,
-              };
+        for (const msg of messages) {
+          const messageQuery = `
+            INSERT INTO public.messages (
+              message_id, company_id, contact_id, thread_id, customer_phone, content, 
+              message_type, media_url, timestamp, direction, status, from_me, chat_id, author
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+            ON CONFLICT (message_id) DO NOTHING;
+          `;
 
-              await sqlDb.query(
-                `INSERT INTO messages (
-                  message_id, company_id, contact_id, thread_id, customer_phone,
-                  content, message_type, media_url, timestamp, direction,
-                  status, from_me, chat_id, author
-                )
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
-                ON CONFLICT (message_id) DO NOTHING`,
-                [
-                  messageData.message_id,
-                  messageData.company_id,
-                  messageData.contact_id,
-                  messageData.thread_id,
-                  messageData.customer_phone,
-                  messageData.content,
-                  messageData.message_type,
-                  messageData.media_url,
-                  messageData.timestamp,
-                  messageData.direction,
-                  messageData.status,
-                  messageData.from_me,
-                  messageData.chat_id,
-                  messageData.author,
-                ]
-              );
-            } catch (error) {
-              console.error(
-                `Error saving message ${message.id._serialized}:`,
-                error
-              );
-            }
+          let mediaUrl = null;
+          if (msg.hasMedia) {
+            // Media download can be time-consuming; consider handling this differently
+            // const media = await msg.downloadMedia(); 
+            // mediaUrl = media.filename; // Or some other identifier
           }
 
-          success = true;
-          processedChats++;
-
-          // Add a small delay between each chat
-          await new Promise((resolve) => setTimeout(resolve, 500));
-        } catch (error) {
-          retries++;
-          console.error(`Error processing chat (attempt ${retries}):`, error);
-
-          if (retries === MAX_RETRIES) {
-            console.error(
-              `Failed to process chat after ${MAX_RETRIES} attempts`
-            );
-            failedChats.push(chat);
-          } else {
-            // Small delay before retry
-            await new Promise((resolve) => setTimeout(resolve, 1000));
-          }
+          await sqlDb.query(messageQuery, [
+            msg.id._serialized,
+            companyId,
+            contactID,
+            chat.id._serialized,
+            contactPhone,
+            msg.body || "",
+            msg.type,
+            mediaUrl,
+            new Date(msg.timestamp * 1000),
+            msg.fromMe ? "outbound" : "inbound",
+            "delivered",
+            msg.fromMe,
+            chat.id._serialized,
+            msg.author || contactID,
+          ]);
         }
-      }
-
-      // Log progress at regular intervals
-      if (processedChats % 10 === 0 || processedChats === totalChats) {
-        console.log(
-          `Processed ${processedChats} out of ${totalChats} chats for company ${companyId}, phone ${phoneIndex}`
-        );
-        if (failedChats.length > 0) {
-          console.log(`Failed chats so far: ${failedChats.length}`);
-        }
+      } catch (error) {
+        console.error(`Error processing chat ${chat.id._serialized}:`, error);
       }
     }
 
-    const successfulChats = totalChats - failedChats.length;
     console.log(
-      `Finished syncing contacts and messages for company ${companyId}, phone ${phoneIndex}`
+      `Finished syncing contacts for company ${companyId}, phone ${phoneIndex}`
     );
-    console.log(
-      `Successfully processed: ${successfulChats}/${totalChats} chats`
-    );
-
-    return {
-      success: true,
-      processedChats: successfulChats,
-      failedChats: failedChats.length,
-      totalChats,
-    };
   } catch (error) {
     console.error(
-      `Error syncing contacts and messages for company ${companyId}, phone ${phoneIndex}:`,
+      `Error syncing contacts for company ${companyId}, phone ${phoneIndex}:`,
       error
     );
-    throw error;
   }
 }
 
@@ -2756,15 +2712,14 @@ const createQueueAndWorker = (botId) => {
                 'UPDATE scheduled_messages SET status = $1, sent_at = NOW() WHERE id = $2',
                 ['sent', batchId]
               );
-
               const batchesCheckQuery = `
-                SELECT COUNT(*) as pending_count 
-                FROM scheduled_messages 
-                WHERE schedule_id = $1 
-                AND company_id = $2 
-                AND status != 'sent'
-                AND id != schedule_id  // Exclude the main message
-              `;
+              SELECT COUNT(*) as pending_count 
+              FROM scheduled_messages 
+              WHERE schedule_id = $1 
+              AND company_id = $2 
+              AND status != 'sent'
+              AND id::text != schedule_id::text
+            `;
               const batchesCheck = await client.query(batchesCheckQuery, [messageId, companyId]);
 
               if (batchesCheck.rows[0].pending_count === 0) {
@@ -2821,21 +2776,31 @@ const createQueueAndWorker = (botId) => {
 
   worker.on('completed', async (job) => {
     console.log(`Bot ${botId} - Job ${job.id} completed successfully`);
-
+  
     if (job.name === 'send-message-batch' && job.data.companyId && job.data.batchId) {
       try {
         const client = await pool.connect();
         try {
           const batchQuery = `
-            SELECT messages FROM scheduled_messages 
+            SELECT chat_ids FROM scheduled_messages 
             WHERE id = $1 AND company_id = $2
           `;
           const batchResult = await client.query(batchQuery, [job.data.batchId, job.data.companyId]);
-
-          if (batchResult.rowCount > 0 && batchResult.rows[0].messages) {
-            const messages = JSON.parse(batchResult.rows[0].messages);
-            if (messages.length > 0) {
-              const chatId = `${job.data.companyId}_${messages[0].chatId}`;
+          
+          if (batchResult.rowCount > 0 && batchResult.rows[0].chat_ids) {
+            let chatIds;
+            const chatIdsData = batchResult.rows[0].chat_ids;
+            
+            try {
+              // Try to parse as JSON array first
+              chatIds = JSON.parse(chatIdsData);
+            } catch (parseError) {
+              // If parsing fails, treat it as a single string
+              chatIds = [chatIdsData];
+            }
+            
+            if (chatIds.length > 0) {
+              const chatId = chatIds[0];
               if (processingChatIds.has(chatId)) {
                 processingChatIds.delete(chatId);
                 console.log(`Bot ${botId} - Released chatId ${chatId} after processing`);
@@ -2849,7 +2814,7 @@ const createQueueAndWorker = (botId) => {
         console.error(`Bot ${botId} - Error releasing chatId:`, error);
       }
     }
-
+  
     await job.updateProgress(100);
     await job.updateData({
       ...job.data,
@@ -2921,11 +2886,30 @@ async function sendScheduledMessage(message) {
       throw new Error(`No active WhatsApp client found for phone index: ${message.phone_index}`);
     }
 
-    if (message.v2 === true) {
+    if (message) {
       console.log(`\n=== [Company ${companyId}] Processing V2 Message ===`);
 
       let messages = [];
-      const chatIds = message.chat_ids ? JSON.parse(message.chat_ids) : [];
+      let chatIds = [];
+      if (message.chat_ids) {
+        if (Array.isArray(message.chat_ids)) {
+          chatIds = message.chat_ids;
+        } else if (typeof message.chat_ids === 'string') {
+          try {
+            // Try to parse as JSON array
+            chatIds = JSON.parse(message.chat_ids);
+            if (typeof chatIds === 'string') {
+              chatIds = [chatIds];
+            }
+          } catch (e) {
+            // If parsing fails, treat as single string
+            chatIds = [message.chat_ids];
+          }
+        } else {
+          // Fallback: wrap in array
+          chatIds = [message.chat_ids];
+        }
+      }
       
       if (!message.messages || JSON.parse(message.messages).length === 0) {
         messages = chatIds.map(chatId => ({
@@ -3219,24 +3203,24 @@ async function scheduleAllMessages() {
       const companyId = companyRow.company_id;
       const queue = getQueueForBot(companyId);
       
-      const messagesQuery = `
-        SELECT * FROM scheduled_messages 
-        WHERE company_id = $1 
-        AND status != 'completed'
-        AND id = schedule_id  // This ensures we only get main messages, not batches
-      `;
+    const messagesQuery = `
+  SELECT * FROM scheduled_messages
+  WHERE company_id = $1
+  AND status != 'sent'
+  AND id::text = schedule_id::text
+`;
       const messagesResult = await client.query(messagesQuery, [companyId]);
 
       for (const message of messagesResult.rows) {
         const messageId = message.id;
 
         const batchesQuery = `
-          SELECT * FROM scheduled_messages 
-          WHERE company_id = $1 
-          AND schedule_id = $2
-          AND status != 'sent'
-          AND id != schedule_id  // This ensures we only get batches, not the main message
-        `;
+        SELECT * FROM scheduled_messages 
+        WHERE company_id = $1 
+        AND schedule_id = $2
+        AND status != 'sent'
+        AND id::text != schedule_id::text
+      `;
         const batchesResult = await client.query(batchesQuery, [companyId, messageId]);
 
         for (const batch of batchesResult.rows) {
@@ -3326,10 +3310,10 @@ function setupMessageCreateHandler(client, botName, phoneIndex) {
         let contactResult;
         try {
           contactResult = await sqlDb.query(
-            `INSERT INTO contacts (contact_id, phone, company_id, last_updated)
-             VALUES ($1, $2, $3, CURRENT_TIMESTAMP)
+            `INSERT INTO contacts (contact_id, phone, company_id, name, last_updated)
+             VALUES ($1, $2, $3, $4, CURRENT_TIMESTAMP)
              RETURNING *`,
-            [contactID, phoneNumber, companyId]
+            [contactID, phoneNumber, companyId, phoneNumber] // Use phoneNumber as fallback name
           );
         } catch (err) {
           if (err.code === "23505") {
@@ -3479,171 +3463,83 @@ async function addMessageToPostgres(
   console.log("idSubstring:", idSubstring);
   console.log("extractedNumber:", extractedNumber);
 
-  if (!extractedNumber || !(extractedNumber.startsWith("+60") || extractedNumber.startsWith("+65"))) {
-    console.error("Invalid extractedNumber for database:", extractedNumber);
-    return;
-  }
-
-  if (!idSubstring) {
-    console.error("Invalid idSubstring for database");
-    return;
-  }
-
-  const contactID = idSubstring + "-" + 
-    (extractedNumber.startsWith("+") ? extractedNumber.slice(1) : extractedNumber);
-
-  const basicInfo = await extractBasicMessageInfo(msg);
-  const messageData = await prepareMessageData(msg, idSubstring, phoneIndex);
-
-  let messageBody = messageData.text?.body || "";
-  if (msg.hasMedia && (msg.type === "audio" || msg.type === "ptt")) {
-    console.log("Voice message detected during saving to NeonDB");
-    const media = await msg.downloadMedia();
-    const transcription = await transcribeAudio(media.data);
-
-    if (transcription && transcription !== "Audio transcription failed. Please try again.") {
-      messageBody += transcription;
-    } else {
-      messageBody += "I couldn't transcribe the audio. Could you please type your message instead?";
-    }
-  }
-
-  // Prepare media data
-  let mediaUrl = null;
-  let mediaData = null;
-  let mediaMetadata = {};
-
-  if (msg.hasMedia) {
-    if (msg.type === "video") {
-      mediaUrl = messageData.video?.link || null;
-    } else if (msg.type !== "audio" && msg.type !== "ptt") {
-      const mediaTypeData = messageData[msg.type];
-      if (mediaTypeData) {
-        mediaData = mediaTypeData.data || null;
-        mediaMetadata = {
-          mimetype: mediaTypeData.mimetype,
-          filename: mediaTypeData.filename || "",
-          caption: mediaTypeData.caption || "",
-          thumbnail: mediaTypeData.thumbnail || null,
-          mediaKey: mediaTypeData.media_key || null,
-          ...(msg.type === "image" && {
-            width: mediaTypeData.width,
-            height: mediaTypeData.height
-          }),
-          ...(msg.type === "document" && {
-            pageCount: mediaTypeData.page_count,
-            fileSize: mediaTypeData.file_size
-          })
-        };
-      }
-    }
-  }
-
-  const quotedMessage = messageData.text?.context || null;
-
-  let author = userName;
-  if (!author && msg.from.includes("@g.us") && basicInfo.author) {
-    const authorData = await getContactDataFromDatabaseByPhone(basicInfo.author, idSubstring);
-    author = authorData ? authorData.contactName : basicInfo.author;
-  }
-
   try {
-    const client = await pool.connect();
-    try {
-      await client.query("BEGIN");
+    await sqlDb.query("BEGIN");
 
-      const contactCheckQuery = `
-        SELECT id FROM public.contacts 
-        WHERE contact_id = $1 AND company_id = $2
-      `;
-      const contactResult = await client.query(contactCheckQuery, [contactID, idSubstring]);
+    const contactID = `${idSubstring}-${extractedNumber.replace("+", "")}`;
+    const chatId = msg.fromMe ? msg.to : msg.from;
 
-      if (contactResult.rows.length === 0) {
-        console.log(`Creating new contact: ${contactID} for company: ${idSubstring}`);
-        const contactQuery = `
-          INSERT INTO public.contacts (
-            contact_id, company_id, name, contact_name, phone, email,
-            thread_id, profile, points, tags, reaction, reaction_timestamp,
-            last_updated, edited, edited_at, whapi_token, created_at
-          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
-          ON CONFLICT (contact_id, company_id) DO UPDATE
-          SET name = EXCLUDED.name,
-              contact_name = EXCLUDED.contact_name,
-              phone = EXCLUDED.phone,
-              last_updated = EXCLUDED.last_updated
-        `;
-        await client.query(contactQuery, [
-          contactID,
-          idSubstring,
-          extractedNumber,
-          extractedNumber,
-          extractedNumber,
-          "",
-          msg.from,
-          {},
-          0,
-          [],
-          null,
-          null,
-          new Date(),
-          false,
-          null,
-          null,
-          new Date(),
-        ]);
-        console.log(`Contact created successfully: ${contactID}`);
-      }
-
-      // Insert message
-      const messageQuery = `
+    // Insert message
+    const messageQuery = `
         INSERT INTO public.messages (
           message_id, company_id, contact_id, content, message_type,
-          media_url, media_data, media_metadata, timestamp, direction,
-          status, from_me, chat_id, author, phone_index, quoted_message,
+          media_url, timestamp, direction,
+          status, from_me, chat_id, author, phone_index,
           thread_id, customer_phone
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+        ON CONFLICT (message_id) DO NOTHING
         RETURNING id
       `;
-      const messageValues = [
-        basicInfo.idSerialized,
-        idSubstring,
-        contactID,
-        messageBody,
-        basicInfo.type,
-        mediaUrl,
-        mediaData,
-        Object.keys(mediaMetadata).length > 0 ? JSON.stringify(mediaMetadata) : null,
-        new Date(basicInfo.timestamp * 1000),
-        msg.fromMe ? "outbound" : "inbound",
-        "delivered",
-        msg.fromMe || false,
-        msg.from,
-        author || contactID,
-        phoneIndex,
-        quotedMessage ? JSON.stringify(quotedMessage) : null,
-        msg.to,
-        extractedNumber
-      ];
+    const messageValues = [
+      msg.id._serialized,
+      idSubstring,
+      contactID,
+      msg.body || "",
+      msg.type,
+      null, // mediaUrl
+      new Date(msg.timestamp * 1000),
+      msg.fromMe ? "outbound" : "inbound",
+      "delivered",
+      msg.fromMe || false,
+      chatId,
+      userName || contactID,
+      phoneIndex,
+      chatId,
+      extractedNumber,
+    ];
 
-      const messageResult = await client.query(messageQuery, messageValues);
+    const messageResult = await sqlDb.query(messageQuery, messageValues);
+
+    if (messageResult.rows.length > 0) {
       const messageDbId = messageResult.rows[0].id;
+      await sqlDb.query("COMMIT");
+      console.log(
+        `Message successfully added to PostgreSQL with ID: ${messageDbId}`
+      );
 
-      await client.query("COMMIT");
-      console.log(`Message successfully added to PostgreSQL with ID: ${messageDbId}`);
-      return { messageDbId, type: basicInfo.type };
-    } catch (error) {
-      await client.query("ROLLBACK");
-      console.error("Error in PostgreSQL transaction:", error);
-      throw error;
-    } finally {
-      client.release();
-      await addNotificationToUser(idSubstring, messageBody, contactName);
+      // Fetch the full message data and broadcast it
+      const res = await sqlDb.query(
+        `SELECT m.*, c.name as contact_name 
+         FROM messages m
+         LEFT JOIN contacts c ON m.contact_id = c.contact_id AND m.company_id = c.company_id
+         WHERE m.id = $1`,
+        [messageDbId]
+      );
+      const fullMessageData = res.rows[0];
+
+      if (fullMessageData) {
+        broadcastNewMessageToChat(fullMessageData.contact_id, msg.body);
+      }
+
+      return { messageDbId, type: msg.type, inserted: true };
+    } else {
+      await sqlDb.query("COMMIT");
+      console.log(
+        `Message ${msg.id._serialized} already exists. Skipping insert.`
+      );
+      return { messageDbId: null, type: msg.type, inserted: false };
     }
   } catch (error) {
-    console.error("PostgreSQL connection error:", error);
+    await sqlDb.query("ROLLBACK");
+    console.error("Error in PostgreSQL transaction:", error);
     throw error;
   }
 }
+
+
+
+
+
 
 async function extractBasicMessageInfo(msg) {
   return {
@@ -4269,6 +4165,77 @@ app.post("/api/login", async (req, res) => {
     res.status(500).json({ error: "Internal server error" });
   }
 });
+// List all tags for a company
+app.get("/api/companies/:companyId/tags", async (req, res) => {
+  const { companyId } = req.params;
+  try {
+    const result = await sqlDb.query(
+      "SELECT id, name FROM company_tags WHERE company_id = $1 ORDER BY name ASC",
+      [companyId]
+    );
+    res.json(result.rows);
+  } catch (error) {
+    console.error("Error fetching tags:", error);
+    res.status(500).json({ error: "Failed to fetch tags" });
+  }
+});
+
+// Add a new tag for a company
+app.post("/api/companies/:companyId/tags", async (req, res) => {
+  const { companyId } = req.params;
+  const { name } = req.body;
+  if (!name) return res.status(400).json({ error: "Tag name is required" });
+  try {
+    const result = await sqlDb.query(
+      "INSERT INTO company_tags (company_id, name) VALUES ($1, $2) RETURNING id, name",
+      [companyId, name]
+    );
+    res.json(result.rows[0]);
+  } catch (error) {
+    if (error.code === '23505') { // unique_violation
+      return res.status(409).json({ error: "Tag already exists" });
+    }
+    console.error("Error adding tag:", error);
+    res.status(500).json({ error: "Failed to add tag" });
+  }
+});
+
+// Update a tag's name
+app.put("/api/companies/:companyId/tags/:tagId", async (req, res) => {
+  const { companyId, tagId } = req.params;
+  const { name } = req.body;
+  if (!name) return res.status(400).json({ error: "Tag name is required" });
+  try {
+    const result = await sqlDb.query(
+      "UPDATE company_tags SET name = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2 AND company_id = $3 RETURNING id, name",
+      [name, tagId, companyId]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: "Tag not found" });
+    res.json(result.rows[0]);
+  } catch (error) {
+    if (error.code === '23505') { // unique_violation
+      return res.status(409).json({ error: "Tag already exists" });
+    }
+    console.error("Error updating tag:", error);
+    res.status(500).json({ error: "Failed to update tag" });
+  }
+});
+
+// Delete a tag
+app.delete("/api/companies/:companyId/tags/:tagId", async (req, res) => {
+  const { companyId, tagId } = req.params;
+  try {
+    const result = await sqlDb.query(
+      "DELETE FROM company_tags WHERE id = $1 AND company_id = $2 RETURNING id",
+      [tagId, companyId]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: "Tag not found" });
+    res.json({ success: true });
+  } catch (error) {
+    console.error("Error deleting tag:", error);
+    res.status(500).json({ error: "Failed to delete tag" });
+  }
+});
 // Get user config
 app.get("/api/user/config", async (req, res) => {
   try {
@@ -4342,6 +4309,10 @@ app.get("/api/companies/:companyId/replies", async (req, res) => {
     res.status(500).json({ error: "Internal server error" });
   }
 });
+async function obiliterateAllJobs() {
+  await messageQueue.obliterate({ force: true });
+  console.log("Queue cleared successfully");
+}
 async function main(reinitialize = false) {
   console.log("Initialization starting...");
 
@@ -4675,7 +4646,7 @@ async function checkAndScheduleDailyReport() {
 
             console.log(`[${companyId}] Daily report scheduled successfully`);
           } else {
-            console.log(`[${companyId}] Daily reporting not enabled, skipping`);
+            //console.log(`[${companyId}] Daily reporting not enabled, skipping`);
           }
         } catch (companyError) {
           console.error(
@@ -4833,11 +4804,60 @@ async function getAllPhoneStatusesSql(companyId) {
 app.get("/api/phone-status/:companyId", async (req, res) => {
   try {
     const { companyId } = req.params;
-    const phoneStatuses = await getAllPhoneStatusesSql(companyId);
-    res.json(phoneStatuses);
+    const result = await sqlDb.query(
+      "SELECT phone_number, status, last_seen, metadata, updated_at FROM phone_status WHERE company_id = $1 ORDER BY phone_number ASC",
+      [companyId]
+    );
+    res.json(result.rows);
   } catch (error) {
     console.error("Error fetching phone statuses:", error);
     res.status(500).json({ error: "Failed to fetch phone statuses" });
+  }
+});
+app.get("/api/instruction-templates", async (req, res) => {
+  try {
+    const { companyId } = req.query;
+    if (!companyId) {
+      return res.status(400).json({ success: false, message: "Missing companyId" });
+    }
+
+    const result = await sqlDb.query(
+      `SELECT id, name, instructions, created_at FROM instruction_templates WHERE company_id = $1 ORDER BY created_at DESC`,
+      [companyId]
+    );
+
+    res.json({
+      success: true,
+      templates: result.rows
+    });
+  } catch (error) {
+    console.error("Error fetching instruction templates:", error);
+    res.status(500).json({ success: false, message: "Failed to fetch templates", details: error.message });
+  }
+});
+app.post("/api/instruction-templates", async (req, res) => {
+  try {
+    const { companyId, name, instructions } = req.body;
+
+    if (!companyId || !name || !instructions) {
+      return res.status(400).json({ success: false, message: "Missing required fields (companyId, name, instructions)" });
+    }
+
+    const result = await sqlDb.query(
+      `INSERT INTO instruction_templates (company_id, name, instructions)
+       VALUES ($1, $2, $3)
+       RETURNING id`,
+      [companyId, name, instructions]
+    );
+
+    res.json({
+      success: true,
+      id: result.rows[0].id,
+      message: "Template saved successfully"
+    });
+  } catch (error) {
+    console.error("Error saving instruction template:", error);
+    res.status(500).json({ success: false, message: "Failed to save template", details: error.message });
   }
 });
 // ... existing code ...
@@ -5203,6 +5223,338 @@ app.get(
     }
   }
 );
+app.delete("/api/contacts/:contact_id", async (req, res) => {
+  try {
+    const { contact_id } = req.params;
+    const { companyId } = req.query;
+
+    if (!companyId || !contact_id) {
+      return res.status(400).json({ success: false, message: "Missing required fields (companyId, contact_id)" });
+    }
+
+    // Optionally: Delete associated data (e.g., scheduled messages) here if needed
+
+    // Delete the contact
+    const result = await sqlDb.query(
+      `DELETE FROM contacts WHERE contact_id = $1 AND company_id = $2 RETURNING contact_id`,
+      [contact_id, companyId]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ success: false, message: "Contact not found" });
+    }
+
+    res.json({
+      success: true,
+      contact_id: result.rows[0].contact_id,
+      message: "Contact deleted successfully"
+    });
+  } catch (error) {
+    console.error("Error deleting contact:", error);
+    res.status(500).json({ success: false, message: "Failed to delete contact", details: error.message });
+  }
+});
+app.delete("/api/schedule-message/:companyId/contact/:contactId", async (req, res) => {
+  try {
+    const { companyId, contactId } = req.params;
+
+    if (!companyId || !contactId) {
+      return res.status(400).json({ success: false, message: "Missing required fields (companyId, contactId)" });
+    }
+
+    // Delete scheduled messages for this contact in this company
+    const result = await sqlDb.query(
+      `DELETE FROM scheduled_messages WHERE company_id = $1 AND contact_id = $2 RETURNING id`,
+      [companyId, contactId]
+    );
+
+    res.json({
+      success: true,
+      deletedCount: result.rowCount,
+      message: `Deleted ${result.rowCount} scheduled message(s) for contact`
+    });
+  } catch (error) {
+    console.error("Error deleting scheduled messages for contact:", error);
+    res.status(500).json({ success: false, message: "Failed to delete scheduled messages", details: error.message });
+  }
+});
+app.post("/api/contacts/bulk", async (req, res) => {
+  try {
+    const { contacts } = req.body;
+    if (!Array.isArray(contacts) || contacts.length === 0) {
+      return res.status(400).json({ success: false, message: "No contacts provided" });
+    }
+
+    // Prepare the SQL for bulk upsert
+    const values = [];
+    const placeholders = [];
+    let idx = 1;
+
+    for (const contact of contacts) {
+      placeholders.push(
+        `($${idx++}, $${idx++}, $${idx++}, $${idx++}, $${idx++}, $${idx++}, $${idx++}, $${idx++}, $${idx++}, $${idx++}, $${idx++}, $${idx++}, $${idx++}, $${idx++}, $${idx++}, $${idx++}, $${idx++}, $${idx++}, $${idx++}, $${idx++})`
+      );
+      values.push(
+        contact.contact_id,
+        contact.companyId,
+        contact.name || contact.contactName || null,
+        contact.last_name || contact.lastName || null,
+        contact.email || null,
+        contact.phone || null,
+        contact.address1 || null,
+        contact.companyName || null,
+        contact.locationId || null,
+        contact.dateAdded || new Date().toISOString(),
+        contact.unreadCount || 0,
+        contact.points || 0,
+        contact.branch || null,
+        contact.expiryDate || null,
+        contact.vehicleNumber || null,
+        contact.ic || null,
+        contact.chat_id || null,
+        contact.notes || null,
+        contact.customFields ? JSON.stringify(contact.customFields) : null,
+        contact.tags ? JSON.stringify(contact.tags) : null
+      );
+    }
+
+    const query = `
+      INSERT INTO contacts (
+        contact_id, company_id, name, last_name, email, phone, address1, company, location_id,
+        created_at, unread_count, points, branch, expiry_date, vehicle_number, ic, chat_id, notes, custom_fields, tags
+      ) VALUES
+        ${placeholders.join(",\n")}
+      ON CONFLICT (contact_id, company_id) DO UPDATE SET
+        name = EXCLUDED.name,
+        last_name = EXCLUDED.last_name,
+        email = EXCLUDED.email,
+        phone = EXCLUDED.phone,
+        address1 = EXCLUDED.address1,
+        company = EXCLUDED.company,
+        location_id = EXCLUDED.location_id,
+        unread_count = EXCLUDED.unread_count,
+        points = EXCLUDED.points,
+        branch = EXCLUDED.branch,
+        expiry_date = EXCLUDED.expiry_date,
+        vehicle_number = EXCLUDED.vehicle_number,
+        ic = EXCLUDED.ic,
+        chat_id = EXCLUDED.chat_id,
+        notes = EXCLUDED.notes,
+        custom_fields = EXCLUDED.custom_fields,
+        tags = EXCLUDED.tags,
+        updated_at = CURRENT_TIMESTAMP
+      RETURNING contact_id
+    `;
+
+    const result = await sqlDb.query(query, values);
+
+    res.json({
+      success: true,
+      imported: result.rowCount,
+      contact_ids: result.rows.map(r => r.contact_id)
+    });
+  } catch (error) {
+    console.error("Error importing contacts in bulk:", error);
+    res.status(500).json({ success: false, message: "Failed to import contacts", details: error.message });
+  }
+});
+app.put("/api/contacts/:contact_id", async (req, res) => {
+  try {
+    const { contact_id } = req.params;
+    const {
+      companyId,
+      name, // <-- this will go to "name"
+      lastName,
+      email,
+      phone,
+      address1,
+      city,
+      state,
+      postalCode,
+      website,
+      dnd,
+      dndSettings,
+      tags,
+      source,
+      country,
+      companyName,
+      branch,
+      expiryDate,
+      vehicleNumber,
+      points,
+      IC,
+      assistantId,
+      threadid,
+      notes,
+      customFields // This should be an object if present
+    } = req.body;
+    console.log('req.body:', req.body);
+    if (!companyId || !contact_id) {
+      return res.status(400).json({ success: false, message: "Missing required fields (companyId, contact_id)" });
+    }
+
+    // Build the update query dynamically
+    const setFields = [];
+    const setValues = [];
+    let idx = 1;
+
+    // Standard fields
+    const fieldMap = {
+      name: name, // <-- changed from contact_name to name
+      last_name: lastName,
+      email,
+      phone,
+      address1,
+      city,
+      state,
+      postal_code: postalCode,
+      website,
+      dnd,
+      dnd_settings: dndSettings,
+      tags: tags ? JSON.stringify(tags) : undefined,
+      source,
+      country,
+      company: companyName,
+      branch,
+      expiry_date: expiryDate,
+      vehicle_number: vehicleNumber,
+      points,
+      ic: IC,
+      assistant_id: assistantId,
+      threadid,
+      notes
+    };
+
+    for (const [col, val] of Object.entries(fieldMap)) {
+      if (val !== undefined) {
+        setFields.push(`${col} = $${idx++}`);
+        setValues.push(val);
+      }
+    }
+
+    // Custom fields
+    if (customFields && Object.keys(customFields).length > 0) {
+      setFields.push(`custom_fields = $${idx++}`);
+      setValues.push(JSON.stringify(customFields));
+    }
+
+    setFields.push(`updated_at = CURRENT_TIMESTAMP`);
+
+    // Add WHERE values at the end
+    setValues.push(contact_id); // $idx
+    setValues.push(companyId);  // $idx+1
+
+    const query = `
+      UPDATE contacts
+      SET ${setFields.join(", ")}
+      WHERE contact_id = $${idx++} AND company_id = $${idx}
+      RETURNING contact_id
+    `;
+
+    const result = await sqlDb.query(query, setValues);
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ success: false, message: "Contact not found" });
+    }
+
+    res.json({
+      success: true,
+      contact_id: result.rows[0].contact_id,
+      message: "Contact updated successfully"
+    });
+  } catch (error) {
+    console.error("Error updating contact:", error);
+    res.status(500).json({ success: false, message: "Failed to update contact", details: error.message });
+  }
+});
+// ... existing code below ...
+
+app.post("/api/contacts", async (req, res) => {
+  try {
+    const {
+      contact_id,
+      companyId,
+      contactName,
+      lastName,
+      email,
+      phone,
+      address1,
+      companyName,
+      locationId,
+      dateAdded,
+      unreadCount,
+      points,
+      branch,
+      expiryDate,
+      vehicleNumber,
+      ic,
+      chat_id,
+      notes,
+    } = req.body;
+
+    if (!companyId || !phone || !contact_id) {
+      return res.status(400).json({ success: false, message: "Missing required fields (companyId, phone, contact_id)" });
+    }
+console.log(contactName);
+    // Insert contact into the database
+    const result = await sqlDb.query(
+      `INSERT INTO contacts (
+        contact_id, company_id, name, last_name, email, phone, address1, company, location_id,
+        created_at, unread_count, points, branch, expiry_date, vehicle_number, ic, chat_id, notes
+      ) VALUES (
+        $1, $2, $3, $4, $5, $6, $7, $8, $9,
+        $10, $11, $12, $13, $14, $15, $16, $17, $18
+      )
+      ON CONFLICT (contact_id, company_id) DO UPDATE
+      SET contact_name = EXCLUDED.name,
+          last_name = EXCLUDED.last_name,
+          email = EXCLUDED.email,
+          phone = EXCLUDED.phone,
+          address1 = EXCLUDED.address1,
+          company = EXCLUDED.company,
+          location_id = EXCLUDED.location_id,
+          unread_count = EXCLUDED.unread_count,
+          points = EXCLUDED.points,
+          branch = EXCLUDED.branch,
+          expiry_date = EXCLUDED.expiry_date,
+          vehicle_number = EXCLUDED.vehicle_number,
+          ic = EXCLUDED.ic,
+          chat_id = EXCLUDED.chat_id,
+          notes = EXCLUDED.notes,
+          updated_at = CURRENT_TIMESTAMP
+      RETURNING contact_id`,
+      [
+        contact_id,
+        companyId,
+        contactName,
+        lastName,
+        email,
+        phone,
+        address1,
+        companyName,
+        locationId,
+        dateAdded || new Date().toISOString(),
+        unreadCount || 0,
+        points || 0,
+        branch,
+        expiryDate,
+        vehicleNumber,
+        ic,
+        chat_id,
+        notes
+      ]
+    );
+
+    res.json({
+      success: true,
+      contact_id: result.rows[0].contact_id,
+      message: "Contact added successfully"
+    });
+  } catch (error) {
+    console.error("Error adding contact:", error);
+    res.status(500).json({ success: false, message: "Failed to add contact", details: error.message });
+  }
+});
 app.get("/api/contacts-data/:companyId", async (req, res) => {
   try {
     const { companyId } = req.params;
@@ -6221,10 +6573,11 @@ app.get("/api/bot-status/:companyId", async (req, res) => {
   }
 });
 
+// ... existing code ...
 app.post("/api/v2/messages/text/:companyId/:chatId", async (req, res) => {
   console.log("\n=== New Text Message Request ===");
   const companyId = req.params.companyId;
-  const chatId = req.params.chatId;
+  const chatId = req.params.chatId.split("-")[1] + "@c.us";
   const {
     message,
     quotedMessageId,
@@ -6245,6 +6598,7 @@ app.post("/api/v2/messages/text/:companyId/:chatId", async (req, res) => {
     requestedPhoneIndex !== undefined ? parseInt(requestedPhoneIndex) : 0;
   const userName = requestedUserName !== undefined ? requestedUserName : "";
   const contactID = companyId + "-" + chatId.split("@")[0];
+  const phoneNumber = "+" + chatId.split("@")[0];
 
   try {
     // 1. Get the client for this company from botMap
@@ -6317,12 +6671,10 @@ app.post("/api/v2/messages/text/:companyId/:chatId", async (req, res) => {
 
     // 3. Process response and save to SQL
     console.log("\n=== Saving to Database ===");
-    const phoneNumber = "+" + chatId.split("@")[0];
 
     // 4. Save to SQL
     try {
-      let contactResult; // Declare the variable first
-      addMessageToPostgres(
+      await addMessageToPostgres(
         sentMessage,
         companyId,
         phoneNumber,
@@ -6331,10 +6683,15 @@ app.post("/api/v2/messages/text/:companyId/:chatId", async (req, res) => {
         userName
       );
 
+      const contactData = await getContactDataFromDatabaseByPhone(
+        phoneNumber,
+        companyId
+      );
+
       // 5. Handle OpenAI integration for the receiver's contact
-      if (contactResult.rows[0]?.thread_id) {
-        console.log("Using existing thread:", contactResult.rows[0].thread_id);
-        await handleOpenAIMyMessage(message, contactResult.rows[0].thread_id);
+      if (contactData?.thread_id) {
+        console.log("Using existing thread:", contactData.thread_id);
+        await handleOpenAIMyMessage(message, contactData.thread_id);
       } else {
         console.log("Creating new OpenAI thread");
         try {
@@ -6396,6 +6753,7 @@ app.post("/api/v2/messages/text/:companyId/:chatId", async (req, res) => {
     });
   }
 });
+// ... existing code ...
 
 //react to message
 app.post("/api/messages/react/:companyId/:messageId", async (req, res) => {
@@ -6897,7 +7255,60 @@ app.post("/api/fetch-users", async (req, res) => {
     res.status(500).send("Error fetching users");
   }
 });
-
+app.delete("/api/contacts/:companyId/:contactId/tags", async (req, res) => {
+  const { companyId, contactId } = req.params;
+  const { tags } = req.body; // tags: array of tags to remove
+  if (!Array.isArray(tags)) {
+    return res.status(400).json({ error: "tags must be an array" });
+  }
+  try {
+    // Fetch current tags
+    const result = await sqlDb.query(
+      "SELECT tags FROM contacts WHERE company_id = $1 AND contact_id = $2",
+      [companyId, contactId]
+    );
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: "Contact not found" });
+    }
+    const currentTags = result.rows[0].tags || [];
+    const newTags = currentTags.filter(tag => !tags.includes(tag));
+    // Update tags
+    await sqlDb.query(
+      "UPDATE contacts SET tags = $1, last_updated = CURRENT_TIMESTAMP WHERE company_id = $2 AND contact_id = $3",
+      [JSON.stringify(newTags), companyId, contactId]
+    );
+    res.json({ success: true, tags: newTags });
+  } catch (error) {
+    res.status(500).json({ error: "Failed to remove tags", details: error.message });
+  }
+});
+app.post("/api/contacts/:companyId/:contactId/tags", async (req, res) => {
+  const { companyId, contactId } = req.params;
+  const { tags } = req.body; // tags: array of tags to add
+  if (!Array.isArray(tags)) {
+    return res.status(400).json({ error: "tags must be an array" });
+  }
+  try {
+    // Fetch current tags
+    const result = await sqlDb.query(
+      "SELECT tags FROM contacts WHERE company_id = $1 AND contact_id = $2",
+      [companyId, contactId]
+    );
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: "Contact not found" });
+    }
+    const currentTags = result.rows[0].tags || [];
+    const newTags = Array.from(new Set([...currentTags, ...tags]));
+    // Update tags
+    await sqlDb.query(
+      "UPDATE contacts SET tags = $1, last_updated = CURRENT_TIMESTAMP WHERE company_id = $2 AND contact_id = $3",
+      [JSON.stringify(newTags), companyId, contactId]
+    );
+    res.json({ success: true, tags: newTags });
+  } catch (error) {
+    res.status(500).json({ error: "Failed to add tags", details: error.message });
+  }
+});
 app.post("/api/contacts/remove-tags", async (req, res) => {
   const { companyId, contactPhone, tagsToRemove } = req.body;
 
@@ -7233,34 +7644,32 @@ async function initializeBot(botName, phoneCount = 1, specificPhoneIndex) {
 }
 
 // Add new function to manage phone status in Firebase
-async function updatePhoneStatus(companyId, phoneIndex, status, details = {}) {
+async function updatePhoneStatus(companyId, phoneNumber, status, metadata = {}) {
   try {
-    const phoneStatusRef = db
-      .collection("companies")
-      .doc(companyId)
-      .collection("phoneStatus")
-      .doc(`phone${phoneIndex}`);
-
-    await phoneStatusRef.set(
-      {
+    await sqlDb.query(
+      `
+      INSERT INTO phone_status (company_id, phone_number, status, last_seen, metadata, updated_at)
+      VALUES ($1, $2, $3, CURRENT_TIMESTAMP, $4, CURRENT_TIMESTAMP)
+      ON CONFLICT (company_id, phone_number) DO UPDATE
+      SET status = EXCLUDED.status,
+          last_seen = CURRENT_TIMESTAMP,
+          metadata = EXCLUDED.metadata,
+          updated_at = CURRENT_TIMESTAMP
+      `,
+      [
+        companyId,
+        phoneNumber,
         status,
-        lastUpdated: admin.firestore.FieldValue.serverTimestamp(),
-        ...details,
-      },
-      { merge: true }
+        Object.keys(metadata).length ? JSON.stringify(metadata) : null,
+      ]
     );
-
     console.log(
-      `Updated status for ${companyId} Phone ${phoneIndex + 1} to ${status}`
+      `Updated status for ${companyId} Phone ${phoneNumber} to ${status} (SQL)`
     );
-
-    // Broadcast the new status
-    broadcastStatus(companyId, status, phoneIndex);
+    broadcastStatus(companyId, status, phoneNumber);
   } catch (error) {
     console.error(
-      `Error updating phone status in Firebase for ${companyId} Phone ${
-        phoneIndex + 1
-      }:`,
+      `Error updating phone status in SQL for ${companyId} Phone ${phoneNumber}:`,
       error
     );
   }
@@ -8344,7 +8753,7 @@ app.get("/api/user-company-data", async (req, res) => {
 
     // Then get company data - added assistant_id to the SELECT
     const companyData = await sqlDb.getRow(
-      "SELECT id, company_id, name, email, phone, plan, v2, phone_count, assistant_id FROM companies WHERE company_id = $1",
+      'SELECT id, company_id, name, email, phone, plan, v2, phone_count, assistant_id, assistant_ids FROM companies WHERE company_id = $1',
       [companyId]
     );
 
@@ -8414,13 +8823,14 @@ app.get("/api/user-company-data", async (req, res) => {
         plan: companyData.plan,
         phoneCount: companyData.phone_count || 1,
         v2: companyData.v2,
-        assistant_id: companyData.assistant_id, // Added this line
+        assistants_ids:companyData.assistant_ids,
+        assistant_id: companyData.assistant_id  // Added this line
       },
       employeeList,
       messageUsage,
       tags,
     };
-
+console.log(response);
     res.json(response);
   } catch (error) {
     console.error("Error fetching user and company data:", error);
@@ -8768,13 +9178,14 @@ app.get("/api/company-data", async (req, res) => {
 // Get messages
 app.get("/api/messages", async (req, res) => {
   try {
-    const { chatId, companyId } = req.query;
-
+    const {chatId, companyId } = req.query;
+console.log(chatId);
+console.log(companyId);
     const result = await sqlDb.query(
       `SELECT m.*, c.name as contact_name 
        FROM messages m
        LEFT JOIN contacts c ON m.contact_id = c.contact_id AND m.company_id = c.company_id
-       WHERE m.chat_id = $1 AND m.company_id = $2 
+       WHERE m.contact_id = $1 AND m.company_id = $2 
        ORDER BY m.timestamp ASC`,
       [chatId, companyId]
     );
