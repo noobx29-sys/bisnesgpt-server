@@ -89,6 +89,8 @@ const pool = new Pool({
   // Connection pooling
   connectionString: process.env.DATABASE_URL,
   max: 2000,
+  idleTimeoutMillis: 30000,
+  connectionTimeoutMillis: 2000
 });
 
 // Redis connection
@@ -201,8 +203,8 @@ app.post("/zahin/hubspot", (req, res) => {
 });
 
 // API Handlers
-app.post("/api/bina/tag", handleBinaTag);
-app.post("/api/edward/tag", handleEdwardTag);
+// app.post("/api/bina/tag", handleBinaTag);
+// app.post("/api/edward/tag", handleEdwardTag);
 app.post("/api/tag/followup", handleTagFollowUp);
 
 // Custom Bots
@@ -950,74 +952,6 @@ app.post("/api/daily-report/:companyId/trigger", async (req, res) => {
   }
 });
 
-app.get("/assignments", async (req, res) => {
-  try {
-    const companyId = "072";
-
-    // Calculate yesterday's date range
-    const today = new Date();
-    const yesterday = new Date(today);
-    yesterday.setDate(yesterday.getDate() - 1);
-    yesterday.setHours(0, 0, 0, 0);
-
-    const endOfYesterday = new Date(yesterday);
-    endOfYesterday.setHours(23, 59, 59, 999);
-
-    // Get all assignments from yesterday
-    const assignmentsRef = db
-      .collection("companies")
-      .doc(companyId)
-      .collection("assignments")
-      .where("timestamp", ">=", yesterday)
-      .where("timestamp", "<=", endOfYesterday);
-
-    const assignmentsSnapshot = await assignmentsRef.get();
-
-    // Count assignments per employee
-    const employeeAssignments = {};
-
-    assignmentsSnapshot.forEach((doc) => {
-      const data = doc.data();
-      const employeeName = data.assigned;
-
-      if (!employeeAssignments[employeeName]) {
-        employeeAssignments[employeeName] = {
-          count: 0,
-          email: data.email || null,
-          numbers: [],
-        };
-      }
-
-      employeeAssignments[employeeName].count++;
-      employeeAssignments[employeeName].numbers.push(data.number);
-    });
-
-    // Format the response
-    const response = Object.entries(employeeAssignments).map(
-      ([name, data]) => ({
-        name,
-        email: data.email,
-        assignmentCount: data.count,
-        numbers: data.numbers,
-      })
-    );
-
-    res.json({
-      success: true,
-      date: yesterday.toISOString().split("T")[0],
-      totalAssignments: assignmentsSnapshot.size,
-      assignments: response,
-    });
-  } catch (error) {
-    console.error("Error fetching assignment counts:", error);
-    res.status(500).json({
-      success: false,
-      error: "Failed to fetch assignment counts",
-      message: error.message,
-    });
-  }
-});
-
 app.get("/api/facebook-lead-webhook", (req, res) => {
   const VERIFY_TOKEN = "test"; // Use the token you entered in the Facebook dashboard
 
@@ -1099,6 +1033,7 @@ app.post(
         role: req.params.role,
       };
       const name = decodedEmail.split("@")[0];
+      console.log("Creating user in Neon Auth:", userData, name);
       // Create user in Neon Auth (only required fields)
       // Create user in Neon Auth
       const neonUser = await createNeonAuthUser(decodedEmail, name);
@@ -1108,18 +1043,18 @@ app.post(
       const companyId = `0${Date.now()}`;
 
       // Create company in database
-      await sqlDb.query(
-        `INSERT INTO companies (company_id, name, email, phone, status, enabled, created_at) 
-        VALUES ($1, $2, $3, $4, $5, $6, CURRENT_TIMESTAMP)`,
-        [
-          companyId,
-          userData.email.split("@")[0],
-          userData.email,
-          userData.phoneNumber,
-          "active",
-          true,
-        ]
-      );
+      // await sqlDb.query(
+      //   `INSERT INTO companies (company_id, name, email, phone, status, enabled, created_at) 
+      //   VALUES ($1, $2, $3, $4, $5, $6, CURRENT_TIMESTAMP)`,
+      //   [
+      //     companyId,
+      //     userData.email.split("@")[0],
+      //     userData.email,
+      //     userData.phoneNumber,
+      //     "active",
+      //     true,
+      //   ]
+      // );
 
       await sqlDb.query(
         `INSERT INTO users (user_id, company_id, email, phone, role, active, created_at, password) 
@@ -2153,116 +2088,171 @@ app.get("/api/search-messages/:companyId", async (req, res) => {
 app.get("/api/stats/:companyId", async (req, res) => {
   const { companyId } = req.params;
   const { employeeId } = req.query;
-  let agentName;
+  const monthKey = getCurrentMonthKey();
 
   if (!employeeId) {
     return res.status(400).json({ error: "Employee ID is required" });
   }
 
-  const employeeRef = db
-    .collection("companies")
-    .doc(companyId)
-    .collection("employee")
-    .doc(employeeId);
-  const employeeDoc = await employeeRef.get();
-
-  if (employeeDoc.exists) {
-    agentName = employeeDoc.data().name;
-  } else {
-    return res
-      .status(400)
-      .json({ error: "No employee found with the given ID" });
-  }
-
   try {
-    // Initialize stats object
+    const employeeQuery = `
+      SELECT id, name, role, weightages
+      FROM employees 
+      WHERE employee_id = $1 AND company_id = $2
+    `;
+    const employeeResult = await pool.query(employeeQuery, [employeeId, companyId]);
+
+    if (employeeResult.rows.length === 0) {
+      return res.status(400).json({ error: "No employee found with the given ID" });
+    }
+
+    const employee = employeeResult.rows[0];
+
     const stats = {
+      employeeName: employee.name,
+      employeeRole: employee.role,
       conversationsAssigned: 0,
       outgoingMessagesSent: 0,
       averageResponseTime: 0,
       closedContacts: 0,
+      currentMonthAssignments: 0,
+      weightageUsed: employee.weightages || {},
+      phoneAssignments: {},
+      responseTimes: [],
+      medianResponseTime: [],
     };
 
-    // Query for contacts with the agent's name as a tag
-    const contactsRef = db
-      .collection("companies")
-      .doc(companyId)
-      .collection("contacts");
-    const contactsSnapshot = await contactsRef
-      .where("tags", "array-contains", agentName)
-      .get();
+    const assignmentsQuery = `
+      SELECT COUNT(*) as count
+      FROM assignments
+      WHERE employee_id = $1 
+        AND company_id = $2
+        AND month_key = $3
+    `;
+    const assignmentsResult = await pool.query(assignmentsQuery, [
+      employeeId, 
+      companyId,
+      monthKey
+    ]);
+    stats.currentMonthAssignments = parseInt(assignmentsResult.rows[0].count) || 0;
 
-    if (contactsSnapshot.empty) {
-      return res
-        .status(404)
-        .json({ error: "No contacts found for the specified agent" });
-    } else {
-      stats.conversationsAssigned = contactsSnapshot.size;
-      const closedContacts = contactsSnapshot.docs.filter((doc) =>
-        doc.data().tags.includes("closed")
-      );
-      stats.closedContacts = closedContacts.length;
+    const assignedContactsQuery = `
+      SELECT a.contact_id, c.tags
+      FROM assignments a
+      LEFT JOIN contacts c ON a.contact_id = c.id AND a.company_id = c.company_id
+      WHERE a.employee_id = $1 AND a.company_id = $2
+    `;
+    const assignedContactsResult = await pool.query(assignedContactsQuery, [employeeId, companyId]);
+    stats.conversationsAssigned = assignedContactsResult.rows.length;
+
+    if (assignedContactsResult.rows.length === 0) {
+      return res.json(stats);
     }
+
+    const closedContacts = assignedContactsResult.rows.filter(row => {
+      try {
+        const tags = row.tags || [];
+        return tags.includes('closed');
+      } catch (e) {
+        return false;
+      }
+    });
+    stats.closedContacts = closedContacts.length;
 
     let totalResponseTime = 0;
     let responseCount = 0;
+    let outgoingMessages = 0;
 
-    // Iterate over each contact to gather statistics
-    for (const contactDoc of contactsSnapshot.docs) {
-      const contactId = contactDoc.id;
+    for (const row of assignedContactsResult.rows) {
+      const contactId = row.contact_id;
 
-      // Query for outgoing messages sent for this contact
-      const messagesRef = contactsRef.doc(contactId).collection("messages");
-      const messagesSnapshot = await messagesRef.get();
-      stats.outgoingMessagesSent += messagesSnapshot.docs.filter(
-        (doc) => doc.data().from_me
-      ).length;
+      const messagesQuery = `
+        SELECT timestamp, from_me
+        FROM messages
+        WHERE company_id = $1 AND contact_id = $2
+        ORDER BY timestamp ASC
+      `;
+      const messagesResult = await pool.query(messagesQuery, [companyId, contactId]);
 
-      // Calculate first response time for this contact
-      const messagesTimeSnapshot = await messagesRef.orderBy("timestamp").get();
-      const sortedMessages = messagesTimeSnapshot.docs
-        .map((doc) => doc.data())
-        .sort((a, b) => a.timestamp - b.timestamp);
+      outgoingMessages += messagesResult.rows.filter(msg => msg.from_me).length;
 
       let firstAgentMessageTime = null;
-      let firstContactMessageTime = null;
+      let firstCustomerMessageTime = null;
 
-      for (const message of sortedMessages) {
-        if (message.from_me && firstAgentMessageTime === null) {
-          firstAgentMessageTime = message.timestamp;
-        } else if (!message.from_me && firstContactMessageTime === null) {
-          firstContactMessageTime = message.timestamp;
+      for (const message of messagesResult.rows) {
+        const timestamp = new Date(message.timestamp).getTime();
+        
+        if (message.from_me) {
+          if (!firstAgentMessageTime) {
+            firstAgentMessageTime = timestamp;
+          }
+        } else if (!firstCustomerMessageTime) {
+          firstCustomerMessageTime = timestamp;
         }
 
-        if (
-          firstAgentMessageTime !== null &&
-          firstContactMessageTime !== null
-        ) {
+        if (firstAgentMessageTime && firstCustomerMessageTime) {
+          const responseTime = Math.abs(firstAgentMessageTime - firstCustomerMessageTime);
+          stats.responseTimes.push({
+            contactId,
+            responseTime,
+            timestamp: message.timestamp
+          });
+          totalResponseTime += responseTime;
+          responseCount++;
           break;
         }
       }
-
-      if (firstAgentMessageTime !== null && firstContactMessageTime !== null) {
-        const responseTime = Math.abs(
-          firstContactMessageTime - firstAgentMessageTime
-        );
-        totalResponseTime += responseTime;
-        responseCount++;
-      }
     }
 
-    // Calculate average response time
+    stats.outgoingMessagesSent = outgoingMessages;
+    
     if (responseCount > 0) {
       stats.averageResponseTime = Math.floor(totalResponseTime / responseCount);
+      
+      const sortedTimes = stats.responseTimes.map(rt => rt.responseTime).sort((a, b) => a - b);
+      const mid = Math.floor(sortedTimes.length / 2);
+      stats.medianResponseTime = sortedTimes.length % 2 !== 0 
+        ? sortedTimes[mid] 
+        : (sortedTimes[mid - 1] + sortedTimes[mid]) / 2;
     }
 
-    // Send the stats as a response
+    const metricsQuery = `
+      SELECT 
+        phone_index,
+        COUNT(*) as assignment_count
+      FROM assignments
+      WHERE employee_id = $1 
+        AND company_id = $2
+        AND month_key = $3
+      GROUP BY phone_index
+    `;
+    const metricsResult = await pool.query(metricsQuery, [
+      employeeId, 
+      companyId,
+      monthKey
+    ]);
+
+    metricsResult.rows.forEach(row => {
+      stats.phoneAssignments[`phone${row.phone_index}`] = parseInt(row.assignment_count) || 0;
+    });
+
     res.json(stats);
   } catch (error) {
     console.error("Error fetching stats:", error);
-    res.status(500).json({ error: "Failed to fetch stats" });
+    res.status(500).json({ 
+      error: "Failed to fetch stats",
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
   }
 });
+
+// Helper function
+function getCurrentMonthKey() {
+  const date = new Date();
+  const month = date.toLocaleString('default', { month: 'short' });
+  const year = date.getFullYear();
+  return `${month}-${year}`;
+}
 
 async function syncContacts(client, companyId, phoneIndex = 0) {
   try {
@@ -4132,6 +4122,97 @@ async function handleTagAddition(
   }
 }
 
+async function addTagToPostgres(contactID, tag, companyID, remove = false) {
+  console.log(
+    `${remove ? "Removing" : "Adding"} tag "${tag}" ${
+      remove ? "from" : "to"
+    } PostgreSQL for contact ${contactID}`
+  );
+  contactID =
+    companyID +
+    "-" +
+    (contactID.startsWith("+") ? contactID.slice(1) : contactID);
+
+  const sqlClient = await pool.connect();
+
+  try {
+    await sqlClient.query("BEGIN");
+
+    const checkQuery = `
+      SELECT 1 FROM public.contacts 
+      WHERE contact_id = $1 AND company_id = $2
+    `;
+    const checkResult = await sqlClient.query(checkQuery, [
+      contactID,
+      companyID,
+    ]);
+
+    if (checkResult.rows.length === 0) {
+      throw new Error("Contact does not exist!");
+    }
+
+    if (remove) {
+      const removeQuery = `
+        UPDATE public.contacts 
+        SET 
+          tags = CASE 
+            WHEN tags ? $1 THEN 
+              (SELECT jsonb_agg(t) FROM jsonb_array_elements_text(tags) t WHERE t != $1)
+            ELSE 
+              tags 
+          END,
+          last_updated = CURRENT_TIMESTAMP
+        WHERE contact_id = $2 AND company_id = $3
+        RETURNING (tags ? $1) AS tag_existed_before
+      `;
+      const removeResult = await sqlClient.query(removeQuery, [
+        tag,
+        contactID,
+        companyID,
+      ]);
+
+      if (removeResult.rows[0].tag_existed_before) {
+        console.log(
+          `Tag "${tag}" removed successfully from contact ${contactID}`
+        );
+      } else {
+        console.log(`Tag "${tag}" doesn't exist for contact ${contactID}`);
+      }
+    } else {
+      const addQuery = `
+        UPDATE public.contacts 
+        SET 
+          tags = CASE 
+            WHEN tags IS NULL THEN jsonb_build_array($1)
+            WHEN NOT tags ? $1 THEN tags || jsonb_build_array($1)
+            ELSE tags
+          END,
+          last_updated = CURRENT_TIMESTAMP
+        WHERE contact_id = $2 AND company_id = $3
+        RETURNING (tags ? $1) AS tag_existed_before_update
+      `;
+      const addResult = await sqlClient.query(addQuery, [
+        tag,
+        contactID,
+        companyID,
+      ]);
+
+      if (!addResult.rows[0].tag_existed_before_update) {
+        console.log(`Tag "${tag}" added successfully to contact ${contactID}`);
+      } else {
+        console.log(`Tag "${tag}" already exists for contact ${contactID}`);
+      }
+    }
+
+    await sqlClient.query("COMMIT");
+  } catch (error) {
+    await sqlClient.query("ROLLBACK");
+    console.error("Error managing tags in PostgreSQL:", error);
+  } finally {
+    sqlClient.release();
+  }
+}
+
 async function handleEmployeeAssignment(
   response,
   idSubstring,
@@ -5255,7 +5336,7 @@ async function main(reinitialize = false) {
   // 1. Fetch companies in parallel with other initialization tasks
   const companiesPromise = sqlDb.query(
     "SELECT * FROM companies WHERE company_id = $1",
-    ["0145"]
+    ["0134"]
   );
 
   // 2. If reinitializing, start cleanup early
@@ -5919,7 +6000,7 @@ app.post("/api/initialize-automations", async (req, res) => {
 async function fetchEmployeesDataSql(companyId) {
   try {
     const query =
-      'SELECT id, employee_id, name, email, phone AS "phoneNumber", role FROM employees WHERE company_id = $1';
+      'SELECT id, employee_id, name, email, phone_number AS "phoneNumber", role FROM employees WHERE company_id = $1';
     const { rows } = await sqlDb.query(query, [companyId]);
     return rows;
   } catch (error) {
@@ -6110,9 +6191,9 @@ async function getEmployeeStats(companyId, employeeId) {
   // 3. Closed contacts (contacts assigned to this employee with tag 'closed')
   const closedRes = await sqlDb.query(
     `SELECT COUNT(*) FROM contacts 
-     WHERE company_id = $1 
-       AND $2 = ANY(tags) 
-       AND 'closed' = ANY(tags)`,
+    WHERE company_id = $1 
+      AND tags::jsonb ? $2 
+      AND tags::jsonb ? 'closed'`,
     [companyId, employee.name]
   );
   const closedContacts = parseInt(closedRes.rows[0].count, 10);
@@ -7162,31 +7243,17 @@ app.get(
     }
   }
 );
+
 app.get("/api/dashboard/:companyId", async (req, res) => {
   const { companyId } = req.params;
+  const monthKey = getCurrentMonthKey();
 
   try {
-    // Fetch company data
-    const companyRef = db.collection("companies").doc(companyId);
-    const companyDoc = await companyRef.get();
-    if (!companyDoc.exists) {
+    const companyQuery = `SELECT name FROM companies WHERE id = $1`;
+    const companyResult = await pool.query(companyQuery, [companyId]);
+    if (companyResult.rows.length === 0) {
       return res.status(404).json({ error: "Company not found" });
     }
-
-    // Fetch contacts
-    const contactsRef = db
-      .collection("companies")
-      .doc(companyId)
-      .collection("contacts");
-    const contactsSnapshot = await contactsRef.get();
-
-    let totalContacts = 0;
-    let closedContacts = 0;
-    let openContacts = 0;
-    let todayContacts = 0;
-    let weekContacts = 0;
-    let monthContacts = 0;
-    let numReplies = 0;
 
     const now = new Date();
     const startOfDay = new Date(now.setHours(0, 0, 0, 0));
@@ -7197,17 +7264,32 @@ app.get("/api/dashboard/:companyId", async (req, res) => {
     );
     const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
 
+    const contactsQuery = `
+      SELECT 
+        contact_id,
+        created_at,
+        tags,
+        (SELECT COUNT(*) FROM messages WHERE contact_id = c.contact_id AND company_id = c.company_id AND NOT from_me) as reply_count,
+        (SELECT COUNT(*) FROM messages WHERE contact_id = c.contact_id AND company_id = c.company_id AND from_me) as outgoing_count
+      FROM contacts c
+      WHERE company_id = $1
+    `;
+    const contactsResult = await pool.query(contactsQuery, [companyId]);
+
+    let totalContacts = 0;
+    let closedContacts = 0;
+    let openContacts = 0;
+    let todayContacts = 0;
+    let weekContacts = 0;
+    let monthContacts = 0;
+    let numReplies = 0;
     const employeePerformance = {};
 
-    // Process contacts
-    for (const doc of contactsSnapshot.docs) {
-      const contactData = doc.data();
-      const dateAdded = contactData.dateAdded
-        ? new Date(contactData.dateAdded)
-        : null;
-
+    contactsResult.rows.forEach(contact => {
       totalContacts++;
-      if (contactData.tags && contactData.tags.includes("closed")) {
+      const dateAdded = contact.created_at ? new Date(contact.created_at) : null;
+
+      if (contact.tags && contact.tags.some(tag => tag.toLowerCase() === 'closed')) {
         closedContacts++;
       } else {
         openContacts++;
@@ -7219,73 +7301,80 @@ app.get("/api/dashboard/:companyId", async (req, res) => {
         if (dateAdded >= startOfMonth) monthContacts++;
       }
 
-      // Process tags for employee performance
-      if (contactData.tags) {
-        contactData.tags.forEach((tag) => {
-          if (tag !== "closed") {
-            employeePerformance[tag] = employeePerformance[tag] || {
-              assignedContacts: 0,
-              outgoingMessages: 0,
-              closedContacts: 0,
-            };
-            employeePerformance[tag].assignedContacts++;
-            if (contactData.tags.includes("closed")) {
-              employeePerformance[tag].closedContacts++;
-            }
-          }
-        });
-      }
+      numReplies += parseInt(contact.reply_count) || 0;
 
-      // Count messages
-      const messagesRef = contactsRef.doc(doc.id).collection("messages");
-      const messagesSnapshot = await messagesRef.get();
-      messagesSnapshot.forEach((messageDoc) => {
-        const messageData = messageDoc.data();
-        if (!messageData.from_me) {
-          numReplies++;
-        } else if (messageData.userName) {
-          employeePerformance[messageData.userName] = employeePerformance[
-            messageData.userName
-          ] || { assignedContacts: 0, outgoingMessages: 0, closedContacts: 0 };
-          employeePerformance[messageData.userName].outgoingMessages++;
-        }
-      });
-    }
-
-    // Calculate metrics
-    const responseRate =
-      totalContacts > 0 ? (numReplies / totalContacts) * 100 : 0;
-    const averageRepliesPerLead =
-      totalContacts > 0 ? numReplies / totalContacts : 0;
-    const engagementScore = responseRate * 0.4 + averageRepliesPerLead * 0.6;
-    const conversionRate =
-      totalContacts > 0 ? (closedContacts / totalContacts) * 100 : 0;
-
-    // Fetch and process employee data
-    const employeesRef = db
-      .collection("companies")
-      .doc(companyId)
-      .collection("employee");
-    const employeesSnapshot = await employeesRef.get();
-    const employees = employeesSnapshot.docs
-      .map((doc) => {
-        const employeeData = doc.data();
-        const performance = employeePerformance[employeeData.name] || {
+      if (contact.tags && contact.tags.assigned_to) {
+        const employeeName = contact.tags.assigned_to;
+        employeePerformance[employeeName] = employeePerformance[employeeName] || {
           assignedContacts: 0,
           outgoingMessages: 0,
-          closedContacts: 0,
+          closedContacts: 0
         };
-        return {
-          id: doc.id,
-          ...employeeData,
-          ...performance,
-        };
-      })
-      .sort((a, b) => b.assignedContacts - a.assignedContacts);
+        
+        employeePerformance[employeeName].assignedContacts++;
+        if (contact.tags.closed === true) {
+          employeePerformance[employeeName].closedContacts++;
+        }
+        employeePerformance[employeeName].outgoingMessages += parseInt(contact.outgoing_count) || 0;
+      }
+    });
 
-    // Prepare the response
+    const responseRate = totalContacts > 0 ? (numReplies / totalContacts) * 100 : 0;
+    const averageRepliesPerLead = totalContacts > 0 ? numReplies / totalContacts : 0;
+    const engagementScore = responseRate * 0.4 + averageRepliesPerLead * 0.6;
+    const conversionRate = totalContacts > 0 ? (closedContacts / totalContacts) * 100 : 0;
+
+    const employeesQuery = `
+      SELECT 
+        e.employee_id,
+        e.name,
+        e.role,
+        e.email,
+        e.phone_number,
+        COALESCE((
+          SELECT COUNT(*) 
+          FROM assignments a 
+          WHERE a.employee_id = e.employee_id 
+            AND a.company_id = e.company_id
+            AND a.month_key = $1
+        ), 0) as current_month_assignments
+      FROM employees e
+      WHERE e.company_id = $2
+      ORDER BY current_month_assignments DESC
+    `;
+    const employeesResult = await pool.query(employeesQuery, [monthKey, companyId]);
+
+    const employees = employeesResult.rows.map(employee => ({
+      ...employee,
+      ...(employeePerformance[employee.name] || {
+        assignedContacts: 0,
+        outgoingMessages: 0,
+        closedContacts: 0
+      })
+    }));
+
+    const phoneStatsQuery = `
+      SELECT 
+        phone_index,
+        COUNT(*) as total_assignments,
+        COUNT(DISTINCT contact_id) as unique_contacts,
+        COUNT(DISTINCT employee_id) as active_agents
+      FROM assignments
+      WHERE company_id = $1
+        AND month_key = $2
+      GROUP BY phone_index
+      ORDER BY phone_index
+    `;
+    const phoneStatsResult = await pool.query(phoneStatsQuery, [companyId, monthKey]);
+
     const dashboardData = {
-      kpi: { totalContacts, numReplies, closedContacts, openContacts },
+      company: companyResult.rows[0].name,
+      kpi: { 
+        totalContacts, 
+        numReplies, 
+        closedContacts, 
+        openContacts 
+      },
       engagementMetrics: {
         responseRate: responseRate.toFixed(2),
         averageRepliesPerLead: averageRepliesPerLead.toFixed(2),
@@ -7298,13 +7387,22 @@ app.get("/api/dashboard/:companyId", async (req, res) => {
         week: weekContacts,
         month: monthContacts,
       },
+      phoneLineStats: phoneStatsResult.rows.map(row => ({
+        phoneIndex: row.phone_index,
+        totalAssignments: row.total_assignments,
+        uniqueContacts: row.unique_contacts,
+        activeAgents: row.active_agents
+      })),
       employeePerformance: employees,
     };
 
     res.json(dashboardData);
   } catch (error) {
     console.error("Error fetching dashboard data:", error);
-    res.status(500).json({ error: "Internal server error" });
+    res.status(500).json({ 
+      error: "Internal server error",
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
   }
 });
 
@@ -8438,6 +8536,7 @@ app.post("/api/fetch-users", async (req, res) => {
     res.status(500).send("Error fetching users");
   }
 });
+
 app.delete("/api/contacts/:companyId/:contactId/tags", async (req, res) => {
   const { companyId, contactId } = req.params;
   const { tags } = req.body; // tags: array of tags to remove
@@ -8445,21 +8544,18 @@ app.delete("/api/contacts/:companyId/:contactId/tags", async (req, res) => {
     return res.status(400).json({ error: "tags must be an array" });
   }
   try {
-    // Fetch current tags
-    const result = await sqlDb.query(
-      "SELECT tags FROM contacts WHERE company_id = $1 AND contact_id = $2",
-      [companyId, contactId]
-    );
-    if (result.rows.length === 0) {
-      return res.status(404).json({ error: "Contact not found" });
+    let phoneNumber;
+    if (contactId.startsWith(`${companyId}-`)) {
+      const contactIdParts = contactId.split("-");
+      phoneNumber = '+' + contactIdParts[1];
+    } else {
+      phoneNumber = contactId;
     }
-    const currentTags = result.rows[0].tags || [];
-    const newTags = currentTags.filter((tag) => !tags.includes(tag));
-    // Update tags
-    await sqlDb.query(
-      "UPDATE contacts SET tags = $1, last_updated = CURRENT_TIMESTAMP WHERE company_id = $2 AND contact_id = $3",
-      [JSON.stringify(newTags), companyId, contactId]
-    );
+
+    const response = {tags: tags};
+    const followupTemplate = await getFollowUpTemplates(companyId);
+    await handleTagDeletion(response, phoneNumber, companyId, followupTemplate);
+
     res.json({ success: true, tags: newTags });
   } catch (error) {
     res
@@ -8467,6 +8563,7 @@ app.delete("/api/contacts/:companyId/:contactId/tags", async (req, res) => {
       .json({ error: "Failed to remove tags", details: error.message });
   }
 });
+
 app.post("/api/contacts/:companyId/:contactId/tags", async (req, res) => {
   const { companyId, contactId } = req.params;
   const { tags } = req.body; // tags: array of tags to add
@@ -8474,21 +8571,17 @@ app.post("/api/contacts/:companyId/:contactId/tags", async (req, res) => {
     return res.status(400).json({ error: "tags must be an array" });
   }
   try {
-    // Fetch current tags
-    const result = await sqlDb.query(
-      "SELECT tags FROM contacts WHERE company_id = $1 AND contact_id = $2",
-      [companyId, contactId]
-    );
-    if (result.rows.length === 0) {
-      return res.status(404).json({ error: "Contact not found" });
+    let phoneNumber;
+    if (contactId.startsWith(`${companyId}-`)) {
+      const contactIdParts = contactId.split("-");
+      phoneNumber = '+' + contactIdParts[1];
+    } else {
+      phoneNumber = contactId;
     }
-    const currentTags = result.rows[0].tags || [];
-    const newTags = Array.from(new Set([...currentTags, ...tags]));
-    // Update tags
-    await sqlDb.query(
-      "UPDATE contacts SET tags = $1, last_updated = CURRENT_TIMESTAMP WHERE company_id = $2 AND contact_id = $3",
-      [JSON.stringify(newTags), companyId, contactId]
-    );
+
+    const response = {tags: tags};
+    const followupTemplate = await getFollowUpTemplates(companyId);
+    await handleTagAddition(response, phoneNumber, companyId, followupTemplate, null, 0);
     res.json({ success: true, tags: newTags });
   } catch (error) {
     res
@@ -8496,57 +8589,11 @@ app.post("/api/contacts/:companyId/:contactId/tags", async (req, res) => {
       .json({ error: "Failed to add tags", details: error.message });
   }
 });
-app.post("/api/contacts/remove-tags", async (req, res) => {
-  const { companyId, contactPhone, tagsToRemove } = req.body;
 
-  if (
-    !companyId ||
-    !contactPhone ||
-    !tagsToRemove ||
-    !Array.isArray(tagsToRemove)
-  ) {
-    return res.status(400).json({
-      error:
-        "Missing required fields. Please provide companyId, contactPhone, and tagsToRemove array",
-    });
-  }
-
-  try {
-    const contactRef = db
-      .collection("companies")
-      .doc(companyId)
-      .collection("contacts")
-      .doc(contactPhone);
-
-    const contactDoc = await contactRef.get();
-    if (!contactDoc.exists) {
-      return res.status(404).json({ error: "Contact not found" });
-    }
-
-    // Remove the specified tags using arrayRemove
-    await contactRef.update({
-      tags: admin.firestore.FieldValue.arrayRemove(...tagsToRemove),
-    });
-
-    // Get the updated contact data
-    const updatedContact = await contactRef.get();
-
-    res.json({
-      success: true,
-      message: "Tags removed successfully",
-      updatedTags: updatedContact.data().tags,
-    });
-  } catch (error) {
-    console.error("Error removing tags:", error);
-    res.status(500).json({
-      error: "Failed to remove tags",
-      details: error.message,
-    });
-  }
-});
 async function customWait(milliseconds) {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
+
 app.post("/api/v2/messages/video/:companyId/:chatId", async (req, res) => {
   const companyId = req.params.companyId;
   const chatId = req.params.chatId;

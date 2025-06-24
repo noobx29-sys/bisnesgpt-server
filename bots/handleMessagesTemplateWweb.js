@@ -37,6 +37,8 @@ const sql = neon(process.env.DATABASE_URL);
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   max: 2000,
+  idleTimeoutMillis: 30000,
+  connectionTimeoutMillis: 2000
 });
 
 let companyConfig = {};
@@ -2508,6 +2510,7 @@ async function handleAIAssignResponses({
   idSubstring,
   contactName,
   keywordSource,
+  phoneIndex
 }) {
   if (!companyConfig.status_ai_responses?.ai_assign) {
     return false;
@@ -2531,6 +2534,7 @@ async function handleAIAssignResponses({
           contactName,
           client,
           matchedKeyword,
+          phoneIndex,
         });
       } catch (error) {
         console.error(`Error handling assignment:`, error);
@@ -4191,6 +4195,7 @@ async function processBotResponse({
       followUpTemplates,
       contactName,
       threadID,
+      phoneIndex
     });
 
     const handlerParams = {
@@ -4274,10 +4279,12 @@ async function handleSpecialCases({
   followUpTemplates,
   contactName,
   threadID,
+  phoneIndex,
 }) {
   // Handle general team notification
   if (part.includes("notified the team")) {
-    await assignNewContactToEmployee(extractedNumber, idSubstring, client);
+    const {empName, empPhone} = await assignNewContactToEmployee(extractedNumber, idSubstring, client, phoneIndex = phoneIndex);
+    await addTagToPostgres(extractedNumber, empName, idSubstring);
   }
 
   // Handle 0128 bot triggers
@@ -4286,12 +4293,14 @@ async function handleSpecialCases({
       part.toLowerCase().includes("i will notify the team") ||
       part.toLowerCase().includes("i have notified the team")
     ) {
-      await assignNewContactToEmployee(extractedNumber, idSubstring, client);
+      const {empName, empPhone} = await assignNewContactToEmployee(extractedNumber, idSubstring, client, phoneIndex = phoneIndex);
+      await addTagToPostgres(extractedNumber, empName, idSubstring);
     }
 
     if (part.toLowerCase().includes("get back to you")) {
       await addTagToPostgres(extractedNumber, "stop bot", idSubstring);
-      await assignNewContactToEmployee(extractedNumber, idSubstring, client);
+      const {empName, empPhone} = await assignNewContactToEmployee(extractedNumber, idSubstring, client, phoneIndex = phoneIndex);
+      await addTagToPostgres(extractedNumber, empName, idSubstring);
     }
 
     if (
@@ -7077,11 +7086,14 @@ async function assignNewContactToEmployee(
   idSubstring,
   client,
   contactName,
-  triggerKeyword = ""
+  triggerKeyword = "",
+  phoneIndex = 0
 ) {
+  // Load current month's assignment counts
+  await loadAssignmentCounts(idSubstring, phoneIndex);
+  
   const employees = await fetchEmployeesFromDatabase(idSubstring);
-
-  console.log("Employees:", employees);
+  console.log("Available employees:", employees);
 
   if (employees.length === 0) {
     console.log("No employees found for assignment");
@@ -7093,80 +7105,124 @@ async function assignNewContactToEmployee(
     extractedNumber,
     idSubstring
   );
-  const updatedContactName =
-    contactData?.contactName || contactName || "Not provided";
+  const updatedContactName = contactData?.contactName || contactName || "Not provided";
 
-  // Filter employees by role
-  const managers = employees.filter((emp) => emp.role === "4");
-  const salesEmployees = employees.filter((emp) => emp.role === "2");
-  const admins = employees.filter((emp) => emp.role === "1");
+  // Helper function to filter and sort available employees
+  const getAvailableEmployees = (role) => {
+    return employees
+      .filter(emp => 
+        emp.role === role && 
+        emp.phone_access?.[phoneIndex] &&
+        (!emp.quota_leads || (assignmentCounts[emp.id] || 0) < emp.quota_leads)
+      .map(emp => ({
+        ...emp,
+        currentAssignments: assignmentCounts[emp.id] || 0,
+        effectiveWeight: (emp.weightages?.[phoneIndex] || 1) / 
+                        ((assignmentCounts[emp.id] || 0) + 1)
+      }))
+      .sort((a, b) => b.effectiveWeight - a.effectiveWeight));
+  };
 
-  let assignedManager = null;
-  let assignedSales = null;
+  // Get available employees by role
+  const availableSales = getAvailableEmployees("4");
+  const availableManagers = getAvailableEmployees("2");
+  const availableAdmins = getAvailableEmployees("1");
 
-  // Assign to manager if available
-  if (managers.length > 0) {
-    assignedManager = managers[Math.floor(Math.random() * managers.length)];
-    await assignToEmployee(
-      assignedManager,
-      "Manager",
-      extractedNumber,
-      updatedContactName,
-      client,
-      idSubstring,
-      triggerKeyword
-    );
-    tags.push(assignedManager.name, assignedManager.phoneNumber);
-  }
+  let assignedEmployee = null;
+  let assignedRole = "";
 
-  // Assign to sales if available
-  if (salesEmployees.length > 0) {
-    // Calculate total weightage
-    const totalWeight = salesEmployees.reduce(
-      (sum, emp) => sum + (emp.weightage || 1),
-      0
-    );
+  // Try to assign to sales first
+  if (availableSales.length > 0) {
+    const totalWeight = availableSales.reduce((sum, emp) => sum + emp.effectiveWeight, 0);
     const randomValue = Math.random() * totalWeight;
-
     let cumulativeWeight = 0;
-    for (const emp of salesEmployees) {
-      cumulativeWeight += emp.weightage || 1;
+
+    for (const emp of availableSales) {
+      cumulativeWeight += emp.effectiveWeight;
       if (randomValue <= cumulativeWeight) {
-        assignedSales = emp;
+        assignedEmployee = emp;
+        assignedRole = "Sales";
         break;
       }
     }
+  }
 
-    if (assignedSales) {
-      await assignToEmployee(
-        assignedSales,
-        "Sales",
-        extractedNumber,
-        updatedContactName,
-        client,
-        idSubstring,
-        triggerKeyword
-      );
-      tags.push(assignedSales.name, assignedSales.phoneNumber);
+  // Fall back to managers if no sales available
+  if (!assignedEmployee && availableManagers.length > 0) {
+    const totalWeight = availableManagers.reduce((sum, emp) => sum + emp.effectiveWeight, 0);
+    const randomValue = Math.random() * totalWeight;
+    let cumulativeWeight = 0;
+
+    for (const emp of availableManagers) {
+      cumulativeWeight += emp.effectiveWeight;
+      if (randomValue <= cumulativeWeight) {
+        assignedEmployee = emp;
+        assignedRole = "Manager";
+        break;
+      }
     }
   }
 
-  // If no manager and no sales, assign to admin
-  if (!assignedManager && !assignedSales && admins.length > 0) {
-    const assignedAdmin = admins[Math.floor(Math.random() * admins.length)];
+  // Fall back to admins if no others available
+  if (!assignedEmployee && availableAdmins.length > 0) {
+    const totalWeight = availableAdmins.reduce((sum, emp) => sum + emp.effectiveWeight, 0);
+    const randomValue = Math.random() * totalWeight;
+    let cumulativeWeight = 0;
+
+    for (const emp of availableAdmins) {
+      cumulativeWeight += emp.effectiveWeight;
+      if (randomValue <= cumulativeWeight) {
+        assignedEmployee = emp;
+        assignedRole = "Admin";
+        break;
+      }
+    }
+  }
+
+  // If we found someone to assign to
+  if (assignedEmployee) {
+    console.log(`Assigning to ${assignedRole}: ${assignedEmployee.name}`);
+    
     await assignToEmployee(
-      assignedAdmin,
-      "Admin",
+      assignedEmployee,
+      assignedRole,
       extractedNumber,
       updatedContactName,
       client,
       idSubstring,
-      triggerKeyword
+      triggerKeyword,
+      phoneIndex
     );
-    tags.push(assignedAdmin.name, assignedAdmin.phoneNumber);
-  }
 
-  await storeAssignmentState(idSubstring);
+    const contactId = `${idSubstring}-${extractedNumber.replace('+', '')}`;
+    
+    // Record the assignment
+    await recordAssignment({
+      company_id: idSubstring,
+      employee_id: assignedEmployee.id,
+      contact_id: contactId,
+      phone_index: phoneIndex,
+      employee_role: assignedEmployee.role,
+      weightage_used: assignedEmployee.weightages?.[phoneIndex] || 1,
+      assignment_type: 'general',
+      notes: `Assigned via ${triggerKeyword || 'automatic'} assignment`,
+      metadata: {
+        contactName: updatedContactName,
+        triggerKeyword,
+        originalPhone: extractedNumber
+      }
+    });
+
+    // Update our local counts
+    assignmentCounts[assignedEmployee.id] = (assignmentCounts[assignedEmployee.id] || 0) + 1;
+    totalAssignments++;
+    tags.push(assignedEmployee.name, assignedEmployee.phone_number);
+
+    // Store the updated counts
+    await storeAssignmentCounts(idSubstring, phoneIndex);
+  } else {
+    console.log("No available employees with capacity for assignment");
+  }
 
   return tags;
 }
@@ -7178,7 +7234,8 @@ async function assignToEmployee(
   contactName,
   client,
   idSubstring,
-  triggerKeyword = ""
+  triggerKeyword = "",
+  phoneIndex = 0
 ) {
   const employeeID = employee.phoneNumber.split("+")[1] + "@c.us";
 
@@ -7220,6 +7277,137 @@ Thank you.`;
   await client.sendMessage(employeeID, message);
   await addTagToPostgres(contactID, employee.name, idSubstring);
   console.log(`Assigned ${role}: ${employee.name}`);
+}
+
+async function fetchEmployeesFromDatabase(idSubstring) {
+  const sqlClient = await pool.connect();
+  try {
+    const query = `
+      SELECT * FROM public.employees WHERE company_id = $1
+    `;
+    const result = await sqlClient.query(query, [idSubstring]);
+    return result.rows;
+  } catch (error) {
+    console.error(
+      `Error fetching employees for Company ${idSubstring}:`,
+      error
+    );
+    return {};
+  } finally {
+    sqlClient.release();
+  }
+}
+
+function getCurrentMonthKey() {
+  const date = new Date();
+  const month = date.toLocaleString('default', { month: 'short' });
+  const year = date.getFullYear();
+  return `${month}-${year}`;
+}
+
+let assignmentCounts = {};
+let totalAssignments = 0;
+
+async function loadAssignmentCounts(idSubstring, phoneIndex) {
+    const assignmentType = 'general';
+    const monthKey = getCurrentMonthKey();
+    
+    const query = `
+        SELECT counts, total 
+        FROM assignment_counts 
+        WHERE company_id = $1 
+          AND assignment_type = $2
+          AND month_key = $3
+    `;
+    
+    try {
+        const result = await pool.query(query, [idSubstring, assignmentType, monthKey]);
+        if (result.rows.length > 0) {
+            assignmentCounts = result.rows[0].counts || {};
+            totalAssignments = result.rows[0].total || 0;
+            console.log(`${assignmentType} counts for ${monthKey} loaded:`, result.rows[0]);
+        } else {
+            console.log(`No previous ${assignmentType} counts found for ${monthKey}`);
+            assignmentCounts = {};
+            totalAssignments = 0;
+        }
+    } catch (error) {
+        console.error(`Error loading assignment counts: ${error}`);
+        assignmentCounts = {};
+        totalAssignments = 0;
+    }
+}
+
+async function storeAssignmentCounts(idSubstring, phoneIndex) {
+    const assignmentType = 'general';
+    const monthKey = getCurrentMonthKey();
+    
+    const query = `
+        INSERT INTO assignment_counts (company_id, assignment_type, month_key, counts, total)
+        VALUES ($1, $2, $3, $4, $5)
+        ON CONFLICT (company_id, assignment_type, month_key) 
+        DO UPDATE SET 
+            counts = EXCLUDED.counts,
+            total = EXCLUDED.total,
+            last_updated = CURRENT_TIMESTAMP
+    `;
+    
+    try {
+        await pool.query(query, [
+            idSubstring,
+            assignmentType,
+            monthKey,
+            assignmentCounts,
+            totalAssignments
+        ]);
+        console.log(`${assignmentType} counts for ${monthKey} stored`);
+    } catch (error) {
+        console.error(`Error storing assignment counts: ${error}`);
+    }
+}
+
+async function recordAssignment(assignmentData) {
+  const monthKey = getCurrentMonthKey();
+  const query = `
+    INSERT INTO assignments (
+      assignment_id,
+      company_id,
+      employee_id,
+      contact_id,
+      assigned_at,
+      status,
+      notes,
+      metadata,
+      month_key,
+      phone_index,
+      assignment_type,
+      employee_role,
+      weightage_used
+    ) VALUES (
+      gen_random_uuid()::text,
+      $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12
+    )
+  `;
+  
+  try {
+    await pool.query(query, [
+      assignmentData.company_id,
+      assignmentData.employee_id,
+      assignmentData.contact_id,
+      new Date(),
+      'active',
+      assignmentData.notes,
+      assignmentData.metadata,
+      monthKey,
+      assignmentData.phone_index,
+      assignmentData.assignment_type,
+      assignmentData.employee_role,
+      assignmentData.weightage_used
+    ]);
+    console.log('Assignment recorded successfully');
+  } catch (error) {
+    console.error('Error recording assignment:', error);
+  }
 }
 
 async function sendDailyContactReport(client, idSubstring) {

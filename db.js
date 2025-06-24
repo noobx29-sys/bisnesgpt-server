@@ -11,6 +11,8 @@ const sql = neon(process.env.DATABASE_URL);
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   max: 2000,
+  idleTimeoutMillis: 30000,
+  connectionTimeoutMillis: 2000
 });
 
 // Helper function to execute SQL queries
