@@ -5336,7 +5336,7 @@ async function main(reinitialize = false) {
   // 1. Fetch companies in parallel with other initialization tasks
   const companiesPromise = sqlDb.query(
     "SELECT * FROM companies WHERE company_id = $1",
-    ["0134"]
+    ["0145"]
   );
 
   // 2. If reinitializing, start cleanup early
