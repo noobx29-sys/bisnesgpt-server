@@ -78,6 +78,7 @@ const readFileAsync = promisify(fs.readFile);
 const writeFileAsync = promisify(fs.writeFile);
 const LAST_PROCESSED_ROW_FILE = "last_processed_row.json";
 const MEDIA_DIR = path.join(__dirname, "public", "media");
+let companyConfig = {};
 
 // ======================
 // 3. SERVICE CONNECTIONS
@@ -3256,6 +3257,7 @@ function setupMessageCreateHandler(client, botName, phoneIndex) {
           extractedNumber,
           botName
         );
+        await fetchConfigFromDatabase(botName);
 
         const handlerParams = {
           client: client,
@@ -3316,6 +3318,35 @@ function setupMessageCreateHandler(client, botName, phoneIndex) {
       );
     }
   });
+}
+
+async function fetchConfigFromDatabase(idSubstring) {
+  let sqlClient;
+  try {
+    sqlClient = await pool.connect();
+
+    const query = `
+      SELECT *
+      FROM public.companies 
+      WHERE company_id = $1
+    `;
+
+    const result = await sqlClient.query(query, [idSubstring]);
+
+    if (result.rows.length === 0) {
+      console.log("No such company found!");
+      return;
+    }
+
+    companyConfig = result.rows[0];
+    console.log(`CompanyConfig for company ${idSubstring}:`, companyConfig);
+  } catch (error) {
+    console.error("Error fetching config:", error);
+  } finally {
+    if (sqlClient) {
+      sqlClient.release();
+    }
+  }
 }
 
 // Modular function to process all AI responses
@@ -5338,6 +5369,11 @@ async function main(reinitialize = false) {
     "SELECT * FROM companies WHERE company_id = $1",
     ["0145"]
   );
+  
+  // const companiesPromise = sqlDb.query(
+  //   "SELECT * FROM companies WHERE company_id IN ($1, $2)",
+  //   ["0134", "0150"]
+  // );
 
   // 2. If reinitializing, start cleanup early
   const cleanupPromise = reinitialize
@@ -5398,26 +5434,35 @@ async function main(reinitialize = false) {
 
   // 6. Initialize bots sequentially with delays
   const initializeBotsWithDelay = async (botConfigs) => {
-    // Only take the first bot configuration
-    const config = botConfigs[0];
-    if (!config) {
+    if (!botConfigs || botConfigs.length === 0) {
       console.log("No bot configurations found");
       return;
     }
 
-    console.log(`Starting initialization of bot ${config.botName}...`);
+    console.log(`Starting initialization of ${botConfigs.length} bots...`);
 
     try {
-      await initializeBot(config.botName, config.phoneCount);
-      console.log(`Successfully initialized bot ${config.botName}`);
-    } catch (error) {
-      console.error(
-        `Error in initialization of bot ${config.botName}:`,
-        error.message
+      // Create an array of promises for all bot initializations
+      const initializationPromises = botConfigs.map(config => 
+        initializeBot(config.botName, config.phoneCount)
+          .then(() => {
+            console.log(`Successfully initialized bot ${config.botName}`);
+          })
+          .catch(error => {
+            console.error(`Error in initialization of bot ${config.botName}:`, error.message);
+            // You might want to rethrow the error here if you want the outer catch to handle it
+            // throw error;
+          })
       );
-    }
 
-    console.log("Bot initialization completed.");
+      // Run all initializations concurrently
+      await Promise.all(initializationPromises);
+      
+      console.log("All bot initializations completed.");
+    } catch (error) {
+      // This will catch any errors that weren't handled in the individual promises
+      console.error("Error during bot initializations:", error.message);
+    }
   };
 
   // Replace the parallel initialization with sequential starts
@@ -7952,6 +7997,7 @@ app.post("/api/v2/messages/text/:companyId/:chatId", async (req, res) => {
       }
 
       // 7. Handle AI Responses for Own Messages
+      await fetchConfigFromDatabase(botName);
       const handlerParams = {
         client: client,
         msg: message,
@@ -8774,64 +8820,80 @@ async function copyDirectory(source, target, options = {}) {
   }
 
   // Normalize paths
-  source = path.normalize(source);
-  target = path.normalize(target);
+  source = path.resolve(source);
+  target = path.resolve(target);
 
   // Check if source exists
   try {
-    await fs.access(source);
+    await fs.promises.access(source);
   } catch (err) {
-    throw new Error(`Source directory does not exist: ${source}`);
+    console.error(`Access error for source directory ${source}:`, err);
+    throw new Error(`Source directory does not exist or is not accessible: ${source}`);
   }
 
   // Remove existing target if it exists
-  if (await pathExists(target)) {
-    await fs.rm(target, { recursive: true, force: true });
+  try {
+    if (await pathExists(target)) {
+      await fs.promises.rm(target, { recursive: true, force: true });
+    }
+  } catch (err) {
+    console.error(`Error removing target directory ${target}:`, err);
+    throw err;
   }
 
   // Create target directory
-  await fs.mkdir(target, { recursive: true });
+  try {
+    await fs.promises.mkdir(target, { recursive: true });
+  } catch (err) {
+    console.error(`Error creating target directory ${target}:`, err);
+    throw err;
+  }
 
   // Copy contents
-  const files = await fs.readdir(source);
+  try {
+    const files = await fs.promises.readdir(source);
 
-  await Promise.all(
-    files.map(async (file) => {
-      const sourcePath = path.join(source, file);
-      const targetPath = path.join(target, file);
+    await Promise.all(
+      files.map(async (file) => {
+        const sourcePath = path.join(source, file);
+        const targetPath = path.join(target, file);
 
-      // Skip files matching skip patterns
-      if (skipPatterns.some((pattern) => file.endsWith(pattern))) {
-        if (skipLockedFiles) {
-          console.log(`Skipping locked file: ${file}`);
-          return;
+        // Skip files matching skip patterns
+        if (skipPatterns.some((pattern) => file.endsWith(pattern))) {
+          if (skipLockedFiles) {
+            console.log(`Skipping locked file: ${file}`);
+            return;
+          }
         }
-      }
 
-      try {
-        const stat = await fs.stat(sourcePath);
+        try {
+          const stat = await fs.promises.stat(sourcePath);
 
-        if (stat.isDirectory()) {
-          await retryOperation(
-            () => copyDirectory(sourcePath, targetPath, options),
-            maxRetries,
-            retryDelay,
-            `Copy directory ${sourcePath} -> ${targetPath}`
-          );
-        } else {
-          await retryOperation(
-            () => copyFileWithStreams(sourcePath, targetPath),
-            maxRetries,
-            retryDelay,
-            `Copy file ${sourcePath} -> ${targetPath}`
-          );
+          if (stat.isDirectory()) {
+            await retryOperation(
+              () => copyDirectory(sourcePath, targetPath, options),
+              maxRetries,
+              retryDelay,
+              `Copy directory ${sourcePath} -> ${targetPath}`
+            );
+          } else {
+            await retryOperation(
+              () => copyFileWithStreams(sourcePath, targetPath),
+              maxRetries,
+              retryDelay,
+              `Copy file ${sourcePath} -> ${targetPath}`
+            );
+          }
+        } catch (error) {
+          console.error(`Error processing ${sourcePath}:`, error);
+          if (!skipLockedFiles) throw error;
         }
-      } catch (error) {
-        console.error(`Error processing ${sourcePath}:`, error);
-        if (!skipLockedFiles) throw error;
-      }
-    })
-  );
+      })
+    );
+  } catch (err) {
+    console.error(`Error reading source directory ${source}:`, err);
+    throw err;
+  }
 }
 
 // Helper function to copy files using streams with proper error handling
@@ -9070,7 +9132,7 @@ async function initializeWithTimeout(botName, phoneIndex, clientName, clients) {
           } - Previous status was ready, creating backup...`
         );
         try {
-          await fs.mkdir(path.dirname(backupDir), { recursive: true });
+          await fs.promises.mkdir(path.dirname(backupDir), { recursive: true });
           await copyDirectory(sessionDir, backupDir);
           console.log(
             `${botName} Phone ${phoneIndex + 1} - Backup created successfully`
@@ -9098,6 +9160,7 @@ async function initializeWithTimeout(botName, phoneIndex, clientName, clients) {
             reason.includes("Target closed."))
         ) {
           await safeCleanup(botName, phoneIndex);
+          await sendAlertToEmployees(botName);
         }
       },
       uncaughtException: async (error) => {
@@ -9106,6 +9169,7 @@ async function initializeWithTimeout(botName, phoneIndex, clientName, clients) {
           error.message.includes("Target closed.")
         ) {
           await safeCleanup(botName, phoneIndex);
+          await sendAlertToEmployees(botName);
         }
       },
     };
@@ -9305,21 +9369,17 @@ async function initializeWithTimeout(botName, phoneIndex, clientName, clients) {
             reason: reason,
           });
 
-          const botData = botMap.get(botName);
-          if (botData?.[phoneIndex]?.client) {
-            try {
-              await destroyClient(botData[phoneIndex].client);
-            } catch (closeError) {
-              console.log("Error closing existing client:", closeError);
-            }
-
-            botData[phoneIndex].client = null;
-            botMap.set(botName, botData);
-          }
+          console.log(`${botName} Phone ${phoneIndex + 1} - Attempting cleanup...`);
 
           // Clean up session if disconnected due to navigation or logout
           if (reason === "NAVIGATION" || reason === "LOGOUT") {
+            console.log(
+              `${botName} Phone ${
+                phoneIndex + 1
+              } - Navigation or logout detected, attempting cleanup...`
+            );
             await safeCleanup(botName, phoneIndex);
+            await sendAlertToEmployees(botName);
           }
 
           await new Promise((resolve) => setTimeout(resolve, 2000));
@@ -9444,11 +9504,11 @@ async function getSessionStatus(botName, phoneIndex) {
 
 // Main cleanup function
 async function safeCleanup(botName, phoneIndex) {
-  const clientName = `session_${botName}_phone${phoneIndex}`;
+  const clientName = `${botName}`;
   const sessionDir = path.join(
     __dirname,
     ".wwebjs_auth",
-    `session-${clientName}`
+    `session-${botName}`
   );
 
   try {
@@ -9458,7 +9518,7 @@ async function safeCleanup(botName, phoneIndex) {
     // Only clean up if session is in error state or disconnected
     if (status !== "ready" && status !== "authenticated") {
       console.log(`Cleaning up problematic session: ${clientName}`);
-      await cleanupSession(clientName, sessionDir);
+      await cleanupSession(botName, phoneIndex, sessionDir);
       return true;
     }
 
@@ -9473,42 +9533,26 @@ async function safeCleanup(botName, phoneIndex) {
 }
 
 // Enhanced session cleanup
-async function cleanupSession(clientName, sessionDir) {
+async function cleanupSession(botName, phoneIndex, sessionDir) {
   try {
-    // 1. Close client properly if it exists
-    await closeClient(clientName);
-
-    // 2. Clean up locked files first
+    console.log(`Cleaning up session ${botName} at ${sessionDir}`);
+    // 1. Clean up locked files first
     await cleanupLockedFiles(sessionDir);
 
-    // 3. Remove session directory
+    // 2. Remove session directory
     await removeSessionDir(sessionDir);
 
-    console.log(`Successfully cleaned up session ${clientName}`);
+    console.log(`Successfully cleaned up session ${botName}`);
     return true;
   } catch (error) {
-    console.error(`Final cleanup attempt failed for ${clientName}:`, error);
+    console.error(`Final cleanup attempt failed for ${botName}:`, error);
     return false;
   }
 }
 
-// Helper to close client
-async function closeClient(clientName) {
-  const botData = botMap.get(botName);
-  if (!botData || !botData[phoneIndex]?.client) return;
-
-  try {
-    await botData[phoneIndex].client.destroy();
-    const browser = botData[phoneIndex].client.pupPage?.browser();
-    if (browser) await browser.close();
-    botData[phoneIndex].client = null;
-  } catch (error) {
-    console.warn(`Error closing client ${clientName}:`, error);
-  }
-}
-
-// Your existing locked files cleaner (improved)
+// Locked files cleaner
 async function cleanupLockedFiles(dirPath) {
+  console.log(`Cleaning up locked files in ${dirPath}`);
   if (!(await fileExists(dirPath))) return;
 
   try {
@@ -9530,13 +9574,16 @@ async function cleanupLockedFiles(dirPath) {
   }
 }
 
-// Enhanced directory removal
+// Directory removal
 async function removeSessionDir(dirPath) {
+  console.log(`Deleting session directory ${dirPath}`);
   if (!(await fileExists(dirPath))) return;
 
   try {
     // Try standard deletion first
+    console.log(`Deleting contents of ${dirPath}`);
     await fs.rm(dirPath, { recursive: true, force: true });
+    console.log(`Successfully deleted contents of ${dirPath}`);
 
     // Verify deletion
     if (await fileExists(dirPath)) {
@@ -9590,93 +9637,69 @@ async function deleteContentsIndividually(dirPath) {
       console.warn(`Could not delete ${filePath}:`, error);
     }
   }
-  await fs.rmdir(dirPath);
+  // Only try to remove directory if it's empty
+  try {
+    await fs.rmdir(dirPath);
+  } catch (error) {
+    console.warn(`Could not remove directory ${dirPath}:`, error);
+  }
 }
 
 async function platformSpecificDelete(dirPath) {
-  if (process.platform === "win32") {
-    await new Promise((resolve, reject) => {
-      exec(`rmdir /s /q "${dirPath}"`, (error) => {
-        if (error) reject(error);
-        else resolve();
-      });
-    });
-  } else {
-    await new Promise((resolve, reject) => {
-      exec(`rm -rf "${dirPath}"`, (error) => {
-        if (error) reject(error);
-        else resolve();
-      });
-    });
-  }
-}
+  return new Promise((resolve, reject) => {
+    const command = process.platform === "win32" 
+      ? `rmdir /s /q "${dirPath}"` 
+      : `rm -rf "${dirPath}"`;
 
-async function reinitializeClient(client, botName, phoneIndex) {
-  try {
-    console.log(`${botName} Phone ${phoneIndex + 1} - Reinitializing...`);
-    await client.destroy();
-    await client.initialize();
-  } catch (error) {
-    console.error(
-      `${botName} Phone ${phoneIndex + 1} - Error reinitializing:`,
-      error
-    );
-    // Handle the error, possibly retry or log for further investigation
-  }
+    exec(command, (error) => {
+      if (error) {
+        reject(error);
+      } else {
+        resolve();
+      }
+    });
+  });
 }
 
 async function sendAlertToEmployees(companyId) {
   try {
-    // Ensure the client for bot 001 is initialized and ready
-    const botData = botMap.get("0210");
+    // Ensure the client for bot 0210 is initialized and ready
+    const botData = botMap.get("0134");
     if (!botData || !botData[0]?.client || botData[0].status !== "ready") {
-      console.error("Client for bot 001 is not initialized or not ready.");
+      console.error("Client for bot 0134 is not initialized or not ready.");
       return;
     }
 
     const client = botData[0].client;
 
-    // Fetch employees from the target companyId
-    const employeesSnapshot = await db
-      .collection("companies")
-      .doc(companyId)
-      .collection("employee")
-      .get();
-    console.log(
-      `Fetched ${employeesSnapshot.size} employees for company ${companyId}.`
-    );
-
-    if (employeesSnapshot.empty) {
-      console.warn(`No employees found for company ${companyId}.`);
-      return;
-    }
-
-    const employees = employeesSnapshot.docs
-      .map((doc) => doc.data())
-      .filter((emp) => emp.role === "1");
-    console.log(`Filtered ${employees.length} employees with role '1'.`);
+    // Fetch employees from the target companyId with role '1'
+    const query = `
+      SELECT * FROM employees 
+      WHERE company_id = $1 AND role = '1' AND active = true
+    `;
+    const { rows: employees } = await pool.query(query, [companyId]);
+    
+    console.log(`Fetched ${employees.length} employees with role '1' for company ${companyId}.`);
 
     if (employees.length === 0) {
-      console.warn(
-        `No employees with role '1' found for company ${companyId}.`
-      );
+      console.warn(`No active employees with role '1' found for company ${companyId}.`);
       return;
     }
 
     const alertMessage = `[ALERT] WhatsApp Connection Disconnected\n\nACTION REQUIRED:\n\n1. Navigate to web.jutasoftware.co.\n2. Log in to your account.\n3. Scan the QR code to reinitialize your WhatsApp connection.\n\nFor support, please contact +601121677672`;
 
     for (const emp of employees) {
-      if (emp.phoneNumber) {
-        const employeeID = emp.phoneNumber.replace("+", "") + "@c.us";
-        console.log(`Sending alert to ${emp.phoneNumber}`);
+      if (emp.phone_number) {
+        const employeeID = emp.phone_number.replace("+", "") + "@c.us";
+        console.log(`Sending alert to ${emp.phone_number}`);
         try {
           await client.sendMessage(employeeID, alertMessage);
           console.log(
-            `Alert sent to ${emp.phoneNumber} about ${companyId} QR status`
+            `Alert sent to ${emp.phone_number} about ${companyId} QR status`
           );
         } catch (sendError) {
           console.error(
-            `Failed to send message to ${emp.phoneNumber}:`,
+            `Failed to send message to ${emp.phone_number}:`,
             sendError
           );
         }
