@@ -8983,7 +8983,7 @@ async function initializeBot(botName, phoneCount = 1, specificPhoneIndex) {
     // Initialize all phones in parallel
     const initializationPromises = indicesToInitialize.map(async (i) => {
       try {
-        let clientName = phoneCount == 1 ? botName : `${botName}_phone${i + 1}`;
+        let clientName = `${botName}_phone${i + 1}`;
 
         // Small stagger between starts to prevent resource contention
         await new Promise((resolve) => setTimeout(resolve, i * 2500));
@@ -9504,11 +9504,11 @@ async function getSessionStatus(botName, phoneIndex) {
 
 // Main cleanup function
 async function safeCleanup(botName, phoneIndex) {
-  const clientName = `${botName}`;
+  const clientName = `${botName}_phone${phoneIndex + 1}`;
   const sessionDir = path.join(
     __dirname,
     ".wwebjs_auth",
-    `session-${botName}`
+    `session-${clientName}`
   );
 
   try {
@@ -9663,16 +9663,36 @@ async function platformSpecificDelete(dirPath) {
 
 async function sendAlertToEmployees(companyId) {
   try {
-    // Ensure the client for bot 0210 is initialized and ready
-    const botData = botMap.get("0134");
+    const companyQuery = `SELECT category FROM companies WHERE company_id = $1`;
+    const { rows: companies } = await pool.query(companyQuery, [companyId]);
+    
+    if (companies.length === 0) {
+      console.error(`Company with ID ${companyId} not found.`);
+      return;
+    }
+
+    const companyCategory = companies[0].category;
+    let botId = "0134";
+    let alertMessage = `[ALERT] WhatsApp Connection Disconnected\n\nACTION REQUIRED:\n\n1. Navigate to web.jutasoftware.co.\n2. Log in to your account.\n3. Scan the QR code to reinitialize your WhatsApp connection.\n\nFor support, please contact +601121677672`;
+
+    if (!companyCategory) {
+      botId = "0134";
+    } else if (companyCategory === "Omniyal") {
+      botId = "063";
+      alertMessage = `[ALERT] WhatsApp Connection Disconnected\n\nACTION REQUIRED:\n\n1. Navigate to app.omniyal.com.\n2. Log in to your account.\n3. Scan the QR code to reinitialize your WhatsApp connection.\n\nFor support, please contact us`;
+    } else if (companyCategory === "XYZ") {
+      botId = "0330";
+      alertMessage = `[ALERT] WhatsApp Connection Disconnected\n\nACTION REQUIRED:\n\n1. Navigate to app.xyzaibot.com.\n2. Log in to your account.\n3. Scan the QR code to reinitialize your WhatsApp connection.\n\nFor support, please contact us`;
+    }
+
+    const botData = botMap.get(botId);
     if (!botData || !botData[0]?.client || botData[0].status !== "ready") {
-      console.error("Client for bot 0134 is not initialized or not ready.");
+      console.error(`Client for bot ${botId} is not initialized or not ready.`);
       return;
     }
 
     const client = botData[0].client;
 
-    // Fetch employees from the target companyId with role '1'
     const query = `
       SELECT * FROM employees 
       WHERE company_id = $1 AND role = '1' AND active = true
@@ -9685,8 +9705,6 @@ async function sendAlertToEmployees(companyId) {
       console.warn(`No active employees with role '1' found for company ${companyId}.`);
       return;
     }
-
-    const alertMessage = `[ALERT] WhatsApp Connection Disconnected\n\nACTION REQUIRED:\n\n1. Navigate to web.jutasoftware.co.\n2. Log in to your account.\n3. Scan the QR code to reinitialize your WhatsApp connection.\n\nFor support, please contact +601121677672`;
 
     for (const emp of employees) {
       if (emp.phone_number) {
