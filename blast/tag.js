@@ -1,85 +1,126 @@
 const fetch = require("node-fetch");
-const admin = require("../firebase.js");
-const db = admin.firestore();
-const OpenAI = require("openai");
 const moment = require("moment-timezone");
+const path = require('path');
+require("dotenv").config({ path: path.resolve(__dirname, '../.env') });
+const axios = require("axios");
+const { Pool } = require('pg');
 
-let ghlConfig = {};
-const openai = new OpenAI({
-  apiKey: process.env.OPENAIKEY,
+const pool = new Pool({
+  // Connection pooling
+  connectionString: process.env.DATABASE_URL,
+  max: 2000,
+  idleTimeoutMillis: 30000,
+  connectionTimeoutMillis: 2000
 });
-async function fetchConfigFromDatabase(idSubstring) {
+
+async function handleTagFollowUp(req, res) {
+  const idSubstring = req.body.idSubstring;
+  const { requestType, phone, first_name, phoneIndex: requestedPhoneIndex, templateId } = req.body;
+  const phoneIndex = requestedPhoneIndex !== undefined ? parseInt(requestedPhoneIndex) : 0;
+  console.log(`Tagfollowup webhook triggered for ${idSubstring} with phone ${phone} and name ${first_name} at index ${phoneIndex} and template ID ${templateId}...`);
+
+  if (!phone || !first_name) {
+    return res.status(400).json({ error: "Phone number and name are required" });
+  }
+
+  if (!templateId) {
+    return res.status(400).json({ error: "Template ID is required" });
+  }
+
+  let phoneWithPlus = phone.replace(/\s+|-/g, "");
+  if (!phoneWithPlus.startsWith("+")) {
+    phoneWithPlus = "+" + phoneWithPlus;
+  }
+  const phoneWithoutPlus = phoneWithPlus.replace("+", "");
+  const chatId = `${phoneWithoutPlus}@c.us`;
+
   try {
-    const docRef = db.collection("companies").doc(idSubstring);
-    const doc = await docRef.get();
-    if (!doc.exists) {
-      console.log("No such document!");
-      return;
+    // Get template from PostgreSQL
+    const templateQuery = `
+      SELECT * FROM followup_templates 
+      WHERE template_id = $1 AND company_id = $2
+    `;
+    const templateResult = await pool.query(templateQuery, [templateId, idSubstring]);
+
+    if (templateResult.rows.length === 0) {
+      return res.status(404).json({ error: "Template not found" });
     }
-    ghlConfig = doc.data();
+
+    const template = templateResult.rows[0];
+
+    // Get template messages from PostgreSQL
+    const messagesQuery = `
+      SELECT * FROM followup_messages 
+      WHERE template_id = $1 AND status = 'active'
+      ORDER BY day_number, sequence
+    `;
+    const messagesResult = await pool.query(messagesQuery, [templateId]);
+    template.messages = messagesResult.rows;
+
+    switch (requestType) {
+      case "startTemplate":
+        await scheduleFollowUpFromTemplate(chatId, idSubstring, first_name, template, phoneIndex);
+        break;
+      case "pauseTemplate":
+        await pauseFollowUpMessages(chatId, idSubstring, template);
+        break;
+      case "resumeTemplate":
+        await resumeFollowUpMessages(chatId, idSubstring, template);
+        break;
+      case "removeTemplate":
+        await removeScheduledMessages(chatId, idSubstring, template);
+        break;
+      default:
+        return res.status(400).json({
+          error: "Invalid request type. Must be one of: startTemplate, pauseTemplate, resumeTemplate, removeTemplate",
+        });
+    }
+
+    res.json({ success: true });
   } catch (error) {
-    console.error("Error fetching config:", error);
-    throw error;
+    res.status(500).json({
+      phone: phoneWithPlus,
+      first_name,
+      success: false,
+      error: error.message,
+    });
   }
 }
 
-const axios = require("axios");
-
 async function scheduleFollowUpFromTemplate(chatId, idSubstring, customerName, template, phoneIndex) {
   try {
-    if (!template || !template.id) {
-      throw new Error("Invalid template: template.id is required");
+    if (!template || !template.template_id) {
+      throw new Error("Invalid template: template.template_id is required");
     }
 
     console.log("Starting template scheduling with:", {
-      templateId: template.id,
+      templateId: template.template_id,
       templateName: template.name,
-      createdAt: template.createdAt?.toDate(),
-      startTime: template.startTime?.toDate(),
-      isCustomStartTime: template.isCustomStartTime,
+      createdAt: template.created_at,
+      delayHours: template.delay_hours
     });
 
     let baseScheduledTime;
-    if (template.isCustomStartTime) {
-      baseScheduledTime = moment(template.startTime.toDate());
+    if (template.is_custom_start_time) {
+      baseScheduledTime = moment(template.start_time);
     } else {
-      const createdAt = moment(template.createdAt.toDate());
-      const startTime = moment(template.startTime.toDate());
-      const initialDelay = startTime.diff(createdAt, "hours");
+      const createdAt = moment(template.created_at);
+      const initialDelay = template.delay_hours || 24;
       baseScheduledTime = moment().add(initialDelay, "hours");
     }
 
     console.log("Initial base scheduled time:", baseScheduledTime.format());
 
     const lastMessageTimeByDay = {};
-
-    const messagesRef = db
-      .collection("companies")
-      .doc(idSubstring)
-      .collection("followUpTemplates")
-      .doc(template.id)
-      .collection("messages");
-
-    const messagesSnapshot = await messagesRef
-      .where("status", "==", "active")
-      .orderBy("dayNumber")
-      .orderBy("sequence")
-      .get();
-
-    if (messagesSnapshot.empty) {
-      console.log("No active messages found in template");
-      return;
-    }
-
     const messagesByDay = {};
-    messagesSnapshot.forEach((doc) => {
-      const message = doc.data();
-      message.id = doc.id;
-      if (typeof message.dayNumber !== "number") {
-        console.warn(`Message ${doc.id} has invalid dayNumber:`, message.dayNumber);
+
+    // Group messages by day
+    template.messages.forEach(message => {
+      if (typeof message.day_number !== "number") {
+        console.warn(`Message ${message.id} has invalid dayNumber:`, message.day_number);
         return;
       }
-      const dayNumber = message.dayNumber.toString();
+      const dayNumber = message.day_number.toString();
       if (!messagesByDay[dayNumber]) {
         messagesByDay[dayNumber] = [];
       }
@@ -94,8 +135,8 @@ async function scheduleFollowUpFromTemplate(chatId, idSubstring, customerName, t
       console.log(`Processing day ${dayNumber} with ${messages.length} messages`);
 
       for (const message of messages) {
-        if (message.useScheduledTime && message.scheduledTime) {
-          const [hours, minutes] = message.scheduledTime.split(":").map(Number);
+        if (message.use_scheduled_time && message.scheduled_time) {
+          const [hours, minutes] = message.scheduled_time.split(":").map(Number);
           let testTime = baseScheduledTime
             .clone()
             .add(parseInt(dayNumber) - 1, "days")
@@ -118,21 +159,20 @@ async function scheduleFollowUpFromTemplate(chatId, idSubstring, customerName, t
 
     for (const dayNumber of Object.keys(messagesByDay).sort()) {
       const messages = messagesByDay[dayNumber];
-
       const dayBaseTime = baseScheduledTime.clone().add(parseInt(dayNumber) - 1, "days");
       lastMessageTimeByDay[dayNumber] = dayBaseTime.clone();
 
       for (const message of messages) {
         let scheduledTime;
 
-        if (message.useScheduledTime && message.scheduledTime) {
-          const [hours, minutes] = message.scheduledTime.split(":").map(Number);
+        if (message.use_scheduled_time && message.scheduled_time) {
+          const [hours, minutes] = message.scheduled_time.split(":").map(Number);
           scheduledTime = dayBaseTime.clone().hour(hours).minute(minutes).second(0);
 
           console.log(`Scheduling message for day ${dayNumber} at specific time:`, {
-            messageTime: message.scheduledTime,
+            messageTime: message.scheduled_time,
             calculatedTime: scheduledTime.format("YYYY-MM-DD HH:mm:ss"),
-            dayNumber: message.dayNumber,
+            dayNumber: message.day_number,
           });
 
           if (scheduledTime.isBefore(moment())) {
@@ -141,29 +181,29 @@ async function scheduleFollowUpFromTemplate(chatId, idSubstring, customerName, t
           }
         } else {
           if (message === messages[0]) {
-            if (dayNumber === "1" && message === messages[0] && message.delayAfter) {
+            if (dayNumber === "1" && message === messages[0] && message.delay_after) {
               scheduledTime = dayBaseTime.clone();
               
-              if (message.delayAfter.isInstantaneous) {
+              if (message.delay_after.isInstantaneous) {
                 scheduledTime.add(DELAY_BETWEEN_MESSAGES, "milliseconds");
               } else {
-                scheduledTime.add(message.delayAfter.value, message.delayAfter.unit);
+                scheduledTime.add(message.delay_after.value, message.delay_after.unit);
               }
               
               console.log(`First message of template with delay:`, {
-                delay: `${message.delayAfter.value} ${message.delayAfter.unit}`,
+                delay: `${message.delay_after.value} ${message.delay_after.unit}`,
                 scheduledTime: scheduledTime.format("YYYY-MM-DD HH:mm:ss")
               });
             } else {
               scheduledTime = dayBaseTime.clone();
             }
           } else {
-            if (message.delayAfter?.isInstantaneous) {
+            if (message.delay_after?.isInstantaneous) {
               scheduledTime = lastMessageTimeByDay[dayNumber].clone().add(DELAY_BETWEEN_MESSAGES, "milliseconds");
-            } else if (message.delayAfter) {
+            } else if (message.delay_after) {
               scheduledTime = lastMessageTimeByDay[dayNumber]
                 .clone()
-                .add(message.delayAfter.value, message.delayAfter.unit)
+                .add(message.delay_after.value, message.delay_after.unit)
                 .add(DELAY_BETWEEN_MESSAGES, "milliseconds");
             } else {
               scheduledTime = lastMessageTimeByDay[dayNumber]
@@ -176,21 +216,21 @@ async function scheduleFollowUpFromTemplate(chatId, idSubstring, customerName, t
 
         console.log(`Final scheduled time for message:`, {
           id: message.id,
-          dayNumber: message.dayNumber,
+          dayNumber: message.day_number,
           sequence: message.sequence,
           scheduledTime: scheduledTime.format("YYYY-MM-DD HH:mm:ss"),
-          useScheduledTime: message.useScheduledTime,
-          specificTime: message.scheduledTime,
-          delayAfter: message.delayAfter ? 
-            `${message.delayAfter.value} ${message.delayAfter.unit} (isInstantaneous: ${!!message.delayAfter.isInstantaneous})` : 
+          use_scheduled_time: message.use_scheduled_time,
+          specificTime: message.scheduled_time,
+          delay_after: message.delay_after ? 
+            `${message.delay_after.value} ${message.delay_after.unit} (isInstantaneous: ${!!message.delay_after.isInstantaneous})` : 
             'none'
         });
 
         let recipientIds = [chatId];
 
-        if (message.specificNumbers?.enabled && message.specificNumbers.numbers?.length > 0) {
-          console.log("Message has specific numbers:", message.specificNumbers.numbers);
-          recipientIds = message.specificNumbers.numbers.map((number) => {
+        if (message.specific_numbers?.enabled && message.specific_numbers.numbers?.length > 0) {
+          console.log("Message has specific numbers:", message.specific_numbers.numbers);
+          recipientIds = message.specific_numbers.numbers.map((number) => {
             return number.includes("@c.us") ? number : `${number}@c.us`;
           });
         }
@@ -202,7 +242,7 @@ async function scheduleFollowUpFromTemplate(chatId, idSubstring, customerName, t
 
           if (message.image) {
             await scheduleImageMessage(
-              message.image,
+              message.image.url,
               message.message || "",
               recipientScheduledTime.toDate(),
               recipientId,
@@ -242,126 +282,48 @@ async function scheduleFollowUpFromTemplate(chatId, idSubstring, customerName, t
   }
 }
 
-async function handleTagFollowUp(req, res) {
-  console.log("TAGFOLLOWUP webhook");
-  console.log(req.body);
-  const idSubstring = req.body.idSubstring;
-
-  await fetchConfigFromDatabase(idSubstring);
-  const { requestType, phone, first_name, phoneIndex: requestedPhoneIndex, templateId } = req.body;
-  const phoneIndex = requestedPhoneIndex !== undefined ? parseInt(requestedPhoneIndex) : 0;
-
-  if (!phone || !first_name) {
-    return res.status(400).json({ error: "Phone number and name are required" });
-  }
-
-  if (!templateId) {
-    return res.status(400).json({ error: "Template ID is required" });
-  }
-
-  let phoneWithPlus = phone.replace(/\s+|-/g, "");
-  if (!phoneWithPlus.startsWith("+")) {
-    phoneWithPlus = "+" + phoneWithPlus;
-  }
-  const phoneWithoutPlus = phoneWithPlus.replace("+", "");
-  const chatId = `${phoneWithoutPlus}@c.us`;
-
-  try {
-    const templateRef = db.collection("companies").doc(idSubstring).collection("followUpTemplates").doc(templateId);
-    const templateDoc = await templateRef.get();
-
-    if (!templateDoc.exists) {
-      return res.status(404).json({ error: "Template not found" });
-    }
-
-    const template = {
-      ...templateDoc.data(),
-      id: templateId,
-    };
-
-    switch (requestType) {
-      case "startTemplate":
-        await scheduleFollowUpFromTemplate(chatId, idSubstring, first_name, template, phoneIndex);
-        break;
-      case "pauseTemplate":
-        await pauseFollowUpMessages(chatId, idSubstring, template);
-        break;
-      case "resumeTemplate":
-        await resumeFollowUpMessages(chatId, idSubstring, template);
-        break;
-      case "removeTemplate":
-        await removeScheduledMessages(chatId, idSubstring, template);
-        break;
-      default:
-        return res.status(400).json({
-          error: "Invalid request type. Must be one of: startTemplate, pauseTemplate, resumeTemplate, removeTemplate",
-        });
-    }
-
-    res.json({ success: true });
-  } catch (error) {
-    res.status(500).json({
-      phone: phoneWithPlus,
-      first_name,
-      success: false,
-      error: error.message,
-    });
-  }
-}
-
 async function pauseFollowUpMessages(chatId, idSubstring, template) {
   try {
     console.log(`Pausing template messages for chat ${chatId}`);
 
-    const scheduledMessagesRef = db.collection("companies").doc(idSubstring).collection("scheduledMessages");
-
     // First, pause messages for the main chatId
-    const snapshot = await scheduledMessagesRef
-      .where("chatIds", "array-contains", chatId)
-      .where("status", "!=", "completed")
-      .where("type", "==", template.name)
-      .get();
+    const snapshot = await pool.query(`
+      SELECT id FROM scheduled_messages 
+      WHERE chat_ids @> $1 
+        AND status != 'completed' 
+        AND type = $2 
+        AND company_id = $3
+    `, [[chatId], template.name, idSubstring]);
 
-    if (snapshot.empty) {
+    if (snapshot.rows.length === 0) {
       console.log("No scheduled messages found to pause.");
       return;
     }
 
-    for (const doc of snapshot.docs) {
-      await pauseMessage(doc, idSubstring, chatId);
+    for (const row of snapshot.rows) {
+      await pauseMessage(row.id, idSubstring, chatId);
     }
 
-    console.log(`Paused ${snapshot.size} scheduled messages for chat ${chatId}`);
+    console.log(`Paused ${snapshot.rows.length} scheduled messages for chat ${chatId}`);
 
-    // Then, fetch messages from template to check for specific numbers
-    const messagesSnapshot = await db
-      .collection("companies")
-      .doc(idSubstring)
-      .collection("followUpTemplates")
-      .doc(template.id)
-      .collection("messages")
-      .where("status", "==", "active")
-      .where("specificNumbers.enabled", "==", true)
-      .get();
-
-    // Process each message with specific numbers
-    for (const messageDoc of messagesSnapshot.docs) {
-      const message = messageDoc.data();
-      if (message.specificNumbers?.numbers?.length > 0) {
-        // For each specific number, pause their messages
-        for (const specificNumber of message.specificNumbers.numbers) {
+    // Then, check for specific numbers in template messages
+    for (const message of template.messages) {
+      if (message.specific_numbers?.enabled && message.specific_numbers.numbers?.length > 0) {
+        for (const specificNumber of message.specific_numbers.numbers) {
           const specificChatId = `${specificNumber}@c.us`;
-          const specificSnapshot = await scheduledMessagesRef
-            .where("chatIds", "array-contains", specificChatId)
-            .where("status", "!=", "completed")
-            .where("type", "==", template.name)
-            .get();
+          const specificSnapshot = await pool.query(`
+            SELECT id FROM scheduled_messages 
+            WHERE chat_ids @> $1 
+              AND status != 'completed' 
+              AND type = $2 
+              AND company_id = $3
+          `, [[specificChatId], template.name, idSubstring]);
 
-          for (const doc of specificSnapshot.docs) {
-            await pauseMessage(doc, idSubstring, specificNumber);
+          for (const row of specificSnapshot.rows) {
+            await pauseMessage(row.id, idSubstring, specificNumber);
           }
 
-          console.log(`Paused ${specificSnapshot.size} messages for specific number: ${specificNumber}`);
+          console.log(`Paused ${specificSnapshot.rows.length} messages for specific number: ${specificNumber}`);
         }
       }
     }
@@ -371,33 +333,18 @@ async function pauseFollowUpMessages(chatId, idSubstring, template) {
   }
 }
 
-async function pauseMessage(doc, idSubstring, chatId) {
-  const messageId = doc.id;
-  const messageData = doc.data();
-
-  // Prepare the updated message data
-  const updatedMessage = {
-    ...messageData,
-    status: "paused",
-  };
-
-  // Ensure scheduledTime is properly formatted
-  if (updatedMessage.scheduledTime && typeof updatedMessage.scheduledTime === "object") {
-    updatedMessage.scheduledTime = {
-      seconds: Math.floor(updatedMessage.scheduledTime.seconds),
-      nanoseconds: updatedMessage.scheduledTime.nanoseconds || 0,
-    };
-  } else {
-    // If scheduledTime is missing or invalid, use the current time
-    updatedMessage.scheduledTime = {
-      seconds: Math.floor(Date.now() / 1000),
-      nanoseconds: 0,
-    };
-  }
-
-  // Call the API to update the message
+async function pauseMessage(messageId, idSubstring, chatId) {
   try {
-    await axios.put(`http://localhost:8443/api/schedule-message/${idSubstring}/${messageId}`, updatedMessage);
+    const response = await axios.put(
+      `http://localhost:8443/api/schedule-message/${idSubstring}/${messageId}`,
+      {
+        status: "paused",
+        scheduledTime: {
+          seconds: Math.floor(Date.now() / 1000),
+          nanoseconds: 0,
+        }
+      }
+    );
     console.log(`Paused scheduled message ${messageId} for chatId: ${chatId}`);
   } catch (error) {
     console.error(
@@ -411,52 +358,40 @@ async function resumeFollowUpMessages(chatId, idSubstring, template) {
   try {
     console.log(`Resuming template messages for chat ${chatId}`);
 
-    const scheduledMessagesRef = db.collection("companies").doc(idSubstring).collection("scheduledMessages");
-
     // First, handle main chatId messages
-    const snapshot = await scheduledMessagesRef
-      .where("chatIds", "array-contains", chatId)
-      .where("status", "==", "paused")
-      .where("type", "==", template.name)
-      .orderBy("scheduledTime", "asc")
-      .get();
+    const snapshot = await pool.query(`
+      SELECT id, scheduled_time FROM scheduled_messages 
+      WHERE chat_ids @> $1 
+        AND status = 'paused' 
+        AND type = $2 
+        AND company_id = $3
+      ORDER BY scheduled_time ASC
+    `, [[chatId], template.name, idSubstring]);
 
-    if (!snapshot.empty) {
-      await resumeMessagesGroup(snapshot.docs, idSubstring, chatId);
-      console.log(`Resumed ${snapshot.size} messages for main chat ${chatId}`);
+    if (snapshot.rows.length > 0) {
+      await resumeMessagesGroup(snapshot.rows, idSubstring, chatId);
+      console.log(`Resumed ${snapshot.rows.length} messages for main chat ${chatId}`);
     } else {
       console.log("No paused messages found for main chat.");
     }
 
     // Then, handle specific numbers from template messages
-    const messagesSnapshot = await db
-      .collection("companies")
-      .doc(idSubstring)
-      .collection("followUpTemplates")
-      .doc(template.id)
-      .collection("messages")
-      .where("status", "==", "active")
-      .where("specificNumbers.enabled", "==", true)
-      .get();
-
-    // Process each message with specific numbers
-    for (const messageDoc of messagesSnapshot.docs) {
-      const message = messageDoc.data();
-      if (message.specificNumbers?.numbers?.length > 0) {
-        // For each specific number, resume their messages
-        for (const specificNumber of message.specificNumbers.numbers) {
+    for (const message of template.messages) {
+      if (message.specific_numbers?.enabled && message.specific_numbers.numbers?.length > 0) {
+        for (const specificNumber of message.specific_numbers.numbers) {
           const specificChatId = `${specificNumber}@c.us`;
+          const specificSnapshot = await pool.query(`
+            SELECT id, scheduled_time FROM scheduled_messages 
+            WHERE chat_ids @> $1 
+              AND status = 'paused' 
+              AND type = $2 
+              AND company_id = $3
+            ORDER BY scheduled_time ASC
+          `, [[specificChatId], template.name, idSubstring]);
 
-          const specificSnapshot = await scheduledMessagesRef
-            .where("chatIds", "array-contains", specificChatId)
-            .where("status", "==", "paused")
-            .where("type", "==", template.name)
-            .orderBy("scheduledTime", "asc")
-            .get();
-
-          if (!specificSnapshot.empty) {
-            await resumeMessagesGroup(specificSnapshot.docs, idSubstring, specificNumber);
-            console.log(`Resumed ${specificSnapshot.size} messages for specific number: ${specificNumber}`);
+          if (specificSnapshot.rows.length > 0) {
+            await resumeMessagesGroup(specificSnapshot.rows, idSubstring, specificNumber);
+            console.log(`Resumed ${specificSnapshot.rows.length} messages for specific number: ${specificNumber}`);
           }
         }
       }
@@ -467,38 +402,32 @@ async function resumeFollowUpMessages(chatId, idSubstring, template) {
   }
 }
 
-// Helper function to resume a group of messages
-async function resumeMessagesGroup(docs, idSubstring, chatId) {
+async function resumeMessagesGroup(rows, idSubstring, chatId) {
   const today = new Date();
-  today.setHours(0, 0, 0, 0); // Set to start of day
+  today.setHours(0, 0, 0, 0);
 
-  const messages = docs.map((doc) => ({ id: doc.id, ...doc.data() }));
-  const firstScheduledTime = messages[0].scheduledTime.toDate();
+  const firstScheduledTime = new Date(rows[0].scheduled_time);
   const timeDifference = today.getTime() - firstScheduledTime.getTime();
 
-  for (const message of messages) {
-    const originalTime = message.scheduledTime.toDate();
+  for (const row of rows) {
+    const originalTime = new Date(row.scheduled_time);
     const newScheduledTime = new Date(originalTime.getTime() + timeDifference);
 
-    const updatedMessage = {
-      ...message,
-      messages: message.chatIds.map((chatId) => ({
-        chatId,
-        message: message.message,
-      })),
-      scheduledTime: {
-        seconds: Math.floor(newScheduledTime.getTime() / 1000),
-        nanoseconds: (newScheduledTime.getTime() % 1000) * 1e6,
-      },
-      status: "scheduled",
-    };
-
     try {
-      await axios.put(`http://localhost:8443/api/schedule-message/${idSubstring}/${message.id}`, updatedMessage);
-      console.log(`Resumed and rescheduled message ${message.id} for chatId: ${chatId}`);
+      await axios.put(
+        `http://localhost:8443/api/schedule-message/${idSubstring}/${row.id}`,
+        {
+          scheduledTime: {
+            seconds: Math.floor(newScheduledTime.getTime() / 1000),
+            nanoseconds: (newScheduledTime.getTime() % 1000) * 1e6,
+          },
+          status: "scheduled"
+        }
+      );
+      console.log(`Resumed and rescheduled message ${row.id} for chatId: ${chatId}`);
     } catch (error) {
       console.error(
-        `Error resuming and rescheduling message ${message.id}:`,
+        `Error resuming and rescheduling message ${row.id}:`,
         error.response ? error.response.data : error.message
       );
     }
@@ -516,7 +445,7 @@ async function scheduleImageMessage(imageUrl, caption, scheduledTime, chatId, id
     batchQuantity: 1,
     chatIds: [chatId],
     companyId: idSubstring,
-    createdAt: admin.firestore.Timestamp.now(),
+    createdAt: new Date(),
     documentUrl: "",
     fileName: null,
     mediaUrl: imageUrl,
@@ -561,7 +490,7 @@ async function scheduleReminderMessage(eventSummary, startDateTime, chatId, idSu
     batchQuantity: 1,
     chatIds: [chatId],
     companyId: idSubstring,
-    createdAt: admin.firestore.Timestamp.now(),
+    createdAt: new Date(),
     documentUrl: "",
     fileName: "",
     infiniteLoop: false,
@@ -602,53 +531,49 @@ async function scheduleReminderMessage(eventSummary, startDateTime, chatId, idSu
 async function removeScheduledMessages(chatId, idSubstring, template) {
   try {
     console.log(`Removing template messages for chat ${chatId}`);
-    const scheduledMessagesRef = db.collection("companies").doc(idSubstring).collection("scheduledMessages");
-
+    
     // First, remove messages for main chatId
-    const snapshot = await scheduledMessagesRef
-      .where("chatIds", "array-contains", chatId)
-      .where("v2", "==", true)
-      .get();
+    const snapshot = await pool.query(`
+      SELECT id FROM scheduled_messages 
+      WHERE chat_ids @> $1 
+        AND v2 = true 
+        AND company_id = $2
+    `, [[chatId], idSubstring]);
 
-    console.log(`Found ${snapshot.size} messages to delete for ${chatId}`);
+    console.log(`Found ${snapshot.rows.length} messages to delete for ${chatId}`);
 
-    // Log the found messages for debugging
-    snapshot.docs.forEach((doc) => {
-      console.log("Message to delete:", {
-        id: doc.id,
-        chatIds: doc.data().chatIds,
-        status: doc.data().status,
-        type: doc.data().type,
-      });
-    });
+    await removeMessagesGroup(snapshot.rows, idSubstring, chatId);
+    console.log(`Deleted ${snapshot.rows.length} messages for main chat ${chatId}`);
 
-    await removeMessagesGroup(snapshot.docs, idSubstring, chatId);
-    console.log(`Deleted ${snapshot.size} messages for main chat ${chatId}`);
+    // Also check for messages where chatId is a single string
+    const singleChatSnapshot = await pool.query(`
+      SELECT id FROM scheduled_messages 
+      WHERE chat_id = $1 
+        AND v2 = true 
+        AND company_id = $2
+    `, [chatId, idSubstring]);
 
-    // Also check for messages where chatId is a single string instead of array
-    const singleChatSnapshot = await scheduledMessagesRef.where("chatId", "==", chatId).where("v2", "==", true).get();
-
-    if (!singleChatSnapshot.empty) {
-      console.log(`Found ${singleChatSnapshot.size} additional messages with single chatId`);
-      await removeMessagesGroup(singleChatSnapshot.docs, idSubstring, chatId);
+    if (singleChatSnapshot.rows.length > 0) {
+      console.log(`Found ${singleChatSnapshot.rows.length} additional messages with single chatId`);
+      await removeMessagesGroup(singleChatSnapshot.rows, idSubstring, chatId);
     }
 
-    // Then, handle specific numbers from template messages if they exist
-    if (template.messages) {
-      for (const message of template.messages) {
-        if (message.specificNumbers?.enabled && message.specificNumbers.numbers?.length > 0) {
-          console.log("Processing specific numbers:", message.specificNumbers.numbers);
-          for (const number of message.specificNumbers.numbers) {
-            const specificChatId = number.includes("@c.us") ? number : `${number}@c.us`;
-            const specificSnapshot = await scheduledMessagesRef
-              .where("chatIds", "array-contains", specificChatId)
-              .where("v2", "==", true)
-              .get();
+    // Then, handle specific numbers from template messages
+    for (const message of template.messages) {
+      if (message.specific_numbers?.enabled && message.specific_numbers.numbers?.length > 0) {
+        console.log("Processing specific numbers:", message.specific_numbers.numbers);
+        for (const number of message.specific_numbers.numbers) {
+          const specificChatId = number.includes("@c.us") ? number : `${number}@c.us`;
+          const specificSnapshot = await pool.query(`
+            SELECT id FROM scheduled_messages 
+            WHERE chat_ids @> $1 
+              AND v2 = true 
+              AND company_id = $2
+          `, [[specificChatId], idSubstring]);
 
-            if (!specificSnapshot.empty) {
-              await removeMessagesGroup(specificSnapshot.docs, idSubstring, specificChatId);
-              console.log(`Deleted ${specificSnapshot.size} messages for specific number: ${specificChatId}`);
-            }
+          if (specificSnapshot.rows.length > 0) {
+            await removeMessagesGroup(specificSnapshot.rows, idSubstring, specificChatId);
+            console.log(`Deleted ${specificSnapshot.rows.length} messages for specific number: ${specificChatId}`);
           }
         }
       }
@@ -659,31 +584,26 @@ async function removeScheduledMessages(chatId, idSubstring, template) {
   }
 }
 
-// Helper function to remove a group of messages
-async function removeMessagesGroup(docs, idSubstring, chatId) {
-  for (const doc of docs) {
-    const messageId = doc.id;
-
-    try {
-      // Add retry logic
-      let retries = 3;
-      while (retries > 0) {
-        try {
-          const response = await axios.delete(`http://localhost:8443/api/schedule-message/${idSubstring}/${messageId}`);
-          console.log(`Successfully deleted message ${messageId} for ${chatId}:`, response.data);
-          break;
-        } catch (error) {
-          retries--;
-          if (retries === 0) throw error;
-          await new Promise((resolve) => setTimeout(resolve, 1000));
+async function removeMessagesGroup(rows, idSubstring, chatId) {
+  for (const row of rows) {
+    const messageId = row.id;
+    let retries = 3;
+    
+    while (retries > 0) {
+      try {
+        const response = await axios.delete(`http://localhost:8443/api/schedule-message/${idSubstring}/${messageId}`);
+        console.log(`Successfully deleted message ${messageId} for ${chatId}:`, response.data);
+        break;
+      } catch (error) {
+        retries--;
+        if (retries === 0) {
+          console.error(
+            `Failed to delete message ${messageId} for ${chatId}:`,
+            error.response ? error.response.data : error.message
+          );
         }
+        await new Promise((resolve) => setTimeout(resolve, 1000));
       }
-    } catch (error) {
-      console.error(
-        `Failed to delete message ${messageId} for ${chatId}:`,
-        error.response ? error.response.data : error.message
-      );
-      // Continue with other messages even if one fails
     }
   }
 }

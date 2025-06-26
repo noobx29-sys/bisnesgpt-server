@@ -3201,7 +3201,7 @@ function setupMessageCreateHandler(client, botName, phoneIndex) {
         }
 
         // 2. Save the message to SQL
-        const { msgDBId, type } = addMessageToPostgres(
+        const { type } = addMessageToPostgres(
           msg,
           companyId,
           extractedNumber,
@@ -4503,79 +4503,246 @@ async function addMessageToPostgres(
   userName
 ) {
   console.log("Adding message to PostgreSQL");
-  console.log("idSubstring:", idSubstring);
-  console.log("extractedNumber:", extractedNumber);
+  console.log("Adding message to PostgreSQL - Call Stack:", new Error().stack);
 
+  // Validate inputs
+  if (!extractedNumber || !(extractedNumber.startsWith("+60") || extractedNumber.startsWith("+65"))) {
+    console.error("Invalid extractedNumber for database:", extractedNumber);
+    return;
+  }
+
+  if (!idSubstring) {
+    console.error("Invalid idSubstring for database");
+    return;
+  }
+
+  // Prepare contact ID
+  const contactID = idSubstring + "-" + 
+    (extractedNumber.startsWith("+") ? extractedNumber.slice(1) : extractedNumber);
+
+  // Extract all message data using modular functions
+  const basicInfo = await extractBasicMessageInfo(msg);
+  const messageData = await prepareMessageData(msg, idSubstring, phoneIndex);
+
+  // Get message body (with audio transcription if applicable)
+  let messageBody = messageData.text?.body || "";
+  if (msg.hasMedia && (msg.type === "audio" || msg.type === "ptt")) {
+    console.log("Voice message detected during saving to NeonDB");
+    const media = await msg.downloadMedia();
+    const transcription = await transcribeAudio(media.data);
+
+    if (transcription && transcription !== "Audio transcription failed. Please try again.") {
+      messageBody += transcription;
+    } else {
+      messageBody += "I couldn't transcribe the audio. Could you please type your message instead?";
+    }
+  }
+
+  // Prepare media data
+  let mediaUrl = null;
+  let mediaData = null;
+  let mediaMetadata = {};
+
+  if (msg.hasMedia) {
+    if (msg.type === "video") {
+      mediaUrl = messageData.video?.link || null;
+    } else if (msg.type !== "audio" && msg.type !== "ptt") {
+      const mediaTypeData = messageData[msg.type];
+      if (mediaTypeData) {
+        mediaData = mediaTypeData.data || null;
+        mediaMetadata = {
+          mimetype: mediaTypeData.mimetype,
+          filename: mediaTypeData.filename || "",
+          caption: mediaTypeData.caption || "",
+          thumbnail: mediaTypeData.thumbnail || null,
+          mediaKey: mediaTypeData.media_key || null,
+          ...(msg.type === "image" && {
+            width: mediaTypeData.width,
+            height: mediaTypeData.height
+          }),
+          ...(msg.type === "document" && {
+            pageCount: mediaTypeData.page_count,
+            fileSize: mediaTypeData.file_size
+          })
+        };
+      }
+    }
+  }
+
+  // Prepare quoted message
+  const quotedMessage = messageData.text?.context || null;
+
+  // Determine author
+  let author = userName;
+  console.log("Author:", author);
+  if (!author && msg.from.includes("@g.us") && basicInfo.author) {
+    const authorData = await getContactDataFromDatabaseByPhone(basicInfo.author, idSubstring);
+    author = authorData ? authorData.contactName : basicInfo.author;
+  }
+
+  // Database operations
   try {
-    await sqlDb.query("BEGIN");
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
 
-    const contactID = `${idSubstring}-${extractedNumber.replace("+", "")}`;
-    const chatId = msg.fromMe ? msg.to : msg.from;
-
-    // Insert message
-    const messageQuery = `
-        INSERT INTO public.messages (
-          message_id, company_id, contact_id, content, message_type,
-          media_url, timestamp, direction,
-          status, from_me, chat_id, author, phone_index,
-          thread_id, customer_phone
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
-        ON CONFLICT (message_id) DO NOTHING
-        RETURNING id
+      // Create/update contact
+      const contactCheckQuery = `
+        SELECT id FROM public.contacts 
+        WHERE contact_id = $1 AND company_id = $2
       `;
-    const messageValues = [
-      msg.id._serialized,
-      idSubstring,
-      contactID,
-      msg.body || "",
-      msg.type,
-      null, // mediaUrl
-      new Date(msg.timestamp * 1000),
-      msg.fromMe ? "outbound" : "inbound",
-      "delivered",
-      msg.fromMe || false,
-      chatId,
-      userName || contactID,
-      phoneIndex,
-      chatId,
-      extractedNumber,
-    ];
+      const contactResult = await client.query(contactCheckQuery, [contactID, idSubstring]);
 
-    const messageResult = await sqlDb.query(messageQuery, messageValues);
-
-    if (messageResult.rows.length > 0) {
-      const messageDbId = messageResult.rows[0].id;
-      await sqlDb.query("COMMIT");
-      console.log(
-        `Message successfully added to PostgreSQL with ID: ${messageDbId}`
-      );
-
-      // Fetch the full message data and broadcast it
-      const res = await sqlDb.query(
-        `SELECT m.*, c.name as contact_name 
-         FROM messages m
-         LEFT JOIN contacts c ON m.contact_id = c.contact_id AND m.company_id = c.company_id
-         WHERE m.id = $1`,
-        [messageDbId]
-      );
-      const fullMessageData = res.rows[0];
-
-      if (fullMessageData) {
-        broadcastNewMessageToChat(fullMessageData.contact_id, msg.body);
+      if (contactResult.rows.length === 0) {
+        console.log(`Creating new contact: ${contactID} for company: ${idSubstring}`);
+        const contactQuery = `
+          INSERT INTO public.contacts (
+            contact_id, company_id, name, contact_name, phone, email,
+            thread_id, profile, points, tags, reaction, reaction_timestamp,
+            last_updated, edited, edited_at, whapi_token, created_at
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+          ON CONFLICT (contact_id, company_id) DO UPDATE
+          SET name = EXCLUDED.name,
+              contact_name = EXCLUDED.contact_name,
+              phone = EXCLUDED.phone,
+              last_updated = EXCLUDED.last_updated
+        `;
+        await client.query(contactQuery, [
+          contactID,
+          idSubstring,
+          extractedNumber,
+          extractedNumber,
+          extractedNumber,
+          "",
+          msg.from,
+          {},
+          0,
+          [],
+          null,
+          null,
+          new Date(),
+          false,
+          null,
+          null,
+          new Date(),
+        ]);
+        console.log(`Contact created successfully: ${contactID}`);
       }
 
-      return { messageDbId, type: msg.type, inserted: true };
-    } else {
-      await sqlDb.query("COMMIT");
-      console.log(
-        `Message ${msg.id._serialized} already exists. Skipping insert.`
-      );
-      return { messageDbId: null, type: msg.type, inserted: false };
+      // Insert message
+      const messageQuery = `
+        INSERT INTO public.messages (
+          message_id, company_id, contact_id, content, message_type,
+          media_url, media_data, media_metadata, timestamp, direction,
+          status, from_me, chat_id, author, phone_index, quoted_message,
+          thread_id, customer_phone
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+        ON CONFLICT (message_id, company_id) DO NOTHING
+        RETURNING id
+      `;
+      const messageValues = [
+        basicInfo.idSerialized,
+        idSubstring,
+        contactID,
+        messageBody,
+        basicInfo.type,
+        mediaUrl,
+        mediaData,
+        Object.keys(mediaMetadata).length > 0 ? JSON.stringify(mediaMetadata) : null,
+        new Date(basicInfo.timestamp * 1000),
+        msg.fromMe ? "outbound" : "inbound",
+        "delivered",
+        msg.fromMe || false,
+        msg.from,
+        author || contactID,
+        phoneIndex,
+        quotedMessage ? JSON.stringify(quotedMessage) : null,
+        msg.to,
+        extractedNumber
+      ];
+
+      await client.query(messageQuery, messageValues);
+
+      await client.query("COMMIT");
+      console.log(`Message successfully added to PostgreSQL with ID: ${basicInfo.idSerialized}`);
+      return { type: basicInfo.type };
+    } catch (error) {
+      await client.query("ROLLBACK");
+      console.error("Error in PostgreSQL transaction:", error);
+      throw error;
+    } finally {
+      client.release();
+      await addNotificationToUser(idSubstring, messageBody, contactName);
     }
   } catch (error) {
-    await sqlDb.query("ROLLBACK");
-    console.error("Error in PostgreSQL transaction:", error);
+    console.error("PostgreSQL connection error:", error);
     throw error;
+  }
+}
+
+async function addNotificationToUser(companyId, message, contactName) {
+  console.log("Adding notification and sending FCM");
+  try {
+    const client = await pool.connect();
+
+    try {
+      const usersQuery = await client.query(
+        "SELECT user_id FROM public.users WHERE company_id = $1",
+        [companyId]
+      );
+
+      if (usersQuery.rows.length === 0) {
+        console.log("No matching users found.");
+        return;
+      }
+
+      // Fix: Handle both string and object message types
+      let cleanMessage;
+      if (typeof message === "string") {
+        cleanMessage = { text: { body: message }, type: "text" };
+      } else if (message && typeof message === "object") {
+        cleanMessage = Object.fromEntries(
+          Object.entries(message).filter(([_, value]) => value !== undefined)
+        );
+      } else {
+        cleanMessage = { text: { body: "New message received" }, type: "text" };
+      }
+
+      let notificationText = cleanMessage.text?.body || "New message received";
+      if (cleanMessage.hasMedia) {
+        notificationText = `Media: ${cleanMessage.type || "attachment"}`;
+      }
+
+      const promises = usersQuery.rows.map(async (user) => {
+        const userId = user.user_id;
+
+        await client.query(
+          `INSERT INTO public.notifications (
+            company_id, user_id, title, message, type, read, message_data, created_at
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, CURRENT_TIMESTAMP)`,
+          [
+            companyId,
+            userId,
+            contactName,
+            notificationText,
+            cleanMessage.type || "message",
+            false,
+            JSON.stringify(cleanMessage),
+          ]
+        );
+
+        console.log(
+          `Notification added to PostgreSQL for user with ID: ${userId}`
+        );
+      });
+
+      await Promise.all(promises);
+   
+    } finally {
+      client.release();
+    }
+  } catch (error) {
+    console.error("Error adding notification or sending FCM: ", error);
   }
 }
 
@@ -7924,10 +8091,11 @@ app.post("/api/v2/messages/text/:companyId/:chatId", async (req, res) => {
         console.log("Sending regular message");
         sentMessage = await client.sendMessage(chatId, message);
       }
+
       console.log("Message sent successfully:", {
-        messageId: sentMessage.id._serialized,
-        timestamp: sentMessage.timestamp,
-        type: sentMessage.type,
+        messageId: sentMessage?.id?._serialized ?? 'no id',
+        timestamp: sentMessage?.timestamp ?? 'no timestamp',
+        type: sentMessage?.type ?? 'no type',
       });
     } catch (sendError) {
       console.error("\n=== Message Send Error ===");
@@ -7947,14 +8115,8 @@ app.post("/api/v2/messages/text/:companyId/:chatId", async (req, res) => {
         companyId
       );
 
-      await addMessageToPostgres(
-        sentMessage,
-        companyId,
-        phoneNumber,
-        contactData.contact_name || contactData.name || "",
-        phoneIndex,
-        userName
-      );
+      // WIP - SentMessage Hilang Tibe2
+      // await addAuthorToPostgres(sentMessage, companyId, userName);
 
       // 5. Handle OpenAI integration for the receiver's contact
       if (contactData?.thread_id) {
@@ -7997,7 +8159,7 @@ app.post("/api/v2/messages/text/:companyId/:chatId", async (req, res) => {
       }
 
       // 7. Handle AI Responses for Own Messages
-      await fetchConfigFromDatabase(botName);
+      await fetchConfigFromDatabase(companyId);
       const handlerParams = {
         client: client,
         msg: message,
@@ -8048,6 +8210,74 @@ app.post("/api/v2/messages/text/:companyId/:chatId", async (req, res) => {
     });
   }
 });
+
+async function addAuthorToPostgres(msg, companyId, userName) {
+  console.log("Preparing to add author to message in PostgreSQL");
+  
+  await new Promise(resolve => setTimeout(resolve, 5000));
+  
+  const basicInfo = await extractBasicMessageInfo(msg);
+  const messageId = basicInfo.idSerialized;
+  
+  let author = userName;
+  if (!author && msg.from.includes("@g.us") && basicInfo.author) {
+    const authorData = await getContactDataFromDatabaseByPhone(basicInfo.author, companyId);
+    author = authorData ? authorData.contactName : basicInfo.author;
+  }
+
+  if (!author) {
+    console.log("No author information available to add");
+    return;
+  }
+
+  try {
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+
+      const messageCheckQuery = `
+        SELECT id, author FROM public.messages 
+        WHERE message_id = $1 AND company_id = $2
+        FOR UPDATE
+      `;
+      const messageResult = await client.query(messageCheckQuery, [messageId, companyId]);
+
+      if (messageResult.rows.length === 0) {
+        console.log("Message not found in database, cannot add author");
+        await client.query("ROLLBACK");
+        return;
+      }
+
+      const existingMessage = messageResult.rows[0];
+      
+      if (existingMessage.author !== author) {
+        const updateQuery = `
+          UPDATE public.messages
+          SET author = $1,
+              last_updated = NOW()
+          WHERE id = $2
+          RETURNING id
+        `;
+        const updateResult = await client.query(updateQuery, [author, existingMessage.id]);
+        
+        console.log(`Successfully updated author for message ID: ${updateResult.rows[0].id}`);
+      } else {
+        console.log("Author already set to the same value, no update needed");
+      }
+
+      await client.query("COMMIT");
+    } catch (error) {
+      await client.query("ROLLBACK");
+      console.error("Error updating author in PostgreSQL:", error);
+      throw error;
+    } finally {
+      client.release();
+    }
+  } catch (error) {
+    console.error("PostgreSQL connection error:", error);
+    throw error;
+  }
+}
 
 // React to message
 app.post("/api/messages/react/:companyId/:messageId", async (req, res) => {

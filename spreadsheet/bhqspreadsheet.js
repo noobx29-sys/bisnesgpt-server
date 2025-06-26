@@ -7,12 +7,19 @@ const util = require("util");
 const moment = require("moment-timezone");
 const fs = require("fs");
 const cron = require("node-cron");
+require("dotenv").config({ path: path.resolve(__dirname, '../.env') });
 
 const { v4: uuidv4 } = require("uuid");
 
 const { URLSearchParams } = require("url");
-const admin = require("../firebase.js");
-const db = admin.firestore();
+const { Pool } = require("pg");
+const pool = new Pool({
+  // Connection pooling
+  connectionString: process.env.DATABASE_URL,
+  max: 2000,
+  idleTimeoutMillis: 30000,
+  connectionTimeoutMillis: 2000
+});
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAIKEY,
@@ -49,7 +56,7 @@ class bhqSpreadsheet {
       const phoneWithoutPlus = phoneNumber.startsWith("+") ? phoneNumber.slice(1) : phoneNumber;
 
       // Fetch the last message timestamp from Firebase
-      const lastMessageTimestamp = await this.getLastMessageTimestampFromFirebase(phoneWithPlus);
+      const lastMessageTimestamp = await this.getLastMessageTimestampFromPostgreSQL(phoneWithPlus);
       if (!lastMessageTimestamp) {
         console.log(`No last message timestamp found for ${phoneWithPlus}`);
         return;
@@ -258,26 +265,28 @@ class bhqSpreadsheet {
     return letter;
   }
 
-  async getLastMessageTimestampFromFirebase(phoneNumber) {
+  async getLastMessageTimestampFromPostgreSQL(phoneNumber) {
     try {
-      const contactRef = db.collection("companies").doc(this.botName).collection("contacts").doc(phoneNumber);
-      const messagesRef = contactRef.collection("messages");
-      const querySnapshot = await messagesRef.orderBy("timestamp", "desc").get();
+      // Query to find the most recent message containing "sahkan kehadiran"
+      const query = `
+        SELECT timestamp
+        FROM messages
+        WHERE 
+          company_id = $1
+          AND customer_phone = $2
+          AND content ILIKE '%sahkan kehadiran%'
+        ORDER BY timestamp DESC
+        LIMIT 1;
+      `;
 
-      if (querySnapshot.empty) {
-        console.log("No messages found.");
+      const result = await pool.query(query, [this.botName, phoneNumber]);
+
+      if (result.rows.length === 0) {
+        console.log('No message with "sahkan kehadiran" found.');
         return null;
       }
 
-      for (const doc of querySnapshot.docs) {
-        const message = doc.data();
-        if (message.text && message.text.body.toLowerCase().includes("sahkan kehadiran")) {
-          return message.timestamp;
-        }
-      }
-
-      console.log('No message with "sahkan kehadiran" found.');
-      return null;
+      return result.rows[0].timestamp;
     } catch (error) {
       console.error("Error fetching last message timestamp:", error);
       return null;
@@ -445,167 +454,271 @@ class bhqSpreadsheet {
     }
   }
 
-  async addMessagetoFirebase(msg, idSubstring, extractedNumber) {
-    console.log("Adding message to Firebase");
-    console.log("idSubstring:", idSubstring);
-    console.log("extractedNumber:", extractedNumber);
+  async addMessageToPostgres(msg, idSubstring, extractedNumber, contactName) {
+    console.log(`�� [CONTACT_TRACKING] Adding message to PostgreSQL`);
 
-    if (!extractedNumber || !extractedNumber.startsWith("+60" || "+65")) {
-      console.error("Invalid extractedNumber for Firebase document path:", extractedNumber);
+    if (!extractedNumber || !extractedNumber.startsWith("+60") && !extractedNumber.startsWith("+65")) {
+      console.error("Invalid extractedNumber for database:", extractedNumber);
       return;
     }
 
     if (!idSubstring) {
-      console.error("Invalid idSubstring for Firebase document path");
+      console.error("Invalid idSubstring for database");
       return;
     }
-    let messageBody = msg.body;
-    let audioData = null;
-    let type = "";
-    if (msg.type === "chat") {
-      type = "text";
-    } else {
-      type = msg.type;
-    }
-    if (msg.hasMedia && msg.type === "audio") {
-      console.log("Voice message detected");
+
+    const contactID = idSubstring + "-" + (extractedNumber.startsWith("+") ? extractedNumber.slice(1) : extractedNumber);
+    console.log(`�� [CONTACT_TRACKING] Generated contactID: ${contactID}`);
+
+    const basicInfo = await extractBasicMessageInfo(msg);
+    const messageData = await prepareMessageData(msg, idSubstring, null);
+
+    let messageBody = messageData.text?.body || "";
+
+    if (msg.hasMedia && (msg.type === "audio" || msg.type === "ptt")) {
+      console.log("Voice message detected during saving to NeonDB");
       const media = await msg.downloadMedia();
       const transcription = await transcribeAudio(media.data);
-      console.log("Transcription:", transcription);
 
-      messageBody = transcription;
-      audioData = media.data;
-      console.log(msg);
-    }
-    const messageData = {
-      chat_id: msg.from,
-      from: msg.from ?? "",
-      from_me: msg.fromMe ?? false,
-      id: msg.id._serialized ?? "",
-      status: "delivered",
-      text: {
-        body: messageBody ?? "",
-      },
-      timestamp: msg.timestamp ?? 0,
-      type: type,
-    };
-
-    if (msg.from.includes("@g.us")) {
-      const authorNumber = "+" + msg.author.split("@")[0];
-
-      const authorData = await getContactDataFromDatabaseByPhone(authorNumber, idSubstring);
-      if (authorData) {
-        messageData.author = authorData.contactName;
+      if (transcription && transcription !== "Audio transcription failed. Please try again.") {
+        messageBody += transcription;
       } else {
-        messageData.author = msg.author;
+        messageBody += "I couldn't transcribe the audio. Could you please type your message instead?";
       }
     }
 
-    if (msg.type === "audio") {
-      messageData.audio = {
-        mimetype: "audio/ogg; codecs=opus", // Default mimetype for WhatsApp voice messages
-        data: audioData, // This is the base64 encoded audio data
-      };
-    }
+    let mediaUrl = null;
+    let mediaData = null;
+    let mediaMetadata = {};
 
-    if (msg.hasMedia && msg.type !== "audio") {
-      try {
-        const media = await msg.downloadMedia();
-        if (media) {
-          if (msg.type === "image") {
-            messageData.image = {
-              mimetype: media.mimetype,
-              data: media.data, // This is the base64-encoded data
-              filename: msg._data.filename || "",
-              caption: msg._data.caption || "",
-            };
-            // Add width and height if available
-            if (msg._data.width) messageData.image.width = msg._data.width;
-            if (msg._data.height) messageData.image.height = msg._data.height;
-          } else if (msg.type === "document") {
-            messageData.document = {
-              mimetype: media.mimetype,
-              data: media.data, // This is the base64-encoded data
-              filename: msg._data.filename || "",
-              caption: msg._data.caption || "",
-              pageCount: msg._data.pageCount,
-              fileSize: msg._data.size,
-            };
-          } else if (msg.type === "video") {
-            messageData.video = {
-              mimetype: media.mimetype,
-              filename: msg._data.filename || "",
-              caption: msg._data.caption || "",
-            };
-            // Store video data separately or use a cloud storage solution
-            const videoUrl = await storeVideoData(media.data, msg._data.filename);
-            messageData.video.link = videoUrl;
-          } else {
-            messageData[msg.type] = {
-              mimetype: media.mimetype,
-              data: media.data,
-              filename: msg._data.filename || "",
-              caption: msg._data.caption || "",
-            };
-          }
+    if (msg.hasMedia) {
+      if (msg.type === "video") {
+        mediaUrl = messageData.video?.link || null;
+      } else if (msg.type !== "audio" && msg.type !== "ptt") {
+        mediaData = messageData[msg.type]?.data || null;
+        mediaMetadata = {
+          mimetype: messageData[msg.type]?.mimetype,
+          filename: messageData[msg.type]?.filename || "",
+          caption: messageData[msg.type]?.caption || "",
+          thumbnail: messageData[msg.type]?.thumbnail || null,
+          mediaKey: messageData[msg.type]?.media_key || null,
+        };
 
-          // Add thumbnail information if available
-          if (msg._data.thumbnailHeight && msg._data.thumbnailWidth) {
-            messageData[msg.type].thumbnail = {
-              height: msg._data.thumbnailHeight,
-              width: msg._data.thumbnailWidth,
-            };
-          }
-
-          // Add media key if available
-          if (msg.mediaKey) {
-            messageData[msg.type].mediaKey = msg.mediaKey;
-          }
-        } else {
-          console.log(`Failed to download media for message: ${msg.id._serialized}`);
-          messageData.text = { body: "Media not available" };
+        if (msg.type === "image") {
+          mediaMetadata.width = messageData.image?.width;
+          mediaMetadata.height = messageData.image?.height;
+        } else if (msg.type === "document") {
+          mediaMetadata.pageCount = messageData.document?.page_count;
+          mediaMetadata.fileSize = messageData.document?.file_size;
         }
-      } catch (error) {
-        console.error(`Error handling media for message ${msg.id._serialized}:`, error);
-        messageData.text = { body: "Error handling media" };
       }
     }
-    const contactRef = db.collection("companies").doc(idSubstring).collection("contacts").doc(extractedNumber);
-    const messagesRef = contactRef.collection("messages");
 
-    const messageDoc = messagesRef.doc(msg.id._serialized);
-    await messageDoc.set(messageData, { merge: true });
-    console.log(messageData);
+    const quotedMessage = messageData.text?.context || null;
+
+    let author = null;
+    if (msg.from.includes("@g.us") && basicInfo.author) {
+      const authorData = await getContactDataFromDatabaseByPhone(basicInfo.author, idSubstring);
+      author = authorData ? authorData.contactName : basicInfo.author;
+    }
+
+    try {
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+
+        // Create/update contact
+        const contactCheckQuery = `
+          SELECT id, contact_id, phone, company_id, name, contact_name FROM public.contacts 
+          WHERE contact_id = $1 AND company_id = $2
+        `;
+        console.log(`�� [CONTACT_TRACKING] Checking for existing contact with contact_id: ${contactID}, company_id: ${idSubstring}`);
+        const contactResult = await client.query(contactCheckQuery, [contactID, idSubstring]);
+
+        if (contactResult.rows.length === 0) {
+          console.log(`�� [CONTACT_TRACKING] ⚠️ CREATING NEW CONTACT: ${contactID} for company: ${idSubstring}`);
+          console.log(`�� [CONTACT_TRACKING] Contact details:`, {
+            contact_id: contactID,
+            company_id: idSubstring,
+            name: contactName || extractedNumber,
+            contact_name: contactName || extractedNumber,
+            phone: extractedNumber
+          });
+          
+          const contactQuery = `
+            INSERT INTO public.contacts (
+              contact_id, company_id, name, contact_name, phone, email,
+              thread_id, profile, points, tags, reaction, reaction_timestamp,
+              last_updated, edited, edited_at, whapi_token, created_at
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+            ON CONFLICT (contact_id, company_id) DO UPDATE
+            SET name = EXCLUDED.name,
+                contact_name = EXCLUDED.contact_name,
+                phone = EXCLUDED.phone,
+                last_updated = EXCLUDED.last_updated
+          `;
+          await client.query(contactQuery, [
+            contactID,
+            idSubstring,
+            contactName || extractedNumber,
+            contactName || extractedNumber,
+            extractedNumber,
+            "",
+            msg.from,
+            {},
+            0,
+            [],
+            null,
+            null,
+            new Date(),
+            false,
+            null,
+            null,
+            new Date(),
+          ]);
+          console.log(`�� [CONTACT_TRACKING] ✅ Contact created successfully: ${contactID}`);
+        } else {
+          const existingContact = contactResult.rows[0];
+          console.log(`�� [CONTACT_TRACKING] ✅ Contact already exists:`, {
+            id: existingContact.id,
+            contact_id: existingContact.contact_id,
+            name: existingContact.name,
+            contact_name: existingContact.contact_name,
+            phone: existingContact.phone,
+            company_id: existingContact.company_id
+          });
+          
+          // Check if name is just the phone number (potential duplicate indicator)
+          if (existingContact.name === extractedNumber || existingContact.name === extractedNumber.slice(1)) {
+            console.log(`�� [CONTACT_TRACKING] ⚠️ WARNING: Contact name is phone number - potential duplicate:`, {
+              contact_id: existingContact.contact_id,
+              name: existingContact.name,
+              phone: existingContact.phone
+            });
+          }
+        }
+
+        // Insert the message
+        const messageQuery = `
+          INSERT INTO public.messages (
+            message_id, company_id, contact_id, thread_id, customer_phone,
+            content, message_type, media_url, timestamp, direction,
+            status, from_me, chat_id, author, quoted_message, media_data, media_metadata
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+          ON CONFLICT (message_id) DO NOTHING
+          RETURNING id
+        `;
+        const messageValues = [
+          basicInfo.idSerialized,
+          idSubstring,
+          contactID,
+          msg.from,
+          extractedNumber,
+          messageBody,
+          basicInfo.type,
+          mediaUrl,
+          new Date(basicInfo.timestamp * 1000),
+          msg.fromMe ? "outbound" : "inbound",
+          "delivered",
+          msg.fromMe || false,
+          msg.from,
+          author || contactID,
+          quotedMessage ? JSON.stringify(quotedMessage) : null,
+          mediaData || null,
+          Object.keys(mediaMetadata).length > 0 ? JSON.stringify(mediaMetadata) : null,
+        ];
+
+        const messageResult = await client.query(messageQuery, messageValues);
+        const messageDbId = messageResult.rows[0]?.id;
+
+        // Update contact's last message
+        await client.query(
+          `UPDATE public.contacts 
+          SET last_message = $1, last_updated = CURRENT_TIMESTAMP
+          WHERE contact_id = $2 AND company_id = $3`,
+          [
+            JSON.stringify({
+              chat_id: msg.to,
+              from: msg.from,
+              from_me: true,
+              id: basicInfo.idSerialized,
+              status: "delivered",
+              text: { body: messageBody },
+              timestamp: Math.floor(Date.now() / 1000),
+              type: basicInfo.type,
+            }),
+            contactID,
+            idSubstring,
+          ]
+        );
+
+        await client.query("COMMIT");
+        console.log(`�� [CONTACT_TRACKING] Message successfully added to PostgreSQL with ID: ${messageDbId}`);
+      } catch (error) {
+        await client.query("ROLLBACK");
+        console.error("Error in PostgreSQL transaction:", error);
+        throw error;
+      } finally {
+        client.release();
+        await addNotificationToUser(idSubstring, messageBody, contactName);
+      }
+    } catch (error) {
+      console.error("PostgreSQL connection error:", error);
+      throw error;
+    }
   }
 
   async getContactDataFromDatabaseByPhone(phoneNumber, idSubstring) {
+    const sqlClient = await pool.connect();
+
     try {
-      // Check if phoneNumber is defined
       if (!phoneNumber) {
         throw new Error("Phone number is undefined or null");
       }
 
-      // Initial fetch of config
-      //await fetchConfigFromDatabase(idSubstring);
+      console.log(`�� [CONTACT_TRACKING] Searching for contact - Phone: ${phoneNumber}, Company: ${idSubstring}`);
 
-      let threadID;
-      let contactName;
-      let bot_status;
-      const contactsRef = db.collection("companies").doc(idSubstring).collection("contacts");
-      const querySnapshot = await contactsRef.where("phone", "==", phoneNumber).get();
+      await sqlClient.query("BEGIN");
 
-      if (querySnapshot.empty) {
-        console.log("No matching documents.");
+      const query = `
+        SELECT * FROM public.contacts
+        WHERE phone = $1 AND company_id = $2
+        LIMIT 1
+      `;
+
+      const result = await sqlClient.query(query, [phoneNumber, idSubstring]);
+
+      await sqlClient.query("COMMIT");
+
+      if (result.rows.length === 0) {
+        console.log(`�� [CONTACT_TRACKING] No contact found for phone: ${phoneNumber}, company: ${idSubstring}`);
         return null;
       } else {
-        const doc = querySnapshot.docs[0];
-        const contactData = doc.data();
+        const contactData = result.rows[0];
+        const contactName = contactData.contact_name || contactData.name;
+        const threadID = contactData.thread_id;
 
-        return { ...contactData };
+        console.log(`�� [CONTACT_TRACKING] Found contact:`, {
+          contact_id: contactData.contact_id,
+          contact_name: contactData.contact_name,
+          name: contactData.name,
+          phone: contactData.phone,
+          company_id: contactData.company_id,
+          thread_id: threadID
+        });
+
+        return {
+          ...contactData,
+          contactName,
+          threadID,
+        };
       }
     } catch (error) {
-      console.error("Error fetching or updating document:", error);
+      await sqlClient.query("ROLLBACK");
+      console.error("Error fetching contact data:", error);
       throw error;
+    } finally {
+      sqlClient.release();
     }
   }
 
@@ -647,7 +760,7 @@ class bhqSpreadsheet {
         } else {
           const thread = await this.createThread();
           threadID = thread.id;
-          await this.saveThreadIDFirebase(contactID, threadID, this.botName);
+          await this.saveThreadIDPostgres(contactID, threadID, this.botName);
         }
       } else {
         await this.customWait(2500);
@@ -658,95 +771,14 @@ class bhqSpreadsheet {
         const thread = await this.createThread();
         threadID = thread.id;
         console.log(threadID);
-        await this.saveThreadIDFirebase(contactID, threadID, this.botName);
-        console.log("sent new contact to create new contact");
-      }
-
-      let firebaseTags = [""];
-      if (contactData) {
-        firebaseTags = contactData.tags ?? [];
-        // Remove 'snooze' tag if present
-        if (firebaseTags.includes("snooze")) {
-          firebaseTags = firebaseTags.filter((tag) => tag !== "snooze");
-        }
+        await this.saveThreadIDPostgres(contactID, threadID, this.botName);
+        console.log(`Created a new contact in PostgreSQL for contact ${contactID} in BHQ Spreadsheet`);
       }
 
       const sentMessage = await client.sendMessage(`${phoneNumber}@c.us`, message);
       await this.tagContactWithAttendance(phoneNumber);
-      await this.addMessagetoFirebase(sentMessage, this.botName, extractedNumber);
+      await this.addMessageToPostgres(sentMessage, this.botName, extractedNumber);
       console.log(`Reminder sent to ${teacherName} (${phoneNumber})`);
-
-      const data = {
-        additionalEmails: [],
-        address1: null,
-        assignedTo: null,
-        businessId: null,
-        phone: extractedNumber,
-        tags: firebaseTags,
-        chat: {
-          contact_id: extractedNumber,
-          id: sentMessage.from,
-          name: contactName,
-          not_spam: true,
-          tags: firebaseTags,
-          timestamp: sentMessage.timestamp || Date.now(),
-          type: "contact",
-          unreadCount: 0,
-          last_message: {
-            chat_id: sentMessage.from,
-            from: sentMessage.from,
-            from_me: true,
-            id: sentMessage.id._serialized,
-            source: "WhatsApp",
-            status: "sent",
-            text: {
-              body: message,
-            },
-            timestamp: sentMessage.timestamp || Date.now(),
-            type: "chat",
-          },
-        },
-        chat_id: sentMessage.from,
-        city: null,
-        companyName: null,
-        contactName: contactName,
-        unreadCount: unreadCount + 1,
-        threadid: threadID ?? "",
-        phoneIndex: 0, // Assuming this is the default value
-        last_message: {
-          chat_id: sentMessage.from,
-          from: sentMessage.from,
-          from_me: true,
-          id: sentMessage.id._serialized,
-          source: "WhatsApp",
-          status: "sent",
-          text: {
-            body: message,
-          },
-          timestamp: sentMessage.timestamp || Date.now(),
-          type: "chat",
-        },
-      };
-
-      if (!contactData) {
-        data.createdAt = admin.firestore.Timestamp.now();
-      }
-
-      let profilePicUrl = "";
-      if (client.getProfilePicUrl) {
-        try {
-          profilePicUrl = (await client.getProfilePicUrl(`${phoneNumber}@c.us`)) || "";
-        } catch (error) {
-          console.error(`Error getting profile picture URL for ${phoneNumber}:`, error);
-        }
-      }
-      data.profilePicUrl = profilePicUrl;
-
-      // Update or create contact in Firebase
-      const contactRef = db.collection("companies").doc(this.botName).collection("contacts").doc(extractedNumber);
-      await contactRef.set(data, { merge: true });
-
-      console.log(`Contact data updated for ${teacherName} (${phoneNumber})`);
     } catch (error) {
       console.error(`Error sending reminder to ${teacherName} (${phoneNumber}):`, error);
     }
@@ -756,20 +788,67 @@ class bhqSpreadsheet {
     return new Promise((resolve) => setTimeout(resolve, milliseconds));
   }
 
-  async saveThreadIDFirebase(contactID, threadID, idSubstring) {
-    // Construct the Firestore document path
-    const docPath = `companies/${idSubstring}/contacts/${contactID}`;
-
+  async saveThreadIDPostgres(contactID, threadID, idSubstring) {
+    let sqlClient;
     try {
-      await db.doc(docPath).set(
-        {
-          threadid: threadID,
-        },
-        { merge: true }
-      ); // merge: true ensures we don't overwrite the document, just update it
-      console.log(`Thread ID saved to Firestore at ${docPath}`);
+      sqlClient = await pool.connect();
+
+      await sqlClient.query("BEGIN");
+
+      const properContactID = idSubstring + "-" + (contactID.startsWith("+") ? contactID.slice(1) : contactID);
+
+      const checkQuery = `
+        SELECT id FROM public.contacts
+        WHERE contact_id = $1 AND company_id = $2
+      `;
+
+      const checkResult = await sqlClient.query(checkQuery, [
+        properContactID,
+        idSubstring,
+      ]);
+
+      if (checkResult.rows.length === 0) {
+        const insertQuery = `
+          INSERT INTO public.contacts (
+            contact_id, company_id, thread_id, name, phone, last_updated, created_at
+          ) VALUES (
+            $1, $2, $3, $4, $5, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+          )
+        `;
+
+        await sqlClient.query(insertQuery, [
+          properContactID,
+          idSubstring,
+          threadID,
+          contactID,
+          contactID,
+        ]);
+        console.log(
+          `New contact created with Thread ID in PostgreSQL for contact ${properContactID}`
+        );
+      } else {
+        const updateQuery = `
+          UPDATE public.contacts
+          SET thread_id = $1, last_updated = CURRENT_TIMESTAMP
+          WHERE contact_id = $2 AND company_id = $3
+        `;
+
+        await sqlClient.query(updateQuery, [threadID, properContactID, idSubstring]);
+        console.log(
+          `Thread ID updated in PostgreSQL for existing contact ${properContactID}`
+        );
+      }
+
+      await sqlClient.query("COMMIT");
     } catch (error) {
-      console.error("Error saving Thread ID to Firestore:", error);
+      if (sqlClient) {
+        await sqlClient.query("ROLLBACK");
+      }
+      console.error("Error saving Thread ID to PostgreSQL:", error);
+    } finally {
+      if (sqlClient) {
+        sqlClient.release();
+      }
     }
   }
 
@@ -812,7 +891,7 @@ Terima kasih`;
         } else {
           const thread = await this.createThread();
           threadID = thread.id;
-          await this.saveThreadIDFirebase(contactID, threadID, this.botName);
+          await this.saveThreadIDPostgres(contactID, threadID, this.botName);
         }
       } else {
         await this.customWait(2500);
@@ -823,128 +902,74 @@ Terima kasih`;
         const thread = await this.createThread();
         threadID = thread.id;
         console.log(threadID);
-        await this.saveThreadIDFirebase(contactID, threadID, this.botName);
-        console.log("sent new contact to create new contact");
-      }
-
-      let firebaseTags;
-      if (contactData) {
-        firebaseTags = contactData.tags ?? [];
-        // Remove 'snooze' tag if present
-        if (firebaseTags.includes("snooze")) {
-          firebaseTags = firebaseTags.filter((tag) => tag !== "snooze");
-        }
+        await this.saveThreadIDPostgres(contactID, threadID, this.botName);
+        console.log(`Created a new contact in PostgreSQL for contact ${contactID} in BHQ Spreadsheet`);
       }
 
       const sentMessage = await client.sendMessage(`${phoneNumber}@c.us`, message);
       await this.tagContactWithAttendance(phoneNumber);
-      await this.addMessagetoFirebase(sentMessage, this.botName, extractedNumber);
+      await this.addMessageToPostgres(sentMessage, this.botName, extractedNumber);
       console.log(`Reminder sent to ${teacherName} (${phoneNumber})`);
-
-      const data = {
-        additionalEmails: [],
-        address1: null,
-        assignedTo: null,
-        businessId: null,
-        phone: extractedNumber,
-        chat: {
-          contact_id: extractedNumber,
-          id: sentMessage.from,
-          name: contactName,
-          not_spam: true,
-          tags: firebaseTags,
-          timestamp: sentMessage.timestamp || Date.now(),
-          type: "contact",
-          unreadCount: 0,
-          last_message: {
-            chat_id: sentMessage.from,
-            from: sentMessage.from,
-            from_me: true,
-            id: sentMessage.id._serialized,
-            source: "WhatsApp",
-            status: "sent",
-            text: {
-              body: message,
-            },
-            timestamp: sentMessage.timestamp || Date.now(),
-            type: "chat",
-          },
-        },
-        chat_id: sentMessage.from,
-        city: null,
-        companyName: null,
-        contactName: contactName,
-        unreadCount: unreadCount + 1,
-        threadid: threadID ?? "",
-        phoneIndex: 0, // Assuming this is the default value
-        last_message: {
-          chat_id: sentMessage.from,
-          from: sentMessage.from,
-          from_me: true,
-          id: sentMessage.id._serialized,
-          source: "WhatsApp",
-          status: "sent",
-          text: {
-            body: message,
-          },
-          timestamp: sentMessage.timestamp || Date.now(),
-          type: "chat",
-        },
-        row: rowNumber + 1, // Add the row number to the data structure
-        customer: true,
-      };
-
-      if (!contactData) {
-        data.createdAt = admin.firestore.Timestamp.now();
-      }
-
-      let profilePicUrl = "";
-      if (client.getProfilePicUrl) {
-        try {
-          profilePicUrl = (await client.getProfilePicUrl(`${phoneNumber}@c.us`)) || "";
-        } catch (error) {
-          console.error(`Error getting profile picture URL for ${phoneNumber}:`, error);
-        }
-      }
-      data.profilePicUrl = profilePicUrl;
-
-      // Update or create contact in Firebase
-      const contactRef = db.collection("companies").doc(this.botName).collection("contacts").doc(extractedNumber);
-      await contactRef.set(data, { merge: true });
-
-      console.log(`Contact data updated for ${teacherName} (${phoneNumber})`);
     } catch (error) {
       console.error(`Error sending reminder to ${teacherName} (${phoneNumber}):`, error);
     }
   }
 
   async tagContactWithAttendance(phoneNumber) {
+    const contactID =
+      this.botName +
+      "-" +
+      phoneNumber.split("@")[0];
+    const tag = "attendance";
+
+    const sqlClient = await pool.connect();
+
     try {
-      const extractedNumber = "+" + phoneNumber.split("@")[0];
-      const contactRef = db.collection("companies").doc(this.botName).collection("contacts").doc(extractedNumber);
+      await sqlClient.query("BEGIN");
 
-      // Get the current contact data
-      const contactDoc = await contactRef.get();
-      if (!contactDoc.exists) {
-        console.log(`Contact not found for ${extractedNumber}`);
-        return;
+      const checkQuery = `
+        SELECT 1 FROM public.contacts 
+        WHERE contact_id = $1 AND company_id = $2
+      `;
+      const checkResult = await sqlClient.query(checkQuery, [
+        contactID,
+        this.botName,
+      ]);
+
+      if (checkResult.rows.length === 0) {
+        throw new Error("Contact does not exist!");
       }
 
-      const contactData = contactDoc.data();
-      let tags = contactData.tags || [];
+      const addQuery = `
+        UPDATE public.contacts 
+        SET 
+          tags = CASE 
+            WHEN tags IS NULL THEN jsonb_build_array($1)
+            WHEN NOT tags ? $1 THEN tags || jsonb_build_array($1)
+            ELSE tags
+          END,
+          last_updated = CURRENT_TIMESTAMP
+        WHERE contact_id = $2 AND company_id = $3
+        RETURNING (tags ? $1) AS tag_existed_before_update
+      `;
+      const addResult = await sqlClient.query(addQuery, [
+        tag,
+        contactID,
+        this.botName,
+      ]);
 
-      // Add 'attendance' tag if it doesn't exist
-      if (!tags.includes("attendance")) {
-        tags.push("attendance");
-
-        // Update the contact with the new tag
-        await contactRef.update({ tags: tags });
-        console.log(`Contact ${extractedNumber} tagged with 'attendance'`);
+      if (!addResult.rows[0].tag_existed_before_update) {
+        console.log(`Tag "${tag}" added successfully to contact ${contactID}`);
       } else {
-        console.log(`Contact ${extractedNumber} already has 'attendance' tag`);
+        console.log(`Tag "${tag}" already exists for contact ${contactID}`);
       }
+
+      await sqlClient.query("COMMIT");
     } catch (error) {
-      console.error(`Error tagging contact ${phoneNumber} with 'attendance':`, error);
+      await sqlClient.query("ROLLBACK");
+      console.error("Error managing tags in PostgreSQL:", error);
+    } finally {
+      sqlClient.release();
     }
   }
 

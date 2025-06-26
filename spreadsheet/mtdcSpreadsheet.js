@@ -258,7 +258,7 @@ class MTDCReport {
         batchQuantity: 1,
         chatIds: [chatId],
         companyId: this.botName,
-        createdAt: admin.firestore.Timestamp.now(),
+        createdAt: new Date(),
         documentUrl: "",
         fileName: "",
         mediaUrl: "",
@@ -278,9 +278,19 @@ class MTDCReport {
         },
         status: "scheduled",
         v2: true,
-        whapiToken: null
+        whapiToken: null,
+        phoneIndex: 0,
+        activateSleep: false,
+        activeHours: null,
+        infiniteLoop: false,
+        minDelay: null,
+        maxDelay: null,
+        messageDelays: null,
+        sleepAfterMessages: null,
+        sleepDuration: null,
+        from_me: true
       };
-      
+
       try {
         console.log('Sending schedule request:', JSON.stringify(scheduledMessage));
         const response = await axios.post(`http://localhost:8443/api/schedule-message/${this.botName}`, scheduledMessage);
