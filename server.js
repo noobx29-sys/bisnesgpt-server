@@ -3427,9 +3427,188 @@ async function processAIResponses({
       ...handlerParams,
     });
   }
-}
+}// ... existing code ...
+
+// Create a new follow-up template
+app.post('/api/followup-templates', async (req, res) => {
+  console.log("=== Starting POST /api/followup-templates ===");
+  console.log("Request body:", JSON.stringify(req.body, null, 2));
+  
+  const {
+    companyId,
+    name,
+    status = 'active',
+    createdAt,
+    startTime,
+    isCustomStartTime,
+    trigger_tags = [],
+    trigger_keywords = [],
+    batchSettings = {}
+  } = req.body;
+
+  // Validation
+  if (!companyId) {
+    console.error("Missing companyId");
+    return res.status(400).json({ success: false, message: 'Missing companyId' });
+  }
+  
+  if (!name || !name.trim()) {
+    console.error("Missing or empty template name");
+    return res.status(400).json({ success: false, message: 'Template name is required' });
+  }
+
+  const sqlClient = await pool.connect();
+
+  try {
+    await sqlClient.query("BEGIN");
+    console.log("Database transaction started");
+
+    // Generate template_id (UUID)
+    const templateId = require('crypto').randomUUID();
+    console.log("Generated template ID:", templateId);
+
+    // Insert the template
+    const insertTemplateQuery = `
+      INSERT INTO public.followup_templates (
+        id,
+        template_id,
+        company_id,
+        name,
+        created_at,
+        updated_at,
+        trigger_keywords,
+        trigger_tags,
+        keyword_source,
+        status,
+        content,
+        delay_hours
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+      RETURNING *
+    `;
+
+    const templateParams = [
+      require('crypto').randomUUID(), // id (UUID)
+      templateId, // template_id
+      companyId,
+      name.trim(),
+      createdAt ? new Date(createdAt) : new Date(),
+      new Date(),
+      Array.isArray(trigger_keywords) ? trigger_keywords : [],
+      Array.isArray(trigger_tags) ? trigger_tags : [],
+      'bot', // default keyword_source
+      status,
+      '', // default content (empty for now)
+      24 // default delay_hours
+    ];
+
+    console.log("Executing template insert with params:", templateParams);
+    const templateResult = await sqlClient.query(insertTemplateQuery, templateParams);
+    console.log("Template inserted successfully:", templateResult.rows[0]);
+
+    // If batchSettings has messages, insert them into followup_messages
+    if (batchSettings.messages && Array.isArray(batchSettings.messages)) {
+      console.log(`Inserting ${batchSettings.messages.length} messages`);
+      
+      for (let i = 0; i < batchSettings.messages.length; i++) {
+        const message = batchSettings.messages[i];
+        console.log(`Processing message ${i + 1}:`, message);
+
+        const insertMessageQuery = `
+          INSERT INTO public.followup_messages (
+            id,
+            template_id,
+            message,
+            day_number,
+            sequence,
+            status,
+            created_at,
+            document,
+            image,
+            video,
+            delay_after,
+            specific_numbers,
+            use_scheduled_time,
+            scheduled_time,
+            add_tags,
+            remove_tags
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+        `;
+
+        const messageParams = [
+          require('crypto').randomUUID(), // id
+          templateId, // template_id
+          message.content || '',
+          message.dayNumber || 0,
+          message.sequence || i + 1,
+          'active',
+          new Date(),
+          message.document || null,
+          message.image || null,
+          message.video || null,
+          message.delayAfter ? JSON.stringify(message.delayAfter) : null,
+          message.specificNumbers ? JSON.stringify(message.specificNumbers) : null,
+          message.useScheduledTime || false,
+          message.scheduledTime || null,
+          Array.isArray(message.addTags) ? message.addTags : [],
+          Array.isArray(message.removeTags) ? message.removeTags : []
+        ];
+
+        console.log(`Inserting message ${i + 1} with params:`, messageParams);
+        await sqlClient.query(insertMessageQuery, messageParams);
+        console.log(`Message ${i + 1} inserted successfully`);
+      }
+    }
+
+    await sqlClient.query("COMMIT");
+    console.log("Database transaction committed successfully");
+
+    // Return the created template
+    const createdTemplate = {
+      id: templateResult.rows[0].id,
+      templateId: templateResult.rows[0].template_id,
+      companyId: templateResult.rows[0].company_id,
+      name: templateResult.rows[0].name,
+      createdAt: templateResult.rows[0].created_at,
+      updatedAt: templateResult.rows[0].updated_at,
+      triggerKeywords: templateResult.rows[0].trigger_keywords || [],
+      triggerTags: templateResult.rows[0].trigger_tags || [],
+      keywordSource: templateResult.rows[0].keyword_source,
+      status: templateResult.rows[0].status,
+      content: templateResult.rows[0].content,
+      delayHours: templateResult.rows[0].delay_hours
+    };
+
+    console.log("Returning created template:", createdTemplate);
+    console.log("=== Completed POST /api/followup-templates ===");
+
+    res.status(201).json({
+      success: true,
+      message: 'Template created successfully',
+      template: createdTemplate
+    });
+
+  } catch (error) {
+    await sqlClient.query("ROLLBACK");
+    console.error("=== Error in POST /api/followup-templates ===");
+    console.error("Error message:", error.message);
+    console.error("Error stack:", error.stack);
+    console.error("Full error:", error);
+    
+    res.status(500).json({
+      success: false,
+      message: 'Failed to create template',
+      error: error.message
+    });
+  } finally {
+    sqlClient.release();
+    console.log("Database client released");
+  }
+});
+
+// ... existing code ...
 
 async function getFollowUpTemplates(companyId) {
+  console.log("Starting getFollowUpTemplates for companyId:", companyId);
   const templates = [];
   const sqlClient = await pool.connect();
 
@@ -3440,42 +3619,369 @@ async function getFollowUpTemplates(companyId) {
       SELECT 
         id,
         template_id,
+        company_id,
         name,
+        created_at,
+        updated_at,
         trigger_keywords,
         trigger_tags,
         keyword_source,
-        content
+        status,
+        content,
+        delay_hours
       FROM 
         public.followup_templates
       WHERE 
-        company_id = $1 
-        AND status = 'active'
+        company_id = $1
+      ORDER BY created_at DESC
     `;
 
+    console.log("Fetching followup_templates...");
     const result = await sqlClient.query(query, [companyId]);
+    console.log("Found followup_templates records:", result.rows.length);
 
     for (const row of result.rows) {
-      templates.push({
-        id: row.template_id,
-        triggerKeywords: row.trigger_keywords || [],
-        triggerTags: row.trigger_tags || [],
+      console.log("\nProcessing template:", row.template_id);
+      console.log("Template data:", row);
+      console.log("Raw trigger_tags from DB:", row.trigger_tags);
+      console.log("Raw trigger_keywords from DB:", row.trigger_keywords);
+
+      const templateObj = {
+        id: row.id,
+        templateId: row.template_id,
+        companyId: row.company_id,
         name: row.name,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+        triggerKeywords: Array.isArray(row.trigger_keywords) ? row.trigger_keywords : [],
+        triggerTags: Array.isArray(row.trigger_tags) ? row.trigger_tags : [],
         keywordSource: row.keyword_source || "bot",
+        status: row.status || "active",
         content: row.content,
-      });
+        delayHours: row.delay_hours || 24,
+      };
+
+      console.log("Processed template object:", templateObj);
+      console.log("Trigger tags array:", templateObj.triggerTags);
+      templates.push(templateObj);
     }
 
     await sqlClient.query("COMMIT");
+    console.log("\nFinal templates array:", templates);
     return templates;
   } catch (error) {
     await sqlClient.query("ROLLBACK");
-    console.error("Error fetching follow-up templates:", error);
+    console.error("Error in getFollowUpTemplates:", error);
     throw error;
   } finally {
     sqlClient.release();
+    console.log("Database client released back to the pool");
   }
 }
+// ... existing code ...
 
+// Add a new message to a follow-up template
+// Add a new message to a follow-up template
+app.post('/api/followup-templates/:templateId/messages', async (req, res) => {
+  console.log("=== Starting POST /api/followup-templates/:templateId/messages ===");
+  console.log("Template ID:", req.params.templateId);
+  console.log("Request body:", JSON.stringify(req.body, null, 2));
+  
+  const { templateId } = req.params;
+  const {
+    message,
+    dayNumber = 1,
+    sequence = 1,
+    status = 'active',
+    createdAt,
+    document = null,
+    image = null,
+    video = null,
+    delayAfter = null,
+    specificNumbers = null,
+    useScheduledTime = false,
+    scheduledTime = '',
+    addTags = [],
+    removeTags = []
+  } = req.body;
+
+  // Validation
+  if (!templateId) {
+    console.error("Missing templateId");
+    return res.status(400).json({ success: false, message: 'Missing templateId' });
+  }
+  
+  if (!message || !message.trim()) {
+    console.error("Missing or empty message content");
+    return res.status(400).json({ success: false, message: 'Message content is required' });
+  }
+
+  if (!dayNumber || dayNumber < 0) {
+    console.error("Invalid day number");
+    return res.status(400).json({ success: false, message: 'Day number must be a positive number' });
+  }
+
+  if (!sequence || sequence < 1) {
+    console.error("Invalid sequence number");
+    return res.status(400).json({ success: false, message: 'Sequence number must be at least 1' });
+  }
+
+  const sqlClient = await pool.connect();
+
+  try {
+    await sqlClient.query("BEGIN");
+    console.log("Database transaction started");
+
+    // First, verify the template exists - CAST templateId to VARCHAR to match the column type
+    const templateCheckQuery = `
+      SELECT id, template_id, company_id, name 
+      FROM public.followup_templates 
+      WHERE template_id = $1::character varying AND status = 'active'
+    `;
+    console.log("Checking if template exists with ID:", templateId);
+    const templateCheckResult = await sqlClient.query(templateCheckQuery, [templateId]);
+    
+    if (templateCheckResult.rows.length === 0) {
+      console.error(`Template not found: ${templateId}`);
+      await sqlClient.query("ROLLBACK");
+      return res.status(404).json({ 
+        success: false, 
+        message: 'Template not found or inactive' 
+      });
+    }
+
+    const template = templateCheckResult.rows[0];
+    console.log("Template found:", template);
+
+    // Check for duplicate message (same day and sequence) - CAST templateId to VARCHAR
+    const duplicateCheckQuery = `
+      SELECT id FROM public.followup_messages 
+      WHERE template_id = $1::character varying AND day_number = $2 AND sequence = $3 AND status = 'active'
+    `;
+    console.log("Checking for duplicate message...");
+    const duplicateCheckResult = await sqlClient.query(duplicateCheckQuery, [
+      templateId, 
+      dayNumber, 
+      sequence
+    ]);
+
+    if (duplicateCheckResult.rows.length > 0) {
+      console.error(`Duplicate message found: day ${dayNumber}, sequence ${sequence}`);
+      await sqlClient.query("ROLLBACK");
+      return res.status(409).json({ 
+        success: false, 
+        message: 'A message with this day and sequence number already exists' 
+      });
+    }
+
+    // Insert the new message - CAST templateId to VARCHAR
+    const insertMessageQuery = `
+      INSERT INTO public.followup_messages (
+        id,
+        template_id,
+        message,
+        day_number,
+        sequence,
+        status,
+        created_at,
+        document,
+        image,
+        video,
+        delay_after,
+        specific_numbers,
+        use_scheduled_time,
+        scheduled_time,
+        add_tags,
+        remove_tags
+      ) VALUES ($1, $2::character varying, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+      RETURNING *
+    `;
+
+    const messageParams = [
+      require('crypto').randomUUID(), // id
+      templateId, // template_id (will be cast to VARCHAR)
+      message.trim(), // message
+      dayNumber, // day_number
+      sequence, // sequence
+      status, // status
+      createdAt ? new Date(createdAt) : new Date(), // created_at
+      document, // document
+      image, // image
+      video, // video
+      delayAfter ? JSON.stringify(delayAfter) : null, // delay_after
+      specificNumbers ? JSON.stringify(specificNumbers) : null, // specific_numbers
+      useScheduledTime, // use_scheduled_time
+      scheduledTime || null, // scheduled_time
+      Array.isArray(addTags) ? addTags : [], // add_tags
+      Array.isArray(removeTags) ? removeTags : [] // remove_tags
+    ];
+
+    console.log("Executing message insert with params:", messageParams);
+    const messageResult = await sqlClient.query(insertMessageQuery, messageParams);
+    console.log("Message inserted successfully:", messageResult.rows[0]);
+
+    await sqlClient.query("COMMIT");
+    console.log("Database transaction committed successfully");
+
+    // Return the created message
+    const createdMessage = {
+      id: messageResult.rows[0].id,
+      templateId: messageResult.rows[0].template_id,
+      message: messageResult.rows[0].message,
+      dayNumber: messageResult.rows[0].day_number,
+      sequence: messageResult.rows[0].sequence,
+      status: messageResult.rows[0].status,
+      createdAt: messageResult.rows[0].created_at,
+      document: messageResult.rows[0].document,
+      image: messageResult.rows[0].image,
+      video: messageResult.rows[0].video,
+      delayAfter: messageResult.rows[0].delay_after,
+      specificNumbers: messageResult.rows[0].specific_numbers,
+      useScheduledTime: messageResult.rows[0].use_scheduled_time,
+      scheduledTime: messageResult.rows[0].scheduled_time,
+      addTags: messageResult.rows[0].add_tags || [],
+      removeTags: messageResult.rows[0].remove_tags || []
+    };
+
+    console.log("Returning created message:", createdMessage);
+    console.log("=== Completed POST /api/followup-templates/:templateId/messages ===");
+
+    res.status(201).json({
+      success: true,
+      message: 'Message added successfully',
+      data: createdMessage
+    });
+
+  } catch (error) {
+    await sqlClient.query("ROLLBACK");
+    console.error("=== Error in POST /api/followup-templates/:templateId/messages ===");
+    console.error("Template ID:", templateId);
+    console.error("Error message:", error.message);
+    console.error("Error stack:", error.stack);
+    console.error("Full error:", error);
+    
+    res.status(500).json({
+      success: false,
+      message: 'Failed to add message',
+      error: error.message
+    });
+  } finally {
+    sqlClient.release();
+    console.log("Database client released");
+  }
+});
+
+// ... existing code ...
+async function getMessagesForTemplate(templateId) {
+  console.log("Starting getMessagesForTemplate for templateId:", templateId);
+  const messages = [];
+  const sqlClient = await pool.connect();
+
+  try {
+    await sqlClient.query("BEGIN");
+
+    const query = `
+      SELECT 
+        id,
+        template_id,
+        message,
+        day_number,
+        sequence,
+        status,
+        created_at,
+        document,
+        image,
+        video,
+        delay_after,
+        specific_numbers,
+        use_scheduled_time,
+        scheduled_time,
+        add_tags,
+        remove_tags
+      FROM 
+        public.followup_messages
+      WHERE 
+        template_id = $1
+      ORDER BY sequence ASC, day_number ASC, created_at ASC
+    `;
+
+    console.log("Fetching followup_messages...");
+    const result = await sqlClient.query(query, [templateId]);
+    console.log("Found followup_messages records:", result.rows.length);
+
+    for (const row of result.rows) {
+      console.log("\nProcessing message:", row.id);
+      console.log("Message data:", row);
+
+      const messageObj = {
+        id: row.id,
+        templateId: row.template_id,
+        message: row.message,
+        dayNumber: row.day_number,
+        sequence: row.sequence,
+        status: row.status || "active",
+        createdAt: row.created_at,
+        document: row.document,
+        image: row.image,
+        video: row.video,
+        delayAfter: row.delay_after,
+        specificNumbers: row.specific_numbers,
+        useScheduledTime: row.use_scheduled_time,
+        scheduledTime: row.scheduled_time,
+        addTags: row.add_tags || [],
+        removeTags: row.remove_tags || [],
+      };
+
+      console.log("Adding message object:", messageObj);
+      messages.push(messageObj);
+    }
+
+    await sqlClient.query("COMMIT");
+    console.log("\nFinal messages array:", messages);
+    return messages;
+  } catch (error) {
+    await sqlClient.query("ROLLBACK");
+    console.error("Error in getMessagesForTemplate:", error);
+    throw error;
+  } finally {
+    sqlClient.release();
+    console.log("Database client released back to the pool");
+  }
+}
+// ... existing code ...
+
+// Get all follow-up templates for a company
+app.get('/api/followup-templates', async (req, res) => {
+  const { companyId } = req.query;
+  if (!companyId) {
+    return res.status(400).json({ success: false, message: 'Missing companyId' });
+  }
+  try {
+    const templates = await getFollowUpTemplates(companyId);
+    res.json({ success: true, templates });
+  } catch (error) {
+    console.error('Error fetching follow-up templates:', error);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+});
+
+// Get all messages for a specific follow-up template
+app.get('/api/followup-templates/:templateId/messages', async (req, res) => {
+  const { templateId } = req.params;
+  if (!templateId) {
+    return res.status(400).json({ success: false, message: 'Missing templateId' });
+  }
+  try {
+    // You need to implement this function based on your DB structure
+    const messages = await getMessagesForTemplate(templateId);
+    res.json({ success: true, messages });
+  } catch (error) {
+    console.error('Error fetching template messages:', error);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+});
+
+// ... existing code ...
 async function getAIAssignResponses(companyId) {
   console.log("Starting getAIAssignResponses for companyId:", companyId);
   const responses = [];
@@ -4128,61 +4634,103 @@ async function handleTagAddition(
   contactName,
   phoneIndex
 ) {
-  for (const tagToRemove of response.remove_tags || []) {
-    await addTagToPostgres(extractedNumber, tagToRemove, idSubstring, true);
-    await handleFollowUpTemplateCleanup(
-      tagToRemove,
-      extractedNumber,
-      idSubstring,
-      followUpTemplates
-    );
-  }
+  console.log("=== Starting handleTagAddition ===");
+  console.log("Response object:", JSON.stringify(response, null, 2));
+  console.log("Extracted number:", extractedNumber);
+  console.log("Company ID:", idSubstring);
+  console.log("Contact name:", contactName);
+  console.log("Phone index:", phoneIndex);
 
-  for (const tag of response.tags) {
-    await addTagToPostgres(extractedNumber, tag, idSubstring);
-    console.log(`Added tag: ${tag} for number: ${extractedNumber}`);
+  try {
+    // Handle tag removal first
+    const tagsToRemove = response.remove_tags || response.removeTags || [];
+    console.log("Tags to remove:", tagsToRemove);
 
-    await handleFollowUpTemplateActivation(
-      tag,
-      extractedNumber,
-      idSubstring,
-      contactName,
-      phoneIndex,
-      followUpTemplates
-    );
+    for (const tagToRemove of tagsToRemove) {
+      console.log(`Processing tag removal: ${tagToRemove}`);
+      try {
+        await addTagToPostgres(extractedNumber, tagToRemove, idSubstring, true);
+        console.log(`Successfully removed tag: ${tagToRemove}`);
+        
+        await handleFollowUpTemplateCleanup(
+          tagToRemove,
+          extractedNumber,
+          idSubstring,
+          followUpTemplates
+        );
+        console.log(`Successfully cleaned up followup templates for removed tag: ${tagToRemove}`);
+      } catch (error) {
+        console.error(`Error removing tag ${tagToRemove}:`, error);
+      }
+    }
+
+    // Handle tag addition
+    const tagsToAdd = response.tags || response.add_tags || response.addTags || [];
+    console.log("Tags to add:", tagsToAdd);
+
+    for (const tag of tagsToAdd) {
+      console.log(`Processing tag addition: ${tag}`);
+      try {
+        await addTagToPostgres(extractedNumber, tag, idSubstring);
+        console.log(`Successfully added tag: ${tag} for number: ${extractedNumber}`);
+
+        await handleFollowUpTemplateActivation(
+          tag,
+          extractedNumber,
+          idSubstring,
+          contactName,
+          phoneIndex,
+          followUpTemplates
+        );
+        console.log(`Successfully activated followup templates for added tag: ${tag}`);
+      } catch (error) {
+        console.error(`Error adding tag ${tag}:`, error);
+      }
+    }
+
+    console.log("=== Completed handleTagAddition ===");
+  } catch (error) {
+    console.error("Error in handleTagAddition:", error);
+    console.error("Full error stack:", error.stack);
+    throw error;
   }
 }
 
 async function addTagToPostgres(contactID, tag, companyID, remove = false) {
-  console.log(
-    `${remove ? "Removing" : "Adding"} tag "${tag}" ${
-      remove ? "from" : "to"
-    } PostgreSQL for contact ${contactID}`
-  );
-  contactID =
-    companyID +
-    "-" +
-    (contactID.startsWith("+") ? contactID.slice(1) : contactID);
+  console.log(`=== Starting addTagToPostgres ===`);
+  console.log(`Action: ${remove ? "Removing" : "Adding"} tag "${tag}"`);
+  console.log(`Contact ID (input): ${contactID}`);
+  console.log(`Company ID: ${companyID}`);
+  console.log(`Remove flag: ${remove}`);
+
+  // Construct the full contact ID
+  const fullContactID = companyID + "-" + (contactID.startsWith("+") ? contactID.slice(1) : contactID);
+  console.log(`Full contact ID: ${fullContactID}`);
 
   const sqlClient = await pool.connect();
 
   try {
     await sqlClient.query("BEGIN");
+    console.log("Database transaction started");
 
+    // Check if contact exists
     const checkQuery = `
       SELECT 1 FROM public.contacts 
       WHERE contact_id = $1 AND company_id = $2
     `;
-    const checkResult = await sqlClient.query(checkQuery, [
-      contactID,
-      companyID,
-    ]);
+    console.log("Checking if contact exists...");
+    const checkResult = await sqlClient.query(checkQuery, [fullContactID, companyID]);
+    console.log(`Contact check result: ${checkResult.rows.length} rows found`);
 
     if (checkResult.rows.length === 0) {
+      console.error(`Contact does not exist: ${fullContactID} in company ${companyID}`);
       throw new Error("Contact does not exist!");
     }
 
+    console.log("Contact exists, proceeding with tag operation");
+
     if (remove) {
+      console.log("Executing tag removal...");
       const removeQuery = `
         UPDATE public.contacts 
         SET 
@@ -4194,22 +4742,23 @@ async function addTagToPostgres(contactID, tag, companyID, remove = false) {
           END,
           last_updated = CURRENT_TIMESTAMP
         WHERE contact_id = $2 AND company_id = $3
-        RETURNING (tags ? $1) AS tag_existed_before
+        RETURNING (tags ? $1) AS tag_existed_before, tags
       `;
       const removeResult = await sqlClient.query(removeQuery, [
         tag,
-        contactID,
+        fullContactID,
         companyID,
       ]);
 
+      console.log("Tag removal result:", removeResult.rows[0]);
+
       if (removeResult.rows[0].tag_existed_before) {
-        console.log(
-          `Tag "${tag}" removed successfully from contact ${contactID}`
-        );
+        console.log(`Tag "${tag}" removed successfully from contact ${fullContactID}`);
       } else {
-        console.log(`Tag "${tag}" doesn't exist for contact ${contactID}`);
+        console.log(`Tag "${tag}" doesn't exist for contact ${fullContactID}`);
       }
     } else {
+      console.log("Executing tag addition...");
       const addQuery = `
         UPDATE public.contacts 
         SET 
@@ -4220,29 +4769,38 @@ async function addTagToPostgres(contactID, tag, companyID, remove = false) {
           END,
           last_updated = CURRENT_TIMESTAMP
         WHERE contact_id = $2 AND company_id = $3
-        RETURNING (tags ? $1) AS tag_existed_before_update
+        RETURNING (tags ? $1) AS tag_existed_before_update, tags
       `;
       const addResult = await sqlClient.query(addQuery, [
         tag,
-        contactID,
+        fullContactID,
         companyID,
       ]);
 
+      console.log("Tag addition result:", addResult.rows[0]);
+
       if (!addResult.rows[0].tag_existed_before_update) {
-        console.log(`Tag "${tag}" added successfully to contact ${contactID}`);
+        console.log(`Tag "${tag}" added successfully to contact ${fullContactID}`);
       } else {
-        console.log(`Tag "${tag}" already exists for contact ${contactID}`);
+        console.log(`Tag "${tag}" already exists for contact ${fullContactID}`);
       }
     }
 
     await sqlClient.query("COMMIT");
+    console.log("Database transaction committed successfully");
   } catch (error) {
     await sqlClient.query("ROLLBACK");
     console.error("Error managing tags in PostgreSQL:", error);
+    console.error("Full error stack:", error.stack);
+    throw error;
   } finally {
     sqlClient.release();
+    console.log("Database client released");
+    console.log(`=== Completed addTagToPostgres ===`);
   }
 }
+
+addTagToPostgres
 
 async function handleEmployeeAssignment(
   response,
@@ -4374,46 +4932,184 @@ async function handleFollowUpTemplateActivation(
   phoneIndex,
   followUpTemplates
 ) {
+  console.log("=== Starting handleFollowUpTemplateActivation ===");
+  console.log("Tag:", tag);
+  console.log("Extracted number:", extractedNumber);
+  console.log("Company ID:", idSubstring);
+  console.log("Contact name:", contactName);
+  console.log("Phone index:", phoneIndex);
+  console.log("Number of templates:", followUpTemplates);
+  
   for (const template of followUpTemplates) {
-    if (template.trigger_tags && template.trigger_tags.includes(tag)) {
+    console.log(`\n--- Checking template: ${template.name} ---`);
+    console.log("Template ID:", template.templateId);
+    console.log("Template UUID:", template.id);
+    console.log("Trigger tags:", template.triggerTags);
+    console.log("Is trigger_tags array?", Array.isArray(template.triggerTags));
+    console.log("Tag to match:", tag);
+    console.log("Includes check:", template.triggerTags && template.triggerTags.includes(tag));
+    
+    if (template.triggerTags && template.triggerTags.includes(tag)) {
+      console.log(`✓ Template "${template.name}" matches tag "${tag}"`);
       await callFollowUpAPI(
         "startTemplate",
         extractedNumber,
         contactName,
         phoneIndex,
-        template.id,
+        template.templateId, // Fixed: use templateId instead of id
         idSubstring
       );
+    } else {
+      console.log(`✗ Template "${template.name}" does not match tag "${tag}"`);
     }
   }
 
   if (tag === "pause followup") {
+    console.log("Processing pause followup logic...");
     const contactResult = await pool.query(
       "SELECT tags FROM contacts WHERE company_id = $1 AND phone = $2",
       [idSubstring, extractedNumber]
     );
     const contactData = contactResult.rows[0];
     const currentTags = contactData?.tags || [];
+    console.log("Current contact tags:", currentTags);
 
     for (const template of followUpTemplates) {
       if (
-        template.trigger_tags?.some((templateTag) =>
+        template.triggerTags?.some((templateTag) =>
           currentTags.includes(templateTag)
         )
       ) {
+        console.log(`Pausing template: ${template.name}`);
         await callFollowUpAPI(
           "pauseTemplate",
           extractedNumber,
           null,
           phoneIndex,
-          template.id,
+          template.templateId, // Fixed: use templateId instead of id
           idSubstring
         );
       }
     }
   }
+  
+  console.log("=== Completed handleFollowUpTemplateActivation ===");
 }
 
+// ... existing code ...
+
+// Get scheduled messages for a company
+// Get scheduled messages for a company
+app.get('/api/scheduled-messages', async (req, res) => {
+  console.log("=== Starting GET /api/scheduled-messages ===");
+  console.log("Query parameters:", req.query);
+  
+  const { companyId, status } = req.query;
+  
+  // Validation
+  if (!companyId) {
+    console.error("Missing companyId parameter");
+    return res.status(400).json({ success: false, message: 'Missing companyId parameter' });
+  }
+
+  const sqlClient = await pool.connect();
+
+  try {
+    await sqlClient.query("BEGIN");
+
+    // Build the query based on status filter
+    let query = `
+      SELECT 
+        id,
+        schedule_id,
+        company_id,
+        contact_id,
+        message_content,
+        media_url,
+        scheduled_time,
+        status,
+        attempt_count,
+        last_attempt,
+        created_at,
+        sent_at,
+        phone_index,
+        from_me
+      FROM scheduled_messages 
+      WHERE company_id = $1
+    `;
+    
+    const queryParams = [companyId];
+    let paramIndex = 2;
+
+    // Add status filter if provided
+    if (status && status !== 'all') {
+      // Map 'scheduled' to 'pending' since that's what we use in the database
+      let dbStatus = status;
+      if (status === 'scheduled') {
+        dbStatus = 'pending';
+      }
+      
+      query += ` AND status = $${paramIndex}`;
+      queryParams.push(dbStatus);
+      paramIndex++;
+    }
+
+    // Order by scheduled_time (earliest first)
+    query += ` ORDER BY scheduled_time ASC`;
+
+    console.log("Executing query:", query);
+    console.log("Query parameters:", queryParams);
+
+    const { rows } = await sqlClient.query(query, queryParams);
+    
+    console.log(`Found ${rows.length} scheduled messages for company ${companyId}`);
+    console.log("Raw database results:", rows);
+
+    // Transform the data to match frontend expectations
+    const messages = rows.map(row => ({
+      id: row.id,
+      scheduleId: row.schedule_id,
+      companyId: row.company_id,
+      contactId: row.contact_id,
+      messageContent: row.message_content,
+      mediaUrl: row.media_url,
+      scheduledTime: row.scheduled_time,
+      status: row.status,
+      attemptCount: row.attempt_count,
+      lastAttempt: row.last_attempt,
+      createdAt: row.created_at,
+      sentAt: row.sent_at,
+      phoneIndex: row.phone_index,
+      fromMe: row.from_me
+    }));
+
+    await sqlClient.query("COMMIT");
+    
+    console.log("Successfully fetched scheduled messages");
+    console.log("Transformed messages:", messages);
+    
+    res.json({ 
+      success: true, 
+      messages: messages,
+      count: messages.length
+    });
+
+  } catch (error) {
+    await sqlClient.query("ROLLBACK");
+    console.error("Error fetching scheduled messages:", error);
+    console.error("Full error:", error.stack);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Failed to fetch scheduled messages',
+      error: error.message 
+    });
+  } finally {
+    sqlClient.release();
+    console.log("Database client released back to the pool");
+  }
+});
+
+// ... existing code ...
 async function callFollowUpAPI(
   action,
   phone,
@@ -4422,32 +5118,151 @@ async function callFollowUpAPI(
   templateId,
   idSubstring
 ) {
-  try {
-    const response = await fetch("https://juta.ngrok.app/api/tag/followup", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        requestType: action,
-        phone: phone,
-        first_name: contactName || phone,
-        phoneIndex: phoneIndex || 0,
-        templateId: templateId,
-        idSubstring: idSubstring,
-      }),
-    });
+  console.log(`Starting callFollowUpAPI for action: ${action}, phone: ${phone}, templateId: ${templateId}, companyId: ${idSubstring}`);
+  const sqlClient = await pool.connect();
 
-    if (!response.ok) {
-      console.error(
-        `Failed to ${action} follow-up sequence:`,
-        await response.text()
+  try {
+    await sqlClient.query("BEGIN");
+
+    // Get contact ID
+    const contactID = idSubstring + "-" + (phone.startsWith("+") ? phone.slice(1) : phone);
+
+    // Get template and messages
+    const templateQuery = `
+      SELECT * FROM public.followup_templates 
+      WHERE template_id = $1 AND company_id = $2 AND status = 'active'
+    `;
+    const templateResult = await sqlClient.query(templateQuery, [templateId, idSubstring]);
+    
+    if (templateResult.rows.length === 0) {
+      console.log(`Template not found or inactive: ${templateId}`);
+      await sqlClient.query("COMMIT");
+      return;
+    }
+
+    const template = templateResult.rows[0];
+    console.log("Template found:", template);
+
+    // Get followup messages for this template
+    const messagesQuery = `
+      SELECT * FROM public.followup_messages 
+      WHERE template_id = $1 AND status = 'active'
+      ORDER BY sequence ASC, day_number ASC
+    `;
+    const messagesResult = await sqlClient.query(messagesQuery, [templateId]);
+    const messages = messagesResult.rows;
+    console.log(`Found ${messages.length} messages for template`);
+
+    if (action === "startTemplate") {
+      console.log("Starting followup template sequence");
+      
+      // Delete any existing scheduled messages for this contact and template
+      await sqlClient.query(
+        `DELETE FROM scheduled_messages 
+         WHERE contact_id = $1 AND company_id = $2 
+         AND message_content LIKE $3`,
+        [contactID, idSubstring, `%${template.name}%`]
+      );
+
+      // Schedule all messages in the sequence
+      for (let i = 0; i < messages.length; i++) {
+        const message = messages[i];
+        const messageId = require('crypto').randomUUID();
+        
+        // Calculate scheduled time based on day_number and delay_after
+        let scheduledTime = new Date();
+        if (message.day_number > 0) {
+          scheduledTime.setDate(scheduledTime.getDate() + message.day_number);
+        }
+        
+        // Add delay_after if specified
+        if (message.delay_after) {
+          const delayData = message.delay_after;
+          if (delayData.hours) scheduledTime.setHours(scheduledTime.getHours() + delayData.hours);
+          if (delayData.minutes) scheduledTime.setMinutes(scheduledTime.getMinutes() + delayData.minutes);
+        }
+
+        // Use scheduled_time if specified
+        if (message.use_scheduled_time && message.scheduled_time) {
+          const [hour, minute] = message.scheduled_time.split(':').map(Number);
+          scheduledTime.setHours(hour, minute, 0, 0);
+        }
+
+        const insertQuery = `
+          INSERT INTO scheduled_messages (
+            id, schedule_id, company_id, contact_id, message_content, 
+            scheduled_time, status, created_at, phone_index, from_me
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+        `;
+
+        await sqlClient.query(insertQuery, [
+          messageId,
+          messageId,
+          idSubstring,
+          contactID,
+          message.message,
+          scheduledTime,
+          "pending",
+          new Date(),
+          phoneIndex || 0,
+          true
+        ]);
+
+        console.log(`Scheduled message ${i + 1}/${messages.length} for ${scheduledTime}`);
+      }
+
+      // Record in sent_followups table
+      await sqlClient.query(
+        `INSERT INTO sent_followups (company_id, contact_id, template_id, sent_at)
+         VALUES ($1, $2, $3, CURRENT_TIMESTAMP)`,
+        [idSubstring, contactID, templateId]
+      );
+    } else if (action === "pauseTemplate") {
+      console.log("Pausing followup template sequence");
+      
+      // Update status of pending messages to 'paused'
+      await sqlClient.query(
+        `UPDATE scheduled_messages 
+         SET status = 'paused' 
+         WHERE contact_id = $1 AND company_id = $2 
+         AND status = 'pending' AND message_content LIKE $3`,
+        [contactID, idSubstring, `%${template.name}%`]
+      );
+
+    } else if (action === "removeTemplate") {
+      console.log("Removing followup template sequence");
+      
+      // Delete all scheduled messages for this contact and template
+      await sqlClient.query(
+        `DELETE FROM scheduled_messages 
+         WHERE contact_id = $1 AND company_id = $2 
+         AND message_content LIKE $3`,
+        [contactID, idSubstring, `%${template.name}%`]
+      );
+
+      // Remove from sent_followups table
+      await sqlClient.query(
+        `DELETE FROM sent_followups 
+         WHERE company_id = $1 AND contact_id = $2 AND template_id = $3`,
+        [idSubstring, contactID, templateId]
       );
     }
+
+    await sqlClient.query("COMMIT");
+    console.log(`Successfully completed ${action} for template ${templateId}`);
+
   } catch (error) {
-    console.error(`Error in ${action} follow-up sequence:`, error);
+    await sqlClient.query("ROLLBACK");
+    console.error(`Error in callFollowUpAPI for ${action}:`, error);
+    console.error("Full error:", error.stack);
+    throw error;
+  } finally {
+    sqlClient.release();
+    console.log("Database client released back to the pool");
   }
 }
+
+// ... existing code ...
 
 app.get("/api/storage-pricing", async (req, res) => {
   let client;
@@ -8813,6 +9628,7 @@ app.post("/api/fetch-users", async (req, res) => {
   }
 });
 
+// ... existing code ...
 app.delete("/api/contacts/:companyId/:contactId/tags", async (req, res) => {
   const { companyId, contactId } = req.params;
   const { tags } = req.body; // tags: array of tags to remove
@@ -8828,17 +9644,18 @@ app.delete("/api/contacts/:companyId/:contactId/tags", async (req, res) => {
       phoneNumber = contactId;
     }
 
-    const response = {tags: tags};
+    const response = { tags: tags };
     const followupTemplate = await getFollowUpTemplates(companyId);
     await handleTagDeletion(response, phoneNumber, companyId, followupTemplate);
 
-    res.json({ success: true, tags: newTags });
+    res.json({ success: true, tags: tags }); // Return the tags that were removed
   } catch (error) {
     res
       .status(500)
       .json({ error: "Failed to remove tags", details: error.message });
   }
 });
+// ... existing code ...
 
 app.post("/api/contacts/:companyId/:contactId/tags", async (req, res) => {
   const { companyId, contactId } = req.params;
@@ -8858,7 +9675,7 @@ app.post("/api/contacts/:companyId/:contactId/tags", async (req, res) => {
     const response = {tags: tags};
     const followupTemplate = await getFollowUpTemplates(companyId);
     await handleTagAddition(response, phoneNumber, companyId, followupTemplate, null, 0);
-    res.json({ success: true, tags: newTags });
+    res.json({ success: true, tags: tags });
   } catch (error) {
     res
       .status(500)
