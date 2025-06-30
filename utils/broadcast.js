@@ -16,5 +16,3 @@ function broadcastNewMessageToChat(chatId, message, whapiToken) {
   }
 }
 module.exports = { broadcastNewMessageToChat };
-  
-  module.exports = { broadcastNewMessageToChat };

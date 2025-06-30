@@ -5671,7 +5671,6 @@ async function getAIVoiceResponses(companyId) {
         keywords,
         voice_urls,
         captions,
-        language,
         keyword_source
       FROM 
         public.ai_voice_responses
@@ -5687,7 +5686,6 @@ async function getAIVoiceResponses(companyId) {
         keywords: row.keywords || [],
         voiceUrls: row.voice_urls || [],
         captions: row.captions || [],
-        language: row.language || "en",
         keywordSource: row.keyword_source || "user",
       });
     }

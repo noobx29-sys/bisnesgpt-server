@@ -35,6 +35,7 @@ const {
 const Redis = require("ioredis");
 const { neon, neonConfig } = require("@neondatabase/serverless");
 const { Pool } = require("pg");
+const multer = require('multer');
 
 // Queue & Scheduling
 const { Queue, Worker, QueueScheduler } = require("bullmq");
@@ -60,6 +61,8 @@ const {
   handleNewMessagesTemplateWweb,
 } = require("./bots/handleMessagesTemplateWweb.js");
 const { handleTagFollowUp } = require("./blast/tag.js");
+// const { broadcastNewMessageToChat } = require("./utils/broadcast.js");
+// const { chatSubscriptions } = require("./utils/chatSubscriptions.js");
 
 // ======================
 // 2. CONFIGURATION
@@ -78,6 +81,10 @@ const readFileAsync = promisify(fs.readFile);
 const writeFileAsync = promisify(fs.writeFile);
 const LAST_PROCESSED_ROW_FILE = "last_processed_row.json";
 const MEDIA_DIR = path.join(__dirname, "public", "media");
+// Ensure media directory exists
+if (!fs.existsSync(MEDIA_DIR)) {
+  fs.mkdirSync(MEDIA_DIR, { recursive: true });
+}
 let companyConfig = {};
 
 // ======================
@@ -131,34 +138,49 @@ const wss = new WebSocket.Server({ server });
 const db = admin.firestore();
 
 // CORS Configuration
+const whitelist = ['http://localhost:5173', 'https://juta-dev.ngrok.dev', 'https://juta.ngrok.app', 'https://d178-2001-e68-5409-64f-f850-607e-e056-2a9e.ngrok-free.app'];
 const corsOptions = {
-  origin: true,
+  origin: function (origin, callback) {
+    if (whitelist.indexOf(origin) !== -1 || !origin) {
+      callback(null, true);
+    } else {
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
   methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
   allowedHeaders: [
     "Content-Type",
     "Authorization",
     "ngrok-skip-browser-warning",
+    "x-requested-with"
   ],
   credentials: true,
   preflightContinue: false,
-  optionsSuccessStatus: 204,
+  optionsSuccessStatus: 204
 };
 
 // Middleware
 app.use(cors(corsOptions));
 app.use(express.json({ limit: "50mb" }));
-app.use(bodyParser.urlencoded({ extended: true }));
-app.use(bodyParser.json());
+app.use(bodyParser.json({ limit: '50mb' }));
+app.use(bodyParser.urlencoded({ extended: true, limit: '50mb' }));
+app.use('/media', express.static(MEDIA_DIR));
 app.use(express.static("public"));
 
-// Preflight OPTIONS handler
-app.options("*", (req, res) => {
-  res.header("Access-Control-Allow-Origin", "http://localhost:5173");
-  res.header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
-  res.header("Access-Control-Allow-Headers", "Content-Type, Authorization");
-  res.header("Access-Control-Allow-Credentials", "true");
-  res.sendStatus(204);
+// Handle preflight requests
+app.options('*', cors());
+
+// Configure Multer storage
+const storage = multer.diskStorage({
+  destination: MEDIA_DIR,
+  filename: (req, file, cb) => {
+    const ext = path.extname(file.originalname);
+    const uniqueName = `${uuidv4()}${ext}`;
+    cb(null, uniqueName);
+  }
 });
+
+const upload = multer({ storage });
 
 // ======================
 // 6. ROUTES
@@ -240,6 +262,15 @@ async function saveMediaLocally(base64Data, mimeType, filename) {
   // Return the URL path to access this filez
   return `/media/${uniqueFilename}`;
 }
+
+app.post('/api/upload-media', upload.single('file'), (req, res) => {
+  if (!req.file) {
+    return res.status(400).json({ error: 'No file uploaded' });
+  }
+  const baseUrl = process.env.URL;
+  const fileUrl = `${baseUrl}/media/${req.file.filename}`;
+  res.json({ url: fileUrl });
+});
 
 // Add this new API endpoint
 app.get("/api/bot-status/:companyId", async (req, res) => {
@@ -3253,6 +3284,7 @@ function setupMessageCreateHandler(client, botName, phoneIndex) {
         }
 
         // 4.5. Handle AI Responses for Own Messages
+        console.log("\n=== Processing AI Responses in MessageCreateHandler ===");
         const contactData = await getContactDataFromDatabaseByPhone(
           extractedNumber,
           botName
@@ -3427,7 +3459,7 @@ async function processAIResponses({
       ...handlerParams,
     });
   }
-}// ... existing code ...
+}
 
 // Create a new follow-up template
 app.post('/api/followup-templates', async (req, res) => {
@@ -3605,8 +3637,6 @@ app.post('/api/followup-templates', async (req, res) => {
   }
 });
 
-// ... existing code ...
-
 async function getFollowUpTemplates(companyId) {
   console.log("Starting getFollowUpTemplates for companyId:", companyId);
   const templates = [];
@@ -3678,9 +3708,7 @@ async function getFollowUpTemplates(companyId) {
     console.log("Database client released back to the pool");
   }
 }
-// ... existing code ...
 
-// Add a new message to a follow-up template
 // Add a new message to a follow-up template
 app.post('/api/followup-templates/:templateId/messages', async (req, res) => {
   console.log("=== Starting POST /api/followup-templates/:templateId/messages ===");
@@ -3871,7 +3899,6 @@ app.post('/api/followup-templates/:templateId/messages', async (req, res) => {
   }
 });
 
-// ... existing code ...
 async function getMessagesForTemplate(templateId) {
   console.log("Starting getMessagesForTemplate for templateId:", templateId);
   const messages = [];
@@ -3948,7 +3975,6 @@ async function getMessagesForTemplate(templateId) {
     console.log("Database client released back to the pool");
   }
 }
-// ... existing code ...
 
 // Get all follow-up templates for a company
 app.get('/api/followup-templates', async (req, res) => {
@@ -3981,7 +4007,6 @@ app.get('/api/followup-templates/:templateId/messages', async (req, res) => {
   }
 });
 
-// ... existing code ...
 async function getAIAssignResponses(companyId) {
   console.log("Starting getAIAssignResponses for companyId:", companyId);
   const responses = [];
@@ -4195,7 +4220,6 @@ async function getAIVoiceResponses(companyId) {
         keywords,
         voice_urls,
         captions,
-        language,
         keyword_source
       FROM 
         public.ai_voice_responses
@@ -4211,7 +4235,6 @@ async function getAIVoiceResponses(companyId) {
         keywords: row.keywords || [],
         voiceUrls: row.voice_urls || [],
         captions: row.captions || [],
-        language: row.language || "en",
         keywordSource: row.keyword_source || "user",
       });
     }
@@ -4401,6 +4424,7 @@ async function handleAIImageResponses({
 
       for (const imageUrl of response.imageUrls) {
         try {
+          console.log("Sending image:", imageUrl);
           const media = await MessageMedia.fromUrl(imageUrl);
           const imageMessage = await client.sendMessage(from, media);
           await addMessageToPostgres(
@@ -4996,9 +5020,6 @@ async function handleFollowUpTemplateActivation(
   console.log("=== Completed handleFollowUpTemplateActivation ===");
 }
 
-// ... existing code ...
-
-// Get scheduled messages for a company
 // Get scheduled messages for a company
 app.get('/api/scheduled-messages', async (req, res) => {
   console.log("=== Starting GET /api/scheduled-messages ===");
@@ -6347,9 +6368,14 @@ async function main(reinitialize = false) {
   console.log("Initialization starting...");
 
   // 1. Fetch companies in parallel with other initialization tasks
+  // const companiesPromise = sqlDb.query(
+  //   "SELECT * FROM companies WHERE company_id = $1",
+  //   ["0145"]
+  // );
+
   const companiesPromise = sqlDb.query(
     "SELECT * FROM companies WHERE company_id = $1",
-    ["0145"]
+    ["0150"]
   );
   
   // const companiesPromise = sqlDb.query(
@@ -6949,21 +6975,6 @@ async function fetchUserDataSql(email) {
   } catch (error) {
     console.error(`Error fetching user data from SQL for ${email}:`, error);
     return null;
-  }
-}
-
-async function fetchEmployeesDataSql(companyId) {
-  try {
-    const query =
-      'SELECT id, employee_id, name, email, phone AS "phoneNumber", role FROM employees WHERE company_id = $1';
-    const { rows } = await sqlDb.query(query, [companyId]);
-    return rows;
-  } catch (error) {
-    console.error(
-      `Error fetching employees data from SQL for company ${companyId}:`,
-      error
-    );
-    return [];
   }
 }
 
@@ -8824,6 +8835,560 @@ app.get("/api/bot-status/:companyId", async (req, res) => {
   }
 });
 
+app.get('/api/ai-responses', async (req, res) => {
+  console.log("=== Starting GET /api/ai-responses ===");
+  console.log("Query params:", req.query);
+
+  const { companyId, type } = req.query;
+
+  // Validation
+  if (!companyId) {
+    console.error("Missing companyId");
+    return res.status(400).json({ success: false, message: 'Missing companyId' });
+  }
+
+  if (!type || !['video', 'voice', 'tag', 'document', 'image', 'assign'].includes(type)) {
+    console.error("Invalid or missing type");
+    return res.status(400).json({ 
+      success: false, 
+      message: 'Type is required and must be one of: video, voice, tag, document, image, assign' 
+    });
+  }
+
+  const sqlClient = await pool.connect();
+
+  try {
+    let tableName;
+    switch (type) {
+      case 'video': tableName = 'ai_video_responses'; break;
+      case 'voice': tableName = 'ai_voice_responses'; break;
+      case 'tag': tableName = 'ai_tag_responses'; break;
+      case 'document': tableName = 'ai_document_responses'; break;
+      case 'image': tableName = 'ai_image_responses'; break;
+      case 'assign': tableName = 'ai_assign_responses'; break;
+    }
+
+    const query = `SELECT * FROM public.${tableName} WHERE company_id = $1 ORDER BY created_at DESC`;
+    console.log("Executing query:", query);
+
+    const result = await sqlClient.query(query, [companyId]);
+    console.log(`Found ${result.rowCount} ${type} responses`);
+
+    res.status(200).json({
+      success: true,
+      data: result.rows,
+      count: result.rowCount
+    });
+
+  } catch (error) {
+    console.error("=== Error in GET /api/ai-responses ===");
+    console.error("Error message:", error.message);
+    console.error("Error stack:", error.stack);
+    
+    res.status(500).json({
+      success: false,
+      message: `Failed to fetch ${type} responses`,
+      error: error.message
+    });
+  } finally {
+    sqlClient.release();
+    console.log("Database client released");
+  }
+});
+
+app.post('/api/ai-responses', async (req, res) => {
+  console.log("=== Starting POST /api/ai-responses ===");
+  console.log("Request body:", JSON.stringify(req.body, null, 2));
+
+  const { companyId, type, data } = req.body;
+
+  // Validation
+  if (!companyId) {
+    console.error("Missing companyId");
+    return res.status(400).json({ success: false, message: 'Missing companyId' });
+  }
+
+  if (!type || !['video', 'voice', 'tag', 'document', 'image', 'assign'].includes(type)) {
+    console.error("Invalid or missing type");
+    return res.status(400).json({ 
+      success: false, 
+      message: 'Type is required and must be one of: video, voice, tag, document, image, assign' 
+    });
+  }
+
+  if (!data) {
+    console.error("Missing data");
+    return res.status(400).json({ success: false, message: 'Missing data for the response' });
+  }
+
+  const sqlClient = await pool.connect();
+
+  try {
+    await sqlClient.query("BEGIN");
+    console.log("Database transaction started");
+
+    const responseId = require('crypto').randomUUID();
+    console.log("Generated response ID:", responseId);
+
+    let insertQuery;
+    let queryParams;
+    let responseData;
+
+    switch (type) {
+      case 'video':
+        insertQuery = `
+          INSERT INTO public.ai_video_responses (
+            response_id, company_id, keywords, 
+            video_urls, captions, keyword_source, status, description
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+          RETURNING *
+        `;
+        queryParams = [
+          responseId,
+          companyId,
+          JSON.stringify(data.keywords) || [],
+          JSON.stringify(data.video_urls) || [],
+          data.captions || [],
+          data.keyword_source || 'user',
+          data.status || 'active',
+          data.description || '',
+        ];
+        break;
+
+      case 'voice':
+        insertQuery = `
+          INSERT INTO public.ai_voice_responses (
+            response_id, company_id, keywords, voice_urls, captions,
+            keyword_source, status, description
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+          RETURNING *
+        `;
+        queryParams = [
+          responseId,
+          companyId,
+          JSON.stringify(data.keywords) || [],
+          JSON.stringify(data.voice_urls) || [],
+          data.captions || [],
+          data.keyword_source || 'user',
+          data.status || 'active',
+          data.description || '',
+        ];
+        break;
+
+      case 'tag':
+        insertQuery = `
+          INSERT INTO public.ai_tag_responses (
+            response_id, company_id, tags,
+            keywords, remove_tags, keyword_source, tag_action_mode, status, description
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+          RETURNING *
+        `;
+        queryParams = [
+          responseId,
+          companyId,
+          JSON.stringify(data.tags) || null,
+          JSON.stringify(data.keywords) || null,
+          JSON.stringify(data.remove_tags) || null,
+          data.keyword_source || 'user',
+          data.tag_action_mode || 'add',
+          data.status || 'active',
+          data.description || '',
+        ];
+        break;
+
+      case 'document':
+        insertQuery = `
+          INSERT INTO public.ai_document_responses (
+            response_id, company_id, document_urls,
+            document_names, keywords, keyword_source, status, description
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+          RETURNING *
+        `;
+        queryParams = [
+          responseId,
+          companyId,
+          JSON.stringify(data.document_urls) || [],
+          JSON.stringify(data.document_names) || [],
+          JSON.stringify(data.keywords) || [],
+          data.keyword_source || 'user',
+          data.status || 'active',
+          data.description || '',
+        ];
+        break;
+
+      case 'image':
+        insertQuery = `
+          INSERT INTO public.ai_image_responses (
+            response_id, company_id,
+            keywords, image_urls, keyword_source, status, description
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7)
+          RETURNING *
+        `;
+        queryParams = [
+          responseId,
+          companyId,
+          JSON.stringify(data.keywords) || [],
+          JSON.stringify(data.image_urls) || [],
+          data.keyword_source || 'user',
+          data.status || 'active',
+          data.description || '',
+        ];
+        break;
+
+      case 'assign':
+        insertQuery = `
+          INSERT INTO public.ai_assign_responses (
+            response_id, company_id, keywords,
+            keyword_source, assigned_employees, description, status
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7)
+          RETURNING *
+        `;
+        queryParams = [
+          responseId,
+          companyId,
+          JSON.stringify(data.keywords) || null,
+          data.keyword_source || 'user',
+          JSON.stringify(data.assigned_employees) || null,
+          data.description || '',
+          data.status || 'active'
+        ];
+        break;
+    }
+
+    console.log("Executing insert with params:", queryParams);
+    const result = await sqlClient.query(insertQuery, queryParams);
+    responseData = result.rows[0];
+    console.log("Response created successfully:", responseData);
+
+    await sqlClient.query("COMMIT");
+    console.log("Database transaction committed successfully");
+
+    res.status(201).json({
+      success: true,
+      message: `${type} response created successfully`,
+      data: responseData
+    });
+
+  } catch (error) {
+    await sqlClient.query("ROLLBACK");
+    console.error("=== Error in POST /api/ai-responses ===");
+    console.error("Error message:", error.message);
+    console.error("Error stack:", error.stack);
+    
+    res.status(500).json({
+      success: false,
+      message: `Failed to create ${type} response`,
+      error: error.message
+    });
+  } finally {
+    sqlClient.release();
+    console.log("Database client released");
+  }
+});
+
+app.put('/api/ai-responses/:id', async (req, res) => {
+  console.log("=== Starting PUT /api/ai-responses/:id ===");
+  console.log("Request params:", req.params);
+  console.log("Request body:", JSON.stringify(req.body, null, 2));
+
+  const { id } = req.params;
+  const { type, data } = req.body;
+
+  // Validation
+  if (!id) {
+    console.error("Missing id");
+    return res.status(400).json({ success: false, message: 'Missing response id' });
+  }
+
+  if (!type || !['video', 'voice', 'tag', 'document', 'image', 'assign'].includes(type)) {
+    console.error("Invalid or missing type");
+    return res.status(400).json({ 
+      success: false, 
+      message: 'Type is required and must be one of: video, voice, tag, document, image, assign' 
+    });
+  }
+
+  if (!data) {
+    console.error("Missing data");
+    return res.status(400).json({ success: false, message: 'Missing update data' });
+  }
+
+  const sqlClient = await pool.connect();
+
+  try {
+    await sqlClient.query("BEGIN");
+    console.log("Database transaction started");
+
+    let updateQuery;
+    let queryParams = [];
+    let responseData;
+
+    switch (type) {
+      case 'video':
+        updateQuery = `
+          UPDATE public.ai_video_responses SET
+            keywords = COALESCE($1, keywords),
+            video_urls = COALESCE($2, video_urls),
+            captions = COALESCE($3, captions),
+            keyword_source = COALESCE($4, keyword_source),
+            status = COALESCE($5, status),
+            description = COALESCE($6, description),
+            updated_at = CURRENT_TIMESTAMP
+          WHERE response_id = $7
+          RETURNING *
+        `;
+        queryParams = [
+          data.keywords ? JSON.stringify(data.keywords) : null,
+          data.video_urls ? JSON.stringify(data.video_urls) : null,
+          data.captions || null,
+          data.keyword_source || null,
+          data.status || null,
+          data.description || null,
+          id
+        ];
+        break;
+
+      case 'voice':
+        updateQuery = `
+          UPDATE public.ai_voice_responses SET
+            keywords = COALESCE($1, keywords),
+            voice_urls = COALESCE($2, voice_urls),
+            captions = COALESCE($3, captions),
+            keyword_source = COALESCE($4, keyword_source),
+            status = COALESCE($5, status),
+            description = COALESCE($6, description),
+            updated_at = CURRENT_TIMESTAMP
+          WHERE response_id = $7
+          RETURNING *
+        `;
+        queryParams = [
+          data.keywords ? JSON.stringify(data.keywords) : null,
+          data.voice_urls ? JSON.stringify(data.voice_urls) : null,
+          data.captions || null,
+          data.keyword_source || null,
+          data.status || null,
+          data.description || null,
+          id
+        ];
+        break;
+
+      case 'tag':
+        updateQuery = `
+          UPDATE public.ai_tag_responses SET
+            tags = COALESCE($1, tags),
+            keywords = COALESCE($2, keywords),
+            remove_tags = COALESCE($3, remove_tags),
+            keyword_source = COALESCE($4, keyword_source),
+            tag_action_mode = COALESCE($5, tag_action_mode),
+            status = COALESCE($6, status),
+            description = COALESCE($7, description),
+            updated_at = CURRENT_TIMESTAMP
+          WHERE response_id = $8
+          RETURNING *
+        `;
+        queryParams = [
+          data.tags ? JSON.stringify(data.tags) : null,
+          data.keywords ? JSON.stringify(data.keywords) : null,
+          data.remove_tags ? JSON.stringify(data.remove_tags) : null,
+          data.keyword_source || null,
+          data.tag_action_mode || null,
+          data.status || null,
+          data.description || null,
+          id
+        ];
+        break;
+
+      case 'document':
+        updateQuery = `
+          UPDATE public.ai_document_responses SET
+            document_urls = COALESCE($1, document_urls),
+            document_names = COALESCE($2, document_names),
+            keywords = COALESCE($3, keywords),
+            keyword_source = COALESCE($4, keyword_source),
+            status = COALESCE($5, status),
+            description = COALESCE($6, description),
+            updated_at = CURRENT_TIMESTAMP
+          WHERE response_id = $7
+          RETURNING *
+        `;
+        queryParams = [
+          data.document_urls ? JSON.stringify(data.document_urls) : null,
+          data.document_names ? JSON.stringify(data.document_names) : null,
+          data.keywords ? JSON.stringify(data.keywords) : null,
+          data.keyword_source || null,
+          data.status || null,
+          data.description || null,
+          id
+        ];
+        break;
+
+      case 'image':
+        updateQuery = `
+          UPDATE public.ai_image_responses SET
+            keywords = COALESCE($1, keywords),
+            image_urls = COALESCE($2, image_urls),
+            keyword_source = COALESCE($3, keyword_source),
+            status = COALESCE($4, status),
+            description = COALESCE($5, description),
+            updated_at = CURRENT_TIMESTAMP
+          WHERE response_id = $6
+          RETURNING *
+        `;
+        queryParams = [
+          data.keywords ? JSON.stringify(data.keywords) : null,
+          data.image_urls ? JSON.stringify(data.image_urls) : null,
+          data.keyword_source || null,
+          data.status || null,
+          data.description || null,
+          id
+        ];
+        break;
+
+      case 'assign':
+        updateQuery = `
+          UPDATE public.ai_assign_responses SET
+            keywords = COALESCE($1, keywords),
+            keyword_source = COALESCE($2, keyword_source),
+            assigned_employees = COALESCE($3, assigned_employees),
+            description = COALESCE($4, description),
+            status = COALESCE($5, status),
+            updated_at = CURRENT_TIMESTAMP
+          WHERE response_id = $6
+          RETURNING *
+        `;
+        queryParams = [
+          data.keywords ? JSON.stringify(data.keywords) : null,
+          data.keyword_source || null,
+          data.assigned_employees ? JSON.stringify(data.assigned_employees) : null,
+          data.description || null,
+          data.status || null,
+          id
+        ];
+        break;
+    }
+
+    console.log("Executing update with params:", queryParams);
+    const result = await sqlClient.query(updateQuery, queryParams);
+    
+    if (result.rowCount === 0) {
+      console.error("No response found with id:", id);
+      await sqlClient.query("ROLLBACK");
+      return res.status(404).json({
+        success: false,
+        message: `${type} response not found with id: ${id}`
+      });
+    }
+
+    responseData = result.rows[0];
+    console.log("Response updated successfully:", responseData);
+
+    await sqlClient.query("COMMIT");
+    console.log("Database transaction committed successfully");
+
+    res.status(200).json({
+      success: true,
+      message: `${type} response updated successfully`,
+      data: responseData
+    });
+
+  } catch (error) {
+    await sqlClient.query("ROLLBACK");
+    console.error("=== Error in PUT /api/ai-responses/:id ===");
+    console.error("Error message:", error.message);
+    console.error("Error stack:", error.stack);
+    
+    res.status(500).json({
+      success: false,
+      message: `Failed to update ${type} response`,
+      error: error.message
+    });
+  } finally {
+    sqlClient.release();
+    console.log("Database client released");
+  }
+});
+
+app.delete('/api/ai-responses/:id', async (req, res) => {
+  console.log("=== Starting DELETE /api/ai-responses/:id ===");
+  console.log("Request params:", req.params);
+  console.log("Query params:", req.query);
+
+  const { id } = req.params;
+  const { type } = req.query;
+
+  // Validation
+  if (!id) {
+    console.error("Missing id");
+    return res.status(400).json({ success: false, message: 'Missing response id' });
+  }
+
+  if (!type || !['video', 'voice', 'tag', 'document', 'image', 'assign'].includes(type)) {
+    console.error("Invalid or missing type");
+    return res.status(400).json({ 
+      success: false, 
+      message: 'Type is required and must be one of: video, voice, tag, document, image, assign' 
+    });
+  }
+
+  const sqlClient = await pool.connect();
+
+  try {
+    await sqlClient.query("BEGIN");
+    console.log("Database transaction started");
+
+    let tableName;
+    switch (type) {
+      case 'video': tableName = 'ai_video_responses'; break;
+      case 'voice': tableName = 'ai_voice_responses'; break;
+      case 'tag': tableName = 'ai_tag_responses'; break;
+      case 'document': tableName = 'ai_document_responses'; break;
+      case 'image': tableName = 'ai_image_responses'; break;
+      case 'assign': tableName = 'ai_assign_responses'; break;
+    }
+
+    const deleteQuery = `DELETE FROM public.${tableName} WHERE response_id = $1 RETURNING *`;
+    console.log("Executing delete query:", deleteQuery);
+
+    const result = await sqlClient.query(deleteQuery, [id]);
+    
+    if (result.rowCount === 0) {
+      console.error("No response found with id:", id);
+      await sqlClient.query("ROLLBACK");
+      return res.status(404).json({
+        success: false,
+        message: `${type} response not found with id: ${id}`
+      });
+    }
+
+    const deletedResponse = result.rows[0];
+    console.log("Response deleted successfully:", deletedResponse);
+
+    await sqlClient.query("COMMIT");
+    console.log("Database transaction committed successfully");
+
+    res.status(200).json({
+      success: true,
+      message: `${type} response deleted successfully`,
+      data: deletedResponse
+    });
+
+  } catch (error) {
+    await sqlClient.query("ROLLBACK");
+    console.error("=== Error in DELETE /api/ai-responses/:id ===");
+    console.error("Error message:", error.message);
+    console.error("Error stack:", error.stack);
+    
+    res.status(500).json({
+      success: false,
+      message: `Failed to delete ${type} response`,
+      error: error.message
+    });
+  } finally {
+    sqlClient.release();
+    console.log("Database client released");
+  }
+});
+
 app.post("/api/v2/messages/text/:companyId/:chatId", async (req, res) => {
   console.log("\n=== New Text Message Request ===");
   const companyId = req.params.companyId;
@@ -8974,6 +9539,7 @@ app.post("/api/v2/messages/text/:companyId/:chatId", async (req, res) => {
       }
 
       // 7. Handle AI Responses for Own Messages
+      console.log("\n=== Processing AI Responses in Messaging API ===");
       await fetchConfigFromDatabase(companyId);
       const handlerParams = {
         client: client,
