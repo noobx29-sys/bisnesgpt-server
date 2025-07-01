@@ -11,6 +11,8 @@ const { exec } = require("child_process");
 const { promisify } = require("util");
 const { pipeline } = require("stream/promises");
 const { createServer } = require("http");
+const FormData = require('form-data');
+const { Readable } = require('stream');
 
 // Third-party Libraries
 // Framework & Middleware
@@ -180,7 +182,15 @@ const storage = multer.diskStorage({
   }
 });
 
-const upload = multer({ storage });
+const upload = multer({
+  storage,
+  limits: {
+    fileSize: 50 * 1024 * 1024, // 50MB file size limit
+    fieldSize: 50 * 1024 * 1024, // 50MB field size limit (for non-file fields)
+    files: 1, // Limit to 1 file per upload
+    fields: 10 // Limit to 10 non-file fields
+  },
+});
 
 // ======================
 // 6. ROUTES
@@ -3402,7 +3412,7 @@ async function processAIResponses({
 }) {
   const followUpTemplates = await getFollowUpTemplates(idSubstring);
 
-  const chatid = formatPhoneNumber(extractedNumber).slice(1) + "@c.us";
+  const chatid = formatPhoneNumber(extractedNumber) + "@c.us";
 
   const handlerParams = {
     client: client,
@@ -3666,16 +3676,9 @@ async function getFollowUpTemplates(companyId) {
       ORDER BY created_at DESC
     `;
 
-    console.log("Fetching followup_templates...");
     const result = await sqlClient.query(query, [companyId]);
-    console.log("Found followup_templates records:", result.rows.length);
 
     for (const row of result.rows) {
-      console.log("\nProcessing template:", row.template_id);
-      console.log("Template data:", row);
-      console.log("Raw trigger_tags from DB:", row.trigger_tags);
-      console.log("Raw trigger_keywords from DB:", row.trigger_keywords);
-
       const templateObj = {
         id: row.id,
         templateId: row.template_id,
@@ -3691,13 +3694,10 @@ async function getFollowUpTemplates(companyId) {
         delayHours: row.delay_hours || 24,
       };
 
-      console.log("Processed template object:", templateObj);
-      console.log("Trigger tags array:", templateObj.triggerTags);
       templates.push(templateObj);
     }
 
     await sqlClient.query("COMMIT");
-    console.log("\nFinal templates array:", templates);
     return templates;
   } catch (error) {
     await sqlClient.query("ROLLBACK");
@@ -3705,7 +3705,6 @@ async function getFollowUpTemplates(companyId) {
     throw error;
   } finally {
     sqlClient.release();
-    console.log("Database client released back to the pool");
   }
 }
 
@@ -3972,7 +3971,6 @@ async function getMessagesForTemplate(templateId) {
     throw error;
   } finally {
     sqlClient.release();
-    console.log("Database client released back to the pool");
   }
 }
 
@@ -4031,16 +4029,12 @@ async function getAIAssignResponses(companyId) {
         AND status = 'active'
     `;
 
-    console.log("Fetching active aiAssignResponses...");
     const result = await sqlClient.query(query, [companyId]);
-    console.log("Found aiAssignResponses records:", result.rows.length);
 
     for (const row of result.rows) {
       console.log("\nProcessing record:", row.response_id);
-      console.log("Record data:", row);
 
       const assignedEmployees = row.assigned_employees || [];
-      console.log("Assigned employees array:", assignedEmployees);
 
       if (assignedEmployees.length === 0) {
         console.log("No assigned employees found, skipping record");
@@ -4058,12 +4052,10 @@ async function getAIAssignResponses(companyId) {
         status: row.status || "active",
       };
 
-      console.log("Adding response object:", responseObj);
       responses.push(responseObj);
     }
 
     await sqlClient.query("COMMIT");
-    console.log("\nFinal responses array:", responses);
     return responses;
   } catch (error) {
     await sqlClient.query("ROLLBACK");
@@ -4072,7 +4064,6 @@ async function getAIAssignResponses(companyId) {
     throw error;
   } finally {
     sqlClient.release();
-    console.log("Database client released back to the pool");
   }
 }
 
@@ -4306,7 +4297,7 @@ async function checkKeywordMatch(response, message, keywordSource) {
 async function handleAIVideoResponses({
   client,
   message,
-  from,
+  chatId,
   extractedNumber,
   idSubstring,
   contactName,
@@ -4331,10 +4322,11 @@ async function handleAIVideoResponses({
           const media = await MessageMedia.fromUrl(videoUrl);
           if (!media) throw new Error("Failed to load video from URL");
 
-          const videoMessage = await client.sendMessage(from, media, {
+          const videoMessage = await client.sendMessage(chatId, media, {
             caption,
             sendVideoAsGif: false,
           });
+          console.log("Video message sent successfully:", videoMessage);
 
           await addMessageToPostgres(
             videoMessage,
@@ -4356,7 +4348,7 @@ async function handleAIVideoResponses({
 async function handleAIVoiceResponses({
   client,
   message,
-  from,
+  chatId,
   extractedNumber,
   idSubstring,
   contactName,
@@ -4378,7 +4370,7 @@ async function handleAIVoiceResponses({
           const caption = response.captions?.[i] || "";
           const voiceMessage = await sendVoiceMessage(
             client,
-            from,
+            chatId,
             response.voiceUrls[i],
             caption
           );
@@ -4401,11 +4393,52 @@ async function handleAIVoiceResponses({
   }
 }
 
+async function sendVoiceMessage(client, chatId, voiceUrl, caption = "") {
+  try {
+    console.log("Sending voice message:", { chatId, voiceUrl, caption });
+
+    // Download the audio file
+    const response = await axios.get(voiceUrl, { responseType: "arraybuffer" });
+    const audioBuffer = Buffer.from(response.data);
+
+    // Create MessageMedia object
+    const media = new MessageMedia(
+      "audio/mpeg", // Default MIME type for voice messages
+      audioBuffer.toString("base64"),
+      `voice_${Date.now()}.mp3` // Generate unique filename
+    );
+
+    // Send the voice message with options
+    const messageOptions = {
+      sendAudioAsVoice: true, // This ensures it's sent as a voice message
+    };
+
+    if (caption) {
+      messageOptions.caption = caption;
+    }
+
+    const sent = await client.sendMessage(chatId, media, messageOptions);
+    console.log("Voice message sent successfully");
+
+    return sent;
+  } catch (error) {
+    console.error("Error sending voice message:", error);
+    // Log detailed error information
+    if (error.response) {
+      console.error("Response error:", {
+        status: error.response.status,
+        data: error.response.data,
+      });
+    }
+    throw new Error(`Failed to send voice message: ${error.message}`);
+  }
+}
+
 // Handles AI image responses
 async function handleAIImageResponses({
   client,
   message,
-  from,
+  chatId,
   extractedNumber,
   idSubstring,
   contactName,
@@ -4425,8 +4458,9 @@ async function handleAIImageResponses({
       for (const imageUrl of response.imageUrls) {
         try {
           console.log("Sending image:", imageUrl);
+          console.log("Chat ID:", chatId);
           const media = await MessageMedia.fromUrl(imageUrl);
-          const imageMessage = await client.sendMessage(from, media);
+          const imageMessage = await client.sendMessage(chatId, media);
           await addMessageToPostgres(
             imageMessage,
             idSubstring,
@@ -4446,7 +4480,7 @@ async function handleAIImageResponses({
 async function handleAIDocumentResponses({
   client,
   message,
-  from,
+  chatId,
   extractedNumber,
   idSubstring,
   contactName,
@@ -4476,7 +4510,7 @@ async function handleAIDocumentResponses({
             media.mimetype ||
             getMimeTypeFromExtension(path.extname(documentName));
 
-          const documentMessage = await client.sendMessage(from, media, {
+          const documentMessage = await client.sendMessage(chatId, media, {
             sendMediaAsDocument: true,
           });
 
@@ -4510,6 +4544,14 @@ async function handleAITagResponses({
     return false;
   }
 
+  console.log("=== Starting handleAITagResponses ===");
+  console.log("Message:", message);
+  console.log("Extracted number:", extractedNumber);
+  console.log("Company ID substring:", idSubstring);
+  console.log("Contact name:", contactName);
+  console.log("Phone index:", phoneIndex);
+  console.log("Keyword source:", keywordSource);
+
   const aiTagResponses = await getAITagResponses(idSubstring);
 
   for (const response of aiTagResponses) {
@@ -4517,22 +4559,22 @@ async function handleAITagResponses({
       console.log("Tags found for keywords:", response.keywords);
 
       try {
-        if (response.tag_action_mode === "delete") {
-          await handleTagDeletion({
+        if (response.tagActionMode === "delete") {
+          await handleTagDeletion(
             response,
             extractedNumber,
             idSubstring,
             followUpTemplates,
-          });
+          );
         } else {
-          await handleTagAddition({
+          await handleTagAddition(
             response,
             extractedNumber,
             idSubstring,
             followUpTemplates,
             contactName,
             phoneIndex,
-          });
+          );
         }
       } catch (error) {
         console.error(`Error handling tags:`, error);
@@ -4565,14 +4607,14 @@ async function handleAIAssignResponses({
           message.toLowerCase().includes(kw.toLowerCase())
         );
 
-        await handleEmployeeAssignment({
+        await handleEmployeeAssignment(
           response,
           idSubstring,
           extractedNumber,
           contactName,
           client,
           matchedKeyword,
-        });
+        );
       } catch (error) {
         console.error(`Error handling assignment:`, error);
       }
@@ -4840,16 +4882,16 @@ async function handleEmployeeAssignment(
   );
   let currentIndex = stateResult.rows[0]?.current_index || 0;
 
-  const employeeEmails = response.assigned_employees;
-  if (employeeEmails.length === 0) {
+  const employeeIDs = response.assignedEmployees;
+  if (employeeIDs.length === 0) {
     console.log("No employees available for assignment");
     return;
   }
 
-  const nextEmail = employeeEmails[currentIndex % employeeEmails.length];
+  const nextID = employeeIDs[currentIndex % employeeIDs.length];
   const employeeResult = await pool.query(
-    "SELECT * FROM employees WHERE company_id = $1 AND email = $2",
-    [idSubstring, nextEmail]
+    "SELECT * FROM employees WHERE company_id = $1 AND id = $2",
+    [idSubstring, nextID]
   );
 
   if (employeeResult.rows.length > 0) {
@@ -4864,7 +4906,7 @@ async function handleEmployeeAssignment(
       matchedKeyword
     );
 
-    const newIndex = (currentIndex + 1) % employeeEmails.length;
+    const newIndex = (currentIndex + 1) % employeeIDs.length;
     await pool.query(
       "INSERT INTO bot_state (company_id, bot_name, state, current_index, last_updated) " +
         "VALUES ($1, $2, $3, $4, $5) " +
@@ -4878,6 +4920,59 @@ async function handleEmployeeAssignment(
       ]
     );
   }
+}
+
+async function assignToEmployee(
+  employee,
+  role,
+  contactID,
+  contactName,
+  client,
+  idSubstring,
+  triggerKeyword = "",
+  phoneIndex = 0
+) {
+  const rawNumber = employee.phone_number?.replace(/\D/g, '');
+  const employeeID = rawNumber ? rawNumber + "@c.us" : null;
+
+  // Get current date and time in Malaysia timezone
+  const currentDateTime = new Date().toLocaleString("en-MY", {
+    timeZone: "Asia/Kuala_Lumpur",
+    dateStyle: "medium",
+    timeStyle: "medium",
+  });
+
+  const message =
+    idSubstring === "0245"
+      ? `Hello ${employee.name}, a new contact has been assigned to you:
+
+Name: ${contactName}
+Phone: ${contactID}
+     
+Triggered keyword: ${
+          triggerKeyword ? `*${triggerKeyword}*` : "[No keyword trigger found]"
+        }
+     
+Date & Time: ${currentDateTime}`
+      : idSubstring === "0335"
+      ? `Hello ${employee.name}, a new contact has been assigned to you:
+
+Name: ${contactName}
+Phone: ${contactID}
+
+Thank you.`
+      : `Hello ${employee.name}, a new contact has been assigned to you:
+
+Name: ${contactName}
+Phone: ${contactID}
+
+Kindly login to the CRM software to continue.
+
+Thank you.`;
+
+  await client.sendMessage(employeeID, message);
+  await addTagToPostgres(contactID, employee.name, idSubstring);
+  console.log(`Assigned ${role}: ${employee.name}`);
 }
 
 async function processFollowUpTemplate(
@@ -5126,7 +5221,6 @@ app.get('/api/scheduled-messages', async (req, res) => {
     });
   } finally {
     sqlClient.release();
-    console.log("Database client released back to the pool");
   }
 });
 
@@ -5279,11 +5373,8 @@ async function callFollowUpAPI(
     throw error;
   } finally {
     sqlClient.release();
-    console.log("Database client released back to the pool");
   }
 }
-
-// ... existing code ...
 
 app.get("/api/storage-pricing", async (req, res) => {
   let client;
@@ -5402,8 +5493,13 @@ async function addMessageToPostgres(
           })
         };
       }
+    } else if (msg.type === "audio" || msg.type === "ptt") {
+      mediaData = messageData.audio?.data || null;
     }
   }
+  console.log("Media URL:", mediaUrl);
+  console.log("Media Data:", mediaData);
+  console.log("Media Metadata:", mediaMetadata);
 
   // Prepare quoted message
   const quotedMessage = messageData.text?.context || null;
@@ -5615,8 +5711,8 @@ async function processMessageMedia(msg) {
     const mediaData = {
       mimetype: media.mimetype,
       data: media.data,
-      filename: msg._data.filename || "",
-      caption: msg._data.caption || "",
+      filename: msg._data.filename || media.filename || "",
+      caption: msg._data.caption || media.caption || "",
     };
 
     switch (msg.type) {
@@ -5629,7 +5725,7 @@ async function processMessageMedia(msg) {
         mediaData.file_size = msg._data.size;
         break;
       case "video":
-        mediaData.link = await storeVideoData(media.data, msg._data.filename);
+        mediaData.link = await storeVideoData(media.data, mediaData.filename);
         break;
     }
 
@@ -5659,9 +5755,11 @@ async function processAudioMessage(msg) {
     return null;
   }
 
+  const media = await msg.downloadMedia();
+
   return {
     mimetype: "audio/ogg; codecs=opus",
-    data: null,
+    data: media.data,
   };
 }
 
@@ -5810,22 +5908,33 @@ async function transcribeAudio(audioData) {
 }
 
 async function storeVideoData(videoData, filename) {
-  const bucket = admin.storage().bucket();
-  const uniqueFilename = `${uuidv4()}_${filename}`;
-  const file = bucket.file(`videos/${uniqueFilename}`);
+  try {
+    const buffer = Buffer.from(videoData, 'base64');
+    const stream = Readable.from(buffer);
+    filename = filename || `video-${Date.now()}.mp4`;
+    
+    const formData = new FormData();
+    formData.append('file', stream, {
+      filename: filename,
+      contentType: 'video/mp4',
+      knownLength: buffer.length
+    });
+    console.log('Buffer length:', buffer.length);
+    console.log('Filename:', filename);
+    console.log('FormData headers:', formData.getHeaders());
+    console.log('FormData length:', formData.getLengthSync());
 
-  await file.save(Buffer.from(videoData, "base64"), {
-    metadata: {
-      contentType: "video/mp4",
-    },
-  });
+    const response = await axios.post(`${process.env.URL}/api/upload-media`, formData, {
+      headers: formData.getHeaders(),
+      maxContentLength: Infinity,
+      maxBodyLength: Infinity
+    });
 
-  const [url] = await file.getSignedUrl({
-    action: "read",
-    expires: "03-01-2500",
-  });
-
-  return url;
+    return response.data.url;
+  } catch (error) {
+    console.error('Error uploading video:', error);
+    throw error;
+  }
 }
 
 app.delete("/api/auth/user", async (req, res) => {
@@ -9539,38 +9648,38 @@ app.post("/api/v2/messages/text/:companyId/:chatId", async (req, res) => {
       }
 
       // 7. Handle AI Responses for Own Messages
-      console.log("\n=== Processing AI Responses in Messaging API ===");
-      await fetchConfigFromDatabase(companyId);
-      const handlerParams = {
-        client: client,
-        msg: message,
-        idSubstring: companyId,
-        extractedNumber: phoneNumber,
-        contactName:
-          contactData?.contact_name || contactData?.name || phoneNumber,
-        phoneIndex: phoneIndex,
-      };
+      // console.log("\n=== Processing AI Responses in Messaging API ===");
+      // await fetchConfigFromDatabase(companyId);
+      // const handlerParams = {
+      //   client: client,
+      //   msg: message,
+      //   idSubstring: companyId,
+      //   extractedNumber: phoneNumber,
+      //   contactName:
+      //     contactData?.contact_name || contactData?.name || phoneNumber,
+      //   phoneIndex: phoneIndex,
+      // };
 
-      // Process AI responses for 'own'
-      await processAIResponses({
-        ...handlerParams,
-        keywordSource: "own",
-        handlers: {
-          assign: true,
-          tag: true,
-          followUp: true,
-          document: true,
-          image: true,
-          video: true,
-          voice: true,
-        },
-      });
+      // // Process AI responses for 'own'
+      // await processAIResponses({
+      //   ...handlerParams,
+      //   keywordSource: "own",
+      //   handlers: {
+      //     assign: true,
+      //     tag: true,
+      //     followUp: true,
+      //     document: true,
+      //     image: true,
+      //     video: true,
+      //     voice: true,
+      //   },
+      // });
 
       console.log("\n=== Message Processing Complete ===");
       res.json({
         success: true,
-        messageId: sentMessage.id._serialized,
-        timestamp: sentMessage.timestamp,
+        messageId: sentMessage?.id?._serialized ?? 'no id',
+        timestamp: sentMessage?.timestamp ?? 'no timestamp',
       });
     } catch (dbError) {
       console.error("\n=== Database Error ===");
@@ -11882,7 +11991,6 @@ app.get("/api/user-company-data", async (req, res) => {
       messageUsage,
       tags,
     };
-    console.log(response);
     res.json(response);
   } catch (error) {
     console.error("Error fetching user and company data:", error);

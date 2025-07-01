@@ -2200,8 +2200,8 @@ async function prepareContactData(
   contactData,
   companyName
 ) {
-  const contact = await msg.getContact();
   const chat = await msg.getChat();
+  const contact = await chat.getContact();
   const extractedNumber = "+" + msg.from.split("@")[0];
 
   const contactTags = contactData?.tags || [];
@@ -2478,22 +2478,22 @@ async function handleAITagResponses({
       console.log("Tags found for keywords:", response.keywords);
 
       try {
-        if (response.tag_action_mode === "delete") {
-          await handleTagDeletion({
+        if (response.tagActionMode === "delete") {
+          await handleTagDeletion(
             response,
             extractedNumber,
             idSubstring,
             followUpTemplates,
-          });
+          );
         } else {
-          await handleTagAddition({
+          await handleTagAddition(
             response,
             extractedNumber,
             idSubstring,
             followUpTemplates,
             contactName,
             phoneIndex,
-          });
+          );
         }
       } catch (error) {
         console.error(`Error handling tags:`, error);
@@ -2527,7 +2527,7 @@ async function handleAIAssignResponses({
           message.toLowerCase().includes(kw.toLowerCase())
         );
 
-        await handleEmployeeAssignment({
+        await handleEmployeeAssignment(
           response,
           idSubstring,
           extractedNumber,
@@ -2535,7 +2535,7 @@ async function handleAIAssignResponses({
           client,
           matchedKeyword,
           phoneIndex,
-        });
+        );
       } catch (error) {
         console.error(`Error handling assignment:`, error);
       }
