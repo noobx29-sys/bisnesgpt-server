@@ -1076,7 +1076,6 @@ app.post(
       };
       const name = decodedEmail.split("@")[0];
       console.log("Creating user in Neon Auth:", userData, name);
-      // Create user in Neon Auth (only required fields)
       // Create user in Neon Auth
       const neonUser = await createNeonAuthUser(decodedEmail, name);
 
@@ -1085,18 +1084,18 @@ app.post(
       const companyId = `0${Date.now()}`;
 
       // Create company in database
-      // await sqlDb.query(
-      //   `INSERT INTO companies (company_id, name, email, phone, status, enabled, created_at) 
-      //   VALUES ($1, $2, $3, $4, $5, $6, CURRENT_TIMESTAMP)`,
-      //   [
-      //     companyId,
-      //     userData.email.split("@")[0],
-      //     userData.email,
-      //     userData.phoneNumber,
-      //     "active",
-      //     true,
-      //   ]
-      // );
+      await sqlDb.query(
+        `INSERT INTO companies (company_id, name, email, phone, status, enabled, created_at) 
+        VALUES ($1, $2, $3, $4, $5, $6, CURRENT_TIMESTAMP)`,
+        [
+          companyId,
+          userData.email.split("@")[0],
+          userData.email,
+          userData.phoneNumber,
+          "active",
+          true,
+        ]
+      );
 
       await sqlDb.query(
         `INSERT INTO users (user_id, company_id, email, phone, role, active, created_at, password) 
@@ -1123,6 +1122,167 @@ app.post(
       console.error("Error creating user:", error);
       res.status(500).json({
         error: error.code || "Failed to create user",
+        details: error.message,
+      });
+    }
+  }
+);
+
+// New API to add a user under an existing company
+app.post(
+  "/api/add-user/:companyId/:email/:phoneNumber/:password/:role",
+  async (req, res) => {
+    try {
+      const { companyId, email, phoneNumber, password, role } = req.params;
+      const decodedEmail = decodeURIComponent(email);
+
+      // Get optional fields from request body
+      const {
+        name: providedName,
+        employeeId,
+        phoneAccess,
+        weightages,
+        company,
+        imageUrl,
+        notes,
+        quotaLeads,
+        viewEmployees,
+        invoiceNumber,
+        empGroup,
+        profile,
+        threadId
+      } = req.body || {};
+
+      if (!decodedEmail || !decodedEmail.includes("@")) {
+        return res.status(400).json({ error: "Invalid email format" });
+      }
+
+      // Check if company exists
+      const companyResult = await sqlDb.query(
+        "SELECT * FROM companies WHERE company_id = $1",
+        [companyId]
+      );
+      if (companyResult.rows.length === 0) {
+        return res.status(404).json({ error: "Company not found" });
+      }
+
+      // Create user in Neon Auth
+      const name = providedName || decodedEmail.split("@")[0];
+      const neonUser = await createNeonAuthUser(decodedEmail, name);
+
+      // Generate unique IDs
+      const userId = uuidv4();
+      const finalEmployeeId = employeeId || uuidv4();
+
+      // Insert into users table with flexible field handling
+      const userFields = ['user_id', 'company_id', 'email', 'phone', 'role', 'active', 'created_at', 'password'];
+      const userValues = [userId, companyId, decodedEmail, phoneNumber, role, true, 'CURRENT_TIMESTAMP', password];
+      let userPlaceholders = '$1, $2, $3, $4, $5, $6, CURRENT_TIMESTAMP, $7';
+      let paramIndex = 8;
+
+      // Add optional user fields
+      if (providedName) {
+        userFields.push('name');
+        userValues.push(name);
+        userPlaceholders += `, $${paramIndex++}`;
+      }
+      if (profile) {
+        userFields.push('profile');
+        userValues.push(JSON.stringify(profile));
+        userPlaceholders += `, $${paramIndex++}`;
+      }
+      if (threadId) {
+        userFields.push('thread_id');
+        userValues.push(threadId);
+        userPlaceholders += `, $${paramIndex++}`;
+      }
+
+      const userQuery = `
+        INSERT INTO users (${userFields.join(', ')}) 
+        VALUES (${userPlaceholders})
+      `;
+
+      await sqlDb.query(userQuery, userValues);
+
+      // Insert into employees table with flexible field handling
+      const empFields = ['employee_id', 'company_id', 'name', 'email', 'role', 'active', 'created_at'];
+      const empValues = [finalEmployeeId, companyId, name, decodedEmail, role, true, 'CURRENT_TIMESTAMP'];
+      let empPlaceholders = '$1, $2, $3, $4, $5, $6, CURRENT_TIMESTAMP';
+      paramIndex = 7;
+
+      // Add optional employee fields
+      if (phoneNumber) {
+        empFields.push('phone_number');
+        empValues.push(phoneNumber);
+        empPlaceholders += `, $${paramIndex++}`;
+      }
+      if (phoneAccess) {
+        empFields.push('phone_access');
+        empValues.push(JSON.stringify(phoneAccess));
+        empPlaceholders += `, $${paramIndex++}`;
+      }
+      if (weightages) {
+        empFields.push('weightages');
+        empValues.push(JSON.stringify(weightages));
+        empPlaceholders += `, $${paramIndex++}`;
+      }
+      if (company) {
+        empFields.push('company');
+        empValues.push(company);
+        empPlaceholders += `, $${paramIndex++}`;
+      }
+      if (imageUrl) {
+        empFields.push('image_url');
+        empValues.push(imageUrl);
+        empPlaceholders += `, $${paramIndex++}`;
+      }
+      if (notes) {
+        empFields.push('notes');
+        empValues.push(notes);
+        empPlaceholders += `, $${paramIndex++}`;
+      }
+      if (quotaLeads !== undefined) {
+        empFields.push('quota_leads');
+        empValues.push(quotaLeads);
+        empPlaceholders += `, $${paramIndex++}`;
+      }
+      if (viewEmployees) {
+        empFields.push('view_employees');
+        empValues.push(JSON.stringify(viewEmployees));
+        empPlaceholders += `, $${paramIndex++}`;
+      }
+      if (invoiceNumber) {
+        empFields.push('invoice_number');
+        empValues.push(invoiceNumber);
+        empPlaceholders += `, $${paramIndex++}`;
+      }
+      if (empGroup) {
+        empFields.push('emp_group');
+        empValues.push(empGroup);
+        empPlaceholders += `, $${paramIndex++}`;
+      }
+
+      const empQuery = `
+        INSERT INTO employees (${empFields.join(', ')}) 
+        VALUES (${empPlaceholders})
+      `;
+
+      await sqlDb.query(empQuery, empValues);
+
+      res.json({
+        message: "User added successfully",
+        userId,
+        employeeId: finalEmployeeId,
+        companyId,
+        neonUserId: neonUser.id,
+        role,
+        email: decodedEmail,
+        name
+      });
+    } catch (error) {
+      console.error("Error adding user:", error);
+      res.status(500).json({
+        error: error.code || "Failed to add user",
         details: error.message,
       });
     }
@@ -12381,5 +12541,109 @@ app.patch("/api/contacts/:contactId", async (req, res) => {
   } catch (error) {
     console.error("Error updating contact:", error);
     res.status(500).json({ error: "Failed to update contact" });
+  }
+});
+
+// API endpoint to get all user context data (user + company + employees)
+app.get("/api/user-context", async (req, res) => {
+  try {
+    const { email } = req.query;
+
+    // 1. Get user data
+    const userResult = await sqlDb.query(
+      `SELECT * FROM users WHERE email = $1`, 
+      [email]
+    );
+
+    if (userResult.rows.length === 0) {
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    const userData = userResult.rows[0];
+    const companyId = userData.company_id;
+
+    // 2. Get company data (including phone info)
+    const companyResult = await sqlDb.query(
+      `SELECT * FROM companies WHERE company_id = $1`,
+      [companyId]
+    );
+    
+    const companyData = companyResult.rows[0] || {};
+    
+    // Process phone names
+    const phoneNamesData = {};
+    const phoneCount = companyData.phone_count || 0;
+    
+    for (let i = 0; i < phoneCount; i++) {
+      const phoneName = companyData[`phone_${i + 1}`];
+      phoneNamesData[i] = phoneName || `Phone ${i + 1}`;
+    }
+
+    // 3. Get all employees for the company
+    const employeesResult = await sqlDb.query(
+      `SELECT 
+        id, name, email, role, employee_id, phone_number 
+       FROM employees 
+       WHERE company_id = $1`,
+      [companyId]
+    );
+
+    // Return combined data
+    res.json({
+      ...userData,
+      companyId,
+      phoneNames: phoneNamesData,
+      employees: employeesResult.rows
+    });
+
+  } catch (error) {
+    console.error("Error fetching user context:", error);
+    res.status(500).json({ error: "Failed to fetch user context" });
+  }
+});
+
+// API endpoint to get detailed user data
+app.get("/api/user-details", async (req, res) => {
+  try {
+    const { email } = req.query;
+
+    const result = await sqlDb.query(
+      `SELECT 
+        name, phone_number, role, company_id, emp_group, 
+        employee_id, notes, quota_leads, invoice_number,
+        phone_access, image_url, weightages, view_employees
+       FROM employees
+       WHERE email = $1`,
+      [email]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    res.json(result.rows[0]);
+  } catch (error) {
+    console.error("Error fetching user details:", error);
+    res.status(500).json({ error: "Failed to fetch user details" });
+  }
+});
+
+// API endpoint to get company groups
+app.get("/api/company-groups", async (req, res) => {
+  try {
+    const { companyId } = req.query;
+
+    const result = await sqlDb.query(
+      `SELECT DISTINCT emp_group AS group_name 
+       FROM employees 
+       WHERE company_id = $1 AND emp_group IS NOT NULL`,
+      [companyId]
+    );
+
+    const groups = result.rows.map(row => row.group_name);
+    res.json(groups);
+  } catch (error) {
+    console.error("Error fetching company groups:", error);
+    res.status(500).json({ error: "Failed to fetch company groups" });
   }
 });
