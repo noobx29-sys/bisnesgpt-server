@@ -1176,7 +1176,7 @@ app.post(
 
       // Insert into users table with flexible field handling
       const userFields = ['user_id', 'company_id', 'email', 'phone', 'role', 'active', 'created_at', 'password'];
-      const userValues = [userId, companyId, decodedEmail, phoneNumber, role, true, 'CURRENT_TIMESTAMP', password];
+      const userValues = [userId, companyId, decodedEmail, phoneNumber, role, true, password];
       let userPlaceholders = '$1, $2, $3, $4, $5, $6, CURRENT_TIMESTAMP, $7';
       let paramIndex = 8;
 
@@ -1206,7 +1206,7 @@ app.post(
 
       // Insert into employees table with flexible field handling
       const empFields = ['employee_id', 'company_id', 'name', 'email', 'role', 'active', 'created_at'];
-      const empValues = [finalEmployeeId, companyId, name, decodedEmail, role, true, 'CURRENT_TIMESTAMP'];
+      const empValues = [finalEmployeeId, companyId, name, decodedEmail, role, true];
       let empPlaceholders = '$1, $2, $3, $4, $5, $6, CURRENT_TIMESTAMP';
       paramIndex = 7;
 
@@ -10515,6 +10515,115 @@ app.post("/api/contacts/:companyId/:contactId/tags", async (req, res) => {
     res
       .status(500)
       .json({ error: "Failed to add tags", details: error.message });
+  }
+});
+
+// Assign employee to contact
+app.post("/api/contacts/:companyId/:contactId/assign-employee", async (req, res) => {
+  const { companyId, contactId } = req.params;
+  const { employeeName } = req.body;
+  
+  if (!employeeName) {
+    return res.status(400).json({ error: "employeeName is required" });
+  }
+  
+  try {
+    let phoneNumber;
+    if (contactId.startsWith(`${companyId}-`)) {
+      const contactIdParts = contactId.split("-");
+      phoneNumber = '+' + contactIdParts[1];
+    } else {
+      phoneNumber = contactId;
+    }
+
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+
+      // 1. Update the contact to assign the employee
+      const updateContactQuery = `
+        UPDATE contacts 
+        SET tags = CASE 
+          WHEN tags::jsonb ? $3 THEN tags::jsonb
+          ELSE COALESCE(tags::jsonb, '[]'::jsonb) || $4::jsonb
+        END
+        WHERE phone = $1 AND company_id = $2
+        RETURNING *
+      `;
+      
+      const employeeNameArray = JSON.stringify([employeeName]);
+      const updateResult = await client.query(updateContactQuery, [
+        phoneNumber,
+        companyId,
+        employeeName,
+        employeeNameArray
+      ]);
+
+      if (updateResult.rows.length === 0) {
+        await client.query("ROLLBACK");
+        return res.status(404).json({ error: "Contact not found" });
+      }
+
+      // 2. Update employee's assigned_contacts count
+      const employeeUpdateQuery = `
+        UPDATE employees
+        SET assigned_contacts = assigned_contacts + 1
+        WHERE company_id = $1 AND name = $2
+        RETURNING id, name, assigned_contacts
+      `;
+      
+      const employeeResult = await client.query(employeeUpdateQuery, [
+        companyId,
+        employeeName
+      ]);
+
+      if (employeeResult.rows.length === 0) {
+        await client.query("ROLLBACK");
+        return res.status(404).json({ error: "Employee not found" });
+      }
+
+      // 3. Update monthly assignments
+      const currentDate = new Date();
+      const currentMonthKey = `${currentDate.getFullYear()}-${(
+        currentDate.getMonth() + 1
+      ).toString().padStart(2, "0")}`;
+
+      const monthlyAssignmentUpsertQuery = `
+        INSERT INTO employee_monthly_assignments (employee_id, company_id, month_key, assignments_count, last_updated)
+        VALUES ($1, $2, $3, 1, CURRENT_TIMESTAMP)
+        ON CONFLICT (employee_id, month_key) DO UPDATE
+        SET assignments_count = employee_monthly_assignments.assignments_count + 1,
+            last_updated = CURRENT_TIMESTAMP
+      `;
+      
+      await client.query(monthlyAssignmentUpsertQuery, [
+        employeeResult.rows[0].id,
+        companyId,
+        currentMonthKey
+      ]);
+
+      await client.query("COMMIT");
+
+      res.json({ 
+        success: true, 
+        message: "Employee assigned successfully",
+        contact: updateResult.rows[0],
+        employee: employeeResult.rows[0]
+      });
+
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
+
+  } catch (error) {
+    console.error("Error assigning employee to contact:", error);
+    res.status(500).json({ 
+      error: "Failed to assign employee", 
+      details: error.message 
+    });
   }
 });
 
