@@ -66,6 +66,14 @@ const { handleTagFollowUp } = require("./blast/tag.js");
 // const { broadcastNewMessageToChat } = require("./utils/broadcast.js");
 // const { chatSubscriptions } = require("./utils/chatSubscriptions.js");
 
+// Import logging system
+const ServerLogger = require('./logger');
+const LogManager = require('./logManager');
+
+// Initialize logger
+const logger = new ServerLogger();
+const logManager = new LogManager();
+
 // ======================
 // 2. CONFIGURATION
 // ======================
@@ -201,6 +209,9 @@ app.get("/", (req, res) => res.send("Bot is running"));
 app.get("/logs", (req, res) =>
   res.sendFile(path.join(__dirname, "public", "logs.html"))
 );
+app.get("/log-manager", (req, res) =>
+  res.sendFile(path.join(__dirname, "public", "log-manager.html"))
+);
 app.get("/status", (req, res) =>
   res.sendFile(path.join(__dirname, "public", "status.html"))
 );
@@ -209,49 +220,197 @@ app.get("/queue", (req, res) =>
 );
 
 // Webhook Handlers
-app.post("/extremefitness/blast", async (req, res) => {
-  const botData = botMap.get("074");
-  if (!botData)
-    return res.status(404).json({ error: "WhatsApp client not found" });
-  await handleExtremeFitnessBlast(req, res, botData[0].client);
-});
+// app.post("/extremefitness/blast", async (req, res) => {
+//   const botData = botMap.get("074");
+//   if (!botData)
+//     return res.status(404).json({ error: "WhatsApp client not found" });
+//   await handleExtremeFitnessBlast(req, res, botData[0].client);
+// });
 
-app.post("/hajoon/blast", async (req, res) => {
-  const botData = botMap.get("045");
-  if (!botData)
-    return res.status(404).json({ error: "WhatsApp client not found" });
-  await handleHajoonCreateContact(req, res, botData[0].client);
-});
+// app.post("/hajoon/blast", async (req, res) => {
+//   const botData = botMap.get("045");
+//   if (!botData)
+//     return res.status(404).json({ error: "WhatsApp client not found" });
+//   await handleHajoonCreateContact(req, res, botData[0].client);
+// });
 
-app.post("/juta/blast", async (req, res) => {
-  const botData = botMap.get("001");
-  if (!botData)
-    return res.status(404).json({ error: "WhatsApp client not found" });
-  await handleJutaCreateContact(req, res, botData[0].client);
-});
+// app.post("/juta/blast", async (req, res) => {
+//   const botData = botMap.get("001");
+//   if (!botData)
+//     return res.status(404).json({ error: "WhatsApp client not found" });
+//   await handleJutaCreateContact(req, res, botData[0].client);
+// });
 
-app.post("/zahin/hubspot", (req, res) => {
-  const getClient = () => botMap.get("042")?.[0].client;
-  handleZahinHubspot(req, res, getClient);
-});
+// app.post("/zahin/hubspot", (req, res) => {
+//   const getClient = () => botMap.get("042")?.[0].client;
+//   handleZahinHubspot(req, res, getClient);
+// });
 
 // API Handlers
 // app.post("/api/bina/tag", handleBinaTag);
 // app.post("/api/edward/tag", handleEdwardTag);
 app.post("/api/tag/followup", handleTagFollowUp);
 
-// Custom Bots
-const customHandlers = {};
-app.post("/zakat", async (req, res) => {
+// ============================================
+// LOG MANAGEMENT API ENDPOINTS
+// ============================================
+
+// Get all log files
+app.get('/api/logs/files', async (req, res) => {
   try {
-    const botData = botMap.get("0124");
-    if (!botData) throw new Error("WhatsApp client not found for zakat");
-    await handleZakatBlast(req, res, botData[0].client);
+    const files = logManager.getLogFiles();
+    res.json({ success: true, files });
   } catch (error) {
-    console.error("Error processing zakat form:", error);
+    console.error('Error fetching log files:', error);
     res.status(500).json({ success: false, error: error.message });
   }
 });
+
+// Read specific log file
+app.get('/api/logs/read/:filename', async (req, res) => {
+  try {
+    const { filename } = req.params;
+    const { lines = 100, filter = '', type = 'all' } = req.query;
+    
+    const options = {
+      lines: parseInt(lines),
+      filter,
+      type
+    };
+    
+    const logData = logManager.readLogFile(filename, options);
+    res.json({ success: true, data: logData });
+  } catch (error) {
+    console.error('Error reading log file:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Get crash summary
+app.get('/api/logs/crash-summary', async (req, res) => {
+  try {
+    const summary = logManager.getCrashSummary();
+    res.json({ success: true, summary });
+  } catch (error) {
+    console.error('Error getting crash summary:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Search logs
+app.post('/api/logs/search', async (req, res) => {
+  try {
+    const { searchTerm, fileTypes = ['console', 'error', 'crash'], caseSensitive = false } = req.body;
+    
+    if (!searchTerm) {
+      return res.status(400).json({ success: false, error: 'Search term is required' });
+    }
+    
+    const results = logManager.searchLogs(searchTerm, { fileTypes, caseSensitive });
+    res.json({ success: true, results });
+  } catch (error) {
+    console.error('Error searching logs:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Get log statistics
+app.get('/api/logs/stats', async (req, res) => {
+  try {
+    const stats = logManager.getLogStats();
+    res.json({ success: true, stats });
+  } catch (error) {
+    console.error('Error getting log stats:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Download log file
+app.get('/api/logs/download/:filename', async (req, res) => {
+  try {
+    const { filename } = req.params;
+    const filePath = path.join(__dirname, 'logs', filename);
+    
+    if (!fs.existsSync(filePath)) {
+      return res.status(404).json({ success: false, error: 'Log file not found' });
+    }
+    
+    res.download(filePath, filename);
+  } catch (error) {
+    console.error('Error downloading log file:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Manually rotate logs
+app.post('/api/logs/rotate', async (req, res) => {
+  try {
+    logger.rotateLogs();
+    res.json({ success: true, message: 'Logs rotated successfully' });
+  } catch (error) {
+    console.error('Error rotating logs:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Clean old logs
+app.post('/api/logs/clean', async (req, res) => {
+  try {
+    logger.cleanOldLogs();
+    res.json({ success: true, message: 'Old logs cleaned successfully' });
+  } catch (error) {
+    console.error('Error cleaning old logs:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Log a custom event
+app.post('/api/logs/event', async (req, res) => {
+  try {
+    const { type, message, data } = req.body;
+    
+    if (!type || !message) {
+      return res.status(400).json({ success: false, error: 'Type and message are required' });
+    }
+    
+    logger.logEvent(type, message, data);
+    res.json({ success: true, message: 'Event logged successfully' });
+  } catch (error) {
+    console.error('Error logging event:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Get real-time logs (WebSocket endpoint would be better, but this works for polling)
+app.get('/api/logs/tail/:filename', async (req, res) => {
+  try {
+    const { filename } = req.params;
+    const { lines = 50 } = req.query;
+    
+    const logData = logManager.readLogFile(filename, { lines: parseInt(lines) });
+    res.json({ success: true, data: logData });
+  } catch (error) {
+    console.error('Error tailing log file:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// ============================================
+// END LOG MANAGEMENT API ENDPOINTS
+// ============================================
+
+// // Custom Bots
+// const customHandlers = {};
+// app.post("/zakat", async (req, res) => {
+//   try {
+//     const botData = botMap.get("0124");
+//     if (!botData) throw new Error("WhatsApp client not found for zakat");
+//     await handleZakatBlast(req, res, botData[0].client);
+//   } catch (error) {
+//     console.error("Error processing zakat form:", error);
+//     res.status(500).json({ success: false, error: error.message });
+//   }
+// });
 
 // ======================
 // 7. SERVER INITIALIZATION
@@ -260,17 +419,81 @@ app.post("/zakat", async (req, res) => {
 const port = process.env.PORT;
 server.listen(port, () => console.log(`Server is running on port ${port}`));
 
+// ============================================
+// AUTOMATED LOG MANAGEMENT
+// ============================================
+
+// Schedule daily log rotation at midnight
+const scheduleLogRotation = () => {
+  const now = new Date();
+  const midnight = new Date();
+  midnight.setHours(24, 0, 0, 0); // Next midnight
+  
+  const msUntilMidnight = midnight.getTime() - now.getTime();
+  
+  setTimeout(() => {
+    logger.rotateLogs();
+    logger.cleanOldLogs();
+    
+    // Schedule next rotation in 24 hours
+    setInterval(() => {
+      logger.rotateLogs();
+      logger.cleanOldLogs();
+    }, 24 * 60 * 60 * 1000); // 24 hours
+    
+  }, msUntilMidnight);
+  
+  console.log(`Log rotation scheduled for ${midnight.toISOString()}`);
+};
+
+// Initialize log rotation scheduling
+scheduleLogRotation();
+
+// Monitor server health and log important events
+const monitorServerHealth = () => {
+  setInterval(() => {
+    const memUsage = process.memoryUsage();
+    const cpuUsage = process.cpuUsage();
+    
+    // Log if memory usage is high (over 500MB)
+    if (memUsage.heapUsed > 500 * 1024 * 1024) {
+      logger.logEvent('PERFORMANCE', 'High memory usage detected', {
+        memoryUsage: memUsage,
+        timestamp: new Date().toISOString()
+      });
+    }
+    
+    // Log server health every hour
+    if (new Date().getMinutes() === 0) {
+      logger.logEvent('HEALTH_CHECK', 'Server health check', {
+        memoryUsage: memUsage,
+        cpuUsage: cpuUsage,
+        uptime: process.uptime(),
+        timestamp: new Date().toISOString()
+      });
+    }
+  }, 60000); // Check every minute
+};
+
+// Initialize server health monitoring
+monitorServerHealth();
+
+// ============================================
+// END AUTOMATED LOG MANAGEMENT
+// ============================================
+
 // Function to save media locally
 async function saveMediaLocally(base64Data, mimeType, filename) {
-  const writeFileAsync = util.promisify(fs.writeFile);
+  const writeFileAsync = promisify(fs.writeFile);
   const buffer = Buffer.from(base64Data, "base64");
   const uniqueFilename = `${uuidv4()}_${filename}`;
   const filePath = path.join(MEDIA_DIR, uniqueFilename);
+  const baseUrl = process.env.URL || 'http://localhost:8443';
 
   await writeFileAsync(filePath, buffer);
 
-  // Return the URL path to access this filez
-  return `/media/${uniqueFilename}`;
+  // Return the URL path to access this file
+  return `${baseUrl}/media/${uniqueFilename}`;
 }
 
 app.post('/api/upload-media', upload.single('file'), (req, res) => {
