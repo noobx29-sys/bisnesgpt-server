@@ -2430,6 +2430,195 @@ app.post("/api/sync-contacts/:companyId", async (req, res) => {
   }
 });
 
+// New route for syncing only contact names for all contacts
+app.post("/api/sync-contact-names/:companyId", async (req, res) => {
+  const { companyId } = req.params;
+  const { phoneIndex } = req.body;
+
+  try {
+    const botData = botMap.get(companyId);
+    if (!botData) {
+      return res
+        .status(404)
+        .json({ error: "WhatsApp client not found for this company" });
+    }
+
+    let syncPromises = [];
+
+    if (botData.length === 1) {
+      const client = botData[0].client;
+      if (!client) {
+        return res
+          .status(404)
+          .json({ error: "WhatsApp client not found for this company" });
+      }
+      syncPromises.push(syncContactNames(client, companyId, 0));
+    } else if (phoneIndex !== undefined) {
+      if (phoneIndex < 0 || phoneIndex >= botData.length) {
+        return res.status(400).json({ error: "Invalid phone index" });
+      }
+      const client = botData[phoneIndex].client;
+      if (!client) {
+        return res.status(404).json({
+          error: `WhatsApp client not found for phone index ${phoneIndex}`,
+        });
+      }
+      syncPromises.push(syncContactNames(client, companyId, phoneIndex));
+    } else {
+      syncPromises = botData
+        .map((data, index) => {
+          if (data.client) {
+            return syncContactNames(data.client, companyId, index);
+          }
+        })
+        .filter(Boolean);
+    }
+
+    if (syncPromises.length === 0) {
+      return res
+        .status(404)
+        .json({ error: "No valid WhatsApp clients found for synchronization" });
+    }
+
+    // Start syncing process for all applicable clients
+    syncPromises.forEach((promise, index) => {
+      promise
+        .then(() => {
+          console.log(
+            `Contact names synchronization completed for company ${companyId}, phone ${index}`
+          );
+        })
+        .catch((error) => {
+          console.error(
+            `Error during contact names sync for company ${companyId}, phone ${index}:`,
+            error
+          );
+        });
+    });
+
+    res.json({
+      success: true,
+      message: "Contact names synchronization started",
+      phonesToSync: syncPromises.length,
+    });
+  } catch (error) {
+    console.error(`Error starting contact names sync for ${companyId}:`, error);
+    res.status(500).json({ error: "Failed to start contact names synchronization" });
+  }
+});
+
+// New route for syncing single contact with messages
+app.post("/api/sync-single-contact/:companyId", async (req, res) => {
+  const { companyId } = req.params;
+  const { phoneIndex, contactPhone } = req.body;
+
+  if (!contactPhone) {
+    return res.status(400).json({ error: "Contact phone number is required" });
+  }
+
+  try {
+    const botData = botMap.get(companyId);
+    if (!botData) {
+      return res
+        .status(404)
+        .json({ error: "WhatsApp client not found for this company" });
+    }
+
+    const selectedPhoneIndex = phoneIndex !== undefined ? phoneIndex : 0;
+    
+    if (selectedPhoneIndex < 0 || selectedPhoneIndex >= botData.length) {
+      return res.status(400).json({ error: "Invalid phone index" });
+    }
+
+    const client = botData[selectedPhoneIndex].client;
+    if (!client) {
+      return res.status(404).json({
+        error: `WhatsApp client not found for phone index ${selectedPhoneIndex}`,
+      });
+    }
+
+    // Start syncing process for single contact
+    syncSingleContact(client, companyId, contactPhone, selectedPhoneIndex)
+      .then(() => {
+        console.log(
+          `Single contact synchronization completed for company ${companyId}, phone ${selectedPhoneIndex}, contact ${contactPhone}`
+        );
+      })
+      .catch((error) => {
+        console.error(
+          `Error during single contact sync for company ${companyId}, phone ${selectedPhoneIndex}, contact ${contactPhone}:`,
+          error
+        );
+      });
+
+    res.json({
+      success: true,
+      message: "Single contact synchronization started",
+      contactPhone,
+      phoneIndex: selectedPhoneIndex,
+    });
+  } catch (error) {
+    console.error(`Error starting single contact sync for ${companyId}:`, error);
+    res.status(500).json({ error: "Failed to start single contact synchronization" });
+  }
+});
+
+// New route for syncing single contact name only
+app.post("/api/sync-single-contact-name/:companyId", async (req, res) => {
+  const { companyId } = req.params;
+  const { phoneIndex, contactPhone } = req.body;
+
+  if (!contactPhone) {
+    return res.status(400).json({ error: "Contact phone number is required" });
+  }
+
+  try {
+    const botData = botMap.get(companyId);
+    if (!botData) {
+      return res
+        .status(404)
+        .json({ error: "WhatsApp client not found for this company" });
+    }
+
+    const selectedPhoneIndex = phoneIndex !== undefined ? phoneIndex : 0;
+    
+    if (selectedPhoneIndex < 0 || selectedPhoneIndex >= botData.length) {
+      return res.status(400).json({ error: "Invalid phone index" });
+    }
+
+    const client = botData[selectedPhoneIndex].client;
+    if (!client) {
+      return res.status(404).json({
+        error: `WhatsApp client not found for phone index ${selectedPhoneIndex}`,
+      });
+    }
+
+    // Start syncing process for single contact name
+    syncSingleContactName(client, companyId, contactPhone, selectedPhoneIndex)
+      .then(() => {
+        console.log(
+          `Single contact name synchronization completed for company ${companyId}, phone ${selectedPhoneIndex}, contact ${contactPhone}`
+        );
+      })
+      .catch((error) => {
+        console.error(
+          `Error during single contact name sync for company ${companyId}, phone ${selectedPhoneIndex}, contact ${contactPhone}:`,
+          error
+        );
+      });
+
+    res.json({
+      success: true,
+      message: "Single contact name synchronization started",
+      contactPhone,
+      phoneIndex: selectedPhoneIndex,
+    });
+  } catch (error) {
+    console.error(`Error starting single contact name sync for ${companyId}:`, error);
+    res.status(500).json({ error: "Failed to start single contact name synchronization" });
+  }
+});
+
 app.get("/api/search-messages/:companyId", async (req, res) => {
   const { companyId } = req.params;
   const {
@@ -2716,44 +2905,110 @@ async function syncContacts(client, companyId, phoneIndex = 0) {
           contact.name,
           chat.id._serialized,
           profilePicUrl,
-        ]);
+        ]);      // Fetch and insert messages using the same method as addMessageToPostgres
+      const messages = await chat.fetchMessages({ limit: 10 }); // Adjust limit as needed
 
-        // Fetch and insert messages
-        const messages = await chat.fetchMessages({ limit: 10 }); // Adjust limit as needed
+      for (const msg of messages) {
+        try {
+          // Use the same comprehensive message saving as addMessageToPostgres
+          const basicInfo = await extractBasicMessageInfo(msg);
+          const messageData = await prepareMessageData(msg, companyId, phoneIndex);
 
-        for (const msg of messages) {
-          const messageQuery = `
-            INSERT INTO public.messages (
-              message_id, company_id, contact_id, thread_id, customer_phone, content, 
-              message_type, media_url, timestamp, direction, status, from_me, chat_id, author
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
-            ON CONFLICT (message_id) DO NOTHING;
-          `;
-
-          let mediaUrl = null;
-          if (msg.hasMedia) {
-            // Media download can be time-consuming; consider handling this differently
-            // const media = await msg.downloadMedia();
-            // mediaUrl = media.filename; // Or some other identifier
+          // Get message body (with audio transcription if applicable)
+          let messageBody = messageData.text?.body || "";
+          if (msg.hasMedia && (msg.type === "audio" || msg.type === "ptt")) {
+            console.log("Voice message detected during sync");
+            try {
+              const media = await msg.downloadMedia();
+              const transcription = await transcribeAudio(media.data);
+              if (transcription && transcription !== "Audio transcription failed. Please try again.") {
+                messageBody += transcription;
+              } else {
+                messageBody += "Audio message";
+              }
+            } catch (error) {
+              console.error("Error transcribing audio during sync:", error);
+              messageBody += "Audio message";
+            }
           }
 
+          // Prepare media data
+          let mediaUrl = null;
+          let mediaData = null;
+          let mediaMetadata = {};
+
+          if (msg.hasMedia) {
+            if (msg.type === "video") {
+              mediaUrl = messageData.video?.link || null;
+            } else if (msg.type !== "audio" && msg.type !== "ptt") {
+              const mediaTypeData = messageData[msg.type];
+              if (mediaTypeData) {
+                mediaData = mediaTypeData.data || null;
+                mediaMetadata = {
+                  mimetype: mediaTypeData.mimetype,
+                  filename: mediaTypeData.filename || "",
+                  caption: mediaTypeData.caption || "",
+                  thumbnail: mediaTypeData.thumbnail || null,
+                  mediaKey: mediaTypeData.media_key || null,
+                  ...(msg.type === "image" && {
+                    width: mediaTypeData.width,
+                    height: mediaTypeData.height
+                  }),
+                  ...(msg.type === "document" && {
+                    pageCount: mediaTypeData.page_count,
+                    fileSize: mediaTypeData.file_size
+                  })
+                };
+              }
+            } else if (msg.type === "audio" || msg.type === "ptt") {
+              mediaData = messageData.audio?.data || null;
+            }
+          }
+
+          // Prepare quoted message
+          const quotedMessage = messageData.text?.context || null;
+
+          // Determine author
+          let author = null;
+          if (msg.from.includes("@g.us") && basicInfo.author) {
+            const authorData = await getContactDataFromDatabaseByPhone(basicInfo.author, companyId);
+            author = authorData ? authorData.contactName : basicInfo.author;
+          }
+
+          const messageQuery = `
+            INSERT INTO public.messages (
+              message_id, company_id, contact_id, content, message_type,
+              media_url, media_data, media_metadata, timestamp, direction,
+              status, from_me, chat_id, author, phone_index, quoted_message,
+              thread_id, customer_phone
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+            ON CONFLICT (message_id, company_id) DO NOTHING;
+          `;
+
           await sqlDb.query(messageQuery, [
-            msg.id._serialized,
+            basicInfo.idSerialized,
             companyId,
             contactID,
-            chat.id._serialized,
-            contactPhone,
-            msg.body || "",
-            msg.type,
+            messageBody,
+            basicInfo.type,
             mediaUrl,
-            new Date(msg.timestamp * 1000),
+            mediaData,
+            Object.keys(mediaMetadata).length > 0 ? JSON.stringify(mediaMetadata) : null,
+            new Date(basicInfo.timestamp * 1000),
             msg.fromMe ? "outbound" : "inbound",
             "delivered",
-            msg.fromMe,
-            chat.id._serialized,
-            msg.author || contactID,
+            msg.fromMe || false,
+            msg.from,
+            author || contactID,
+            phoneIndex,
+            quotedMessage ? JSON.stringify(quotedMessage) : null,
+            msg.to,
+            contactPhone
           ]);
+        } catch (error) {
+          console.error(`Error processing message ${msg.id._serialized} during sync:`, error);
         }
+      }
       } catch (error) {
         console.error(`Error processing chat ${chat.id._serialized}:`, error);
       }
@@ -2767,6 +3022,275 @@ async function syncContacts(client, companyId, phoneIndex = 0) {
       `Error syncing contacts for company ${companyId}, phone ${phoneIndex}:`,
       error
     );
+  }
+}
+
+async function syncContactNames(client, companyId, phoneIndex = 0) {
+  try {
+    const chats = await client.getChats();
+    console.log(
+      `Found ${chats.length} chats for company ${companyId}, phone ${phoneIndex}. Syncing contact names only.`
+    );
+
+    for (const chat of chats) {
+      try {
+        const contact = await chat.getContact();
+        const contactPhone = contact.id.user;
+        const contactID = `${companyId}-${contactPhone}`;
+
+        const profilePicUrl = await contact.getProfilePicUrl();
+
+        // Update only contact name and profile picture for existing contacts
+        const contactQuery = `
+          UPDATE public.contacts SET
+            name = $1,
+            last_updated = NOW(),
+            profile_pic_url = $2
+          WHERE contact_id = $3 AND company_id = $4;
+        `;
+        
+        const result = await sqlDb.query(contactQuery, [
+          contact.name || contact.pushname || contact.shortName || contactPhone,
+          profilePicUrl,
+          contactID,
+          companyId,
+        ]);
+
+        if (result.rowCount === 0) {
+          console.log(`Contact ${contactID} not found in database, skipping name sync`);
+        }
+
+      } catch (error) {
+        console.error(`Error processing contact name for chat ${chat.id._serialized}:`, error);
+      }
+    }
+
+    console.log(
+      `Finished syncing contact names for company ${companyId}, phone ${phoneIndex}`
+    );
+  } catch (error) {
+    console.error(
+      `Error syncing contact names for company ${companyId}, phone ${phoneIndex}:`,
+      error
+    );
+  }
+}
+
+async function syncSingleContact(client, companyId, contactPhone, phoneIndex = 0) {
+  try {
+    console.log(
+      `Syncing single contact ${contactPhone} for company ${companyId}, phone ${phoneIndex}`
+    );
+
+    // Format the contact ID to match WhatsApp format
+    const chatId = `${contactPhone}@c.us`;
+    
+    try {
+      const chat = await client.getChatById(chatId);
+      const contact = await chat.getContact();
+      const contactID = `${companyId}-${contactPhone}`;
+
+      const profilePicUrl = await contact.getProfilePicUrl();
+
+      // Upsert contact
+      const contactQuery = `
+        INSERT INTO public.contacts (
+          contact_id, company_id, name, phone, tags, unread_count, created_at, last_updated, 
+          chat_data, company, thread_id, last_message, profile_pic_url
+        ) VALUES ($1, $2, $3, $4, '[]'::jsonb, $5, NOW(), NOW(), $6, $7, $8, '{}'::jsonb, $9)
+        ON CONFLICT (contact_id, company_id) DO UPDATE SET
+          name = EXCLUDED.name,
+          last_updated = NOW(),
+          profile_pic_url = EXCLUDED.profile_pic_url,
+          unread_count = EXCLUDED.unread_count,
+          chat_data = EXCLUDED.chat_data,
+          thread_id = EXCLUDED.thread_id;
+      `;
+      await sqlDb.query(contactQuery, [
+        contactID,
+        companyId,
+        contact.name || contact.pushname || contact.shortName || contactPhone,
+        contactPhone,
+        chat.unreadCount,
+        JSON.stringify(chat),
+        contact.name,
+        chat.id._serialized,
+        profilePicUrl,
+      ]);
+
+      // Fetch and insert messages using the same method as addMessageToPostgres
+      const messages = await chat.fetchMessages({ limit: 50 }); // Fetch more messages for single contact
+
+      for (const msg of messages) {
+        try {
+          // Use the same comprehensive message saving as addMessageToPostgres
+          const basicInfo = await extractBasicMessageInfo(msg);
+          const messageData = await prepareMessageData(msg, companyId, phoneIndex);
+
+          // Get message body (with audio transcription if applicable)
+          let messageBody = messageData.text?.body || "";
+          if (msg.hasMedia && (msg.type === "audio" || msg.type === "ptt")) {
+            console.log("Voice message detected during single contact sync");
+            try {
+              const media = await msg.downloadMedia();
+              const transcription = await transcribeAudio(media.data);
+              if (transcription && transcription !== "Audio transcription failed. Please try again.") {
+                messageBody += transcription;
+              } else {
+                messageBody += "Audio message";
+              }
+            } catch (error) {
+              console.error("Error transcribing audio during single contact sync:", error);
+              messageBody += "Audio message";
+            }
+          }
+
+          // Prepare media data
+          let mediaUrl = null;
+          let mediaData = null;
+          let mediaMetadata = {};
+
+          if (msg.hasMedia) {
+            if (msg.type === "video") {
+              mediaUrl = messageData.video?.link || null;
+            } else if (msg.type !== "audio" && msg.type !== "ptt") {
+              const mediaTypeData = messageData[msg.type];
+              if (mediaTypeData) {
+                mediaData = mediaTypeData.data || null;
+                mediaMetadata = {
+                  mimetype: mediaTypeData.mimetype,
+                  filename: mediaTypeData.filename || "",
+                  caption: mediaTypeData.caption || "",
+                  thumbnail: mediaTypeData.thumbnail || null,
+                  mediaKey: mediaTypeData.media_key || null,
+                  ...(msg.type === "image" && {
+                    width: mediaTypeData.width,
+                    height: mediaTypeData.height
+                  }),
+                  ...(msg.type === "document" && {
+                    pageCount: mediaTypeData.page_count,
+                    fileSize: mediaTypeData.file_size
+                  })
+                };
+              }
+            } else if (msg.type === "audio" || msg.type === "ptt") {
+              mediaData = messageData.audio?.data || null;
+            }
+          }
+
+          // Prepare quoted message
+          const quotedMessage = messageData.text?.context || null;
+
+          // Determine author
+          let author = null;
+          if (msg.from.includes("@g.us") && basicInfo.author) {
+            const authorData = await getContactDataFromDatabaseByPhone(basicInfo.author, companyId);
+            author = authorData ? authorData.contactName : basicInfo.author;
+          }
+
+          const messageQuery = `
+            INSERT INTO public.messages (
+              message_id, company_id, contact_id, content, message_type,
+              media_url, media_data, media_metadata, timestamp, direction,
+              status, from_me, chat_id, author, phone_index, quoted_message,
+              thread_id, customer_phone
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+            ON CONFLICT (message_id, company_id) DO NOTHING;
+          `;
+
+          await sqlDb.query(messageQuery, [
+            basicInfo.idSerialized,
+            companyId,
+            contactID,
+            messageBody,
+            basicInfo.type,
+            mediaUrl,
+            mediaData,
+            Object.keys(mediaMetadata).length > 0 ? JSON.stringify(mediaMetadata) : null,
+            new Date(basicInfo.timestamp * 1000),
+            msg.fromMe ? "outbound" : "inbound",
+            "delivered",
+            msg.fromMe || false,
+            msg.from,
+            author || contactID,
+            phoneIndex,
+            quotedMessage ? JSON.stringify(quotedMessage) : null,
+            msg.to,
+            contactPhone
+          ]);
+        } catch (error) {
+          console.error(`Error processing message ${msg.id._serialized} during single contact sync:`, error);
+        }
+      }
+
+      console.log(
+        `Successfully synced contact ${contactPhone} with ${messages.length} messages for company ${companyId}, phone ${phoneIndex}`
+      );
+    } catch (error) {
+      console.error(`Error processing single contact ${contactPhone}:`, error);
+      throw error;
+    }
+
+  } catch (error) {
+    console.error(
+      `Error syncing single contact for company ${companyId}, phone ${phoneIndex}, contact ${contactPhone}:`,
+      error
+    );
+    throw error;
+  }
+}
+
+async function syncSingleContactName(client, companyId, contactPhone, phoneIndex = 0) {
+  try {
+    console.log(
+      `Syncing single contact name ${contactPhone} for company ${companyId}, phone ${phoneIndex}`
+    );
+
+    // Format the contact ID to match WhatsApp format
+    const chatId = `${contactPhone}@c.us`;
+    
+    try {
+      const chat = await client.getChatById(chatId);
+      const contact = await chat.getContact();
+      const contactID = `${companyId}-${contactPhone}`;
+
+      const profilePicUrl = await contact.getProfilePicUrl();
+
+      // Update only contact name and profile picture for existing contact
+      const contactQuery = `
+        UPDATE public.contacts SET
+          name = $1,
+          last_updated = NOW(),
+          profile_pic_url = $2
+        WHERE contact_id = $3 AND company_id = $4;
+      `;
+      
+      const result = await sqlDb.query(contactQuery, [
+        contact.name || contact.pushname || contact.shortName || contactPhone,
+        profilePicUrl,
+        contactID,
+        companyId,
+      ]);
+
+      if (result.rowCount === 0) {
+        console.log(`Contact ${contactID} not found in database, cannot sync name`);
+        throw new Error(`Contact ${contactPhone} not found in database`);
+      }
+
+      console.log(
+        `Successfully synced contact name for ${contactPhone} in company ${companyId}, phone ${phoneIndex}`
+      );
+    } catch (error) {
+      console.error(`Error processing single contact name ${contactPhone}:`, error);
+      throw error;
+    }
+
+  } catch (error) {
+    console.error(
+      `Error syncing single contact name for company ${companyId}, phone ${phoneIndex}, contact ${contactPhone}:`,
+      error
+    );
+    throw error;
   }
 }
 
@@ -8036,6 +8560,44 @@ app.put("/api/contacts/:contact_id", async (req, res) => {
   }
 });
 
+// API to reset unread_count to 0 for a contact
+app.put("/api/contacts/:contact_id/reset-unread", async (req, res) => {
+  try {
+    const { contact_id } = req.params;
+    const { companyId } = req.body;
+    if (!companyId || !contact_id) {
+      return res.status(400).json({
+        success: false,
+        message: "Missing required fields (companyId, contact_id)",
+      });
+    }
+    const query = `
+      UPDATE contacts
+      SET unread_count = 0, updated_at = CURRENT_TIMESTAMP
+      WHERE contact_id = $1 AND company_id = $2
+      RETURNING contact_id
+    `;
+    const result = await sqlDb.query(query, [contact_id, companyId]);
+    if (result.rows.length === 0) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Contact not found" });
+    }
+    res.json({
+      success: true,
+      contact_id: result.rows[0].contact_id,
+      message: "Unread count reset to 0",
+    });
+  } catch (error) {
+    console.error("Error resetting unread count:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to reset unread count",
+      details: error.message,
+    });
+  }
+});
+
 app.post("/api/contacts", async (req, res) => {
   try {
     const {
@@ -12406,7 +12968,7 @@ app.get("/api/user-company-data", async (req, res) => {
 
     // Then get company data - added assistant_id to the SELECT
     const companyData = await sqlDb.getRow(
-      "SELECT id, company_id, name, email, phone, plan, v2, phone_count, assistant_id, assistant_ids FROM companies WHERE company_id = $1",
+      "SELECT id, company_id, name, email, phone, plan, v2, phone_count, assistant_ids, api_url FROM companies WHERE company_id = $1",
       [companyId]
     );
 
@@ -12477,7 +13039,8 @@ app.get("/api/user-company-data", async (req, res) => {
         phoneCount: companyData.phone_count || 1,
         v2: companyData.v2,
         assistants_ids: companyData.assistant_ids,
-        assistant_id: companyData.assistant_id, // Added this line
+        assistant_id: companyData.assistant_id,
+        api_url: companyData.api_url || "",
       },
       employeeList,
       messageUsage,
@@ -12960,6 +13523,317 @@ app.get("/api/user-details", async (req, res) => {
   }
 });
 
+// API endpoint to get quick replies for a user (by email)
+app.get("/api/quick-replies", async (req, res) => {
+  try {
+    const { email } = req.query;
+    if (!email) {
+      return res.status(400).json({ error: "Email is required" });
+    }
+
+    // Get company_id from users table
+    const userResult = await sqlDb.query(
+      "SELECT company_id FROM users WHERE email = $1",
+      [email]
+    );
+    if (userResult.rows.length === 0) {
+      return res.status(404).json({ error: "User not found" });
+    }
+    const companyId = userResult.rows[0].company_id;
+
+    // Get quick replies for the company
+    const quickRepliesResult = await sqlDb.query(
+      `SELECT id, category, keyword, text, type, documents, images, videos, created_by, created_at, updated_at, status
+       FROM quick_replies
+       WHERE company_id = $1 AND status = 'active'
+       ORDER BY updated_at DESC`,
+      [companyId]
+    );
+
+    res.json({ quickReplies: quickRepliesResult.rows });
+  } catch (error) {
+    console.error("Error fetching quick replies:", error);
+    res.status(500).json({ error: "Failed to fetch quick replies" });
+  }
+});
+
+// API endpoint to add a quick reply
+app.post("/api/quick-replies", async (req, res) => {
+  try {
+    const {
+      email,
+      category,
+      keyword,
+      text,
+      type,
+      documents,
+      images,
+      videos,
+      created_by,
+    } = req.body;
+
+    if (!email || !text) {
+      return res.status(400).json({ error: "Email and text are required" });
+    }
+
+    // Get company_id from users table
+    const userResult = await sqlDb.query(
+      "SELECT company_id FROM users WHERE email = $1",
+      [email]
+    );
+    if (userResult.rows.length === 0) {
+      return res.status(404).json({ error: "User not found" });
+    }
+    const companyId = userResult.rows[0].company_id;
+
+    // Insert quick reply
+    const insertResult = await sqlDb.query(
+      `INSERT INTO quick_replies
+        (company_id, category, keyword, text, type, documents, images, videos, created_by, created_at, updated_at, status)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 'active')
+        RETURNING id, category, keyword, text, type, documents, images, videos, created_by, created_at, updated_at, status`,
+      [
+        companyId,
+        category || null,
+        keyword || null,
+        text,
+        type || null,
+        documents ? JSON.stringify(documents) : null,
+        images ? JSON.stringify(images) : null,
+        videos ? JSON.stringify(videos) : null,
+        created_by || email,
+      ]
+    );
+
+    res.json({ success: true, quickReply: insertResult.rows[0] });
+  } catch (error) {
+    console.error("Error adding quick reply:", error);
+    res.status(500).json({ error: "Failed to add quick reply" });
+  }
+});
+
+// API endpoint to edit a quick reply
+app.put("/api/quick-replies/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const {
+      category,
+      keyword,
+      text,
+      type,
+      documents,
+      images,
+      videos,
+      status,
+      updated_by,
+    } = req.body;
+
+    const updateFields = [];
+    const values = [];
+    let idx = 1;
+
+    if (category !== undefined) {
+      updateFields.push(`category = $${idx++}`);
+      values.push(category);
+    }
+    if (keyword !== undefined) {
+      updateFields.push(`keyword = $${idx++}`);
+      values.push(keyword);
+    }
+    if (text !== undefined) {
+      updateFields.push(`text = $${idx++}`);
+      values.push(text);
+    }
+    if (type !== undefined) {
+      updateFields.push(`type = $${idx++}`);
+      values.push(type);
+    }
+    if (documents !== undefined) {
+      updateFields.push(`documents = $${idx++}`);
+      values.push(documents);
+    }
+    if (images !== undefined) {
+      updateFields.push(`images = $${idx++}`);
+      values.push(images);
+    }
+    if (videos !== undefined) {
+      updateFields.push(`videos = $${idx++}`);
+      values.push(videos);
+    }
+    if (status !== undefined) {
+      updateFields.push(`status = $${idx++}`);
+      values.push(status);
+    }
+    if (updated_by !== undefined) {
+      updateFields.push(`updated_by = $${idx++}`);
+      values.push(updated_by);
+    }
+    updateFields.push(`updated_at = CURRENT_TIMESTAMP`);
+
+    if (updateFields.length === 0) {
+      return res.status(400).json({ error: "No fields to update" });
+    }
+
+    values.push(id);
+
+    const query = `
+      UPDATE quick_replies
+      SET ${updateFields.join(", ")}
+      WHERE id = $${idx}
+      RETURNING *
+    `;
+
+    const result = await sqlDb.query(query, values);
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: "Quick reply not found" });
+    }
+
+    res.json({ success: true, quickReply: result.rows[0] });
+  } catch (error) {
+    console.error("Error updating quick reply:", error);
+    res.status(500).json({ error: "Failed to update quick reply" });
+  }
+});
+
+// API endpoint to delete a quick reply
+app.delete("/api/quick-replies/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+    // Soft delete: set status to 'deleted'
+    const result = await sqlDb.query(
+      `UPDATE quick_replies SET status = 'deleted', updated_at = CURRENT_TIMESTAMP WHERE id = $1 RETURNING id`,
+      [id]
+    );
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: "Quick reply not found" });
+    }
+    res.json({ success: true, id });
+  } catch (error) {
+    console.error("Error deleting quick reply:", error);
+    res.status(500).json({ error: "Failed to delete quick reply" });
+  }
+});
+
+// API endpoint to get quick reply categories from settings
+app.get("/api/quick-reply-categories", async (req, res) => {
+  try {
+    const { companyId } = req.query;
+    if (!companyId) {
+      return res.status(400).json({ error: "companyId is required" });
+    }
+    const result = await sqlDb.query(
+      `SELECT setting_value FROM settings WHERE company_id = $1 AND setting_type = 'quick_reply' AND setting_key = 'categories'`,
+      [companyId]
+    );
+    if (result.rows.length === 0) {
+      return res.json({ categories: [] });
+    }
+    res.json({ categories: result.rows[0].setting_value || [] });
+  } catch (error) {
+    console.error("Error fetching quick reply categories:", error);
+    res.status(500).json({ error: "Failed to fetch categories" });
+  }
+});
+
+// API endpoint to add a quick reply category
+app.post("/api/quick-reply-categories", async (req, res) => {
+  try {
+    const { companyId, category } = req.body;
+    if (!companyId || !category) {
+      return res.status(400).json({ error: "companyId and category are required" });
+    }
+    // Get current categories
+    const result = await sqlDb.query(
+      `SELECT id, setting_value FROM settings WHERE company_id = $1 AND setting_type = 'quick_reply' AND setting_key = 'categories'`,
+      [companyId]
+    );
+    let categories = [];
+    let settingsId = null;
+    if (result.rows.length > 0) {
+      categories = result.rows[0].setting_value || [];
+      settingsId = result.rows[0].id;
+    }
+    if (categories.includes(category)) {
+      return res.status(409).json({ error: "Category already exists" });
+    }
+    categories.push(category);
+    if (settingsId) {
+      await sqlDb.query(
+        `UPDATE settings SET setting_value = $1, last_updated = CURRENT_TIMESTAMP WHERE id = $2`,
+        [JSON.stringify(categories), settingsId]
+      );
+    } else {
+      await sqlDb.query(
+        `INSERT INTO settings (company_id, setting_type, setting_key, setting_value) VALUES ($1, 'quick_reply', 'categories', $2)`,
+        [companyId, JSON.stringify(categories)]
+      );
+    }
+    res.json({ success: true, categories });
+  } catch (error) {
+    console.error("Error adding quick reply category:", error);
+    res.status(500).json({ error: "Failed to add category" });
+  }
+});
+
+// API endpoint to edit a quick reply category
+app.put("/api/quick-reply-categories", async (req, res) => {
+  try {
+    const { companyId, oldCategory, newCategory } = req.body;
+    if (!companyId || !oldCategory || !newCategory) {
+      return res.status(400).json({ error: "companyId, oldCategory, newCategory are required" });
+    }
+    const result = await sqlDb.query(
+      `SELECT id, setting_value FROM settings WHERE company_id = $1 AND setting_type = 'quick_reply' AND setting_key = 'categories'`,
+      [companyId]
+    );
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: "Categories not found" });
+    }
+    let categories = result.rows[0].setting_value || [];
+    const idx = categories.indexOf(oldCategory);
+    if (idx === -1) {
+      return res.status(404).json({ error: "Old category not found" });
+    }
+    categories[idx] = newCategory;
+    await sqlDb.query(
+      `UPDATE settings SET setting_value = $1, last_updated = CURRENT_TIMESTAMP WHERE id = $2`,
+      [JSON.stringify(categories), result.rows[0].id]
+    );
+    res.json({ success: true, categories });
+  } catch (error) {
+    console.error("Error editing quick reply category:", error);
+    res.status(500).json({ error: "Failed to edit category" });
+  }
+});
+
+// API endpoint to delete a quick reply category
+app.delete("/api/quick-reply-categories", async (req, res) => {
+  try {
+    const { companyId, category } = req.body;
+    if (!companyId || !category) {
+      return res.status(400).json({ error: "companyId and category are required" });
+    }
+    const result = await sqlDb.query(
+      `SELECT id, setting_value FROM settings WHERE company_id = $1 AND setting_type = 'quick_reply' AND setting_key = 'categories'`,
+      [companyId]
+    );
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: "Categories not found" });
+    }
+    let categories = result.rows[0].setting_value || [];
+    categories = categories.filter((c) => c !== category);
+    await sqlDb.query(
+      `UPDATE settings SET setting_value = $1, last_updated = CURRENT_TIMESTAMP WHERE id = $2`,
+      [JSON.stringify(categories), result.rows[0].id]
+    );
+    res.json({ success: true, categories });
+  } catch (error) {
+    console.error("Error deleting quick reply category:", error);
+    res.status(500).json({ error: "Failed to delete category" });
+  }
+});
+
 // API endpoint to get company groups
 app.get("/api/company-groups", async (req, res) => {
   try {
@@ -12977,5 +13851,80 @@ app.get("/api/company-groups", async (req, res) => {
   } catch (error) {
     console.error("Error fetching company groups:", error);
     res.status(500).json({ error: "Failed to fetch company groups" });
+  }
+});
+
+app.post("/api/private-note", async (req, res) => {
+  try {
+    const { companyId, chatId, text, from, fromEmail } = req.body;
+    if (!companyId || !chatId || !text || !from) {
+      return res.status(400).json({ error: "Missing required fields" });
+    }
+
+    const numericChatId =
+      chatId.startsWith("+") ? chatId : "+" + chatId.replace(/\D/g, "");
+
+    const contactId =
+      companyId + "-" + numericChatId.replace(/^\+/, "");
+
+    const noteId = uuidv4();
+    const timestamp = new Date();
+
+    const insertNoteQuery = `
+      INSERT INTO private_notes (
+        id, company_id, contact_id, text, "from", from_email, timestamp, type
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+      RETURNING *
+    `;
+    const noteResult = await sqlDb.query(insertNoteQuery, [
+      noteId,
+      companyId,
+      contactId,
+      text,
+      from,
+      fromEmail || "",
+      timestamp,
+      "privateNote",
+    ]);
+    const note = noteResult.rows[0];
+
+    const insertMessageQuery = `
+      INSERT INTO messages (
+        message_id, company_id, contact_id, content, message_type,
+        timestamp, direction, status, from_me, chat_id, author
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+    `;
+    await sqlDb.query(insertMessageQuery, [
+      noteId,
+      companyId,
+      contactId,
+      text,
+      "privateNote",
+      timestamp,
+      "internal",
+      "delivered",
+      true,
+      numericChatId,
+      from,
+    ]);
+
+    const mentions = (text.match(/@\w+/g) || []).map((m) => m.slice(1));
+    for (const employeeName of mentions) {
+      await addNotificationToUser(companyId, text, employeeName);
+    }
+
+    res.json({
+      success: true,
+      note: {
+        id: note.id,
+        text: note.text,
+        from: note.from,
+        timestamp: note.timestamp,
+        type: note.type,
+      },
+    });
+  } catch (error) {
+    console.error("Error adding private note:", error);
+    res.status(500).json({ error: "Failed to add private note" });
   }
 });
