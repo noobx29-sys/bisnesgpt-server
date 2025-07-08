@@ -1899,6 +1899,8 @@ app.post("/api/schedule-message/:companyId", async (req, res) => {
       scheduledMessage.mediaUrl || scheduledMessage.documentUrl
     ),
     hasCaption: Boolean(scheduledMessage.caption),
+    multiple: Boolean(scheduledMessage.multiple),
+    contactCount: Array.isArray(scheduledMessage.contactId) ? scheduledMessage.contactId.length : 1,
   });
 
   try {
@@ -1914,24 +1916,52 @@ app.post("/api/schedule-message/:companyId", async (req, res) => {
       const messageCaption =
         scheduledMessage.caption || scheduledMessage.message || "";
 
-      const chatIds = scheduledMessage.chatIds || [];
-      const totalMessages =
-        scheduledMessage.messages?.length > 0
-          ? chatIds.length * scheduledMessage.messages.length
-          : chatIds.length;
+      // Handle multiple vs single contact logic
+      const isMultiple = Boolean(scheduledMessage.multiple);
+      const contactIds = Array.isArray(scheduledMessage.contact_id) 
+        ? scheduledMessage.contact_id 
+        : [scheduledMessage.contact_id].filter(Boolean);
+      
+      console.log("Contact processing:", {
+        isMultiple,
+        contactIds,
+        originalContactId: scheduledMessage.contact_id
+      });
+      
+      // Validation: ensure we have contacts
+      if (!contactIds.length) {
+        throw new Error("No valid contacts provided");
+      }
+      
+      // For single contact, store in contact_id field
+      // For multiple contacts, store in contact_ids field
+      const singleContactId = !isMultiple && contactIds.length > 0 ? contactIds[0] : null;
+      const multipleContactIds = isMultiple && contactIds.length > 0 ? contactIds : null;
 
-      const batchSize = scheduledMessage.batchQuantity || totalMessages;
-      const numberOfBatches = Math.ceil(totalMessages / batchSize);
+      const chatIds = scheduledMessage.chatIds || [];
+      
+      // Calculate batching based on CONTACTS (not messages)
+      const totalContacts = contactIds.length;
+      const contactsPerBatch = scheduledMessage.batchQuantity || totalContacts;
+      const numberOfBatches = Math.ceil(totalContacts / contactsPerBatch);
+
+      console.log("Batch calculation:", {
+        totalContacts,
+        contactsPerBatch,
+        numberOfBatches,
+        isMultiple,
+        contactIds
+      });
 
       const mainMessageQuery = `
         INSERT INTO scheduled_messages (
-          id, schedule_id, company_id, contact_id, message_content, media_url, 
+          id, schedule_id, company_id, contact_id, contact_ids, multiple, message_content, media_url, 
           scheduled_time, status, created_at, chat_id, phone_index, is_media,
           document_url, file_name, caption, chat_ids, batch_quantity, repeat_interval,
           repeat_unit, message_delays, infinite_loop, min_delay, max_delay, activate_sleep,
-          sleep_after_messages, sleep_duration, active_hours, from_me
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, 
-          $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28)
+          sleep_after_messages, sleep_duration, active_hours, from_me, messages
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, 
+          $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31)
       `;
       console.log("scheduledTime received:", scheduledMessage.scheduledTime);
       const scheduledTime = toPgTimestamp(scheduledMessage.scheduledTime);
@@ -1940,7 +1970,9 @@ app.post("/api/schedule-message/:companyId", async (req, res) => {
         messageId,
         messageId,
         companyId,
-        scheduledMessage.contactId || null,
+        singleContactId,
+        multipleContactIds ? JSON.stringify(multipleContactIds) : null,
+        isMultiple,
         scheduledMessage.message || null,
         scheduledMessage.mediaUrl || null,
         scheduledTime,
@@ -1969,67 +2001,122 @@ app.post("/api/schedule-message/:companyId", async (req, res) => {
           ? JSON.stringify(scheduledMessage.activeHours)
           : null,
         true,
+        scheduledMessage.messages
+          ? JSON.stringify(scheduledMessage.messages)
+          : null,
       ]);
 
       const queue = getQueueForBot(companyId);
       const batches = [];
 
-      for (let batchIndex = 0; batchIndex < numberOfBatches; batchIndex++) {
-        const startIndex = batchIndex * batchSize;
-        const endIndex = Math.min((batchIndex + 1) * batchSize, totalMessages);
+      // Create batches if there are multiple contacts requiring batching
+      if (isMultiple && numberOfBatches > 1) {
+        for (let batchIndex = 0; batchIndex < numberOfBatches; batchIndex++) {
+          const startIndex = batchIndex * contactsPerBatch;
+          const endIndex = Math.min((batchIndex + 1) * contactsPerBatch, totalContacts);
 
-        const batchDelay =
-          batchIndex *
-          scheduledMessage.repeatInterval *
-          getMillisecondsForUnit(scheduledMessage.repeatUnit);
-        const batchScheduledTime = new Date(
-          toPgTimestamp(scheduledMessage.scheduledTime).getTime() + batchDelay
-        );
+          const batchDelay =
+            batchIndex *
+            (scheduledMessage.repeatInterval || 0) *
+            getMillisecondsForUnit(scheduledMessage.repeatUnit || 'minutes');
+          const batchScheduledTime = new Date(
+            toPgTimestamp(scheduledMessage.scheduledTime).getTime() + batchDelay
+          );
 
-        const batchId = uuidv4(); // generate a valid UUID for each batch
+          const batchId = uuidv4(); // generate a valid UUID for each batch
 
-        const batchQuery = `
-        INSERT INTO scheduled_messages (
-          id, schedule_id, company_id, scheduled_time, status, created_at,
-          batch_index, chat_ids, phone_index, from_me, message_content, media_url, document_url, file_name, caption
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
-      `;
-        await client.query(batchQuery, [
-          batchId,
-          messageId,
-          companyId,
-          batchScheduledTime,
-          "pending",
-          new Date(),
-          batchIndex,
-          JSON.stringify(chatIds.slice(startIndex, endIndex)),
-          phoneIndex,
-          true,
-          scheduledMessage.message || null,
-          scheduledMessage.mediaUrl || null,
-          scheduledMessage.documentUrl || null,
-          scheduledMessage.fileName || null,
-          scheduledMessage.caption || null,
-        ]);
-        batches.push({ id: batchId, scheduledTime: batchScheduledTime });
+          // Get contact IDs for this batch
+          const batchContactIds = contactIds.slice(startIndex, endIndex);
+          const batchChatIds = chatIds.slice(startIndex, endIndex);
+
+          // Prepare messages for this batch
+          const batchMessages = batchChatIds.map(chatId => ({
+            chatId: chatId,
+            message: scheduledMessage.message || null,
+            delay: scheduledMessage.messageDelays 
+              ? (JSON.parse(scheduledMessage.messageDelays)[0] || 0)
+              : Math.floor(Math.random() * ((scheduledMessage.maxDelay || 5) - (scheduledMessage.minDelay || 1) + 1) + (scheduledMessage.minDelay || 1)),
+            mediaUrl: scheduledMessage.mediaUrl || "",
+            documentUrl: scheduledMessage.documentUrl || "",
+            fileName: scheduledMessage.fileName || "",
+            caption: scheduledMessage.caption || ""
+          }));
+          
+          const batchQuery = `
+          INSERT INTO scheduled_messages (
+            id, schedule_id, company_id, scheduled_time, status, created_at,
+            batch_index, chat_ids, phone_index, from_me, message_content, media_url, document_url, file_name, caption,
+            messages, min_delay, max_delay, infinite_loop, repeat_interval, repeat_unit, active_hours,
+            multiple, contact_id, contact_ids
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25)
+        `;
+          await client.query(batchQuery, [
+            batchId,
+            messageId,
+            companyId,
+            batchScheduledTime,
+            "scheduled",
+            new Date(),
+            batchIndex,
+            JSON.stringify(batchChatIds),
+            phoneIndex,
+            true,
+            scheduledMessage.message || null,
+            scheduledMessage.mediaUrl || null,
+            scheduledMessage.documentUrl || null,
+            scheduledMessage.fileName || null,
+            scheduledMessage.caption || null,
+            JSON.stringify(batchMessages),
+            scheduledMessage.minDelay || null,
+            scheduledMessage.maxDelay || null,
+            scheduledMessage.infiniteLoop || false,
+            scheduledMessage.repeatInterval || null,
+            scheduledMessage.repeatUnit || null,
+            scheduledMessage.activeHours ? JSON.stringify(scheduledMessage.activeHours) : null,
+            isMultiple, // Use the defined variable
+            null, // For batches, contact_id is always null
+            JSON.stringify(batchContactIds), // Store the batch contacts in contact_ids
+          ]);
+          batches.push({ id: batchId, scheduledTime: batchScheduledTime });
+        }
       }
 
       await client.query("COMMIT");
 
-      for (const batch of batches) {
-        const delay = Math.max(batch.scheduledTime.getTime() - Date.now(), 0);
+      // Add jobs to queue
+      if (batches.length > 0) {
+        // Add batch jobs
+        for (const batch of batches) {
+          const delay = Math.max(batch.scheduledTime.getTime() - Date.now(), 0);
+          await queue.add(
+            "send-message-batch",
+            {
+              companyId,
+              messageId,
+              batchId: batch.id,
+            },
+            {
+              removeOnComplete: false,
+              removeOnFail: false,
+              delay,
+              jobId: batch.id,
+            }
+          );
+        }
+      } else {
+        // Add single message job (no batching needed)
+        const delay = Math.max(scheduledTime.getTime() - Date.now(), 0);
         await queue.add(
-          "send-message-batch",
+          "send-single-message",
           {
             companyId,
             messageId,
-            batchId: batch.id,
           },
           {
             removeOnComplete: false,
             removeOnFail: false,
             delay,
-            jobId: batch.id,
+            jobId: messageId,
           }
         );
       }
@@ -2091,8 +2178,9 @@ app.put("/api/schedule-message/:companyId/:messageId", async (req, res) => {
           activate_sleep = $18,
           sleep_after_messages = $19,
           sleep_duration = $20,
-          active_hours = $21
-        WHERE id = $22 AND company_id = $23
+          active_hours = $21,
+          messages = $22
+        WHERE id = $23 AND company_id = $24
       `;
 
       const isMediaMessage = Boolean(
@@ -2126,6 +2214,9 @@ app.put("/api/schedule-message/:companyId/:messageId", async (req, res) => {
         updatedMessage.sleepDuration || null,
         updatedMessage.activeHours
           ? JSON.stringify(updatedMessage.activeHours)
+          : null,
+        updatedMessage.messages
+          ? JSON.stringify(updatedMessage.messages)
           : null,
         messageId,
         companyId,
@@ -2163,21 +2254,29 @@ app.put("/api/schedule-message/:companyId/:messageId", async (req, res) => {
           const batchQuery = `
             INSERT INTO scheduled_messages (
               id, schedule_id, company_id, scheduled_time, status, created_at,
-              batch_index, chat_ids, phone_index, from_me
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+              batch_index, chat_ids, phone_index, from_me, multiple, contact_id, contact_ids
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
           `;
+
+          // Get contacts for this batch - assumes contact data is available from main message
+          const batchContactIds = existingMessage.multiple && existingMessage.contact_ids 
+            ? JSON.parse(existingMessage.contact_ids).slice(startIndex, endIndex)
+            : existingMessage.contact_id ? [existingMessage.contact_id] : [];
 
           await client.query(batchQuery, [
             batchId,
             messageId,
             companyId,
             batchScheduledTime,
-            "pending",
+            "scheduled",
             new Date(),
             batchIndex,
             JSON.stringify(chatIds.slice(startIndex, endIndex)),
             phoneIndex,
             true,
+            existingMessage.multiple || false,
+            existingMessage.multiple ? null : (batchContactIds[0] || null),
+            existingMessage.multiple ? JSON.stringify(batchContactIds) : null,
           ]);
 
           batches.push({ id: batchId, scheduledTime: batchScheduledTime });
@@ -2311,7 +2410,7 @@ app.post(
           stopped_at = NOW()
         WHERE schedule_id = $1 
           AND company_id = $2
-          AND status = 'pending'
+          AND status = 'scheduled'
       `;
 
         await client.query(updateBatchesQuery, [messageId, companyId]);
@@ -3349,20 +3448,40 @@ const createQueueAndWorker = (botId) => {
           }
 
           const batchData = batchResult.rows[0];
-          const messages = batchData.messages
-            ? JSON.parse(batchData.messages)
-            : [];
+          
+          // Get chat IDs for duplicate detection - prioritize from chat_ids field
+          let chatIdsForDetection = [];
+          if (batchData.chat_ids) {
+            try {
+              chatIdsForDetection = Array.isArray(batchData.chat_ids) 
+                ? batchData.chat_ids 
+                : JSON.parse(batchData.chat_ids);
+            } catch (e) {
+              chatIdsForDetection = [batchData.chat_ids];
+            }
+          }
+          
+          // Fallback to messages array if available
+          if (chatIdsForDetection.length === 0 && batchData.messages) {
+            try {
+              const messages = JSON.parse(batchData.messages);
+              chatIdsForDetection = messages.map(m => m.chatId).filter(Boolean);
+            } catch (e) {
+              console.warn(`Bot ${botId} - Could not parse messages for duplicate detection`);
+            }
+          }
 
-          if (messages.length > 0) {
-            const chatId = `${companyId}_${messages[0].chatId}`;
+          if (chatIdsForDetection.length > 0) {
+            const firstChatId = chatIdsForDetection[0];
+            const duplicateKey = `${companyId}_${firstChatId}`;
 
-            if (processingChatIds.has(chatId)) {
-              const processingStartTime = processingChatIds.get(chatId);
+            if (processingChatIds.has(duplicateKey)) {
+              const processingStartTime = processingChatIds.get(duplicateKey);
               const currentTime = Date.now();
               const processingTime = (currentTime - processingStartTime) / 1000;
 
               console.log(
-                `Bot ${botId} - Detected duplicate message for chatId ${chatId} (already processing for ${processingTime}s)`
+                `Bot ${botId} - Detected duplicate message for chatId ${firstChatId} (already processing for ${processingTime}s)`
               );
 
               if (processingTime < 300) {
@@ -3379,13 +3498,13 @@ const createQueueAndWorker = (botId) => {
                 );
 
                 console.log(
-                  `Bot ${botId} - Marked job ${job.id} as duplicate for chatId ${chatId}`
+                  `Bot ${botId} - Marked job ${job.id} as duplicate for chatId ${firstChatId}`
                 );
               }
             } else {
-              processingChatIds.set(chatId, Date.now());
+              processingChatIds.set(duplicateKey, Date.now());
               console.log(
-                `Bot ${botId} - Reserved chatId ${chatId} for processing`
+                `Bot ${botId} - Reserved chatId ${firstChatId} for processing`
               );
             }
           }
@@ -3510,6 +3629,84 @@ const createQueueAndWorker = (botId) => {
         } finally {
           client.release();
         }
+      } else if (job.name === "send-single-message") {
+        const { companyId, messageId } = job.data;
+        console.log(`Bot ${botId} - Processing scheduled single message:`, {
+          messageId,
+        });
+
+        const client = await pool.connect();
+        try {
+          await client.query("BEGIN");
+
+          const messageQuery = `
+            SELECT * FROM scheduled_messages 
+            WHERE id = $1 AND company_id = $2
+            FOR UPDATE
+          `;
+          const messageResult = await client.query(messageQuery, [
+            messageId,
+            companyId,
+          ]);
+
+          if (messageResult.rowCount === 0) {
+            console.error(`Bot ${botId} - Message ${messageId} not found`);
+            return;
+          }
+
+          const messageData = messageResult.rows[0];
+
+          if (messageData.status === "skipped" || messageData.status === "sent") {
+            console.log(
+              `Bot ${botId} - Message ${messageId} was already ${messageData.status}, not processing`
+            );
+            return {
+              skipped: true,
+              reason: `Already ${messageData.status}`,
+            };
+          }
+
+          try {
+            console.log(
+              `Bot ${botId} - Sending scheduled single message:`,
+              messageData
+            );
+            const result = await sendScheduledMessage(messageData);
+
+            if (result.success) {
+              await client.query(
+                "UPDATE scheduled_messages SET status = $1, sent_at = NOW() WHERE id = $2",
+                ["sent", messageId]
+              );
+            } else {
+              console.error(
+                `Bot ${botId} - Failed to send message ${messageId}:`,
+                result.error
+              );
+              await client.query(
+                "UPDATE scheduled_messages SET status = $1 WHERE id = $2",
+                ["failed", messageId]
+              );
+            }
+
+            await client.query("COMMIT");
+          } catch (error) {
+            await client.query("ROLLBACK");
+            console.error(
+              `Bot ${botId} - Error processing scheduled single message:`,
+              error
+            );
+            throw error;
+          }
+        } catch (error) {
+          console.error(
+            `Bot ${botId} - Error processing scheduled single message:`,
+            error
+          );
+          throw error;
+        } finally {
+          client.release();
+        }
       }
     },
     {
@@ -3544,7 +3741,7 @@ const createQueueAndWorker = (botId) => {
         const client = await pool.connect();
         try {
           const batchQuery = `
-            SELECT chat_ids FROM scheduled_messages 
+            SELECT chat_ids, messages FROM scheduled_messages 
             WHERE id = $1 AND company_id = $2
           `;
           const batchResult = await client.query(batchQuery, [
@@ -3552,24 +3749,36 @@ const createQueueAndWorker = (botId) => {
             job.data.companyId,
           ]);
 
-          if (batchResult.rowCount > 0 && batchResult.rows[0].chat_ids) {
-            let chatIds;
-            const chatIdsData = batchResult.rows[0].chat_ids;
+          if (batchResult.rowCount > 0) {
+            const { chat_ids, messages } = batchResult.rows[0];
+            let chatIds = [];
 
-            try {
-              // Try to parse as JSON array first
-              chatIds = JSON.parse(chatIdsData);
-            } catch (parseError) {
-              // If parsing fails, treat it as a single string
-              chatIds = [chatIdsData];
+            // Try to get chatIds from chat_ids field first
+            if (chat_ids) {
+              try {
+                chatIds = Array.isArray(chat_ids) ? chat_ids : JSON.parse(chat_ids);
+              } catch (parseError) {
+                chatIds = [chat_ids];
+              }
+            }
+
+            // Fallback to messages array
+            if (chatIds.length === 0 && messages) {
+              try {
+                const messagesArray = JSON.parse(messages);
+                chatIds = messagesArray.map(m => m.chatId).filter(Boolean);
+              } catch (parseError) {
+                console.warn(`Bot ${botId} - Could not parse messages for chat ID release`);
+              }
             }
 
             if (chatIds.length > 0) {
-              const chatId = chatIds[0];
-              if (processingChatIds.has(chatId)) {
-                processingChatIds.delete(chatId);
+              const firstChatId = chatIds[0];
+              const duplicateKey = `${job.data.companyId}_${firstChatId}`;
+              if (processingChatIds.has(duplicateKey)) {
+                processingChatIds.delete(duplicateKey);
                 console.log(
-                  `Bot ${botId} - Released chatId ${chatId} after processing`
+                  `Bot ${botId} - Released chatId ${firstChatId} after processing`
                 );
               }
             }
@@ -3671,40 +3880,59 @@ async function sendScheduledMessage(message) {
 
       let messages = [];
       let chatIds = [];
+      
+      // Parse chat_ids first
       if (message.chat_ids) {
         if (Array.isArray(message.chat_ids)) {
           chatIds = message.chat_ids;
         } else if (typeof message.chat_ids === "string") {
           try {
-            // Try to parse as JSON array
             chatIds = JSON.parse(message.chat_ids);
             if (typeof chatIds === "string") {
               chatIds = [chatIds];
             }
           } catch (e) {
-            // If parsing fails, treat as single string
             chatIds = [message.chat_ids];
           }
         } else {
-          // Fallback: wrap in array
           chatIds = [message.chat_ids];
         }
       }
 
-      if (!message.messages || JSON.parse(message.messages).length === 0) {
+      // Parse messages array
+      if (message.messages) {
+        try {
+          console.log(`[Company ${companyId}] Parsing messages field:`, message.messages);
+          if (Array.isArray(message.messages)) {
+            messages = message.messages;
+          } else if (typeof message.messages === "string") {
+            messages = JSON.parse(message.messages);
+            if (!Array.isArray(messages)) {
+              // Sometimes it's a stringified object, not array
+              messages = [messages];
+            }
+          } else {
+            messages = [];
+          }
+        } catch (e) {
+          console.warn(`[Company ${companyId}] Could not parse messages field:`, e);
+          messages = [];
+        }
+      }
+
+      // If no messages array, create from individual message fields
+      if (!messages || messages.length === 0) {
         messages = chatIds.map((chatId) => ({
           chatId: chatId,
           message: message.message_content,
-          delay: Math.floor(
-            Math.random() * (message.max_delay - message.min_delay + 1) +
-              message.min_delay
-          ),
+          delay: message.min_delay && message.max_delay 
+            ? Math.floor(Math.random() * (message.max_delay - message.min_delay + 1) + message.min_delay)
+            : 0,
           mediaUrl: message.media_url || "",
           documentUrl: message.document_url || "",
           fileName: message.file_name || "",
+          caption: message.caption || ""
         }));
-      } else {
-        messages = JSON.parse(message.messages);
       }
 
       console.log(`[Company ${companyId}] Batch details:`, {
@@ -3765,6 +3993,27 @@ async function sendScheduledMessage(message) {
         return processedMessage;
       };
 
+      const isWithinActiveHours = () => {
+        if (!message.active_hours) return true;
+        
+        try {
+          const activeHours = JSON.parse(message.active_hours);
+          const now = new Date();
+          const currentHour = now.getHours();
+          const currentMinute = now.getMinutes();
+          const currentTime = currentHour * 60 + currentMinute;
+          
+          const startTime = activeHours.start ? 
+            (parseInt(activeHours.start.split(':')[0]) * 60 + parseInt(activeHours.start.split(':')[1])) : 0;
+          const endTime = activeHours.end ? 
+            (parseInt(activeHours.end.split(':')[0]) * 60 + parseInt(activeHours.end.split(':')[1])) : 1440;
+          
+          return currentTime >= startTime && currentTime <= endTime;
+        } catch (e) {
+          return true; // If parsing fails, assume active
+        }
+      };
+
       const waitUntilNextDay = async () => {
         const now = new Date();
         const tomorrow = new Date(now);
@@ -3797,6 +4046,13 @@ async function sendScheduledMessage(message) {
       let dayCount = 1;
 
       while (true) {
+        // Check if we're within active hours
+        if (!isWithinActiveHours()) {
+          console.log(`[Company ${companyId}] Outside active hours, waiting...`);
+          await new Promise(resolve => setTimeout(resolve, 60000)); // Wait 1 minute
+          continue;
+        }
+
         console.log(`\n=== [Company ${companyId}] Processing Message Item ===`);
         const messageItem = messages[currentMessageIndex];
         console.log(`[Company ${companyId}] Current message item:`, {
@@ -3807,24 +4063,68 @@ async function sendScheduledMessage(message) {
         });
 
         const { chatId, message: messageText, delay } = messageItem;
-        const phone = chatId.split("@")[0];
+        const phone = '+' + chatId.split("@")[0];
 
         console.log(`[Company ${companyId}] Fetching contact data for:`, phone);
-        const contactQuery = `
-          SELECT * FROM contacts 
-          WHERE company_id = $1 AND phone = $2
-        `;
-        const contactResult = await client.query(contactQuery, [
-          companyId,
-          phone,
-        ]);
+        
+        let contactData = {};
+        
+        // Determine which contacts to get for this batch
+        let contactIds = [];
+        if (message.multiple && message.contact_ids) {
+          try {
+            contactIds = JSON.parse(message.contact_ids);
+          } catch (e) {
+            console.warn(`[Company ${companyId}] Could not parse contact_ids:`, e);
+          }
+        } else if (message.contact_id) {
+          contactIds = [message.contact_id];
+        }
+        
+        // Fetch contact by ID if available, otherwise by phone
+        if (contactIds.length > 0) {
+          // For batched messages, find the contact that matches this chatId
+          const contactQuery = `
+            SELECT * FROM contacts 
+            WHERE company_id = $1 AND contact_id = ANY($2::text[]) AND phone = $3
+          `;
+          const contactResult = await client.query(contactQuery, [
+            companyId,
+            contactIds,
+            phone,
+          ]);
+          
+          if (contactResult.rowCount > 0) {
+            contactData = contactResult.rows[0];
+          } else {
+            // Fallback to phone lookup if contact ID lookup fails
+            const phoneContactQuery = `
+              SELECT * FROM contacts 
+              WHERE company_id = $1 AND phone = $2
+            `;
+            const phoneContactResult = await client.query(phoneContactQuery, [
+              companyId,
+              phone,
+            ]);
+            contactData = phoneContactResult.rowCount > 0 ? phoneContactResult.rows[0] : {};
+          }
+        } else {
+          // Original phone-based lookup
+          const contactQuery = `
+            SELECT * FROM contacts 
+            WHERE company_id = $1 AND phone = $2
+          `;
+          const contactResult = await client.query(contactQuery, [
+            companyId,
+            phone,
+          ]);
+          contactData = contactResult.rowCount > 0 ? contactResult.rows[0] : {};
+        }
+        
         console.log(
           `[Company ${companyId}] Contact exists:`,
-          contactResult.rowCount > 0
+          Object.keys(contactData).length > 0
         );
-
-        const contactData =
-          contactResult.rowCount > 0 ? contactResult.rows[0] : {};
 
         if (
           companyId === "0128" &&
@@ -3894,7 +4194,7 @@ async function sendScheduledMessage(message) {
             ? "document"
             : "text";
 
-          const url = `${process.env.URL}api/v2/messages/${endpoint}/${companyId}/${chatId}`;
+          const url = `${process.env.URL}/api/v2/messages/${endpoint}/${companyId}/${chatId}`;
 
           console.log(`[Company ${companyId}] Request details:`, {
             endpoint,
@@ -3979,6 +4279,15 @@ async function sendScheduledMessage(message) {
         }
 
         currentMessageIndex++;
+        
+        // Check if we need to sleep after a certain number of messages
+        if (message.activate_sleep && message.sleep_after_messages && message.sleep_duration) {
+          if (currentMessageIndex % message.sleep_after_messages === 0) {
+            console.log(`[Company ${companyId}] Sleeping for ${message.sleep_duration} seconds after ${message.sleep_after_messages} messages`);
+            await new Promise(resolve => setTimeout(resolve, message.sleep_duration * 1000));
+          }
+        }
+        
         console.log(`\n=== [Company ${companyId}] Sequence Status ===`);
         console.log({
           currentIndex: currentMessageIndex,
@@ -6023,10 +6332,7 @@ async function handleFollowUpTemplateActivation(
 }
 
 // Get scheduled messages for a company
-app.get('/api/scheduled-messages', async (req, res) => {
-  console.log("=== Starting GET /api/scheduled-messages ===");
-  console.log("Query parameters:", req.query);
-  
+app.get('/api/scheduled-messages', async (req, res) => {  
   const { companyId, status } = req.query;
   
   // Validation
@@ -6047,6 +6353,8 @@ app.get('/api/scheduled-messages', async (req, res) => {
         schedule_id,
         company_id,
         contact_id,
+        contact_ids,
+        multiple,
         message_content,
         media_url,
         scheduled_time,
@@ -6066,12 +6374,7 @@ app.get('/api/scheduled-messages', async (req, res) => {
 
     // Add status filter if provided
     if (status && status !== 'all') {
-      // Map 'scheduled' to 'pending' since that's what we use in the database
-      let dbStatus = status;
-      if (status === 'scheduled') {
-        dbStatus = 'pending';
-      }
-      
+      let dbStatus = status;      
       query += ` AND status = $${paramIndex}`;
       queryParams.push(dbStatus);
       paramIndex++;
@@ -6079,37 +6382,41 @@ app.get('/api/scheduled-messages', async (req, res) => {
 
     // Order by scheduled_time (earliest first)
     query += ` ORDER BY scheduled_time ASC`;
-
-    console.log("Executing query:", query);
-    console.log("Query parameters:", queryParams);
-
     const { rows } = await sqlClient.query(query, queryParams);
-    
-    console.log(`Found ${rows.length} scheduled messages for company ${companyId}`);
-    console.log("Raw database results:", rows);
 
     // Transform the data to match frontend expectations
-    const messages = rows.map(row => ({
-      id: row.id,
-      scheduleId: row.schedule_id,
-      companyId: row.company_id,
-      contactId: row.contact_id,
-      messageContent: row.message_content,
-      mediaUrl: row.media_url,
-      scheduledTime: row.scheduled_time,
-      status: row.status,
-      attemptCount: row.attempt_count,
-      lastAttempt: row.last_attempt,
-      createdAt: row.created_at,
-      sentAt: row.sent_at,
-      phoneIndex: row.phone_index,
-      fromMe: row.from_me
-    }));
+    const messages = rows.map(row => {
+      let contactIds = null;
+      if (row.contact_ids) {
+        try {
+          contactIds = Array.isArray(row.contact_ids)
+          ? row.contact_ids
+          : JSON.parse(row.contact_ids);
+        } catch (e) {
+          contactIds = [row.contact_ids];
+        }
+      }
+      return {
+        id: row.id,
+        scheduleId: row.schedule_id,
+        companyId: row.company_id,
+        contactId: row.contact_id,
+        contactIds: contactIds,
+        multiple: row.multiple,
+        messageContent: row.message_content,
+        mediaUrl: row.media_url,
+        scheduledTime: row.scheduled_time,
+        status: row.status,
+        attemptCount: row.attempt_count,
+        lastAttempt: row.last_attempt,
+        createdAt: row.created_at,
+        sentAt: row.sent_at,
+        phoneIndex: row.phone_index,
+        fromMe: row.from_me
+      };
+    });
 
     await sqlClient.query("COMMIT");
-    
-    console.log("Successfully fetched scheduled messages");
-    console.log("Transformed messages:", messages);
     
     res.json({ 
       success: true, 
@@ -6131,7 +6438,6 @@ app.get('/api/scheduled-messages', async (req, res) => {
   }
 });
 
-// ... existing code ...
 async function callFollowUpAPI(
   action,
   phone,
@@ -6213,8 +6519,9 @@ async function callFollowUpAPI(
         const insertQuery = `
           INSERT INTO scheduled_messages (
             id, schedule_id, company_id, contact_id, message_content, 
-            scheduled_time, status, created_at, phone_index, from_me
-          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+            scheduled_time, status, created_at, phone_index, from_me,
+            multiple, contact_ids
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
         `;
 
         await sqlClient.query(insertQuery, [
@@ -6224,10 +6531,12 @@ async function callFollowUpAPI(
           contactID,
           message.message,
           scheduledTime,
-          "pending",
+          "scheduled",
           new Date(),
           phoneIndex || 0,
-          true
+          true,
+          false,  // multiple = false for single contact followup
+          null    // contact_ids = null for single contact
         ]);
 
         console.log(`Scheduled message ${i + 1}/${messages.length} for ${scheduledTime}`);
@@ -6247,7 +6556,7 @@ async function callFollowUpAPI(
         `UPDATE scheduled_messages 
          SET status = 'paused' 
          WHERE contact_id = $1 AND company_id = $2 
-         AND status = 'pending' AND message_content LIKE $3`,
+         AND status = 'scheduled' AND message_content LIKE $3`,
         [contactID, idSubstring, `%${template.name}%`]
       );
 
@@ -8600,82 +8909,115 @@ app.put("/api/contacts/:contact_id/reset-unread", async (req, res) => {
 
 app.post("/api/contacts", async (req, res) => {
   try {
-    const {
+    // Extract important fields
+    let {
       contact_id,
       companyId,
       contactName,
-      lastName,
-      email,
+      name,
       phone,
-      address1,
-      companyName,
-      locationId,
-      dateAdded,
-      unreadCount,
-      points,
-      branch,
-      expiryDate,
-      vehicleNumber,
-      ic,
       chat_id,
-      notes,
+      tags,
+      unreadCount,
+      ...additionalFields
     } = req.body;
 
+    // Fallbacks and normalization
+    if (!contact_id && companyId && phone) {
+      // If contact_id not provided, generate from companyId and phone
+      const formattedPhone = phone.startsWith("+") ? phone.slice(1) : phone;
+      contact_id = `${companyId}-${formattedPhone}`;
+    }
     if (!companyId || !phone || !contact_id) {
       return res.status(400).json({
         success: false,
         message: "Missing required fields (companyId, phone, contact_id)",
       });
     }
-    console.log(contactName);
-    // Insert contact into the database
-    const result = await sqlDb.query(
-      `INSERT INTO contacts (
-        contact_id, company_id, name, last_name, email, phone, address1, company, location_id,
-        created_at, unread_count, points, branch, expiry_date, vehicle_number, ic, chat_id, notes
-      ) VALUES (
-        $1, $2, $3, $4, $5, $6, $7, $8, $9,
-        $10, $11, $12, $13, $14, $15, $16, $17, $18
-      )
-      ON CONFLICT (contact_id, company_id) DO UPDATE
-      SET contact_name = EXCLUDED.name,
-          last_name = EXCLUDED.last_name,
-          email = EXCLUDED.email,
-          phone = EXCLUDED.phone,
-          address1 = EXCLUDED.address1,
-          company = EXCLUDED.company,
-          location_id = EXCLUDED.location_id,
-          unread_count = EXCLUDED.unread_count,
-          points = EXCLUDED.points,
-          branch = EXCLUDED.branch,
-          expiry_date = EXCLUDED.expiry_date,
-          vehicle_number = EXCLUDED.vehicle_number,
-          ic = EXCLUDED.ic,
-          chat_id = EXCLUDED.chat_id,
-          notes = EXCLUDED.notes,
-          updated_at = CURRENT_TIMESTAMP
-      RETURNING contact_id`,
-      [
-        contact_id,
-        companyId,
-        contactName,
-        lastName,
-        email,
-        phone,
-        address1,
-        companyName,
-        locationId,
-        dateAdded || new Date().toISOString(),
-        unreadCount || 0,
-        points || 0,
-        branch,
-        expiryDate,
-        vehicleNumber,
-        ic,
-        chat_id,
-        notes,
-      ]
+
+    // Format phone to always have + and only digits
+    let formattedPhone = phone.replace(/\D/g, "");
+    if (!formattedPhone.startsWith("6")) {
+      formattedPhone = "6" + formattedPhone;
+    }
+    formattedPhone = "+" + formattedPhone;
+
+    // Use contactName or name or fallback to formattedPhone
+    const finalName = contactName || name || formattedPhone;
+
+    // Get all columns in the contacts table
+    const tableColumnsResult = await sqlDb.query(`
+      SELECT column_name FROM information_schema.columns
+      WHERE table_name = 'contacts'
+    `);
+    const tableColumns = tableColumnsResult.rows.map(r => r.column_name);
+
+    // Helper to convert camelCase to snake_case
+    function camelToSnake(str) {
+      return str.replace(/[A-Z]/g, letter => `_${letter.toLowerCase()}`);
+    }
+
+    // Prepare custom_fields object
+    let customFields = {};
+    let standardFields = {};
+
+    for (const [key, value] of Object.entries(additionalFields)) {
+      // Convert camelCase to snake_case for checking
+      const snakeKey = camelToSnake(key);
+      if (tableColumns.includes(snakeKey)) {
+        standardFields[snakeKey] = value;
+      } else if (tableColumns.includes(key)) {
+        standardFields[key] = value;
+      } else {
+        // Store in custom_fields as snake_case
+        customFields[snakeKey] = value;
+      }
+    }
+
+    // Prepare contact data with required fields
+    const contactData = {
+      contact_id,
+      company_id: companyId,
+      name: finalName,
+      phone: formattedPhone,
+      chat_id: chat_id || null,
+      tags: Array.isArray(tags) ? tags : [],
+      unread_count: typeof unreadCount === "number" ? unreadCount : 0,
+      created_at: new Date(),
+      updated_at: new Date(),
+      ...standardFields,
+    };
+
+    // Merge/append custom_fields if present
+    if (Object.keys(customFields).length > 0) {
+      contactData.custom_fields = customFields;
+    }
+
+    // Remove undefined values (so only provided fields are inserted/updated)
+    Object.keys(contactData).forEach(
+      (key) => contactData[key] === undefined && delete contactData[key]
     );
+
+    // Build dynamic insert/update query for only present fields
+    const fields = Object.keys(contactData);
+    const values = Object.values(contactData);
+    const placeholders = fields.map((_, i) => `$${i + 1}`);
+
+    // Build ON CONFLICT update set clause
+    const updateSet = fields
+      .filter((f) => f !== "contact_id" && f !== "company_id" && f !== "created_at" && f !== "updated_at")
+      .map((f) => `${f} = EXCLUDED.${f}`)
+      .join(", ");
+
+    const query = `
+      INSERT INTO contacts (${fields.join(", ")})
+      VALUES (${placeholders.join(", ")})
+      ON CONFLICT (contact_id, company_id) DO UPDATE
+      SET ${updateSet}${updateSet ? ', ' : ''}updated_at = CURRENT_TIMESTAMP
+      RETURNING contact_id
+    `;
+
+    const result = await sqlDb.query(query, values);
 
     res.json({
       success: true,
@@ -10446,7 +10788,7 @@ app.delete('/api/ai-responses/:id', async (req, res) => {
 app.post("/api/v2/messages/text/:companyId/:chatId", async (req, res) => {
   console.log("\n=== New Text Message Request ===");
   const companyId = req.params.companyId;
-  const chatId = req.params.chatId.split("-")[1] + "@c.us";
+  const chatId = req.params.chatId;
   const {
     message,
     quotedMessageId,

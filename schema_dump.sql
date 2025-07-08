@@ -18,6 +18,15 @@ SET client_min_messages = warning;
 SET row_security = off;
 
 --
+-- Name: neon_auth; Type: SCHEMA; Schema: -; Owner: neondb_owner
+--
+
+CREATE SCHEMA neon_auth;
+
+
+ALTER SCHEMA neon_auth OWNER TO neondb_owner;
+
+--
 -- Name: uuid-ossp; Type: EXTENSION; Schema: -; Owner: -
 --
 
@@ -37,16 +46,11 @@ COMMENT ON EXTENSION "uuid-ossp" IS 'generate universally unique identifiers (UU
 
 CREATE FUNCTION public.update_updated_at_column() RETURNS trigger
     LANGUAGE plpgsql
-    AS $$
-
-BEGIN
-
-    NEW.updated_at = CURRENT_TIMESTAMP;
-
-    RETURN NEW;
-
-END;
-
+    AS $$
+BEGIN
+    NEW.updated_at = CURRENT_TIMESTAMP;
+    RETURN NEW;
+END;
 $$;
 
 
@@ -55,6 +59,23 @@ ALTER FUNCTION public.update_updated_at_column() OWNER TO neondb_owner;
 SET default_tablespace = '';
 
 SET default_table_access_method = heap;
+
+--
+-- Name: users_sync; Type: TABLE; Schema: neon_auth; Owner: neondb_owner
+--
+
+CREATE TABLE neon_auth.users_sync (
+    raw_json jsonb NOT NULL,
+    id text GENERATED ALWAYS AS ((raw_json ->> 'id'::text)) STORED NOT NULL,
+    name text GENERATED ALWAYS AS ((raw_json ->> 'display_name'::text)) STORED,
+    email text GENERATED ALWAYS AS ((raw_json ->> 'primary_email'::text)) STORED,
+    created_at timestamp with time zone GENERATED ALWAYS AS (to_timestamp((trunc((((raw_json ->> 'signed_up_at_millis'::text))::bigint)::double precision) / (1000)::double precision))) STORED,
+    updated_at timestamp with time zone,
+    deleted_at timestamp with time zone
+);
+
+
+ALTER TABLE neon_auth.users_sync OWNER TO neondb_owner;
 
 --
 -- Name: companies; Type: TABLE; Schema: public; Owner: neondb_owner
@@ -153,7 +174,6 @@ CREATE TABLE public.ai_assign_responses (
     id uuid DEFAULT public.uuid_generate_v4() NOT NULL,
     response_id character varying(255) NOT NULL,
     company_id character varying(255) NOT NULL,
-    message_id character varying(255),
     created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP,
     keywords jsonb,
     keyword_source character varying(50) DEFAULT 'user'::character varying,
@@ -174,16 +194,15 @@ CREATE TABLE public.ai_document_responses (
     id uuid DEFAULT public.uuid_generate_v4() NOT NULL,
     response_id character varying(255) NOT NULL,
     company_id character varying(255) NOT NULL,
-    message_id character varying(255),
-    document_url character varying(500),
-    document_urls text[] DEFAULT '{}'::text[],
-    document_names text[] DEFAULT '{}'::text[],
-    keywords text[] DEFAULT '{}'::text[],
+    description text,
+    document_urls jsonb,
+    document_names jsonb,
+    keywords jsonb,
+    captions text[] DEFAULT '{}'::text[],
     keyword_source character varying(50) DEFAULT 'user'::character varying,
-    extracted_text text,
-    analysis_result jsonb,
     status character varying(50) DEFAULT 'active'::character varying,
-    created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP
+    created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP,
+    updated_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP
 );
 
 
@@ -197,13 +216,14 @@ CREATE TABLE public.ai_image_responses (
     id uuid DEFAULT public.uuid_generate_v4() NOT NULL,
     response_id character varying(255) NOT NULL,
     company_id character varying(255) NOT NULL,
-    message_id character varying(255),
-    analysis_result jsonb,
     created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP,
-    keywords text[] DEFAULT '{}'::text[],
-    image_urls text[] DEFAULT '{}'::text[],
+    keywords jsonb,
+    image_urls jsonb,
+    captions text[] DEFAULT '{}'::text[],
     keyword_source character varying(50) DEFAULT 'user'::character varying,
-    status character varying(50) DEFAULT 'active'::character varying
+    status character varying(50) DEFAULT 'active'::character varying,
+    description text,
+    updated_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP
 );
 
 
@@ -217,15 +237,15 @@ CREATE TABLE public.ai_tag_responses (
     id uuid DEFAULT public.uuid_generate_v4() NOT NULL,
     response_id character varying(255) NOT NULL,
     company_id character varying(255) NOT NULL,
-    message_id character varying(255),
     tags jsonb,
-    confidence numeric(3,2),
     created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP,
     keywords jsonb,
     remove_tags jsonb,
     keyword_source character varying(50) DEFAULT 'user'::character varying,
     tag_action_mode character varying(50) DEFAULT 'add'::character varying,
-    status character varying(50) DEFAULT 'active'::character varying
+    status character varying(50) DEFAULT 'active'::character varying,
+    description text,
+    updated_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP
 );
 
 
@@ -239,14 +259,14 @@ CREATE TABLE public.ai_video_responses (
     id uuid DEFAULT public.uuid_generate_v4() NOT NULL,
     response_id character varying(255) NOT NULL,
     company_id character varying(255) NOT NULL,
-    message_id character varying(255),
-    analysis_result jsonb,
     created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP,
-    keywords text[] DEFAULT '{}'::text[] NOT NULL,
-    video_urls text[] DEFAULT '{}'::text[] NOT NULL,
+    keywords jsonb,
+    video_urls jsonb,
     captions text[] DEFAULT '{}'::text[],
     keyword_source character varying(50) DEFAULT 'user'::character varying,
-    status character varying(50) DEFAULT 'active'::character varying
+    status character varying(50) DEFAULT 'active'::character varying,
+    description text,
+    updated_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP
 );
 
 
@@ -260,17 +280,14 @@ CREATE TABLE public.ai_voice_responses (
     id uuid DEFAULT public.uuid_generate_v4() NOT NULL,
     response_id character varying(255) NOT NULL,
     company_id character varying(255) NOT NULL,
-    message_id character varying(255),
-    audio_url character varying(500),
-    transcription text,
-    analysis_result jsonb,
     created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP,
-    keywords text[] DEFAULT '{}'::text[],
-    voice_urls text[] DEFAULT '{}'::text[],
+    keywords jsonb,
+    voice_urls jsonb,
     captions text[] DEFAULT '{}'::text[],
-    language character varying(10) DEFAULT 'en'::character varying,
     keyword_source character varying(50) DEFAULT 'user'::character varying,
-    status character varying(20) DEFAULT 'active'::character varying
+    status character varying(20) DEFAULT 'active'::character varying,
+    description text,
+    updated_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP
 );
 
 
@@ -315,6 +332,40 @@ CREATE TABLE public.archived_messages (
 ALTER TABLE public.archived_messages OWNER TO neondb_owner;
 
 --
+-- Name: assignment_counts; Type: TABLE; Schema: public; Owner: neondb_owner
+--
+
+CREATE TABLE public.assignment_counts (
+    id uuid DEFAULT public.uuid_generate_v4() NOT NULL,
+    company_id character varying(255) NOT NULL,
+    assignment_type character varying(50) NOT NULL,
+    counts jsonb DEFAULT '{}'::jsonb,
+    total integer DEFAULT 0,
+    last_updated timestamp with time zone DEFAULT CURRENT_TIMESTAMP,
+    created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP,
+    month_key character varying(10) NOT NULL
+);
+
+
+ALTER TABLE public.assignment_counts OWNER TO neondb_owner;
+
+--
+-- Name: assignment_logs; Type: TABLE; Schema: public; Owner: neondb_owner
+--
+
+CREATE TABLE public.assignment_logs (
+    id uuid DEFAULT public.uuid_generate_v4() NOT NULL,
+    company_id character varying(255) NOT NULL,
+    phone_index integer NOT NULL,
+    contact_id character varying(255) NOT NULL,
+    logs text[],
+    "timestamp" timestamp with time zone DEFAULT CURRENT_TIMESTAMP
+);
+
+
+ALTER TABLE public.assignment_logs OWNER TO neondb_owner;
+
+--
 -- Name: assignments; Type: TABLE; Schema: public; Owner: neondb_owner
 --
 
@@ -327,7 +378,12 @@ CREATE TABLE public.assignments (
     assigned_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP,
     status character varying(50) DEFAULT 'active'::character varying,
     notes text,
-    metadata jsonb
+    metadata jsonb,
+    month_key character varying(7) NOT NULL,
+    phone_index integer,
+    assignment_type character varying(50),
+    employee_role character varying(50),
+    weightage_used integer
 );
 
 
@@ -368,7 +424,8 @@ CREATE TABLE public.bot_state (
     company_id character varying(255) NOT NULL,
     bot_name character varying(255),
     state jsonb,
-    last_updated timestamp with time zone DEFAULT CURRENT_TIMESTAMP
+    last_updated timestamp with time zone DEFAULT CURRENT_TIMESTAMP,
+    current_index integer
 );
 
 
@@ -406,7 +463,26 @@ CREATE TABLE public.contacts (
     unread_count integer DEFAULT 0,
     last_message jsonb,
     custom_fields jsonb,
-    company character varying(255)
+    company character varying(255),
+    multi_assign jsonb DEFAULT '[]'::jsonb,
+    not_spam boolean DEFAULT true,
+    profile_pic_url text,
+    pinned boolean DEFAULT false,
+    customer_message text,
+    storage_requirements jsonb,
+    form_submission jsonb,
+    phone_indexes jsonb DEFAULT '[]'::jsonb,
+    personal_id character(255),
+    last_name character varying(255),
+    notes text,
+    chat_id character varying(255),
+    updated_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP,
+    location_id character varying(255),
+    branch character varying(255),
+    expiry_date character varying(255),
+    vehiclenumber character varying(255),
+    vehicle_number character varying(255),
+    ic character varying(255)
 );
 
 
@@ -425,17 +501,26 @@ COMMENT ON TABLE public.contacts IS 'Customer contacts for each company';
 
 CREATE TABLE public.employees (
     id uuid DEFAULT public.uuid_generate_v4() NOT NULL,
-    employee_id character varying(255) NOT NULL,
+    employee_id character varying(255),
     company_id character varying(255) NOT NULL,
     name character varying(255) NOT NULL,
     email character varying(255),
-    phone character varying(50),
     role character varying(100),
     current_index integer DEFAULT 0,
     last_updated timestamp with time zone DEFAULT CURRENT_TIMESTAMP,
     created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP,
     active boolean DEFAULT true,
-    assigned_contacts integer DEFAULT 0
+    assigned_contacts integer DEFAULT 0,
+    phone_number character varying(50),
+    phone_access jsonb,
+    weightages jsonb,
+    company character varying(255),
+    image_url text,
+    notes text,
+    quota_leads integer DEFAULT 0,
+    view_employees jsonb,
+    invoice_number character varying(255),
+    emp_group character varying(255)
 );
 
 
@@ -461,7 +546,7 @@ CREATE TABLE public.messages (
     customer_phone character varying(50),
     content text,
     message_type character varying(50),
-    media_url character varying(500),
+    media_url text,
     "timestamp" timestamp with time zone DEFAULT CURRENT_TIMESTAMP,
     logs jsonb,
     tags jsonb,
@@ -480,7 +565,9 @@ CREATE TABLE public.messages (
     author character varying(255),
     media_data text,
     media_metadata jsonb,
-    CONSTRAINT messages_direction_check CHECK (((direction)::text = ANY ((ARRAY['inbound'::character varying, 'outbound'::character varying])::text[])))
+    phone_index integer,
+    quoted_message jsonb,
+    CONSTRAINT messages_direction_check CHECK (((direction)::text = ANY (ARRAY[('inbound'::character varying)::text, ('outbound'::character varying)::text])))
 );
 
 
@@ -511,6 +598,21 @@ CREATE VIEW public.company_stats AS
 
 
 ALTER VIEW public.company_stats OWNER TO neondb_owner;
+
+--
+-- Name: company_tags; Type: TABLE; Schema: public; Owner: neondb_owner
+--
+
+CREATE TABLE public.company_tags (
+    id uuid DEFAULT public.uuid_generate_v4() NOT NULL,
+    company_id character varying(255) NOT NULL,
+    name character varying(255) NOT NULL,
+    created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP,
+    updated_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP
+);
+
+
+ALTER TABLE public.company_tags OWNER TO neondb_owner;
 
 --
 -- Name: duplicate_check_logs; Type: TABLE; Schema: public; Owner: neondb_owner
@@ -552,13 +654,12 @@ ALTER TABLE public.employee_monthly_assignments OWNER TO neondb_owner;
 
 CREATE TABLE public.error_logs (
     id uuid DEFAULT public.uuid_generate_v4() NOT NULL,
-    company_id character varying(255),
-    error_type character varying(100),
+    company_id character varying(255) NOT NULL,
+    message_id character varying(255),
+    error_type character varying(255),
     error_message text,
     stack_trace text,
-    context jsonb,
-    "timestamp" timestamp with time zone DEFAULT CURRENT_TIMESTAMP,
-    resolved boolean DEFAULT false
+    "timestamp" timestamp with time zone DEFAULT CURRENT_TIMESTAMP
 );
 
 
@@ -583,6 +684,32 @@ CREATE TABLE public.feedback (
 
 
 ALTER TABLE public.feedback OWNER TO neondb_owner;
+
+--
+-- Name: followup_messages; Type: TABLE; Schema: public; Owner: neondb_owner
+--
+
+CREATE TABLE public.followup_messages (
+    id uuid DEFAULT public.uuid_generate_v4() NOT NULL,
+    template_id character varying(255) NOT NULL,
+    message text NOT NULL,
+    day_number integer NOT NULL,
+    sequence integer NOT NULL,
+    status character varying(50) DEFAULT 'active'::character varying,
+    created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP,
+    document jsonb,
+    image jsonb,
+    video jsonb,
+    delay_after jsonb,
+    specific_numbers jsonb,
+    use_scheduled_time boolean DEFAULT false,
+    scheduled_time character varying(50),
+    add_tags text[] DEFAULT '{}'::text[],
+    remove_tags text[] DEFAULT '{}'::text[]
+);
+
+
+ALTER TABLE public.followup_messages OWNER TO neondb_owner;
 
 --
 -- Name: followup_templates; Type: TABLE; Schema: public; Owner: neondb_owner
@@ -612,6 +739,21 @@ ALTER TABLE public.followup_templates OWNER TO neondb_owner;
 
 COMMENT ON TABLE public.followup_templates IS 'Automated follow-up message templates';
 
+
+--
+-- Name: instruction_templates; Type: TABLE; Schema: public; Owner: neondb_owner
+--
+
+CREATE TABLE public.instruction_templates (
+    id uuid DEFAULT public.uuid_generate_v4() NOT NULL,
+    company_id character varying(255) NOT NULL,
+    name character varying(255) NOT NULL,
+    instructions text NOT NULL,
+    created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP
+);
+
+
+ALTER TABLE public.instruction_templates OWNER TO neondb_owner;
 
 --
 -- Name: merchants; Type: TABLE; Schema: public; Owner: neondb_owner
@@ -687,16 +829,80 @@ ALTER TABLE public.pinned_items OWNER TO neondb_owner;
 --
 
 CREATE TABLE public.pricing (
-    id uuid DEFAULT public.uuid_generate_v4() NOT NULL,
-    plan_name character varying(100) NOT NULL,
-    price numeric(10,2),
-    features jsonb,
-    active boolean DEFAULT true,
-    created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP
+    id integer NOT NULL,
+    company_id character varying(50),
+    category character varying(50) NOT NULL,
+    pricing_data jsonb NOT NULL,
+    updated_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL
 );
 
 
 ALTER TABLE public.pricing OWNER TO neondb_owner;
+
+--
+-- Name: pricing_id_seq; Type: SEQUENCE; Schema: public; Owner: neondb_owner
+--
+
+CREATE SEQUENCE public.pricing_id_seq
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER SEQUENCE public.pricing_id_seq OWNER TO neondb_owner;
+
+--
+-- Name: pricing_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: neondb_owner
+--
+
+ALTER SEQUENCE public.pricing_id_seq OWNED BY public.pricing.id;
+
+
+--
+-- Name: private_notes; Type: TABLE; Schema: public; Owner: neondb_owner
+--
+
+CREATE TABLE public.private_notes (
+    id uuid NOT NULL,
+    company_id character varying(255) NOT NULL,
+    contact_id character varying(255) NOT NULL,
+    text text NOT NULL,
+    "from" character varying(255) NOT NULL,
+    from_email character varying(255) DEFAULT ''::character varying NOT NULL,
+    "timestamp" timestamp with time zone NOT NULL,
+    type character varying(100) DEFAULT 'privateNote'::character varying NOT NULL,
+    created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP,
+    updated_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP
+);
+
+
+ALTER TABLE public.private_notes OWNER TO neondb_owner;
+
+--
+-- Name: quick_replies; Type: TABLE; Schema: public; Owner: neondb_owner
+--
+
+CREATE TABLE public.quick_replies (
+    id uuid DEFAULT public.uuid_generate_v4() NOT NULL,
+    company_id character varying(255) NOT NULL,
+    category character varying(100) NOT NULL,
+    keyword character varying(255) NOT NULL,
+    text text,
+    type character varying(50) DEFAULT 'all'::character varying,
+    documents jsonb DEFAULT '[]'::jsonb,
+    images jsonb DEFAULT '[]'::jsonb,
+    videos jsonb DEFAULT '[]'::jsonb,
+    created_by character varying(255) NOT NULL,
+    created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP,
+    updated_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP,
+    status character varying(50) DEFAULT 'active'::character varying
+);
+
+
+ALTER TABLE public.quick_replies OWNER TO neondb_owner;
 
 --
 -- Name: recent_messages; Type: VIEW; Schema: public; Owner: neondb_owner
@@ -752,7 +958,31 @@ CREATE TABLE public.scheduled_messages (
     attempt_count integer DEFAULT 0,
     last_attempt timestamp with time zone,
     created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP,
-    sent_at timestamp with time zone
+    sent_at timestamp with time zone,
+    chat_id character varying(255),
+    message_id character varying(255),
+    phone_index integer DEFAULT 0,
+    is_media boolean DEFAULT false,
+    document_url character varying(500),
+    file_name character varying(255),
+    caption text,
+    chat_ids jsonb,
+    batch_quantity integer,
+    repeat_interval integer,
+    repeat_unit character varying(20),
+    message_delays jsonb,
+    infinite_loop boolean DEFAULT false,
+    min_delay integer,
+    max_delay integer,
+    activate_sleep boolean DEFAULT false,
+    sleep_after_messages integer,
+    sleep_duration integer,
+    active_hours jsonb,
+    batch_index integer,
+    from_me boolean DEFAULT true,
+    messages jsonb,
+    skipped_reason text,
+    skipped_at timestamp with time zone
 );
 
 
@@ -787,6 +1017,26 @@ ALTER TABLE public.sent_followups OWNER TO neondb_owner;
 
 COMMENT ON TABLE public.sent_followups IS 'Tracking of sent follow-up messages';
 
+
+--
+-- Name: sent_messages; Type: TABLE; Schema: public; Owner: neondb_owner
+--
+
+CREATE TABLE public.sent_messages (
+    id uuid DEFAULT public.uuid_generate_v4() NOT NULL,
+    company_id character varying(255) NOT NULL,
+    chat_id character varying(255) NOT NULL,
+    identifier character varying(255) NOT NULL,
+    sent_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP,
+    message_index integer,
+    message_content text,
+    message_type character varying(50),
+    media_url character varying(500),
+    document_url character varying(500)
+);
+
+
+ALTER TABLE public.sent_messages OWNER TO neondb_owner;
 
 --
 -- Name: sessions; Type: TABLE; Schema: public; Owner: neondb_owner
@@ -892,7 +1142,9 @@ CREATE TABLE public.users (
     profile jsonb,
     last_updated timestamp with time zone DEFAULT CURRENT_TIMESTAMP,
     created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP,
-    active boolean DEFAULT true
+    active boolean DEFAULT true,
+    password character varying(255),
+    thread_id character varying(255)
 );
 
 
@@ -903,6 +1155,21 @@ ALTER TABLE public.users OWNER TO neondb_owner;
 --
 
 COMMENT ON TABLE public.users IS 'System users with access permissions';
+
+
+--
+-- Name: pricing id; Type: DEFAULT; Schema: public; Owner: neondb_owner
+--
+
+ALTER TABLE ONLY public.pricing ALTER COLUMN id SET DEFAULT nextval('public.pricing_id_seq'::regclass);
+
+
+--
+-- Name: users_sync users_sync_pkey; Type: CONSTRAINT; Schema: neon_auth; Owner: neondb_owner
+--
+
+ALTER TABLE ONLY neon_auth.users_sync
+    ADD CONSTRAINT users_sync_pkey PRIMARY KEY (id);
 
 
 --
@@ -1026,6 +1293,30 @@ ALTER TABLE ONLY public.archived_messages
 
 
 --
+-- Name: assignment_counts assignment_counts_pkey; Type: CONSTRAINT; Schema: public; Owner: neondb_owner
+--
+
+ALTER TABLE ONLY public.assignment_counts
+    ADD CONSTRAINT assignment_counts_pkey PRIMARY KEY (company_id, assignment_type, month_key);
+
+
+--
+-- Name: assignment_counts assignment_counts_unique; Type: CONSTRAINT; Schema: public; Owner: neondb_owner
+--
+
+ALTER TABLE ONLY public.assignment_counts
+    ADD CONSTRAINT assignment_counts_unique UNIQUE (company_id, assignment_type);
+
+
+--
+-- Name: assignment_logs assignment_logs_pkey; Type: CONSTRAINT; Schema: public; Owner: neondb_owner
+--
+
+ALTER TABLE ONLY public.assignment_logs
+    ADD CONSTRAINT assignment_logs_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: assignments assignments_assignment_id_key; Type: CONSTRAINT; Schema: public; Owner: neondb_owner
 --
 
@@ -1038,7 +1329,7 @@ ALTER TABLE ONLY public.assignments
 --
 
 ALTER TABLE ONLY public.assignments
-    ADD CONSTRAINT assignments_pkey PRIMARY KEY (id);
+    ADD CONSTRAINT assignments_pkey PRIMARY KEY (id, month_key);
 
 
 --
@@ -1087,6 +1378,14 @@ ALTER TABLE ONLY public.companies
 
 ALTER TABLE ONLY public.companies
     ADD CONSTRAINT companies_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: company_tags company_tags_pkey; Type: CONSTRAINT; Schema: public; Owner: neondb_owner
+--
+
+ALTER TABLE ONLY public.company_tags
+    ADD CONSTRAINT company_tags_pkey PRIMARY KEY (id);
 
 
 --
@@ -1170,6 +1469,14 @@ ALTER TABLE ONLY public.feedback
 
 
 --
+-- Name: followup_messages followup_messages_pkey; Type: CONSTRAINT; Schema: public; Owner: neondb_owner
+--
+
+ALTER TABLE ONLY public.followup_messages
+    ADD CONSTRAINT followup_messages_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: followup_templates followup_templates_pkey; Type: CONSTRAINT; Schema: public; Owner: neondb_owner
 --
 
@@ -1186,6 +1493,14 @@ ALTER TABLE ONLY public.followup_templates
 
 
 --
+-- Name: instruction_templates instruction_templates_pkey; Type: CONSTRAINT; Schema: public; Owner: neondb_owner
+--
+
+ALTER TABLE ONLY public.instruction_templates
+    ADD CONSTRAINT instruction_templates_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: merchants merchants_merchant_id_key; Type: CONSTRAINT; Schema: public; Owner: neondb_owner
 --
 
@@ -1199,6 +1514,14 @@ ALTER TABLE ONLY public.merchants
 
 ALTER TABLE ONLY public.merchants
     ADD CONSTRAINT merchants_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: messages messages_message_id_company_id_unique; Type: CONSTRAINT; Schema: public; Owner: neondb_owner
+--
+
+ALTER TABLE ONLY public.messages
+    ADD CONSTRAINT messages_message_id_company_id_unique UNIQUE (message_id, company_id);
 
 
 --
@@ -1250,11 +1573,35 @@ ALTER TABLE ONLY public.pinned_items
 
 
 --
+-- Name: pricing pricing_company_id_category_key; Type: CONSTRAINT; Schema: public; Owner: neondb_owner
+--
+
+ALTER TABLE ONLY public.pricing
+    ADD CONSTRAINT pricing_company_id_category_key UNIQUE (company_id, category);
+
+
+--
 -- Name: pricing pricing_pkey; Type: CONSTRAINT; Schema: public; Owner: neondb_owner
 --
 
 ALTER TABLE ONLY public.pricing
     ADD CONSTRAINT pricing_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: private_notes private_notes_pkey; Type: CONSTRAINT; Schema: public; Owner: neondb_owner
+--
+
+ALTER TABLE ONLY public.private_notes
+    ADD CONSTRAINT private_notes_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: quick_replies quick_replies_pkey; Type: CONSTRAINT; Schema: public; Owner: neondb_owner
+--
+
+ALTER TABLE ONLY public.quick_replies
+    ADD CONSTRAINT quick_replies_pkey PRIMARY KEY (id);
 
 
 --
@@ -1266,19 +1613,27 @@ ALTER TABLE ONLY public.scheduled_messages
 
 
 --
--- Name: scheduled_messages scheduled_messages_schedule_id_key; Type: CONSTRAINT; Schema: public; Owner: neondb_owner
---
-
-ALTER TABLE ONLY public.scheduled_messages
-    ADD CONSTRAINT scheduled_messages_schedule_id_key UNIQUE (schedule_id);
-
-
---
 -- Name: sent_followups sent_followups_pkey; Type: CONSTRAINT; Schema: public; Owner: neondb_owner
 --
 
 ALTER TABLE ONLY public.sent_followups
     ADD CONSTRAINT sent_followups_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: sent_followups sent_followups_unique_contact_template; Type: CONSTRAINT; Schema: public; Owner: neondb_owner
+--
+
+ALTER TABLE ONLY public.sent_followups
+    ADD CONSTRAINT sent_followups_unique_contact_template UNIQUE (company_id, contact_id, template_id);
+
+
+--
+-- Name: sent_messages sent_messages_pkey; Type: CONSTRAINT; Schema: public; Owner: neondb_owner
+--
+
+ALTER TABLE ONLY public.sent_messages
+    ADD CONSTRAINT sent_messages_pkey PRIMARY KEY (company_id, chat_id, identifier);
 
 
 --
@@ -1378,6 +1733,13 @@ ALTER TABLE ONLY public.users
 
 
 --
+-- Name: users_sync_deleted_at_idx; Type: INDEX; Schema: neon_auth; Owner: neondb_owner
+--
+
+CREATE INDEX users_sync_deleted_at_idx ON neon_auth.users_sync USING btree (deleted_at);
+
+
+--
 -- Name: idx_ai_assign_responses_company_id; Type: INDEX; Schema: public; Owner: neondb_owner
 --
 
@@ -1420,6 +1782,34 @@ CREATE INDEX idx_appointments_metadata ON public.appointments USING gin (metadat
 
 
 --
+-- Name: idx_assignment_counts_company_type; Type: INDEX; Schema: public; Owner: neondb_owner
+--
+
+CREATE INDEX idx_assignment_counts_company_type ON public.assignment_counts USING btree (company_id, assignment_type);
+
+
+--
+-- Name: idx_assignment_counts_month; Type: INDEX; Schema: public; Owner: neondb_owner
+--
+
+CREATE INDEX idx_assignment_counts_month ON public.assignment_counts USING btree (month_key);
+
+
+--
+-- Name: idx_assignment_logs_company_contact; Type: INDEX; Schema: public; Owner: neondb_owner
+--
+
+CREATE INDEX idx_assignment_logs_company_contact ON public.assignment_logs USING btree (company_id, contact_id);
+
+
+--
+-- Name: idx_assignment_logs_timestamp; Type: INDEX; Schema: public; Owner: neondb_owner
+--
+
+CREATE INDEX idx_assignment_logs_timestamp ON public.assignment_logs USING btree ("timestamp");
+
+
+--
 -- Name: idx_assignments_company_id; Type: INDEX; Schema: public; Owner: neondb_owner
 --
 
@@ -1427,10 +1817,31 @@ CREATE INDEX idx_assignments_company_id ON public.assignments USING btree (compa
 
 
 --
+-- Name: idx_assignments_company_month; Type: INDEX; Schema: public; Owner: neondb_owner
+--
+
+CREATE INDEX idx_assignments_company_month ON public.assignments USING btree (company_id, month_key);
+
+
+--
+-- Name: idx_assignments_contact; Type: INDEX; Schema: public; Owner: neondb_owner
+--
+
+CREATE INDEX idx_assignments_contact ON public.assignments USING btree (contact_id);
+
+
+--
 -- Name: idx_assignments_employee_id; Type: INDEX; Schema: public; Owner: neondb_owner
 --
 
 CREATE INDEX idx_assignments_employee_id ON public.assignments USING btree (employee_id);
+
+
+--
+-- Name: idx_assignments_employee_month; Type: INDEX; Schema: public; Owner: neondb_owner
+--
+
+CREATE INDEX idx_assignments_employee_month ON public.assignments USING btree (employee_id, month_key);
 
 
 --
@@ -1487,6 +1898,13 @@ CREATE INDEX idx_companies_status ON public.companies USING btree (status);
 --
 
 CREATE INDEX idx_companies_tasks ON public.companies USING gin (tasks);
+
+
+--
+-- Name: idx_company_tags_unique; Type: INDEX; Schema: public; Owner: neondb_owner
+--
+
+CREATE UNIQUE INDEX idx_company_tags_unique ON public.company_tags USING btree (company_id, name);
 
 
 --
@@ -1595,10 +2013,24 @@ CREATE INDEX idx_error_logs_timestamp ON public.error_logs USING btree ("timesta
 
 
 --
+-- Name: idx_followup_messages_template_id; Type: INDEX; Schema: public; Owner: neondb_owner
+--
+
+CREATE INDEX idx_followup_messages_template_id ON public.followup_messages USING btree (template_id);
+
+
+--
 -- Name: idx_followup_templates_company_id; Type: INDEX; Schema: public; Owner: neondb_owner
 --
 
 CREATE INDEX idx_followup_templates_company_id ON public.followup_templates USING btree (company_id);
+
+
+--
+-- Name: idx_instruction_templates_company_id; Type: INDEX; Schema: public; Owner: neondb_owner
+--
+
+CREATE INDEX idx_instruction_templates_company_id ON public.instruction_templates USING btree (company_id);
 
 
 --
@@ -1672,6 +2104,62 @@ CREATE INDEX idx_phone_status_company_id ON public.phone_status USING btree (com
 
 
 --
+-- Name: idx_pricing_company; Type: INDEX; Schema: public; Owner: neondb_owner
+--
+
+CREATE INDEX idx_pricing_company ON public.pricing USING btree (company_id);
+
+
+--
+-- Name: idx_pricing_data; Type: INDEX; Schema: public; Owner: neondb_owner
+--
+
+CREATE INDEX idx_pricing_data ON public.pricing USING gin (pricing_data);
+
+
+--
+-- Name: idx_private_notes_company_id; Type: INDEX; Schema: public; Owner: neondb_owner
+--
+
+CREATE INDEX idx_private_notes_company_id ON public.private_notes USING btree (company_id);
+
+
+--
+-- Name: idx_private_notes_contact_id; Type: INDEX; Schema: public; Owner: neondb_owner
+--
+
+CREATE INDEX idx_private_notes_contact_id ON public.private_notes USING btree (contact_id);
+
+
+--
+-- Name: idx_private_notes_timestamp; Type: INDEX; Schema: public; Owner: neondb_owner
+--
+
+CREATE INDEX idx_private_notes_timestamp ON public.private_notes USING btree ("timestamp");
+
+
+--
+-- Name: idx_quick_replies_category; Type: INDEX; Schema: public; Owner: neondb_owner
+--
+
+CREATE INDEX idx_quick_replies_category ON public.quick_replies USING btree (category);
+
+
+--
+-- Name: idx_quick_replies_company_id; Type: INDEX; Schema: public; Owner: neondb_owner
+--
+
+CREATE INDEX idx_quick_replies_company_id ON public.quick_replies USING btree (company_id);
+
+
+--
+-- Name: idx_quick_replies_keyword; Type: INDEX; Schema: public; Owner: neondb_owner
+--
+
+CREATE INDEX idx_quick_replies_keyword ON public.quick_replies USING btree (keyword);
+
+
+--
 -- Name: idx_scheduled_messages_company_id; Type: INDEX; Schema: public; Owner: neondb_owner
 --
 
@@ -1679,10 +2167,24 @@ CREATE INDEX idx_scheduled_messages_company_id ON public.scheduled_messages USIN
 
 
 --
+-- Name: idx_scheduled_messages_messages; Type: INDEX; Schema: public; Owner: neondb_owner
+--
+
+CREATE INDEX idx_scheduled_messages_messages ON public.scheduled_messages USING gin (messages);
+
+
+--
 -- Name: idx_scheduled_messages_scheduled_time; Type: INDEX; Schema: public; Owner: neondb_owner
 --
 
 CREATE INDEX idx_scheduled_messages_scheduled_time ON public.scheduled_messages USING btree (scheduled_time);
+
+
+--
+-- Name: idx_scheduled_messages_skipped_at; Type: INDEX; Schema: public; Owner: neondb_owner
+--
+
+CREATE INDEX idx_scheduled_messages_skipped_at ON public.scheduled_messages USING btree (skipped_at);
 
 
 --
@@ -1753,13 +2255,6 @@ CREATE INDEX idx_users_company_id ON public.users USING btree (company_id);
 --
 
 CREATE INDEX idx_users_email ON public.users USING btree (email);
-
-
---
--- Name: ai_assign_responses update_ai_assign_responses_updated_at; Type: TRIGGER; Schema: public; Owner: neondb_owner
---
-
-CREATE TRIGGER update_ai_assign_responses_updated_at BEFORE UPDATE ON public.ai_assign_responses FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
 
 
 --
@@ -1838,6 +2333,22 @@ ALTER TABLE ONLY public.appointments
 
 ALTER TABLE ONLY public.appointments
     ADD CONSTRAINT appointments_contact_id_company_id_fkey FOREIGN KEY (contact_id, company_id) REFERENCES public.contacts(contact_id, company_id);
+
+
+--
+-- Name: assignment_counts assignment_counts_company_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: neondb_owner
+--
+
+ALTER TABLE ONLY public.assignment_counts
+    ADD CONSTRAINT assignment_counts_company_id_fkey FOREIGN KEY (company_id) REFERENCES public.companies(company_id) ON DELETE CASCADE;
+
+
+--
+-- Name: assignment_logs assignment_logs_company_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: neondb_owner
+--
+
+ALTER TABLE ONLY public.assignment_logs
+    ADD CONSTRAINT assignment_logs_company_id_fkey FOREIGN KEY (company_id) REFERENCES public.companies(company_id) ON DELETE CASCADE;
 
 
 --
@@ -1957,7 +2468,7 @@ ALTER TABLE ONLY public.messages
 --
 
 ALTER TABLE ONLY public.messages
-    ADD CONSTRAINT messages_contact_id_company_id_fkey FOREIGN KEY (contact_id, company_id) REFERENCES public.contacts(contact_id, company_id);
+    ADD CONSTRAINT messages_contact_id_company_id_fkey FOREIGN KEY (contact_id, company_id) REFERENCES public.contacts(contact_id, company_id) ON DELETE CASCADE;
 
 
 --
@@ -1982,6 +2493,30 @@ ALTER TABLE ONLY public.phone_status
 
 ALTER TABLE ONLY public.pinned_items
     ADD CONSTRAINT pinned_items_company_id_fkey FOREIGN KEY (company_id) REFERENCES public.companies(company_id) ON DELETE CASCADE;
+
+
+--
+-- Name: pricing pricing_company_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: neondb_owner
+--
+
+ALTER TABLE ONLY public.pricing
+    ADD CONSTRAINT pricing_company_id_fkey FOREIGN KEY (company_id) REFERENCES public.companies(company_id);
+
+
+--
+-- Name: private_notes private_notes_company_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: neondb_owner
+--
+
+ALTER TABLE ONLY public.private_notes
+    ADD CONSTRAINT private_notes_company_id_fkey FOREIGN KEY (company_id) REFERENCES public.companies(company_id) ON DELETE CASCADE;
+
+
+--
+-- Name: quick_replies quick_replies_company_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: neondb_owner
+--
+
+ALTER TABLE ONLY public.quick_replies
+    ADD CONSTRAINT quick_replies_company_id_fkey FOREIGN KEY (company_id) REFERENCES public.companies(company_id) ON DELETE CASCADE;
 
 
 --
@@ -2061,7 +2596,7 @@ ALTER TABLE ONLY public.threads
 --
 
 ALTER TABLE ONLY public.usage_logs
-    ADD CONSTRAINT usage_logs_company_id_fkey FOREIGN KEY (company_id) REFERENCES public.companies(company_id);
+    ADD CONSTRAINT usage_logs_company_id_fkey FOREIGN KEY (company_id) REFERENCES public.companies(company_id) ON DELETE CASCADE;
 
 
 --
