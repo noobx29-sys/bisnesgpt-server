@@ -6438,6 +6438,104 @@ app.get('/api/scheduled-messages', async (req, res) => {
   }
 });
 
+// New API: Get scheduled messages for a single contact
+app.get('/api/scheduled-messages/contact', async (req, res) => {
+  const { companyId, contactId, status } = req.query;
+
+  if (!companyId || !contactId) {
+    return res.status(400).json({ success: false, message: 'Missing companyId or contactId parameter' });
+  }
+
+  const sqlClient = await pool.connect();
+
+  try {
+    await sqlClient.query("BEGIN");
+
+    let query = `
+      SELECT 
+        id,
+        schedule_id,
+        company_id,
+        contact_id,
+        contact_ids,
+        multiple,
+        message_content,
+        media_url,
+        scheduled_time,
+        status,
+        attempt_count,
+        last_attempt,
+        created_at,
+        sent_at,
+        phone_index,
+        from_me
+      FROM scheduled_messages 
+      WHERE company_id = $1 AND contact_id = $2
+    `;
+    const queryParams = [companyId, contactId];
+    let paramIndex = 3;
+
+    if (status && status !== 'all') {
+      query += ` AND status = $${paramIndex}`;
+      queryParams.push(status);
+      paramIndex++;
+    }
+
+    query += ` ORDER BY scheduled_time ASC`;
+    const { rows } = await sqlClient.query(query, queryParams);
+
+    const messages = rows.map(row => {
+      let contactIds = null;
+      if (row.contact_ids) {
+        try {
+          contactIds = Array.isArray(row.contact_ids)
+            ? row.contact_ids
+            : JSON.parse(row.contact_ids);
+        } catch (e) {
+          contactIds = [row.contact_ids];
+        }
+      }
+      return {
+        id: row.id,
+        scheduleId: row.schedule_id,
+        companyId: row.company_id,
+        contactId: row.contact_id,
+        contactIds: contactIds,
+        multiple: row.multiple,
+        messageContent: row.message_content,
+        mediaUrl: row.media_url,
+        scheduledTime: row.scheduled_time,
+        status: row.status,
+        attemptCount: row.attempt_count,
+        lastAttempt: row.last_attempt,
+        createdAt: row.created_at,
+        sentAt: row.sent_at,
+        phoneIndex: row.phone_index,
+        fromMe: row.from_me
+      };
+    });
+
+    await sqlClient.query("COMMIT");
+
+    res.json({
+      success: true,
+      messages: messages,
+      count: messages.length
+    });
+
+  } catch (error) {
+    await sqlClient.query("ROLLBACK");
+    console.error("Error fetching scheduled messages for contact:", error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch scheduled messages for contact',
+      error: error.message
+    });
+  } finally {
+    sqlClient.release();
+  }
+});
+
 async function callFollowUpAPI(
   action,
   phone,
@@ -7003,12 +7101,16 @@ async function processQuotedMessage(msg, idSubstring) {
     authorNumber,
     idSubstring
   );
+  let authorName = authorData ? authorData.contactName : authorNumber;
+  if (quotedMsg.fromMe) {
+    authorName = "Me";
+  }
 
   return {
     quoted_content: {
       body: quotedMsg.body,
     },
-    quoted_author: authorData ? authorData.name : authorNumber,
+    quoted_author: authorName,
     message_id: quotedMsg.id._serialized,
     message_type: quotedMsg.type,
   };
@@ -11813,6 +11915,53 @@ app.post("/api/v2/messages/video/:companyId/:chatId", async (req, res) => {
   }
 });
 
+app.post('/api/v2/messages/document/:companyId/:chatId', async (req, res) => {
+  const companyId = req.params.companyId;
+  const chatId = req.params.chatId;
+  const { documentUrl, filename, caption, phoneIndex: requestedPhoneIndex, userName: requestedUserName } = req.body;
+  const phoneIndex = requestedPhoneIndex !== undefined ? parseInt(requestedPhoneIndex) : 0;
+  const userName = requestedUserName !== undefined ? requestedUserName : '';
+
+  try {
+    let client;
+    // 1. Get the client for this company from botMap
+    const botData = botMap.get(companyId);
+    if (!botData) {
+      return res.status(404).send('WhatsApp client not found for this company');
+    }
+    client = botData[phoneIndex].client;
+
+    if (!client) {
+      return res.status(404).send('No active WhatsApp client found for this company');
+    }
+
+    // 2. Use wwebjs to send the document message
+    const media = await MessageMedia.fromUrl(documentUrl, { unsafeMime: true, filename: filename });
+    const sentMessage = await client.sendMessage(chatId, media, { caption });
+    let phoneNumber = '+' + (chatId).split('@')[0];
+
+    // 3. Save the message to Firebase
+    const contactData = await getContactDataFromDatabaseByPhone(
+      phoneNumber,
+      companyId
+    );
+
+    await addMessageToPostgres(
+      sentMessage,
+      companyId,
+      phoneNumber,
+      contactData.contact_name || contactData.name || "",
+      phoneIndex,
+      userName
+    );
+
+    res.json({ success: true, messageId: sentMessage.id._serialized });
+  } catch (error) {
+    console.error('Error sending document message:', error);
+    res.status(500).send('Internal Server Error');
+  }
+});
+
 app.get("/api/update-phone-indices/:companyId", async (req, res) => {
   const { companyId } = req.params;
 
@@ -12139,35 +12288,46 @@ async function initializeBot(botName, phoneCount = 1, specificPhoneIndex) {
 // Add new function to manage phone status
 async function updatePhoneStatus(
   companyId,
-  phoneNumber,
+  phoneIndex,
   status,
   metadata = {}
 ) {
   try {
+    // Get phone number if status is 'ready'
+    let phoneNumber = null;
+    if (status === 'ready') {
+      const botData = botMap.get(companyId);
+      if (botData && botData[phoneIndex] && botData[phoneIndex].client?.info?.wid?.user) {
+        phoneNumber = botData[phoneIndex].client.info.wid.user;
+      }
+    }
+
     await sqlDb.query(
       `
-      INSERT INTO phone_status (company_id, phone_number, status, last_seen, metadata, updated_at)
-      VALUES ($1, $2, $3, CURRENT_TIMESTAMP, $4, CURRENT_TIMESTAMP)
-      ON CONFLICT (company_id, phone_number) DO UPDATE
+      INSERT INTO phone_status (company_id, phone_index, status, last_seen, metadata, updated_at, phone_number)
+      VALUES ($1, $2, $3, CURRENT_TIMESTAMP, $4, CURRENT_TIMESTAMP, $5)
+      ON CONFLICT (company_id, phone_index) DO UPDATE
       SET status = EXCLUDED.status,
           last_seen = CURRENT_TIMESTAMP,
           metadata = EXCLUDED.metadata,
-          updated_at = CURRENT_TIMESTAMP
+          updated_at = CURRENT_TIMESTAMP,
+          phone_number = EXCLUDED.phone_number
       `,
       [
         companyId,
-        phoneNumber,
+        phoneIndex,
         status,
         Object.keys(metadata).length ? JSON.stringify(metadata) : null,
+        phoneNumber,
       ]
     );
     console.log(
-      `Updated status for ${companyId} Phone ${phoneNumber} to ${status} (SQL)`
+      `Updated status for ${companyId} Phone ${phoneIndex} to ${status} (SQL)${phoneNumber ? ` with phone number ${phoneNumber}` : ''}`
     );
-    broadcastStatus(companyId, status, phoneNumber);
+    broadcastStatus(companyId, status, phoneIndex);
   } catch (error) {
     console.error(
-      `Error updating phone status in SQL for ${companyId} Phone ${phoneNumber}:`,
+      `Error updating phone status in SQL for ${companyId} Phone ${phoneIndex}:`,
       error
     );
   }
@@ -13544,14 +13704,14 @@ app.get("/api/companies/:companyId/contacts", async (req, res) => {
         c.name,
         c.phone,
         c.email,
-        c.thread_id,
+        c.chat_id,
         c.profile,
         c.profile_pic_url,
         c.tags,
         c.created_at,
         c.last_updated,
         CASE 
-          WHEN c.thread_id LIKE '%@c.us' THEN true 
+          WHEN c.chat_id LIKE '%@c.us' THEN true 
           ELSE false 
         END as is_individual,
         (
@@ -13622,7 +13782,7 @@ app.get("/api/companies/:companyId/contacts", async (req, res) => {
         name: contact.name || "",
         phone: contact.phone || "",
         email: contact.email || "",
-        chat_id: contact.thread_id || "",
+        chat_id: contact.chat_id || "",
         profileUrl: contact.profile_pic_url || "",
         profile: contact.profile || {},
         tags: tags,
@@ -13635,7 +13795,7 @@ app.get("/api/companies/:companyId/contacts", async (req, res) => {
     });
 
     // Filter contacts based on user role
-    // const filteredContacts = filterContactsByUserRole(processedContacts, userData.role, userData.name);
+    const filteredContacts = filterContactsByUserRole(processedContacts, userData.role, userData.name);
 
     res.json({
       success: true,
@@ -13736,8 +13896,7 @@ app.get("/api/company-data", async (req, res) => {
 app.get("/api/messages", async (req, res) => {
   try {
     const { chatId, companyId } = req.query;
-    console.log(chatId);
-    console.log(companyId);
+    console.log("Fetching messages for chatId:", chatId, "companyId:", companyId);
     const result = await sqlDb.query(
       `SELECT m.*, c.name as contact_name 
        FROM messages m
@@ -13810,6 +13969,9 @@ app.get("/api/user-context", async (req, res) => {
     // Process phone names
     const phoneNamesData = {};
     const phoneCount = companyData.phone_count || 0;
+    const apiUrl = companyData.api_url || "https://juta.ngrok.app";
+    const stopBot = companyData.stopbot || false;
+    const stopBots = companyData.stopbots || {};
     
     for (let i = 0; i < phoneCount; i++) {
       const phoneName = companyData[`phone_${i + 1}`];
@@ -13830,9 +13992,11 @@ app.get("/api/user-context", async (req, res) => {
       ...userData,
       companyId,
       phoneNames: phoneNamesData,
-      employees: employeesResult.rows
+      employees: employeesResult.rows,
+      apiUrl: apiUrl,
+      stopBot: stopBot,
+      stopBots: stopBots,
     });
-
   } catch (error) {
     console.error("Error fetching user context:", error);
     res.status(500).json({ error: "Failed to fetch user context" });

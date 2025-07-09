@@ -6523,12 +6523,16 @@ async function processQuotedMessage(msg, idSubstring) {
     authorNumber,
     idSubstring
   );
+  let authorName = authorData ? authorData.contactName : authorNumber;
+  if (quotedMsg.fromMe) {
+    authorName = "Me";
+  }
 
   return {
     quoted_content: {
       body: quotedMsg.body,
     },
-    quoted_author: authorData ? authorData.name : authorNumber,
+    quoted_author: authorName,
     message_id: quotedMsg.id._serialized,
     message_type: quotedMsg.type,
   };
