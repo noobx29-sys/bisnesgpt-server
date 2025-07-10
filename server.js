@@ -2006,9 +2006,13 @@ app.post("/api/schedule-message/:companyId", async (req, res) => {
           : null,
       ]);
 
-      const queue = getQueueForBot(companyId);
+      const queue = getQueueForBot(companyId);        
       const batches = [];
 
+      console.log(`[Company ${companyId}] Creating batches: ` +
+        `${isMultiple ? "Multiple contacts" : "Single contact"}, ` + 
+        `${numberOfBatches} batches needed`);
+        
       // Create batches if there are multiple contacts requiring batching
       if (isMultiple && numberOfBatches > 1) {
         for (let batchIndex = 0; batchIndex < numberOfBatches; batchIndex++) {
@@ -2085,7 +2089,7 @@ app.post("/api/schedule-message/:companyId", async (req, res) => {
 
       // Add jobs to queue
       if (batches.length > 0) {
-        // Add batch jobs
+        // Add batch jobs only (not the main entry as per requirements)
         for (const batch of batches) {
           const delay = Math.max(batch.scheduledTime.getTime() - Date.now(), 0);
           await queue.add(
@@ -2103,6 +2107,9 @@ app.post("/api/schedule-message/:companyId", async (req, res) => {
             }
           );
         }
+        
+        // When using batching, the main entry is just a placeholder and should not be queued
+        console.log(`[Company ${companyId}] Created ${batches.length} batch jobs, main entry will be updated when all batches complete`);
       } else {
         // Add single message job (no batching needed)
         const delay = Math.max(scheduledTime.getTime() - Date.now(), 0);
@@ -2145,42 +2152,45 @@ app.put("/api/schedule-message/:companyId/:messageId", async (req, res) => {
   const updatedMessage = req.body;
   const phoneIndex = updatedMessage.phoneIndex || 0;
 
+  console.log("PUT /api/schedule-message/:companyId/:messageId called");
+  console.log("Params:", { companyId, messageId });
+  console.log("Updated message body:", updatedMessage);
+
   try {
     const client = await pool.connect();
 
     try {
       await client.query("BEGIN");
 
-      await client.query(
-        "DELETE FROM scheduled_messages WHERE schedule_id = $1 AND id != $1",
-        [messageId]
-      );
+      // Get existing message to access its properties
+      const existingMessageQuery = "SELECT * FROM scheduled_messages WHERE id = $1 AND company_id = $2";
+      const existingMessageResult = await client.query(existingMessageQuery, [messageId, companyId]);
 
+      if (existingMessageResult.rowCount === 0) {
+        console.log("Scheduled message not found");
+        return res.status(404).json({
+          success: false,
+          error: "Scheduled message not found",
+        });
+      }
+
+      const existingMessage = existingMessageResult.rows[0];
+
+      // Do not delete any records - we will update them all instead
+      console.log("Updating all messages with schedule_id:", messageId);
+
+      // We'll only update the content-related fields that can be changed in the frontend
+      // Keeping the batch structure, recipients, and scheduling intact
       const updateQuery = `
         UPDATE scheduled_messages SET
           message_content = $1,
           media_url = $2,
-          scheduled_time = $3,
-          status = $4,
-          phone_index = $5,
-          is_media = $6,
-          document_url = $7,
-          file_name = $8,
-          caption = $9,
-          chat_ids = $10,
-          batch_quantity = $11,
-          repeat_interval = $12,
-          repeat_unit = $13,
-          message_delays = $14,
-          infinite_loop = $15,
-          min_delay = $16,
-          max_delay = $17,
-          activate_sleep = $18,
-          sleep_after_messages = $19,
-          sleep_duration = $20,
-          active_hours = $21,
-          messages = $22
-        WHERE id = $23 AND company_id = $24
+          is_media = $3,
+          document_url = $4,
+          file_name = $5,
+          caption = $6,
+          status = $7
+        WHERE (id::text = $8::text OR schedule_id::text = $8::text) AND company_id = $9
       `;
 
       const isMediaMessage = Boolean(
@@ -2189,120 +2199,51 @@ app.put("/api/schedule-message/:companyId/:messageId", async (req, res) => {
       const messageCaption =
         updatedMessage.caption || updatedMessage.message || "";
 
+      console.log("Updating content for all scheduled message records with schedule_id:", messageId);
       await client.query(updateQuery, [
         updatedMessage.message || null,
         updatedMessage.mediaUrl || null,
-        toPgTimestamp(updatedMessage.scheduledTime),
-        updatedMessage.status || "scheduled",
-        phoneIndex,
         isMediaMessage,
         updatedMessage.documentUrl || null,
         updatedMessage.fileName || null,
         messageCaption,
-        JSON.stringify(updatedMessage.chatIds || []),
-        updatedMessage.batchQuantity || null,
-        updatedMessage.repeatInterval || null,
-        updatedMessage.repeatUnit || null,
-        updatedMessage.messageDelays
-          ? JSON.stringify(updatedMessage.messageDelays)
-          : null,
-        updatedMessage.infiniteLoop || false,
-        updatedMessage.minDelay || null,
-        updatedMessage.maxDelay || null,
-        updatedMessage.activateSleep || false,
-        updatedMessage.sleepAfterMessages || null,
-        updatedMessage.sleepDuration || null,
-        updatedMessage.activeHours
-          ? JSON.stringify(updatedMessage.activeHours)
-          : null,
-        updatedMessage.messages
-          ? JSON.stringify(updatedMessage.messages)
-          : null,
+        updatedMessage.status || "scheduled",
         messageId,
         companyId,
       ]);
 
-      if (updatedMessage.status === "scheduled") {
-        const chatIds = updatedMessage.chatIds || [];
-        const totalMessages =
-          updatedMessage.messages?.length > 0
-            ? chatIds.length * updatedMessage.messages.length
-            : chatIds.length;
-
-        const batchSize = updatedMessage.batchQuantity || totalMessages;
-        const numberOfBatches = Math.ceil(totalMessages / batchSize);
+      // No need to modify the queue jobs or recreate batches
+      // Just update the content of the existing messages
+      // The existing job scheduling remains intact
+      
+      // If the status has changed to something other than "scheduled", 
+      // we should remove any pending jobs from the queue
+      if (updatedMessage.status && updatedMessage.status !== "scheduled") {
+        console.log(`Message status changed to ${updatedMessage.status}, removing jobs from queue if they exist`);
+        
+        // Get all batch IDs associated with this message
+        const batchesQuery = "SELECT id FROM scheduled_messages WHERE (id::text = $1::text OR schedule_id::text = $1::text) AND company_id = $2";
+        const batchesResult = await client.query(batchesQuery, [messageId, companyId]);
+        const batchIds = batchesResult.rows.map(row => row.id);
+        
+        // Remove jobs from queue
         const queue = getQueueForBot(companyId);
-        const batches = [];
-
-        for (let batchIndex = 0; batchIndex < numberOfBatches; batchIndex++) {
-          const startIndex = batchIndex * batchSize;
-          const endIndex = Math.min(
-            (batchIndex + 1) * batchSize,
-            totalMessages
-          );
-
-          const batchDelay =
-            batchIndex *
-            updatedMessage.repeatInterval *
-            getMillisecondsForUnit(updatedMessage.repeatUnit);
-          const batchScheduledTime = new Date(
-            toPgTimestamp(updatedMessage.scheduledTime).getTime() + batchDelay
-          );
-
-          const batchId = uuidv4(); // generate a valid UUID for each batch
-
-          const batchQuery = `
-            INSERT INTO scheduled_messages (
-              id, schedule_id, company_id, scheduled_time, status, created_at,
-              batch_index, chat_ids, phone_index, from_me, multiple, contact_id, contact_ids
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
-          `;
-
-          // Get contacts for this batch - assumes contact data is available from main message
-          const batchContactIds = existingMessage.multiple && existingMessage.contact_ids 
-            ? JSON.parse(existingMessage.contact_ids).slice(startIndex, endIndex)
-            : existingMessage.contact_id ? [existingMessage.contact_id] : [];
-
-          await client.query(batchQuery, [
-            batchId,
-            messageId,
-            companyId,
-            batchScheduledTime,
-            "scheduled",
-            new Date(),
-            batchIndex,
-            JSON.stringify(chatIds.slice(startIndex, endIndex)),
-            phoneIndex,
-            true,
-            existingMessage.multiple || false,
-            existingMessage.multiple ? null : (batchContactIds[0] || null),
-            existingMessage.multiple ? JSON.stringify(batchContactIds) : null,
-          ]);
-
-          batches.push({ id: batchId, scheduledTime: batchScheduledTime });
+        for (const id of batchIds) {
+          try {
+            await queue.remove(id);
+            console.log(`Removed job with ID ${id} from queue`);
+          } catch (e) {
+            // Job might not exist, which is fine
+            console.log(`Job with ID ${id} not found in queue or already processed`);
+          }
         }
-
-        for (const batch of batches) {
-          const delay = Math.max(batch.scheduledTime.getTime() - Date.now(), 0);
-          await queue.add(
-            "send-message-batch",
-            {
-              companyId,
-              messageId,
-              batchId: batch.id,
-            },
-            {
-              removeOnComplete: false,
-              removeOnFail: false,
-              delay,
-              jobId: batch.id,
-            }
-          );
-        }
+      } else {
+        console.log("Message status remains 'scheduled', keeping existing jobs in the queue");
       }
 
       await client.query("COMMIT");
 
+      console.log("Scheduled message updated successfully:", messageId);
       res.json({
         id: messageId,
         message: "Message updated successfully",
@@ -2310,6 +2251,7 @@ app.put("/api/schedule-message/:companyId/:messageId", async (req, res) => {
       });
     } catch (error) {
       await client.query("ROLLBACK");
+      console.error("Error during scheduled message update transaction:", error);
       throw error;
     } finally {
       client.release();
@@ -2331,7 +2273,7 @@ app.delete("/api/schedule-message/:companyId/:messageId", async (req, res) => {
       await client.query("BEGIN");
 
       const checkQuery =
-        "SELECT id FROM scheduled_messages WHERE id = $1 AND company_id = $2";
+        "SELECT id FROM scheduled_messages WHERE schedule_id = $1 AND company_id = $2";
       const checkResult = await client.query(checkQuery, [
         messageId,
         companyId,
@@ -2344,12 +2286,47 @@ app.delete("/api/schedule-message/:companyId/:messageId", async (req, res) => {
         });
       }
 
+      // First, get all batch IDs associated with this message for queue job removal
+      const getBatchesQuery = 
+        "SELECT id FROM scheduled_messages WHERE (id::text = $1::text OR schedule_id = $1) AND company_id = $2";
+      const batchesResult = await client.query(getBatchesQuery, [
+        messageId,
+        companyId,
+      ]);
+      
+      const batchIds = batchesResult.rows.map(row => row.id);
+      
+      // Delete the message records from database
       const deleteQuery =
-        "DELETE FROM scheduled_messages WHERE (id = $1 OR schedule_id = $1) AND company_id = $2";
+        "DELETE FROM scheduled_messages WHERE (id::text = $1::text OR schedule_id = $1) AND company_id = $2";
       const deleteResult = await client.query(deleteQuery, [
         messageId,
         companyId,
       ]);
+      
+      // Get the queue and remove all related jobs
+      const queue = getQueueForBot(companyId);
+      
+      // Remove main message job if it exists
+      await queue.removeRepeatableByKey(messageId);
+      try {
+        await queue.remove(messageId);
+      } catch (e) {
+        // Job might not exist, which is fine
+        console.log(`Job with ID ${messageId} not found in queue or already processed`);
+      }
+      
+      // Remove all batch jobs if they exist
+      for (const batchId of batchIds) {
+        if (batchId !== messageId) {
+          try {
+            await queue.remove(batchId);
+          } catch (e) {
+            // Job might not exist, which is fine
+            console.log(`Batch job with ID ${batchId} not found in queue or already processed`);
+          }
+        }
+      }
 
       await client.query("COMMIT");
 
@@ -2358,6 +2335,7 @@ app.delete("/api/schedule-message/:companyId/:messageId", async (req, res) => {
         message: "Message deleted successfully",
         success: true,
         batchesDeleted: deleteResult.rowCount - 1,
+        jobsRemoved: batchIds.length
       });
     } catch (error) {
       await client.query("ROLLBACK");
@@ -3573,28 +3551,44 @@ const createQueueAndWorker = (botId) => {
             const result = await sendScheduledMessage(batchData);
 
             if (result.success) {
+              console.log(`Bot ${botId} - Successfully sent batch ${batchId} for message ${messageId}`);
+              
               await client.query(
                 "UPDATE scheduled_messages SET status = $1, sent_at = NOW() WHERE id = $2",
                 ["sent", batchId]
               );
+              
+              // Check if all batches are now processed
               const batchesCheckQuery = `
-              SELECT COUNT(*) as pending_count 
+              SELECT COUNT(*) as pending_count,
+                     (SELECT status FROM scheduled_messages WHERE id = $1::uuid) as main_status
               FROM scheduled_messages 
-              WHERE schedule_id = $1 
+              WHERE schedule_id = $1::uuid
               AND company_id = $2 
               AND status != 'sent'
-              AND id::text != schedule_id::text
+              AND id::uuid != schedule_id::uuid
             `;
               const batchesCheck = await client.query(batchesCheckQuery, [
                 messageId,
                 companyId,
               ]);
 
+              console.log(`Bot ${botId} - Batch status check:`, {
+                pendingCount: batchesCheck.rows[0].pending_count,
+                mainStatus: batchesCheck.rows[0].main_status
+              });
+              
               if (batchesCheck.rows[0].pending_count === 0) {
-                await client.query(
-                  "UPDATE scheduled_messages SET status = $1 WHERE id = $2",
-                  ["completed", messageId]
-                );
+                // All batches have been processed, update the main entry to "sent" status
+                if (batchesCheck.rows[0].main_status !== 'sent') {
+                  await client.query(
+                    "UPDATE scheduled_messages SET status = $1, sent_at = NOW() WHERE id = $2",
+                    ["sent", messageId]
+                  );
+                  console.log(`Bot ${botId} - All batches completed for message ${messageId}, main entry updated to "sent" status`);
+                } else {
+                  console.log(`Bot ${botId} - All batches completed for message ${messageId}, main entry already has "sent" status`);
+                }
               }
             } else {
               console.error(
@@ -3605,10 +3599,35 @@ const createQueueAndWorker = (botId) => {
                 "UPDATE scheduled_messages SET status = $1 WHERE id = $2",
                 ["failed", batchId]
               );
-              await client.query(
-                "UPDATE scheduled_messages SET status = $1 WHERE id = $2",
-                ["failed", messageId]
-              );
+              
+              // We'll only update the main entry to failed if ALL batches have failed
+              // Check if any batches are still pending or sent successfully
+              const batchStatusCheckQuery = `
+                SELECT 
+                  COUNT(*) FILTER (WHERE status = 'scheduled') as pending_count,
+                  COUNT(*) FILTER (WHERE status = 'sent') as sent_count,
+                  COUNT(*) FILTER (WHERE status = 'failed') as failed_count
+                FROM scheduled_messages 
+                WHERE schedule_id = $1::uuid
+                AND company_id = $2
+                AND id::uuid != schedule_id::uuid
+              `;
+              
+              const batchStatusCheck = await client.query(batchStatusCheckQuery, [messageId, companyId]);
+              const { pending_count, sent_count, failed_count } = batchStatusCheck.rows[0];
+              
+              console.log(`Bot ${botId} - Batch failure status:`, { pending_count, sent_count, failed_count });
+              
+              // Only mark main entry as failed if all batches have failed and none are pending
+              if (pending_count === 0 && sent_count === 0) {
+                await client.query(
+                  "UPDATE scheduled_messages SET status = $1 WHERE id = $2",
+                  ["failed", messageId]
+                );
+                console.log(`Bot ${botId} - All batches failed for message ${messageId}, marking main entry as failed`);
+              } else {
+                console.log(`Bot ${botId} - Some batches still pending or sent for message ${messageId}, not marking main as failed`);
+              }
             }
 
             await client.query("COMMIT");
@@ -6335,6 +6354,8 @@ async function handleFollowUpTemplateActivation(
 app.get('/api/scheduled-messages', async (req, res) => {  
   const { companyId, status } = req.query;
   
+  console.log(`Fetching scheduled messages for companyId: ${companyId}, status: ${status || 'all'}`);
+  
   // Validation
   if (!companyId) {
     console.error("Missing companyId parameter");
@@ -6367,6 +6388,7 @@ app.get('/api/scheduled-messages', async (req, res) => {
         from_me
       FROM scheduled_messages 
       WHERE company_id = $1
+      AND id::text = schedule_id
     `;
     
     const queryParams = [companyId];
@@ -6418,6 +6440,8 @@ app.get('/api/scheduled-messages', async (req, res) => {
 
     await sqlClient.query("COMMIT");
     
+    console.log(`Returning ${messages.length} main scheduled messages (excluding batch entries) for companyId: ${companyId}`);
+    
     res.json({ 
       success: true, 
       messages: messages,
@@ -6441,6 +6465,8 @@ app.get('/api/scheduled-messages', async (req, res) => {
 // New API: Get scheduled messages for a single contact
 app.get('/api/scheduled-messages/contact', async (req, res) => {
   const { companyId, contactId, status } = req.query;
+  
+  console.log(`Fetching scheduled messages for companyId: ${companyId}, contactId: ${contactId}, status: ${status || 'all'}`);
 
   if (!companyId || !contactId) {
     return res.status(400).json({ success: false, message: 'Missing companyId or contactId parameter' });
@@ -6470,7 +6496,13 @@ app.get('/api/scheduled-messages/contact', async (req, res) => {
         phone_index,
         from_me
       FROM scheduled_messages 
-      WHERE company_id = $1 AND contact_id = $2
+      WHERE company_id = $1
+      AND id::text = schedule_id
+      AND (
+        contact_id = $2 
+        OR 
+        (contact_ids IS NOT NULL AND contact_ids::jsonb ? $2)
+      )
     `;
     const queryParams = [companyId, contactId];
     let paramIndex = 3;
@@ -6516,6 +6548,8 @@ app.get('/api/scheduled-messages/contact', async (req, res) => {
     });
 
     await sqlClient.query("COMMIT");
+    
+    console.log(`Returning ${messages.length} main scheduled messages for contactId: ${contactId} (excluding batch entries)`);
 
     res.json({
       success: true,
@@ -14432,5 +14466,61 @@ app.post("/api/private-note", async (req, res) => {
   } catch (error) {
     console.error("Error adding private note:", error);
     res.status(500).json({ error: "Failed to add private note" });
+  }
+});
+
+app.post("/api/company/update-stopbot", async (req, res) => {
+  try {
+    const { companyId, stopbot, phoneIndex } = req.body;
+    if (!companyId) {
+      return res.status(400).json({ error: "companyId is required" });
+    }
+    if (typeof stopbot === "undefined" || typeof phoneIndex === "undefined") {
+      return res.status(400).json({ error: "stopbot and phoneIndex are required" });
+    }
+
+    // Fetch current stopbots object
+    const companyResult = await sqlDb.query(
+      "SELECT stopbots FROM companies WHERE company_id = $1",
+      [companyId]
+    );
+    if (companyResult.rows.length === 0) {
+      return res.status(404).json({ error: "Company not found" });
+    }
+    let stopbots = companyResult.rows[0].stopbots || {};
+
+    // If stopbots is a string (from DB), parse it
+    if (typeof stopbots === "string") {
+      try {
+        stopbots = JSON.parse(stopbots);
+      } catch {
+        stopbots = {};
+      }
+    }
+
+    // Update the stopbots for the given phoneIndex
+    stopbots[phoneIndex] = stopbot;
+
+    // Update the company row
+    const result = await sqlDb.query(
+      `
+        UPDATE companies
+        SET stopbot = $1,
+            stopbots = $2,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE company_id = $3
+        RETURNING company_id, stopbot, stopbots
+      `,
+      [stopbot, JSON.stringify(stopbots), companyId]
+    );
+
+    res.json({
+      success: true,
+      message: "Company stopbot settings updated",
+      data: result.rows[0],
+    });
+  } catch (error) {
+    console.error("Error updating stopbot:", error);
+    res.status(500).json({ error: "Failed to update stopbot", details: error.message });
   }
 });
