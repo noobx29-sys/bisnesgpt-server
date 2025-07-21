@@ -193,8 +193,8 @@ const storage = multer.diskStorage({
 const upload = multer({
   storage,
   limits: {
-    fileSize: 50 * 1024 * 1024, // 50MB file size limit
-    fieldSize: 50 * 1024 * 1024, // 50MB field size limit (for non-file fields)
+    fileSize: 200 * 1024 * 1024, // 200MB file size limit
+    fieldSize: 200 * 1024 * 1024, // 200MB field size limit (for non-file fields)
     files: 1, // Limit to 1 file per upload
     fields: 10 // Limit to 10 non-file fields
   },
@@ -956,20 +956,10 @@ function broadcastProgress(botName, action, progress, phoneIndex) {
 
 const botStatusMap = new Map();
 function broadcastAuthStatus(botName, status, qrCode = null, i = 0) {
-  console.log("Broadcasting auth status:", { botName, status, qrCode, i });
-  console.log("Number of connected clients:", wss.clients.size);
-
   wss.clients.forEach((client) => {
     try {
       if (client.readyState === WebSocket.OPEN) {
-        console.log("Client state:", {
-          pathname: client.pathname,
-          companyId: botName,
-          readyState: client.readyState,
-        });
-
         if (client.pathname === "/status") {
-          console.log("Sending to status monitor client");
           const message = JSON.stringify({
             type: "status_update",
             botName,
@@ -979,7 +969,6 @@ function broadcastAuthStatus(botName, status, qrCode = null, i = 0) {
           });
           client.send(message);
         } else if (client.companyId === botName) {
-          console.log("Sending to company client");
           const message = JSON.stringify({
             type: "auth_status",
             botName,
@@ -1963,9 +1952,7 @@ app.post("/api/schedule-message/:companyId", async (req, res) => {
         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, 
           $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31)
       `;
-      console.log("scheduledTime received:", scheduledMessage.scheduledTime);
       const scheduledTime = toPgTimestamp(scheduledMessage.scheduledTime);
-      console.log("scheduledTime parsed:", scheduledTime);
       await client.query(mainMessageQuery, [
         messageId,
         messageId,
@@ -2008,10 +1995,6 @@ app.post("/api/schedule-message/:companyId", async (req, res) => {
 
       const queue = getQueueForBot(companyId);        
       const batches = [];
-
-      console.log(`[Company ${companyId}] Creating batches: ` +
-        `${isMultiple ? "Multiple contacts" : "Single contact"}, ` + 
-        `${numberOfBatches} batches needed`);
         
       // Create batches if there are multiple contacts requiring batching
       if (isMultiple && numberOfBatches > 1) {
@@ -2107,9 +2090,6 @@ app.post("/api/schedule-message/:companyId", async (req, res) => {
             }
           );
         }
-        
-        // When using batching, the main entry is just a placeholder and should not be queued
-        console.log(`[Company ${companyId}] Created ${batches.length} batch jobs, main entry will be updated when all batches complete`);
       } else {
         // Add single message job (no batching needed)
         const delay = Math.max(scheduledTime.getTime() - Date.now(), 0);
@@ -2602,7 +2582,7 @@ app.post("/api/sync-single-contact/:companyId", async (req, res) => {
     }
 
     const selectedPhoneIndex = phoneIndex !== undefined ? phoneIndex : 0;
-    
+
     if (selectedPhoneIndex < 0 || selectedPhoneIndex >= botData.length) {
       return res.status(400).json({ error: "Invalid phone index" });
     }
@@ -2614,26 +2594,24 @@ app.post("/api/sync-single-contact/:companyId", async (req, res) => {
       });
     }
 
-    // Start syncing process for single contact
-    syncSingleContact(client, companyId, contactPhone, selectedPhoneIndex)
-      .then(() => {
-        console.log(
-          `Single contact synchronization completed for company ${companyId}, phone ${selectedPhoneIndex}, contact ${contactPhone}`
-        );
-      })
-      .catch((error) => {
-        console.error(
-          `Error during single contact sync for company ${companyId}, phone ${selectedPhoneIndex}, contact ${contactPhone}:`,
-          error
-        );
+    try {
+      await syncSingleContact(client, companyId, contactPhone, selectedPhoneIndex);
+      console.log(
+        `Single contact synchronization completed for company ${companyId}, phone ${selectedPhoneIndex}, contact ${contactPhone}`
+      );
+      res.json({
+        success: true,
+        message: "Single contact synchronization finished",
+        contactPhone,
+        phoneIndex: selectedPhoneIndex,
       });
-
-    res.json({
-      success: true,
-      message: "Single contact synchronization started",
-      contactPhone,
-      phoneIndex: selectedPhoneIndex,
-    });
+    } catch (error) {
+      console.error(
+        `Error during single contact sync for company ${companyId}, phone ${selectedPhoneIndex}, contact ${contactPhone}:`,
+        error
+      );
+      res.status(500).json({ error: "Failed to sync single contact", details: error.message });
+    }
   } catch (error) {
     console.error(`Error starting single contact sync for ${companyId}:`, error);
     res.status(500).json({ error: "Failed to start single contact synchronization" });
@@ -2658,7 +2636,7 @@ app.post("/api/sync-single-contact-name/:companyId", async (req, res) => {
     }
 
     const selectedPhoneIndex = phoneIndex !== undefined ? phoneIndex : 0;
-    
+
     if (selectedPhoneIndex < 0 || selectedPhoneIndex >= botData.length) {
       return res.status(400).json({ error: "Invalid phone index" });
     }
@@ -2670,26 +2648,24 @@ app.post("/api/sync-single-contact-name/:companyId", async (req, res) => {
       });
     }
 
-    // Start syncing process for single contact name
-    syncSingleContactName(client, companyId, contactPhone, selectedPhoneIndex)
-      .then(() => {
-        console.log(
-          `Single contact name synchronization completed for company ${companyId}, phone ${selectedPhoneIndex}, contact ${contactPhone}`
-        );
-      })
-      .catch((error) => {
-        console.error(
-          `Error during single contact name sync for company ${companyId}, phone ${selectedPhoneIndex}, contact ${contactPhone}:`,
-          error
-        );
+    try {
+      await syncSingleContactName(client, companyId, contactPhone, selectedPhoneIndex);
+      console.log(
+        `Single contact name synchronization completed for company ${companyId}, phone ${selectedPhoneIndex}, contact ${contactPhone}`
+      );
+      res.json({
+        success: true,
+        message: "Single contact name synchronization finished",
+        contactPhone,
+        phoneIndex: selectedPhoneIndex,
       });
-
-    res.json({
-      success: true,
-      message: "Single contact name synchronization started",
-      contactPhone,
-      phoneIndex: selectedPhoneIndex,
-    });
+    } catch (error) {
+      console.error(
+        `Error during single contact name sync for company ${companyId}, phone ${selectedPhoneIndex}, contact ${contactPhone}:`,
+        error
+      );
+      res.status(500).json({ error: "Failed to sync single contact name", details: error.message });
+    }
   } catch (error) {
     console.error(`Error starting single contact name sync for ${companyId}:`, error);
     res.status(500).json({ error: "Failed to start single contact name synchronization" });
@@ -2964,13 +2940,14 @@ async function syncContacts(client, companyId, phoneIndex = 0) {
         const contactQuery = `
           INSERT INTO public.contacts (
             contact_id, company_id, name, phone, tags, unread_count, created_at, last_updated, 
-            chat_data, company, thread_id, last_message, profile_pic_url
+            chat_data, company, chat_id, last_message, profile_pic_url
           ) VALUES ($1, $2, $3, $4, '[]'::jsonb, $5, NOW(), NOW(), $6, $7, $8, '{}'::jsonb, $9)
           ON CONFLICT (contact_id, company_id) DO UPDATE SET
-            name = EXCLUDED.name,
             last_updated = NOW(),
             profile_pic_url = EXCLUDED.profile_pic_url,
-            unread_count = EXCLUDED.unread_count;
+            unread_count = EXCLUDED.unread_count,
+            last_message = EXCLUDED.last_message,
+            chat_data = EXCLUDED.chat_data;
         `;
         await sqlDb.query(contactQuery, [
           contactID,
@@ -2982,110 +2959,144 @@ async function syncContacts(client, companyId, phoneIndex = 0) {
           contact.name,
           chat.id._serialized,
           profilePicUrl,
-        ]);      // Fetch and insert messages using the same method as addMessageToPostgres
-      const messages = await chat.fetchMessages({ limit: 10 }); // Adjust limit as needed
+        ]);
 
-      for (const msg of messages) {
-        try {
-          // Use the same comprehensive message saving as addMessageToPostgres
-          const basicInfo = await extractBasicMessageInfo(msg);
-          const messageData = await prepareMessageData(msg, companyId, phoneIndex);
+        // Fetch and insert messages using the same method as addMessageToPostgres
+        const messages = await chat.fetchMessages();
+        let lastMessage = null;
 
-          // Get message body (with audio transcription if applicable)
-          let messageBody = messageData.text?.body || "";
-          if (msg.hasMedia && (msg.type === "audio" || msg.type === "ptt")) {
-            console.log("Voice message detected during sync");
-            try {
-              const media = await msg.downloadMedia();
-              const transcription = await transcribeAudio(media.data);
-              if (transcription && transcription !== "Audio transcription failed. Please try again.") {
-                messageBody += transcription;
-              } else {
+        for (const msg of messages) {
+          try {
+            // Use the same comprehensive message saving as addMessageToPostgres
+            const basicInfo = await extractBasicMessageInfo(msg);
+            const messageData = await prepareMessageData(msg, companyId, phoneIndex);
+
+            // Get message body (with audio transcription if applicable)
+            let messageBody = messageData.text?.body || "";
+            if (msg.hasMedia && (msg.type === "audio" || msg.type === "ptt")) {
+              console.log("Voice message detected during sync");
+              try {
+                const media = await msg.downloadMedia();
+                const transcription = await transcribeAudio(media.data);
+                if (transcription && transcription !== "Audio transcription failed. Please try again.") {
+                  messageBody += transcription;
+                } else {
+                  messageBody += "Audio message";
+                }
+              } catch (error) {
+                console.error("Error transcribing audio during sync:", error);
                 messageBody += "Audio message";
               }
-            } catch (error) {
-              console.error("Error transcribing audio during sync:", error);
-              messageBody += "Audio message";
             }
-          }
 
-          // Prepare media data
-          let mediaUrl = null;
-          let mediaData = null;
-          let mediaMetadata = {};
+            // Prepare media data
+            let mediaUrl = null;
+            let mediaData = null;
+            let mediaMetadata = {};
 
-          if (msg.hasMedia) {
-            if (msg.type === "video") {
-              mediaUrl = messageData.video?.link || null;
-            } else if (msg.type !== "audio" && msg.type !== "ptt") {
-              const mediaTypeData = messageData[msg.type];
-              if (mediaTypeData) {
-                mediaData = mediaTypeData.data || null;
-                mediaMetadata = {
-                  mimetype: mediaTypeData.mimetype,
-                  filename: mediaTypeData.filename || "",
-                  caption: mediaTypeData.caption || "",
-                  thumbnail: mediaTypeData.thumbnail || null,
-                  mediaKey: mediaTypeData.media_key || null,
-                  ...(msg.type === "image" && {
-                    width: mediaTypeData.width,
-                    height: mediaTypeData.height
-                  }),
-                  ...(msg.type === "document" && {
-                    pageCount: mediaTypeData.page_count,
-                    fileSize: mediaTypeData.file_size
-                  })
-                };
+            if (msg.hasMedia) {
+              if (msg.type === "video") {
+                mediaUrl = messageData.video?.link || null;
+              } else if (msg.type !== "audio" && msg.type !== "ptt") {
+                const mediaTypeData = messageData[msg.type];
+                if (mediaTypeData) {
+                  mediaData = mediaTypeData.data || null;
+                  mediaMetadata = {
+                    mimetype: mediaTypeData.mimetype,
+                    filename: mediaTypeData.filename || "",
+                    caption: mediaTypeData.caption || "",
+                    thumbnail: mediaTypeData.thumbnail || null,
+                    mediaKey: mediaTypeData.media_key || null,
+                    ...(msg.type === "image" && {
+                      width: mediaTypeData.width,
+                      height: mediaTypeData.height
+                    }),
+                    ...(msg.type === "document" && {
+                      pageCount: mediaTypeData.page_count,
+                      fileSize: mediaTypeData.file_size
+                    })
+                  };
+                }
+              } else if (msg.type === "audio" || msg.type === "ptt") {
+                mediaData = messageData.audio?.data || null;
               }
-            } else if (msg.type === "audio" || msg.type === "ptt") {
-              mediaData = messageData.audio?.data || null;
             }
+
+            // Prepare quoted message
+            const quotedMessage = messageData.text?.context || null;
+
+            // Determine author
+            let author = null;
+            if (msg.from.includes("@g.us") && basicInfo.author) {
+              const authorData = await getContactDataFromDatabaseByPhone(basicInfo.author, companyId);
+              author = authorData ? authorData.contactName : basicInfo.author;
+            }
+
+            const messageQuery = `
+              INSERT INTO public.messages (
+                message_id, company_id, contact_id, content, message_type,
+                media_url, media_data, media_metadata, timestamp, direction,
+                status, from_me, chat_id, author, phone_index, quoted_message,
+                thread_id, customer_phone
+              ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+              ON CONFLICT (message_id, company_id) DO NOTHING;
+            `;
+
+            await sqlDb.query(messageQuery, [
+              basicInfo.idSerialized,
+              companyId,
+              contactID,
+              messageBody,
+              basicInfo.type,
+              mediaUrl,
+              mediaData,
+              Object.keys(mediaMetadata).length > 0 ? JSON.stringify(mediaMetadata) : null,
+              new Date(basicInfo.timestamp * 1000),
+              msg.fromMe ? "outbound" : "inbound",
+              "delivered",
+              msg.fromMe || false,
+              msg.from,
+              author || contactID,
+              phoneIndex,
+              quotedMessage ? JSON.stringify(quotedMessage) : null,
+              msg.to,
+              contactPhone
+            ]);
+
+            // Keep track of the most recent message for last_message
+            if (!lastMessage || basicInfo.timestamp > lastMessage.timestamp) {
+              lastMessage = {
+                chat_id: basicInfo.chatId,
+                from: basicInfo.from,
+                from_me: basicInfo.fromMe,
+                id: basicInfo.idSerialized,
+                phoneIndex: phoneIndex,
+                source: basicInfo.deviceType,
+                status: "delivered",
+                text: { body: messageBody },
+                timestamp: basicInfo.timestamp,
+                type: basicInfo.type
+              };
+            }
+          } catch (error) {
+            console.error(`Error processing message ${msg.id._serialized} during sync:`, error);
           }
-
-          // Prepare quoted message
-          const quotedMessage = messageData.text?.context || null;
-
-          // Determine author
-          let author = null;
-          if (msg.from.includes("@g.us") && basicInfo.author) {
-            const authorData = await getContactDataFromDatabaseByPhone(basicInfo.author, companyId);
-            author = authorData ? authorData.contactName : basicInfo.author;
-          }
-
-          const messageQuery = `
-            INSERT INTO public.messages (
-              message_id, company_id, contact_id, content, message_type,
-              media_url, media_data, media_metadata, timestamp, direction,
-              status, from_me, chat_id, author, phone_index, quoted_message,
-              thread_id, customer_phone
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
-            ON CONFLICT (message_id, company_id) DO NOTHING;
-          `;
-
-          await sqlDb.query(messageQuery, [
-            basicInfo.idSerialized,
-            companyId,
-            contactID,
-            messageBody,
-            basicInfo.type,
-            mediaUrl,
-            mediaData,
-            Object.keys(mediaMetadata).length > 0 ? JSON.stringify(mediaMetadata) : null,
-            new Date(basicInfo.timestamp * 1000),
-            msg.fromMe ? "outbound" : "inbound",
-            "delivered",
-            msg.fromMe || false,
-            msg.from,
-            author || contactID,
-            phoneIndex,
-            quotedMessage ? JSON.stringify(quotedMessage) : null,
-            msg.to,
-            contactPhone
-          ]);
-        } catch (error) {
-          console.error(`Error processing message ${msg.id._serialized} during sync:`, error);
         }
-      }
+
+        // Update contact with the actual last message
+        if (lastMessage) {
+          const updateContactQuery = `
+            UPDATE public.contacts SET
+              last_message = $1,
+              last_updated = NOW()
+            WHERE contact_id = $2 AND company_id = $3;
+          `;
+          await sqlDb.query(updateContactQuery, [
+            JSON.stringify(lastMessage),
+            contactID,
+            companyId,
+          ]);
+        }
       } catch (error) {
         console.error(`Error processing chat ${chat.id._serialized}:`, error);
       }
@@ -3117,24 +3128,69 @@ async function syncContactNames(client, companyId, phoneIndex = 0) {
 
         const profilePicUrl = await contact.getProfilePicUrl();
 
-        // Update only contact name and profile picture for existing contacts
-        const contactQuery = `
-          UPDATE public.contacts SET
-            name = $1,
-            last_updated = NOW(),
-            profile_pic_url = $2
-          WHERE contact_id = $3 AND company_id = $4;
-        `;
+        const potentialName = contact.name || contact.pushname || contact.shortName || contactPhone;
         
-        const result = await sqlDb.query(contactQuery, [
-          contact.name || contact.pushname || contact.shortName || contactPhone,
-          profilePicUrl,
-          contactID,
-          companyId,
-        ]);
+        // Function to check if a string is just a phone number
+        function isJustPhoneNumber(str) {
+          if (!str) return false;
+          const cleanStr = str.replace(/[\s\-\(\)\+]/g, '');
+          return /^[\+]?\d+$/.test(cleanStr);
+        }
+        
+        // Function to check if name contains both text and numbers (mixed content)
+        function hasMixedContent(str) {
+          if (!str) return false;
+          const hasLetters = /[a-zA-Z]/.test(str);
+          const hasNumbers = /\d/.test(str);
+          return hasLetters && hasNumbers;
+        }
+        
+        let shouldSaveName = false;
+        let nameToSave = potentialName;
+        
+        if (isJustPhoneNumber(potentialName)) {
+          console.log(`Skipping name sync for ${contactID} - name is just a phone number: ${potentialName}`);
+          shouldSaveName = false;
+        } else if (hasMixedContent(potentialName)) {
+          shouldSaveName = true;
+        } else if (potentialName !== contactPhone) {
+          shouldSaveName = true;
+        }
 
-        if (result.rowCount === 0) {
-          console.log(`Contact ${contactID} not found in database, skipping name sync`);
+        if (shouldSaveName) {
+          const contactQuery = `
+            UPDATE public.contacts SET
+              name = $1,
+              last_updated = NOW(),
+              profile_pic_url = $2
+            WHERE contact_id = $3 AND company_id = $4;
+          `;
+          
+          const result = await sqlDb.query(contactQuery, [
+            nameToSave,
+            profilePicUrl,
+            contactID,
+            companyId,
+          ]);
+
+          if (result.rowCount === 0) {
+            console.log(`Contact ${contactID} not found in database, skipping name sync`);
+          } else {
+            console.log(`Updated name for ${contactID}: ${nameToSave}`);
+          }
+        } else {
+          const profileQuery = `
+            UPDATE public.contacts SET
+              last_updated = NOW(),
+              profile_pic_url = $1
+            WHERE contact_id = $2 AND company_id = $3;
+          `;
+          
+          await sqlDb.query(profileQuery, [
+            profilePicUrl,
+            contactID,
+            companyId,
+          ]);
         }
 
       } catch (error) {
@@ -3161,6 +3217,7 @@ async function syncSingleContact(client, companyId, contactPhone, phoneIndex = 0
 
     // Format the contact ID to match WhatsApp format
     const chatId = `${contactPhone}@c.us`;
+    const phoneWithPlus = contactPhone.startsWith("+") ? contactPhone : `+${contactPhone}`;
     
     try {
       const chat = await client.getChatById(chatId);
@@ -3173,21 +3230,21 @@ async function syncSingleContact(client, companyId, contactPhone, phoneIndex = 0
       const contactQuery = `
         INSERT INTO public.contacts (
           contact_id, company_id, name, phone, tags, unread_count, created_at, last_updated, 
-          chat_data, company, thread_id, last_message, profile_pic_url
+          chat_data, company, chat_id, last_message, profile_pic_url
         ) VALUES ($1, $2, $3, $4, '[]'::jsonb, $5, NOW(), NOW(), $6, $7, $8, '{}'::jsonb, $9)
         ON CONFLICT (contact_id, company_id) DO UPDATE SET
-          name = EXCLUDED.name,
           last_updated = NOW(),
           profile_pic_url = EXCLUDED.profile_pic_url,
           unread_count = EXCLUDED.unread_count,
           chat_data = EXCLUDED.chat_data,
-          thread_id = EXCLUDED.thread_id;
+          chat_id = EXCLUDED.chat_id,
+          last_message = EXCLUDED.last_message;
       `;
       await sqlDb.query(contactQuery, [
         contactID,
         companyId,
         contact.name || contact.pushname || contact.shortName || contactPhone,
-        contactPhone,
+        phoneWithPlus,
         chat.unreadCount,
         JSON.stringify(chat),
         contact.name,
@@ -3196,7 +3253,8 @@ async function syncSingleContact(client, companyId, contactPhone, phoneIndex = 0
       ]);
 
       // Fetch and insert messages using the same method as addMessageToPostgres
-      const messages = await chat.fetchMessages({ limit: 50 }); // Fetch more messages for single contact
+      const messages = await chat.fetchMessages(); // Fetch more messages for single contact
+      let lastMessage = null;
 
       for (const msg of messages) {
         try {
@@ -3295,9 +3353,40 @@ async function syncSingleContact(client, companyId, contactPhone, phoneIndex = 0
             msg.to,
             contactPhone
           ]);
+
+          // Keep track of the most recent message for last_message
+          if (!lastMessage || basicInfo.timestamp > lastMessage.timestamp) {
+            lastMessage = {
+              chat_id: basicInfo.chatId,
+              from: basicInfo.from,
+              from_me: basicInfo.fromMe,
+              id: basicInfo.idSerialized,
+              phoneIndex: phoneIndex,
+              source: basicInfo.deviceType,
+              status: "delivered",
+              text: { body: messageBody },
+              timestamp: basicInfo.timestamp,
+              type: basicInfo.type
+            };
+          }
         } catch (error) {
           console.error(`Error processing message ${msg.id._serialized} during single contact sync:`, error);
         }
+      }
+
+      // Update contact with the actual last message
+      if (lastMessage) {
+        const updateContactQuery = `
+          UPDATE public.contacts SET
+            last_message = $1,
+            last_updated = NOW()
+          WHERE contact_id = $2 AND company_id = $3;
+        `;
+        await sqlDb.query(updateContactQuery, [
+          JSON.stringify(lastMessage),
+          contactID,
+          companyId,
+        ]);
       }
 
       console.log(
@@ -6777,9 +6866,6 @@ async function addMessageToPostgres(
   phoneIndex = 0,
   userName
 ) {
-  console.log("Adding message to PostgreSQL");
-  console.log("Adding message to PostgreSQL - Call Stack:", new Error().stack);
-
   // Validate inputs
   if (!extractedNumber || !(extractedNumber.startsWith("+60") || extractedNumber.startsWith("+65"))) {
     console.error("Invalid extractedNumber for database:", extractedNumber);
@@ -6845,16 +6931,12 @@ async function addMessageToPostgres(
       mediaData = messageData.audio?.data || null;
     }
   }
-  console.log("Media URL:", mediaUrl);
-  console.log("Media Data:", mediaData);
-  console.log("Media Metadata:", mediaMetadata);
 
   // Prepare quoted message
   const quotedMessage = messageData.text?.context || null;
 
   // Determine author
   let author = userName;
-  console.log("Author:", author);
   if (!author && msg.from.includes("@g.us") && basicInfo.author) {
     const authorData = await getContactDataFromDatabaseByPhone(basicInfo.author, idSubstring);
     author = authorData ? authorData.contactName : basicInfo.author;
@@ -7056,6 +7138,10 @@ async function processMessageMedia(msg) {
       return null;
     }
 
+    const fileSizeBytes = Math.floor((media.data.length * 3) / 4);
+    const fileSizeMB = fileSizeBytes / (1024 * 1024);
+    const FILE_SIZE_LIMIT_MB = 10;
+
     const mediaData = {
       mimetype: media.mimetype,
       data: media.data,
@@ -7067,13 +7153,30 @@ async function processMessageMedia(msg) {
       case "image":
         mediaData.width = msg._data.width;
         mediaData.height = msg._data.height;
+        if (fileSizeMB > FILE_SIZE_LIMIT_MB) {
+          mediaData.link = await storeDocumentData(media.data, mediaData.filename, media.mimetype);
+          delete mediaData.data;
+        }
         break;
       case "document":
         mediaData.page_count = msg._data.pageCount;
         mediaData.file_size = msg._data.size;
+        if (fileSizeMB > FILE_SIZE_LIMIT_MB) {
+          mediaData.link = await storeDocumentData(media.data, mediaData.filename, media.mimetype);
+          delete mediaData.data;
+        }
         break;
       case "video":
         mediaData.link = await storeVideoData(media.data, mediaData.filename);
+        delete mediaData.data;
+        break;
+      default:
+        if (fileSizeMB > FILE_SIZE_LIMIT_MB) {
+          mediaData.link = await storeDocumentData(media.data, mediaData.filename, media.mimetype);
+          delete mediaData.data;
+        } else {
+          mediaData.link = null;
+        }
         break;
     }
 
@@ -7259,22 +7362,33 @@ async function transcribeAudio(audioData) {
   }
 }
 
-async function storeVideoData(videoData, filename) {
+async function storeDocumentData(documentData, filename, mimeType) {
   try {
-    const buffer = Buffer.from(videoData, 'base64');
+    const buffer = Buffer.from(documentData, 'base64');
     const stream = Readable.from(buffer);
-    filename = filename || `video-${Date.now()}.mp4`;
-    
+
+    // Try to determine mimeType and extension if not provided
+    if (!mimeType) {
+      // Try to guess from filename
+      if (filename) {
+        mimeType = mime.lookup(filename) || 'application/octet-stream';
+      } else {
+        mimeType = 'application/octet-stream';
+      }
+    }
+
+    // If filename is missing or has no extension, generate one from mimeType
+    if (!filename || !filename.includes('.')) {
+      const ext = mime.extension(mimeType) || 'bin';
+      filename = `document-${Date.now()}.${ext}`;
+    }
+
     const formData = new FormData();
     formData.append('file', stream, {
       filename: filename,
-      contentType: 'video/mp4',
+      contentType: mimeType,
       knownLength: buffer.length
     });
-    console.log('Buffer length:', buffer.length);
-    console.log('Filename:', filename);
-    console.log('FormData headers:', formData.getHeaders());
-    console.log('FormData length:', formData.getLengthSync());
 
     const response = await axios.post(`${process.env.URL}/api/upload-media`, formData, {
       headers: formData.getHeaders(),
@@ -7284,7 +7398,7 @@ async function storeVideoData(videoData, filename) {
 
     return response.data.url;
   } catch (error) {
-    console.error('Error uploading video:', error);
+    console.error('Error uploading document:', error);
     throw error;
   }
 }
@@ -7783,16 +7897,22 @@ app.get("/api/companies/:companyId", async (req, res) => {
       return res.status(404).json({ error: "Company not found" });
     }
 
-    res.json({
-      name: company.name,
-      company_id: company.company_id,
-      // Add other company fields you need
-    });
+    // Convert snake_case to camelCase
+    const toCamel = (str) =>
+      str.replace(/_([a-z])/g, (g) => g[1].toUpperCase());
+
+    const camelCompany = {};
+    for (const key in company) {
+      camelCompany[toCamel(key)] = company[key];
+    }
+
+    res.json(camelCompany);
   } catch (error) {
     console.error("Error fetching company data:", error);
     res.status(500).json({ error: "Internal server error" });
   }
 });
+
 // Get contacts with replies
 app.get("/api/companies/:companyId/replies", async (req, res) => {
   try {
@@ -11502,60 +11622,49 @@ app.post("/api/v2/messages/audio/:companyId/:chatId", async (req, res) => {
   const userName = requestedUserName !== undefined ? requestedUserName : "";
 
   try {
-    let client;
     // 1. Get the client for this company from botMap
     const botData = botMap.get(companyId);
     if (!botData) {
       return res.status(404).send("WhatsApp client not found for this company");
     }
-    client = botData[phoneIndex].client;
-
+    const client = botData[phoneIndex]?.client;
     if (!client) {
       return res
         .status(404)
         .send("No active WhatsApp client found for this company");
     }
-
     if (!audioUrl) {
       return res.status(400).send("No audio URL provided");
     }
 
-    // 2. Download the WebM file
-    const tempWebmPath = path.join(os.tmpdir(), `temp_${Date.now()}.webm`);
-    const tempMp4Path = path.join(os.tmpdir(), `temp_${Date.now()}.mp4`);
-    const response = await axios({
-      method: "get",
-      url: audioUrl,
-      responseType: "arraybuffer",
-    });
-    await fs.promises.writeFile(tempWebmPath, response.data);
-    await new Promise((resolve, reject) => {
-      exec(
-        `${ffmpeg} -i ${tempWebmPath} -c:a aac -b:a 128k ${tempMp4Path}`,
-        (error, stdout, stderr) => {
-          if (error) {
-            console.error(`FFmpeg error: ${error.message}`);
-            reject(error);
-          } else {
-            resolve();
-          }
-        }
-      );
-    });
-    const media = MessageMedia.fromFilePath(tempMp4Path);
-    media.mimetype = "audio/mp4";
+    // 2. Download the audio file (assume it's already in a WhatsApp-compatible format, e.g. mp3, ogg, m4a)
+    const response = await axios.get(audioUrl, { responseType: "arraybuffer" });
+    const buffer = Buffer.from(response.data);
 
-    const sentMessage = await client.sendMessage(chatId, media, {
-      sendAudioAsVoice: true,
-    });
+    // 3. Create MessageMedia object (try to detect mimetype from url or fallback to audio/mpeg)
+    let mimetype = "audio/mpeg";
+    if (audioUrl.endsWith(".ogg")) mimetype = "audio/ogg";
+    else if (audioUrl.endsWith(".mp3")) mimetype = "audio/mpeg";
+    else if (audioUrl.endsWith(".m4a")) mimetype = "audio/mp4";
+    else if (audioUrl.endsWith(".wav")) mimetype = "audio/wav";
+    else if (audioUrl.endsWith(".aac")) mimetype = "audio/aac";
 
-    // Clean up temporary files
-    await fs.promises.unlink(tempWebmPath);
-    await fs.promises.unlink(tempMp4Path);
+    const filename = `audio_${Date.now()}.${mimetype.split("/")[1]}`;
+    const media = new MessageMedia(
+      mimetype,
+      buffer.toString("base64"),
+      filename
+    );
+
+    // 4. Send the audio as a voice message, with caption if provided
+    const options = { sendAudioAsVoice: true };
+    if (caption) options.caption = caption;
+
+    const sentMessage = await client.sendMessage(chatId, media, options);
 
     let phoneNumber = "+" + chatId.split("@")[0];
 
-    // 5. Save the message to Firebase
+    // 5. Save the message to database
     const contactData = await getContactDataFromDatabaseByPhone(
       phoneNumber,
       companyId
@@ -11565,7 +11674,7 @@ app.post("/api/v2/messages/audio/:companyId/:chatId", async (req, res) => {
       sentMessage,
       companyId,
       phoneNumber,
-      contactData.contact_name || contactData.name || "",
+      contactData?.contact_name || contactData?.name || "",
       phoneIndex,
       userName
     );
@@ -11573,9 +11682,6 @@ app.post("/api/v2/messages/audio/:companyId/:chatId", async (req, res) => {
     res.json({ success: true, messageId: sentMessage.id._serialized });
   } catch (error) {
     console.error("Error sending audio message:", error);
-    if (error.stack) {
-      console.error("Error stack:", error.stack);
-    }
     res.status(500).send(`Internal Server Error: ${error.message}`);
   }
 });
@@ -11726,13 +11832,20 @@ app.post("/api/fetch-users", async (req, res) => {
   }
 });
 
-// ... existing code ...
 app.delete("/api/contacts/:companyId/:contactId/tags", async (req, res) => {
   const { companyId, contactId } = req.params;
-  const { tags } = req.body; // tags: array of tags to remove
+  let { tags } = req.body; // tags: array of tags to remove
   if (!Array.isArray(tags)) {
     return res.status(400).json({ error: "tags must be an array" });
   }
+
+  // Normalize stop bot tags
+  tags = tags.map(tag =>
+    typeof tag === "string" && tag.trim().toLowerCase().replace(/\s+/g, "") === "stopbot"
+      ? "stop bot"
+      : tag
+  );
+
   try {
     let phoneNumber;
     if (contactId.startsWith(`${companyId}-`)) {
@@ -11753,14 +11866,21 @@ app.delete("/api/contacts/:companyId/:contactId/tags", async (req, res) => {
       .json({ error: "Failed to remove tags", details: error.message });
   }
 });
-// ... existing code ...
 
 app.post("/api/contacts/:companyId/:contactId/tags", async (req, res) => {
   const { companyId, contactId } = req.params;
-  const { tags } = req.body; // tags: array of tags to add
+  let { tags } = req.body; // tags: array of tags to add
   if (!Array.isArray(tags)) {
     return res.status(400).json({ error: "tags must be an array" });
   }
+
+  // Normalize stop bot tags
+  tags = tags.map(tag =>
+    typeof tag === "string" && tag.trim().toLowerCase().replace(/\s+/g, "") === "stopbot"
+      ? "stop bot"
+      : tag
+  );
+
   try {
     let phoneNumber;
     if (contactId.startsWith(`${companyId}-`)) {
@@ -11956,38 +12076,82 @@ app.post('/api/v2/messages/document/:companyId/:chatId', async (req, res) => {
   const phoneIndex = requestedPhoneIndex !== undefined ? parseInt(requestedPhoneIndex) : 0;
   const userName = requestedUserName !== undefined ? requestedUserName : '';
 
+  console.log("\n=== New Document Message Request ===");
+  console.log("Request details:", {
+    companyId,
+    chatId,
+    documentUrl,
+    filename,
+    caption,
+    requestedPhoneIndex,
+    userName: requestedUserName,
+    phoneIndex,
+    userName,
+  });
+
   try {
     let client;
     // 1. Get the client for this company from botMap
     const botData = botMap.get(companyId);
+    console.log("Bot data found:", Boolean(botData));
     if (!botData) {
+      console.error('WhatsApp client not found for this company');
       return res.status(404).send('WhatsApp client not found for this company');
     }
     client = botData[phoneIndex].client;
+    console.log("Client status:", {
+      phoneIndex,
+      hasClient: Boolean(client),
+      clientInfo: client ? {
+        info: (() => {
+          try {
+            return client.info;
+          } catch (e) {
+            return "Error getting info";
+          }
+        })(),
+        isConnected: client.isConnected,
+      } : null,
+    });
 
     if (!client) {
+      console.error('No active WhatsApp client found for this company');
       return res.status(404).send('No active WhatsApp client found for this company');
     }
 
     // 2. Use wwebjs to send the document message
+    console.log("Preparing to send document message with:", { documentUrl, filename, caption });
     const media = await MessageMedia.fromUrl(documentUrl, { unsafeMime: true, filename: filename });
+    console.log("Media object created:", {
+      mimetype: media.mimetype,
+      filename: media.filename,
+      dataLength: media.data ? media.data.length : 0,
+    });
     const sentMessage = await client.sendMessage(chatId, media, { caption });
+    console.log("Message sent successfully:", {
+      messageId: sentMessage?.id?._serialized ?? 'no id',
+      timestamp: sentMessage?.timestamp ?? 'no timestamp',
+      type: sentMessage?.type ?? 'no type',
+    });
     let phoneNumber = '+' + (chatId).split('@')[0];
 
-    // 3. Save the message to Firebase
+    // 3. Save the message to Database
+    console.log("Fetching contact data for phone:", phoneNumber, "companyId:", companyId);
     const contactData = await getContactDataFromDatabaseByPhone(
       phoneNumber,
       companyId
     );
+    console.log("Contact data:", contactData);
 
     await addMessageToPostgres(
       sentMessage,
       companyId,
       phoneNumber,
-      contactData.contact_name || contactData.name || "",
+      contactData?.contact_name || contactData?.name || "",
       phoneIndex,
       userName
     );
+    console.log("Message saved to database");
 
     res.json({ success: true, messageId: sentMessage.id._serialized });
   } catch (error) {
@@ -12395,6 +12559,7 @@ function startPhoneMonitoring(botName, phoneIndex) {
         );
 
         const { spawn } = require("child_process");
+const mime = require('mime-types');
         // Your existing cleanup code here
       }
     } catch (error) {
@@ -13744,6 +13909,8 @@ app.get("/api/companies/:companyId/contacts", async (req, res) => {
         c.tags,
         c.created_at,
         c.last_updated,
+        c.phone_indexes,
+        c.unread_count,
         CASE 
           WHEN c.chat_id LIKE '%@c.us' THEN true 
           ELSE false 
@@ -13797,6 +13964,18 @@ app.get("/api/companies/:companyId/contacts", async (req, res) => {
         tags = [];
       }
 
+      // Parse phone_indexes from JSONB if they are a string, or use empty array if null/undefined
+      let phoneIndexes = contact.phone_indexes;
+      try {
+        if (typeof phoneIndexes === "string") {
+          phoneIndexes = JSON.parse(phoneIndexes);
+        }
+        phoneIndexes = Array.isArray(phoneIndexes) ? phoneIndexes.filter((v) => v !== undefined && v !== null) : [];
+      } catch (error) {
+        console.error("Error parsing phone_indexes:", error);
+        phoneIndexes = [];
+      }
+
       // Parse assigned_to from JSONB if it exists
       let assignedTo = contact.assigned_to;
       try {
@@ -13820,11 +13999,13 @@ app.get("/api/companies/:companyId/contacts", async (req, res) => {
         profileUrl: contact.profile_pic_url || "",
         profile: contact.profile || {},
         tags: tags,
+        phoneIndexes: phoneIndexes,
         assignedTo: assignedTo,
         createdAt: contact.created_at,
         lastUpdated: contact.last_updated,
         isIndividual: contact.is_individual,
         last_message: contact.last_message || null,
+        unreadCount: contact.unread_count || 0, 
       };
     });
 
@@ -13943,6 +14124,38 @@ app.get("/api/messages", async (req, res) => {
     res.json(result.rows);
   } catch (error) {
     console.error("Error fetching messages:", error);
+    res.status(500).json({ error: "Failed to fetch messages" });
+  }
+});
+
+// Get paginated messages for app
+app.get("/api/message-pages", async (req, res) => {
+  try {
+    const { chatId, companyId, limit = 50, offset = 0 } = req.query;
+    console.log("Fetching paginated messages for chatId:", chatId, "companyId:", companyId, "limit:", limit, "offset:", offset);
+    if (!chatId || !companyId) {
+      return res.status(400).json({ error: "Missing chatId or companyId" });
+    }
+
+    const sql = `
+      SELECT m.*, c.name as contact_name 
+      FROM messages m
+      LEFT JOIN contacts c ON m.contact_id = c.contact_id AND m.company_id = c.company_id
+      WHERE m.contact_id = $1 AND m.company_id = $2
+      ORDER BY m.timestamp DESC
+      LIMIT $3 OFFSET $4
+    `;
+    const params = [chatId, companyId, parseInt(limit, 10), parseInt(offset, 10)];
+
+    const result = await sqlDb.query(sql, params);
+
+    res.json({
+      success: true,
+      messages: result.rows,
+      count: result.rows.length,
+    });
+  } catch (error) {
+    console.error("Error fetching paginated messages:", error);
     res.status(500).json({ error: "Failed to fetch messages" });
   }
 });

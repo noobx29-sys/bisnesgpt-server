@@ -728,62 +728,6 @@ class bhqSpreadsheet {
     return thread;
   }
 
-  async sendReminderToTeacher(teacherName, phoneNumber, customerName, rowNumber) {
-    const message = `Assalamualaikum ${teacherName}, 
-    
-    \nKelas anda bersama ${customerName} akan bermula dalam sebentar lagi. 
-    \nSila ingatkan ${customerName} untuk mengesahkan kehadiran anda.`;
-
-    const botData = this.botMap.get(this.botName);
-    if (!botData || !botData[0].client) {
-      console.log(`WhatsApp client not found for bot ${this.botName}`);
-      return;
-    }
-    const client = botData[0].client;
-    const extractedNumber = "+" + phoneNumber.split("@")[0];
-    let contactID;
-    let contactName;
-    let threadID;
-    let stopTag;
-    let unreadCount;
-    try {
-      const contactData = await this.getContactDataFromDatabaseByPhone(extractedNumber, this.botName);
-      if (contactData !== null) {
-        stopTag = contactData.tags;
-        console.log(stopTag);
-        unreadCount = contactData.unreadCount ?? 0;
-        contactID = extractedNumber;
-        contactName = contactData.contactName ?? teacherName ?? extractedNumber;
-
-        if (contactData.threadid) {
-          threadID = contactData.threadid;
-        } else {
-          const thread = await this.createThread();
-          threadID = thread.id;
-          await this.saveThreadIDPostgres(contactID, threadID, this.botName);
-        }
-      } else {
-        await this.customWait(2500);
-
-        contactID = extractedNumber;
-        contactName = teacherName || extractedNumber;
-
-        const thread = await this.createThread();
-        threadID = thread.id;
-        console.log(threadID);
-        await this.saveThreadIDPostgres(contactID, threadID, this.botName);
-        console.log(`Created a new contact in PostgreSQL for contact ${contactID} in BHQ Spreadsheet`);
-      }
-
-      const sentMessage = await client.sendMessage(`${phoneNumber}@c.us`, message);
-      await this.tagContactWithAttendance(phoneNumber);
-      await this.addMessageToPostgres(sentMessage, this.botName, extractedNumber);
-      console.log(`Reminder sent to ${teacherName} (${phoneNumber})`);
-    } catch (error) {
-      console.error(`Error sending reminder to ${teacherName} (${phoneNumber}):`, error);
-    }
-  }
-
   async customWait(milliseconds) {
     return new Promise((resolve) => setTimeout(resolve, milliseconds));
   }

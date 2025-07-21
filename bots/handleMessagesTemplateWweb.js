@@ -3234,7 +3234,7 @@ async function processImmediateActions(client, msg, botName, phoneIndex) {
     }
 
     if (contactTags !== undefined) {
-      if (contactTags.includes("stop bot")) {
+      if (contactTags.toLowerCase().includes("stop bot")) {
         console.log(
           `Bot stopped for contact ${extractedNumber} for Company ${idSubstring}`
         );
@@ -3571,7 +3571,7 @@ async function processMessage(
       return;
     }
 
-    if (stopTag.includes("stop bot")) {
+    if (stopTag.toLowerCase().includes("stop bot")) {
       console.log(
         `Bot stopped for this message from ${sender.to} for Company ${idSubstring}`
       );
