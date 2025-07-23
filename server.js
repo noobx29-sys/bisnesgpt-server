@@ -2806,7 +2806,7 @@ app.get("/api/stats/:companyId", async (req, res) => {
     const assignedContactsQuery = `
       SELECT a.contact_id, c.tags
       FROM assignments a
-      LEFT JOIN contacts c ON a.contact_id = c.id AND a.company_id = c.company_id
+      LEFT JOIN contacts c ON a.contact_id = c.contact_id AND a.company_id = c.company_id
       WHERE a.employee_id = $1 AND a.company_id = $2
     `;
     const assignedContactsResult = await pool.query(assignedContactsQuery, [employeeId, companyId]);
@@ -3001,6 +3001,7 @@ async function syncContacts(client, companyId, phoneIndex = 0) {
                 const mediaTypeData = messageData[msg.type];
                 if (mediaTypeData) {
                   mediaData = mediaTypeData.data || null;
+                  mediaUrl = mediaTypeData.link || null;
                   mediaMetadata = {
                     mimetype: mediaTypeData.mimetype,
                     filename: mediaTypeData.filename || "",
@@ -3253,8 +3254,13 @@ async function syncSingleContact(client, companyId, contactPhone, phoneIndex = 0
       ]);
 
       // Fetch and insert messages using the same method as addMessageToPostgres
-      const messages = await chat.fetchMessages(); // Fetch more messages for single contact
+      const messages = await chat.fetchMessages({ limit: 100 }); // Fetch more messages for single contact
       let lastMessage = null;
+
+      const totalMessages = messages.length;
+      console.log(`Found ${totalMessages} messages for contact ${contactPhone} in company ${companyId}, phone ${phoneIndex}`);
+      let processedMessages = 0;
+      let lastProgress = 0;
 
       for (const msg of messages) {
         try {
@@ -3265,7 +3271,7 @@ async function syncSingleContact(client, companyId, contactPhone, phoneIndex = 0
           // Get message body (with audio transcription if applicable)
           let messageBody = messageData.text?.body || "";
           if (msg.hasMedia && (msg.type === "audio" || msg.type === "ptt")) {
-            console.log("Voice message detected during single contact sync");
+            // Voice message detected during single contact sync
             try {
               const media = await msg.downloadMedia();
               const transcription = await transcribeAudio(media.data);
@@ -3275,7 +3281,6 @@ async function syncSingleContact(client, companyId, contactPhone, phoneIndex = 0
                 messageBody += "Audio message";
               }
             } catch (error) {
-              console.error("Error transcribing audio during single contact sync:", error);
               messageBody += "Audio message";
             }
           }
@@ -3292,6 +3297,7 @@ async function syncSingleContact(client, companyId, contactPhone, phoneIndex = 0
               const mediaTypeData = messageData[msg.type];
               if (mediaTypeData) {
                 mediaData = mediaTypeData.data || null;
+                mediaUrl = mediaTypeData.link || null;
                 mediaMetadata = {
                   mimetype: mediaTypeData.mimetype,
                   filename: mediaTypeData.filename || "",
@@ -3370,7 +3376,15 @@ async function syncSingleContact(client, companyId, contactPhone, phoneIndex = 0
             };
           }
         } catch (error) {
-          console.error(`Error processing message ${msg.id._serialized} during single contact sync:`, error);
+          // Error processing message
+        }
+
+        processedMessages++;
+        // Calculate progress in 10% steps
+        const progress = Math.floor((processedMessages / totalMessages) * 100);
+        if (progress >= lastProgress + 10 || progress === 100) {
+          console.log(`Sync progress for ${contactPhone}: ${progress}% (${processedMessages}/${totalMessages})`);
+          lastProgress = progress;
         }
       }
 
@@ -3414,43 +3428,83 @@ async function syncSingleContactName(client, companyId, contactPhone, phoneIndex
 
     // Format the contact ID to match WhatsApp format
     const chatId = `${contactPhone}@c.us`;
-    
+
     try {
       const chat = await client.getChatById(chatId);
       const contact = await chat.getContact();
       const contactID = `${companyId}-${contactPhone}`;
 
       const profilePicUrl = await contact.getProfilePicUrl();
+      const potentialName = contact.name || contact.pushname || contact.shortName || contactPhone;
 
-      // Update only contact name and profile picture for existing contact
-      const contactQuery = `
-        UPDATE public.contacts SET
-          name = $1,
-          last_updated = NOW(),
-          profile_pic_url = $2
-        WHERE contact_id = $3 AND company_id = $4;
-      `;
-      
-      const result = await sqlDb.query(contactQuery, [
-        contact.name || contact.pushname || contact.shortName || contactPhone,
-        profilePicUrl,
-        contactID,
-        companyId,
-      ]);
-
-      if (result.rowCount === 0) {
-        console.log(`Contact ${contactID} not found in database, cannot sync name`);
-        throw new Error(`Contact ${contactPhone} not found in database`);
+      // Helper: is just a phone number
+      function isJustPhoneNumber(str) {
+        if (!str) return false;
+        const cleanStr = str.replace(/[\s\-\(\)\+]/g, '');
+        return /^[\+]?\d+$/.test(cleanStr);
+      }
+      // Helper: has mixed content (letters and numbers)
+      function hasMixedContent(str) {
+        if (!str) return false;
+        const hasLetters = /[a-zA-Z]/.test(str);
+        const hasNumbers = /\d/.test(str);
+        return hasLetters && hasNumbers;
       }
 
-      console.log(
-        `Successfully synced contact name for ${contactPhone} in company ${companyId}, phone ${phoneIndex}`
-      );
+      let shouldSaveName = false;
+      let nameToSave = potentialName;
+
+      if (isJustPhoneNumber(potentialName)) {
+        console.log(`Skipping name sync for ${contactID} - name is just a phone number: ${potentialName}`);
+        shouldSaveName = false;
+      } else if (hasMixedContent(potentialName)) {
+        shouldSaveName = true;
+      } else if (potentialName !== contactPhone) {
+        shouldSaveName = true;
+      }
+
+      if (shouldSaveName) {
+        const contactQuery = `
+          UPDATE public.contacts SET
+            name = $1,
+            last_updated = NOW(),
+            profile_pic_url = $2
+          WHERE contact_id = $3 AND company_id = $4;
+        `;
+        const result = await sqlDb.query(contactQuery, [
+          nameToSave,
+          profilePicUrl,
+          contactID,
+          companyId,
+        ]);
+        if (result.rowCount === 0) {
+          console.log(`Contact ${contactID} not found in database, cannot sync name`);
+          throw new Error(`Contact ${contactPhone} not found in database`);
+        }
+        console.log(
+          `Successfully synced contact name for ${contactPhone} in company ${companyId}, phone ${phoneIndex}: ${nameToSave}`
+        );
+      } else {
+        // Only update profile picture and last_updated
+        const profileQuery = `
+          UPDATE public.contacts SET
+            last_updated = NOW(),
+            profile_pic_url = $1
+          WHERE contact_id = $2 AND company_id = $3;
+        `;
+        await sqlDb.query(profileQuery, [
+          profilePicUrl,
+          contactID,
+          companyId,
+        ]);
+        console.log(
+          `Updated profile picture only for ${contactPhone} in company ${companyId}, phone ${phoneIndex}`
+        );
+      }
     } catch (error) {
       console.error(`Error processing single contact name ${contactPhone}:`, error);
       throw error;
     }
-
   } catch (error) {
     console.error(
       `Error syncing single contact name for company ${companyId}, phone ${phoneIndex}, contact ${contactPhone}:`,
@@ -6294,8 +6348,87 @@ Kindly login to the CRM software to continue.
 
 Thank you.`;
 
+  // Send WhatsApp message to employee
   await client.sendMessage(employeeID, message);
+  
+  // Add employee name as tag to contact
   await addTagToPostgres(contactID, employee.name, idSubstring);
+  
+  // Create assignment record in assignments table
+  try {
+    const sqlClient = await pool.connect();
+    try {
+      await sqlClient.query("BEGIN");
+
+      // Get contact details
+      const contactQuery = `
+        SELECT contact_id FROM contacts 
+        WHERE phone = $1 AND company_id = $2
+      `;
+      const contactResult = await sqlClient.query(contactQuery, [contactID, idSubstring]);
+      
+      if (contactResult.rows.length > 0) {
+        const currentDate = new Date();
+        const currentMonthKey = `${currentDate.getFullYear()}-${(
+          currentDate.getMonth() + 1
+        ).toString().padStart(2, "0")}`;
+
+        const assignmentId = `${idSubstring}-${contactResult.rows[0].contact_id}-${employee.employee_id}-${Date.now()}`;
+        
+        const assignmentInsertQuery = `
+          INSERT INTO assignments (
+            assignment_id, company_id, employee_id, contact_id, 
+            assigned_at, status, month_key, assignment_type, 
+            phone_index, weightage_used, employee_role
+          ) VALUES ($1, $2, $3, $4, CURRENT_TIMESTAMP, 'active', $5, 'auto', $6, 1, $7)
+        `;
+        
+        await sqlClient.query(assignmentInsertQuery, [
+          assignmentId,
+          idSubstring,
+          employee.employee_id,
+          contactResult.rows[0].contact_id,
+          currentMonthKey,
+          phoneIndex,
+          role
+        ]);
+
+        // Update employee's assigned_contacts count
+        const employeeUpdateQuery = `
+          UPDATE employees
+          SET assigned_contacts = assigned_contacts + 1
+          WHERE company_id = $1 AND employee_id = $2
+        `;
+        
+        await sqlClient.query(employeeUpdateQuery, [idSubstring, employee.employee_id]);
+
+        // Update monthly assignments
+        const monthlyAssignmentUpsertQuery = `
+          INSERT INTO employee_monthly_assignments (employee_id, company_id, month_key, assignments_count, last_updated)
+          VALUES ($1, $2, $3, 1, CURRENT_TIMESTAMP)
+          ON CONFLICT (employee_id, month_key) DO UPDATE
+          SET assignments_count = employee_monthly_assignments.assignments_count + 1,
+              last_updated = CURRENT_TIMESTAMP
+        `;
+        
+        await sqlClient.query(monthlyAssignmentUpsertQuery, [
+          employee.id,
+          idSubstring,
+          currentMonthKey
+        ]);
+      }
+
+      await sqlClient.query("COMMIT");
+    } catch (error) {
+      await sqlClient.query("ROLLBACK");
+      console.error("Error creating assignment record:", error);
+    } finally {
+      sqlClient.release();
+    }
+  } catch (error) {
+    console.error("Error in assignToEmployee database operations:", error);
+  }
+  
   console.log(`Assigned ${role}: ${employee.name}`);
 }
 
@@ -6528,9 +6661,7 @@ app.get('/api/scheduled-messages', async (req, res) => {
     });
 
     await sqlClient.query("COMMIT");
-    
-    console.log(`Returning ${messages.length} main scheduled messages (excluding batch entries) for companyId: ${companyId}`);
-    
+        
     res.json({ 
       success: true, 
       messages: messages,
@@ -6911,6 +7042,7 @@ async function addMessageToPostgres(
       const mediaTypeData = messageData[msg.type];
       if (mediaTypeData) {
         mediaData = mediaTypeData.data || null;
+        mediaUrl = mediaTypeData.link || null;
         mediaMetadata = {
           mimetype: mediaTypeData.mimetype,
           filename: mediaTypeData.filename || "",
@@ -7140,7 +7272,7 @@ async function processMessageMedia(msg) {
 
     const fileSizeBytes = Math.floor((media.data.length * 3) / 4);
     const fileSizeMB = fileSizeBytes / (1024 * 1024);
-    const FILE_SIZE_LIMIT_MB = 10;
+    const FILE_SIZE_LIMIT_MB = 5;
 
     const mediaData = {
       mimetype: media.mimetype,
@@ -7154,7 +7286,7 @@ async function processMessageMedia(msg) {
         mediaData.width = msg._data.width;
         mediaData.height = msg._data.height;
         if (fileSizeMB > FILE_SIZE_LIMIT_MB) {
-          mediaData.link = await storeDocumentData(media.data, mediaData.filename, media.mimetype);
+          mediaData.link = await storeMediaData(media.data, mediaData.filename, media.mimetype);
           delete mediaData.data;
         }
         break;
@@ -7162,17 +7294,17 @@ async function processMessageMedia(msg) {
         mediaData.page_count = msg._data.pageCount;
         mediaData.file_size = msg._data.size;
         if (fileSizeMB > FILE_SIZE_LIMIT_MB) {
-          mediaData.link = await storeDocumentData(media.data, mediaData.filename, media.mimetype);
+          mediaData.link = await storeMediaData(media.data, mediaData.filename, media.mimetype);
           delete mediaData.data;
         }
         break;
       case "video":
-        mediaData.link = await storeVideoData(media.data, mediaData.filename);
+        mediaData.link = await storeMediaData(media.data, mediaData.filename, media.mimetype);
         delete mediaData.data;
         break;
       default:
         if (fileSizeMB > FILE_SIZE_LIMIT_MB) {
-          mediaData.link = await storeDocumentData(media.data, mediaData.filename, media.mimetype);
+          mediaData.link = await storeMediaData(media.data, mediaData.filename, media.mimetype);
           delete mediaData.data;
         } else {
           mediaData.link = null;
@@ -7362,9 +7494,9 @@ async function transcribeAudio(audioData) {
   }
 }
 
-async function storeDocumentData(documentData, filename, mimeType) {
+async function storeMediaData(mediaData, filename, mimeType) {
   try {
-    const buffer = Buffer.from(documentData, 'base64');
+    const buffer = Buffer.from(mediaData, 'base64');
     const stream = Readable.from(buffer);
 
     // Try to determine mimeType and extension if not provided
@@ -8635,9 +8767,11 @@ async function fetchEmployeesDataSql(companyId) {
 async function updateMonthlyAssignmentsSql(
   companyId,
   employeeName,
-  incrementValue
+  incrementValue,
+  contactId = null,
+  assignmentType = 'manual'
 ) {
-  const client = await sqlDb.connect(); // Get a client from the pool
+  const client = await pool.connect(); // Get a client from the pool
   try {
     await client.query("BEGIN"); // Start transaction
 
@@ -8663,7 +8797,34 @@ async function updateMonthlyAssignmentsSql(
 
     const employeeId = employeeResult.rows[0].id; // This is the UUID 'id' from employees table
 
-    // 2. Update or insert monthly assignments
+    // 2. Create assignment record if contactId is provided and incrementValue is positive
+    if (contactId && incrementValue > 0) {
+      const currentDate = new Date();
+      const currentMonthKey = `${currentDate.getFullYear()}-${(
+        currentDate.getMonth() + 1
+      ).toString().padStart(2, "0")}`;
+
+      const assignmentId = `${companyId}-${contactId}-${employeeId}-${Date.now()}`;
+      
+      const assignmentInsertQuery = `
+        INSERT INTO assignments (
+          assignment_id, company_id, employee_id, contact_id, 
+          assigned_at, status, month_key, assignment_type, 
+          phone_index, weightage_used
+        ) VALUES ($1, $2, $3, $4, CURRENT_TIMESTAMP, 'active', $5, $6, 0, 1)
+      `;
+      
+      await client.query(assignmentInsertQuery, [
+        assignmentId,
+        companyId,
+        employeeId,
+        contactId,
+        currentMonthKey,
+        assignmentType
+      ]);
+    }
+
+    // 3. Update or insert monthly assignments
     const currentDate = new Date();
     const currentMonthKey = `${currentDate.getFullYear()}-${(
       currentDate.getMonth() + 1
@@ -8695,17 +8856,6 @@ async function updateMonthlyAssignmentsSql(
     client.release(); // Release client back to the pool
   }
 }
-
-app.get("/api/employees-data/:companyId", async (req, res) => {
-  try {
-    const { companyId } = req.params;
-    const employees = await fetchEmployeesDataSql(companyId);
-    res.json(employees);
-  } catch (error) {
-    console.error("Error fetching employees data:", error);
-    res.status(500).json({ error: "Failed to fetch employees data" });
-  }
-});
 
 // New API endpoint to update monthly assignments
 app.post("/api/employees/update-monthly-assignments", async (req, res) => {
@@ -9939,7 +10089,7 @@ app.get("/api/dashboard/:companyId", async (req, res) => {
   const monthKey = getCurrentMonthKey();
 
   try {
-    const companyQuery = `SELECT name FROM companies WHERE id = $1`;
+    const companyQuery = `SELECT name FROM companies WHERE company_id = $1`;
     const companyResult = await pool.query(companyQuery, [companyId]);
     if (companyResult.rows.length === 0) {
       return res.status(404).json({ error: "Company not found" });
@@ -11952,7 +12102,7 @@ app.post("/api/contacts/:companyId/:contactId/assign-employee", async (req, res)
         UPDATE employees
         SET assigned_contacts = assigned_contacts + 1
         WHERE company_id = $1 AND name = $2
-        RETURNING id, name, assigned_contacts
+        RETURNING id, employee_id, name, assigned_contacts
       `;
       
       const employeeResult = await client.query(employeeUpdateQuery, [
@@ -11965,12 +12115,43 @@ app.post("/api/contacts/:companyId/:contactId/assign-employee", async (req, res)
         return res.status(404).json({ error: "Employee not found" });
       }
 
-      // 3. Update monthly assignments
+      // 3. Get contact details for assignments table
+      const contactQuery = `
+        SELECT contact_id FROM contacts 
+        WHERE phone = $1 AND company_id = $2
+      `;
+      const contactResult = await client.query(contactQuery, [phoneNumber, companyId]);
+      
+      if (contactResult.rows.length === 0) {
+        await client.query("ROLLBACK");
+        return res.status(404).json({ error: "Contact not found in database" });
+      }
+
+      // 4. Insert into assignments table
       const currentDate = new Date();
       const currentMonthKey = `${currentDate.getFullYear()}-${(
         currentDate.getMonth() + 1
       ).toString().padStart(2, "0")}`;
 
+      const assignmentId = `${companyId}-${contactResult.rows[0].contact_id}-${employeeResult.rows[0].employee_id}-${Date.now()}`;
+      
+      const assignmentInsertQuery = `
+        INSERT INTO assignments (
+          assignment_id, company_id, employee_id, contact_id, 
+          assigned_at, status, month_key, assignment_type, 
+          phone_index, weightage_used
+        ) VALUES ($1, $2, $3, $4, CURRENT_TIMESTAMP, 'active', $5, 'manual', 0, 1)
+      `;
+      
+      await client.query(assignmentInsertQuery, [
+        assignmentId,
+        companyId,
+        employeeResult.rows[0].employee_id,
+        contactResult.rows[0].contact_id,
+        currentMonthKey
+      ]);
+
+      // 5. Update monthly assignments
       const monthlyAssignmentUpsertQuery = `
         INSERT INTO employee_monthly_assignments (employee_id, company_id, month_key, assignments_count, last_updated)
         VALUES ($1, $2, $3, 1, CURRENT_TIMESTAMP)
@@ -12005,6 +12186,374 @@ app.post("/api/contacts/:companyId/:contactId/assign-employee", async (req, res)
     console.error("Error assigning employee to contact:", error);
     res.status(500).json({ 
       error: "Failed to assign employee", 
+      details: error.message 
+    });
+  }
+});
+
+// Unassign employee from contact
+app.post("/api/contacts/:companyId/:contactId/unassign-employee", async (req, res) => {
+  const { companyId, contactId } = req.params;
+  const { employeeName } = req.body;
+  
+  if (!employeeName) {
+    return res.status(400).json({ error: "employeeName is required" });
+  }
+  
+  try {
+    let phoneNumber;
+    if (contactId.startsWith(`${companyId}-`)) {
+      const contactIdParts = contactId.split("-");
+      phoneNumber = '+' + contactIdParts[1];
+    } else {
+      phoneNumber = contactId;
+    }
+
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+
+      // 1. Get current contact tags and remove the employee name
+      const getContactQuery = `
+        SELECT tags, contact_id FROM contacts 
+        WHERE phone = $1 AND company_id = $2
+      `;
+      const contactResult = await client.query(getContactQuery, [phoneNumber, companyId]);
+      
+      if (contactResult.rows.length === 0) {
+        await client.query("ROLLBACK");
+        return res.status(404).json({ error: "Contact not found" });
+      }
+
+      const currentTags = contactResult.rows[0].tags || [];
+      const updatedTags = currentTags.filter(tag => tag !== employeeName);
+      
+      // Update the contact to remove the employee tag
+      const updateContactQuery = `
+        UPDATE contacts 
+        SET tags = $3
+        WHERE phone = $1 AND company_id = $2
+        RETURNING *
+      `;
+      
+      const updateResult = await client.query(updateContactQuery, [
+        phoneNumber,
+        companyId,
+        JSON.stringify(updatedTags)
+      ]);
+
+      // 2. Get employee details and decrease assigned_contacts count
+      const employeeUpdateQuery = `
+        UPDATE employees
+        SET assigned_contacts = GREATEST(assigned_contacts - 1, 0)
+        WHERE company_id = $1 AND name = $2
+        RETURNING id, employee_id, name, assigned_contacts
+      `;
+      
+      const employeeResult = await client.query(employeeUpdateQuery, [
+        companyId,
+        employeeName
+      ]);
+
+      if (employeeResult.rows.length === 0) {
+        await client.query("ROLLBACK");
+        return res.status(404).json({ error: "Employee not found" });
+      }
+
+      // 3. Update assignment record status to 'inactive'
+      const updateAssignmentQuery = `
+        UPDATE assignments 
+        SET status = 'inactive', 
+            updated_at = CURRENT_TIMESTAMP
+        WHERE company_id = $1 
+          AND employee_id = $2 
+          AND contact_id = $3 
+          AND status = 'active'
+      `;
+      
+      await client.query(updateAssignmentQuery, [
+        companyId,
+        employeeResult.rows[0].employee_id,
+        contactResult.rows[0].contact_id
+      ]);
+
+      // 4. Update monthly assignments (decrease count)
+      const currentDate = new Date();
+      const currentMonthKey = `${currentDate.getFullYear()}-${(
+        currentDate.getMonth() + 1
+      ).toString().padStart(2, "0")}`;
+
+      const monthlyAssignmentUpdateQuery = `
+        UPDATE employee_monthly_assignments 
+        SET assignments_count = GREATEST(assignments_count - 1, 0),
+            last_updated = CURRENT_TIMESTAMP
+        WHERE employee_id = $1 
+          AND company_id = $2 
+          AND month_key = $3
+      `;
+      
+      await client.query(monthlyAssignmentUpdateQuery, [
+        employeeResult.rows[0].id,
+        companyId,
+        currentMonthKey
+      ]);
+
+      await client.query("COMMIT");
+
+      res.json({ 
+        success: true, 
+        message: "Employee unassigned successfully",
+        contact: updateResult.rows[0],
+        employee: employeeResult.rows[0],
+        removedTags: [employeeName]
+      });
+
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
+
+  } catch (error) {
+    console.error("Error unassigning employee from contact:", error);
+    res.status(500).json({ 
+      error: "Failed to unassign employee", 
+      details: error.message 
+    });
+  }
+});
+
+// Bulk unassign all employees from contact
+app.delete("/api/contacts/:companyId/:contactId/assignments", async (req, res) => {
+  const { companyId, contactId } = req.params;
+  
+  try {
+    let phoneNumber;
+    if (contactId.startsWith(`${companyId}-`)) {
+      const contactIdParts = contactId.split("-");
+      phoneNumber = '+' + contactIdParts[1];
+    } else {
+      phoneNumber = contactId;
+    }
+
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+
+      // 1. Get current contact and all assigned employees
+      const getContactQuery = `
+        SELECT tags, contact_id FROM contacts 
+        WHERE phone = $1 AND company_id = $2
+      `;
+      const contactResult = await client.query(getContactQuery, [phoneNumber, companyId]);
+      
+      if (contactResult.rows.length === 0) {
+        await client.query("ROLLBACK");
+        return res.status(404).json({ error: "Contact not found" });
+      }
+
+      // 2. Get all active assignments for this contact
+      const getAssignmentsQuery = `
+        SELECT DISTINCT a.employee_id, e.name, e.id as employee_uuid
+        FROM assignments a
+        JOIN employees e ON a.employee_id = e.employee_id
+        WHERE a.company_id = $1 
+          AND a.contact_id = $2 
+          AND a.status = 'active'
+      `;
+      
+      const assignmentsResult = await client.query(getAssignmentsQuery, [
+        companyId,
+        contactResult.rows[0].contact_id
+      ]);
+
+      if (assignmentsResult.rows.length === 0) {
+        await client.query("ROLLBACK");
+        return res.status(404).json({ error: "No active assignments found for this contact" });
+      }
+
+      const assignedEmployees = assignmentsResult.rows;
+      const employeeNames = assignedEmployees.map(emp => emp.name);
+
+      // 3. Remove all employee names from contact tags
+      const currentTags = contactResult.rows[0].tags || [];
+      const updatedTags = currentTags.filter(tag => !employeeNames.includes(tag));
+      
+      const updateContactQuery = `
+        UPDATE contacts 
+        SET tags = $3
+        WHERE phone = $1 AND company_id = $2
+        RETURNING *
+      `;
+      
+      const updateResult = await client.query(updateContactQuery, [
+        phoneNumber,
+        companyId,
+        JSON.stringify(updatedTags)
+      ]);
+
+      // 4. Update all employees' assigned_contacts count
+      for (const employee of assignedEmployees) {
+        const employeeUpdateQuery = `
+          UPDATE employees
+          SET assigned_contacts = GREATEST(assigned_contacts - 1, 0)
+          WHERE company_id = $1 AND employee_id = $2
+        `;
+        
+        await client.query(employeeUpdateQuery, [companyId, employee.employee_id]);
+      }
+
+      // 5. Update all assignment records to 'inactive'
+      const updateAssignmentsQuery = `
+        UPDATE assignments 
+        SET status = 'inactive', 
+            updated_at = CURRENT_TIMESTAMP
+        WHERE company_id = $1 
+          AND contact_id = $2 
+          AND status = 'active'
+      `;
+      
+      await client.query(updateAssignmentsQuery, [
+        companyId,
+        contactResult.rows[0].contact_id
+      ]);
+
+      // 6. Update monthly assignments for all employees
+      const currentDate = new Date();
+      const currentMonthKey = `${currentDate.getFullYear()}-${(
+        currentDate.getMonth() + 1
+      ).toString().padStart(2, "0")}`;
+
+      for (const employee of assignedEmployees) {
+        const monthlyAssignmentUpdateQuery = `
+          UPDATE employee_monthly_assignments 
+          SET assignments_count = GREATEST(assignments_count - 1, 0),
+              last_updated = CURRENT_TIMESTAMP
+          WHERE employee_id = $1 
+            AND company_id = $2 
+            AND month_key = $3
+        `;
+        
+        await client.query(monthlyAssignmentUpdateQuery, [
+          employee.employee_uuid,
+          companyId,
+          currentMonthKey
+        ]);
+      }
+
+      await client.query("COMMIT");
+
+      res.json({ 
+        success: true, 
+        message: `Successfully unassigned ${assignedEmployees.length} employee(s)`,
+        contact: updateResult.rows[0],
+        unassignedEmployees: employeeNames,
+        removedTags: employeeNames
+      });
+
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
+
+  } catch (error) {
+    console.error("Error bulk unassigning employees from contact:", error);
+    res.status(500).json({ 
+      error: "Failed to unassign employees", 
+      details: error.message 
+    });
+  }
+});
+
+// Get all assignments for a contact
+app.get("/api/contacts/:companyId/:contactId/assignments", async (req, res) => {
+  const { companyId, contactId } = req.params;
+  
+  try {
+    let phoneNumber;
+    if (contactId.startsWith(`${companyId}-`)) {
+      const contactIdParts = contactId.split("-");
+      phoneNumber = '+' + contactIdParts[1];
+    } else {
+      phoneNumber = contactId;
+    }
+
+    const client = await pool.connect();
+    try {
+      // 1. Get contact details
+      const getContactQuery = `
+        SELECT contact_id, tags FROM contacts 
+        WHERE phone = $1 AND company_id = $2
+      `;
+      const contactResult = await client.query(getContactQuery, [phoneNumber, companyId]);
+      
+      if (contactResult.rows.length === 0) {
+        return res.status(404).json({ error: "Contact not found" });
+      }
+
+      // 2. Get all assignments (both active and inactive) for this contact
+      const getAssignmentsQuery = `
+        SELECT 
+          a.assignment_id,
+          a.employee_id,
+          a.assigned_at,
+          a.status,
+          a.assignment_type,
+          a.phone_index,
+          a.weightage_used,
+          a.employee_role,
+          a.month_key,
+          e.name as employee_name,
+          e.email as employee_email,
+          e.role as employee_role_from_employees,
+          e.phone_number as employee_phone
+        FROM assignments a
+        JOIN employees e ON a.employee_id = e.employee_id
+        WHERE a.company_id = $1 AND a.contact_id = $2
+        ORDER BY a.assigned_at DESC
+      `;
+      
+      const assignmentsResult = await client.query(getAssignmentsQuery, [
+        companyId,
+        contactResult.rows[0].contact_id
+      ]);
+
+      // 3. Separate active and inactive assignments
+      const activeAssignments = assignmentsResult.rows.filter(a => a.status === 'active');
+      const inactiveAssignments = assignmentsResult.rows.filter(a => a.status === 'inactive');
+
+      res.json({ 
+        success: true,
+        contact: {
+          contact_id: contactResult.rows[0].contact_id,
+          phone: phoneNumber,
+          tags: contactResult.rows[0].tags
+        },
+        assignments: {
+          active: activeAssignments,
+          inactive: inactiveAssignments,
+          total: assignmentsResult.rows.length
+        },
+        summary: {
+          activeCount: activeAssignments.length,
+          inactiveCount: inactiveAssignments.length,
+          totalCount: assignmentsResult.rows.length
+        }
+      });
+
+    } catch (error) {
+      throw error;
+    } finally {
+      client.release();
+    }
+
+  } catch (error) {
+    console.error("Error getting contact assignments:", error);
+    res.status(500).json({ 
+      error: "Failed to get contact assignments", 
       details: error.message 
     });
   }
@@ -13901,6 +14450,7 @@ app.get("/api/companies/:companyId/contacts", async (req, res) => {
         c.id,
         c.contact_id,
         c.name,
+        c.contact_name,
         c.phone,
         c.email,
         c.chat_id,
@@ -13911,6 +14461,7 @@ app.get("/api/companies/:companyId/contacts", async (req, res) => {
         c.last_updated,
         c.phone_indexes,
         c.unread_count,
+        c.custom_fields,
         CASE 
           WHEN c.chat_id LIKE '%@c.us' THEN true 
           ELSE false 
@@ -13992,7 +14543,7 @@ app.get("/api/companies/:companyId/contacts", async (req, res) => {
       return {
         id: contact.id,
         contact_id: contact.contact_id,
-        name: contact.name || "",
+        name: contact.name || contact.contact_name || "",
         phone: contact.phone || "",
         email: contact.email || "",
         chat_id: contact.chat_id || "",
@@ -14006,6 +14557,7 @@ app.get("/api/companies/:companyId/contacts", async (req, res) => {
         isIndividual: contact.is_individual,
         last_message: contact.last_message || null,
         unreadCount: contact.unread_count || 0, 
+        customFields: contact.custom_fields || {},  
       };
     });
 

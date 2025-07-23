@@ -1544,23 +1544,45 @@ async function fetchContactData(phoneNumber, idSubstring) {
   }
 }
 
-async function storeVideoData(videoData, filename) {
-  const bucket = admin.storage().bucket();
-  const uniqueFilename = `${uuidv4()}_${filename}`;
-  const file = bucket.file(`videos/${uniqueFilename}`);
+async function storeMediaData(mediaData, filename, mimeType) {
+  try {
+    const buffer = Buffer.from(mediaData, 'base64');
+    const stream = Readable.from(buffer);
 
-  await file.save(Buffer.from(videoData, "base64"), {
-    metadata: {
-      contentType: "video/mp4", // Adjust this based on the actual video type
-    },
-  });
+    // Try to determine mimeType and extension if not provided
+    if (!mimeType) {
+      // Try to guess from filename
+      if (filename) {
+        mimeType = mime.lookup(filename) || 'application/octet-stream';
+      } else {
+        mimeType = 'application/octet-stream';
+      }
+    }
 
-  const [url] = await file.getSignedUrl({
-    action: "read",
-    expires: "03-01-2500", // Adjust expiration as needed
-  });
+    // If filename is missing or has no extension, generate one from mimeType
+    if (!filename || !filename.includes('.')) {
+      const ext = mime.extension(mimeType) || 'bin';
+      filename = `document-${Date.now()}.${ext}`;
+    }
 
-  return url;
+    const formData = new FormData();
+    formData.append('file', stream, {
+      filename: filename,
+      contentType: mimeType,
+      knownLength: buffer.length
+    });
+
+    const response = await axios.post(`${process.env.URL}/api/upload-media`, formData, {
+      headers: formData.getHeaders(),
+      maxContentLength: Infinity,
+      maxBodyLength: Infinity
+    });
+
+    return response.data.url;
+  } catch (error) {
+    console.error('Error uploading document:', error);
+    throw error;
+  }
 }
 
 async function getTotalContacts(idSubstring) {
@@ -3846,6 +3868,7 @@ async function addMessageToPostgres(msg, idSubstring, extractedNumber, contactNa
       mediaUrl = messageData.video?.link || null;
     } else if (msg.type !== "audio" && msg.type !== "ptt") {
       mediaData = messageData[msg.type]?.data || null;
+      mediaUrl = messageData[msg.type]?.link || null;
       mediaMetadata = {
         mimetype: messageData[msg.type]?.mimetype,
         filename: messageData[msg.type]?.filename || "",
@@ -6446,24 +6469,45 @@ async function processMessageMedia(msg) {
       return null;
     }
 
+    const fileSizeBytes = Math.floor((media.data.length * 3) / 4);
+    const fileSizeMB = fileSizeBytes / (1024 * 1024);
+    const FILE_SIZE_LIMIT_MB = 5;
+
     const mediaData = {
       mimetype: media.mimetype,
       data: media.data,
-      filename: msg._data.filename || "",
-      caption: msg._data.caption || "",
+      filename: msg._data.filename || media.filename || "",
+      caption: msg._data.caption || media.caption || "",
     };
 
     switch (msg.type) {
       case "image":
         mediaData.width = msg._data.width;
         mediaData.height = msg._data.height;
+        if (fileSizeMB > FILE_SIZE_LIMIT_MB) {
+          mediaData.link = await storeMediaData(media.data, mediaData.filename, media.mimetype);
+          delete mediaData.data;
+        }
         break;
       case "document":
         mediaData.page_count = msg._data.pageCount;
         mediaData.file_size = msg._data.size;
+        if (fileSizeMB > FILE_SIZE_LIMIT_MB) {
+          mediaData.link = await storeMediaData(media.data, mediaData.filename, media.mimetype);
+          delete mediaData.data;
+        }
         break;
       case "video":
-        mediaData.link = await storeVideoData(media.data, msg._data.filename);
+        mediaData.link = await storeMediaData(media.data, mediaData.filename, media.mimetype);
+        delete mediaData.data;
+        break;
+      default:
+        if (fileSizeMB > FILE_SIZE_LIMIT_MB) {
+          mediaData.link = await storeMediaData(media.data, mediaData.filename, media.mimetype);
+          delete mediaData.data;
+        } else {
+          mediaData.link = null;
+        }
         break;
     }
 
@@ -7239,7 +7283,7 @@ async function assignToEmployee(
   triggerKeyword = "",
   phoneIndex = 0
 ) {
-  const employeeID = employee.phoneNumber.split("+")[1] + "@c.us";
+  const employeeID = employee.phone_number?.replace(/\D/g, '') + "@c.us";
 
   // Get current date and time in Malaysia timezone
   const currentDateTime = new Date().toLocaleString("en-MY", {
@@ -7276,8 +7320,101 @@ Kindly login to the CRM software to continue.
 
 Thank you.`;
 
+  // Send WhatsApp message to employee
   await client.sendMessage(employeeID, message);
+  
+  // Add employee name as tag to contact
   await addTagToPostgres(contactID, employee.name, idSubstring);
+  
+  // Create assignment record in assignments table (the addTagToPostgres function now handles this)
+  // But we also want to create a direct assignment record for better tracking
+  try {
+    const sqlClient = await pool.connect();
+    try {
+      await sqlClient.query("BEGIN");
+
+      // Get contact details
+      const contactQuery = `
+        SELECT contact_id FROM contacts 
+        WHERE phone = $1 AND company_id = $2
+      `;
+      const contactResult = await sqlClient.query(contactQuery, [contactID, idSubstring]);
+      
+      if (contactResult.rows.length > 0) {
+        const currentDate = new Date();
+        const currentMonthKey = `${currentDate.getFullYear()}-${(
+          currentDate.getMonth() + 1
+        ).toString().padStart(2, "0")}`;
+
+        const assignmentId = `${idSubstring}-${contactResult.rows[0].contact_id}-${employee.employee_id}-${Date.now()}`;
+        
+        // Check if assignment already exists to avoid duplicates
+        const existingAssignmentQuery = `
+          SELECT id FROM assignments 
+          WHERE company_id = $1 AND employee_id = $2 AND contact_id = $3 AND status = 'active'
+        `;
+        const existingResult = await sqlClient.query(existingAssignmentQuery, [
+          idSubstring,
+          employee.employee_id,
+          contactResult.rows[0].contact_id
+        ]);
+
+        if (existingResult.rows.length === 0) {
+          const assignmentInsertQuery = `
+            INSERT INTO assignments (
+              assignment_id, company_id, employee_id, contact_id, 
+              assigned_at, status, month_key, assignment_type, 
+              phone_index, weightage_used, employee_role
+            ) VALUES ($1, $2, $3, $4, CURRENT_TIMESTAMP, 'active', $5, 'auto_bot', $6, 1, $7)
+          `;
+          
+          await sqlClient.query(assignmentInsertQuery, [
+            assignmentId,
+            idSubstring,
+            employee.employee_id,
+            contactResult.rows[0].contact_id,
+            currentMonthKey,
+            phoneIndex,
+            role
+          ]);
+
+          // Update employee's assigned_contacts count
+          const employeeUpdateQuery = `
+            UPDATE employees
+            SET assigned_contacts = assigned_contacts + 1
+            WHERE company_id = $1 AND employee_id = $2
+          `;
+          
+          await sqlClient.query(employeeUpdateQuery, [idSubstring, employee.employee_id]);
+
+          // Update monthly assignments
+          const monthlyAssignmentUpsertQuery = `
+            INSERT INTO employee_monthly_assignments (employee_id, company_id, month_key, assignments_count, last_updated)
+            VALUES ($1, $2, $3, 1, CURRENT_TIMESTAMP)
+            ON CONFLICT (employee_id, month_key) DO UPDATE
+            SET assignments_count = employee_monthly_assignments.assignments_count + 1,
+                last_updated = CURRENT_TIMESTAMP
+          `;
+          
+          await sqlClient.query(monthlyAssignmentUpsertQuery, [
+            employee.id,
+            idSubstring,
+            currentMonthKey
+          ]);
+        }
+      }
+
+      await sqlClient.query("COMMIT");
+    } catch (error) {
+      await sqlClient.query("ROLLBACK");
+      console.error("Error creating assignment record:", error);
+    } finally {
+      sqlClient.release();
+    }
+  } catch (error) {
+    console.error("Error in assignToEmployee database operations:", error);
+  }
+  
   console.log(`Assigned ${role}: ${employee.name}`);
 }
 
@@ -9218,6 +9355,26 @@ function removeUndefined(obj) {
   return Object.fromEntries(Object.entries(obj).filter(([_, v]) => v != null));
 }
 
+// Helper function to check if a tag is an employee name
+async function isEmployeeTag(tag, companyId) {
+  try {
+    const sqlClient = await pool.connect();
+    try {
+      const employeeQuery = `
+        SELECT id, employee_id, name FROM employees 
+        WHERE company_id = $1 AND name = $2
+      `;
+      const result = await sqlClient.query(employeeQuery, [companyId, tag]);
+      return result.rows.length > 0 ? result.rows[0] : null;
+    } finally {
+      sqlClient.release();
+    }
+  } catch (error) {
+    console.error("Error checking if tag is employee:", error);
+    return null;
+  }
+}
+
 async function addTagToPostgres(contactID, tag, companyID, remove = false) {
   console.log(
     `${remove ? "Removing" : "Adding"} tag "${tag}" ${
@@ -9247,6 +9404,9 @@ async function addTagToPostgres(contactID, tag, companyID, remove = false) {
       throw new Error("Contact does not exist!");
     }
 
+    // Check if the tag is an employee name
+    const employeeData = await isEmployeeTag(tag, companyID);
+
     if (remove) {
       const removeQuery = `
         UPDATE public.contacts 
@@ -9271,6 +9431,48 @@ async function addTagToPostgres(contactID, tag, companyID, remove = false) {
         console.log(
           `Tag "${tag}" removed successfully from contact ${contactID}`
         );
+
+        // If removing an employee tag, handle assignment deactivation
+        if (employeeData) {
+          console.log(`Deactivating assignment for employee: ${tag}`);
+          
+          // Deactivate assignment records
+          const deactivateAssignmentQuery = `
+            UPDATE assignments 
+            SET status = 'inactive', last_updated = CURRENT_TIMESTAMP
+            WHERE company_id = $1 AND employee_id = $2 AND contact_id = $3 AND status = 'active'
+          `;
+          await sqlClient.query(deactivateAssignmentQuery, [
+            companyID,
+            employeeData.employee_id,
+            contactID
+          ]);
+
+          // Decrease employee's assigned_contacts count
+          const decreaseEmployeeCountQuery = `
+            UPDATE employees
+            SET assigned_contacts = GREATEST(assigned_contacts - 1, 0)
+            WHERE company_id = $1 AND employee_id = $2
+          `;
+          await sqlClient.query(decreaseEmployeeCountQuery, [companyID, employeeData.employee_id]);
+
+          // Update monthly assignments (decrease)
+          const currentDate = new Date();
+          const currentMonthKey = `${currentDate.getFullYear()}-${(
+            currentDate.getMonth() + 1
+          ).toString().padStart(2, "0")}`;
+
+          const monthlyAssignmentUpdateQuery = `
+            UPDATE employee_monthly_assignments
+            SET assignments_count = GREATEST(assignments_count - 1, 0),
+                last_updated = CURRENT_TIMESTAMP
+            WHERE employee_id = $1 AND month_key = $2
+          `;
+          await sqlClient.query(monthlyAssignmentUpdateQuery, [
+            employeeData.id,
+            currentMonthKey
+          ]);
+        }
       } else {
         console.log(`Tag "${tag}" doesn't exist for contact ${contactID}`);
       }
@@ -9295,6 +9497,58 @@ async function addTagToPostgres(contactID, tag, companyID, remove = false) {
 
       if (!addResult.rows[0].tag_existed_before_update) {
         console.log(`Tag "${tag}" added successfully to contact ${contactID}`);
+
+        // If adding an employee tag, handle assignment creation
+        if (employeeData) {
+          console.log(`Creating assignment for employee: ${tag}`);
+          
+          const currentDate = new Date();
+          const currentMonthKey = `${currentDate.getFullYear()}-${(
+            currentDate.getMonth() + 1
+          ).toString().padStart(2, "0")}`;
+
+          const assignmentId = `${companyID}-${contactID}-${employeeData.employee_id}-${Date.now()}`;
+          
+          // Create assignment record
+          const assignmentInsertQuery = `
+            INSERT INTO assignments (
+              assignment_id, company_id, employee_id, contact_id, 
+              assigned_at, status, month_key, assignment_type, 
+              phone_index, weightage_used
+            ) VALUES ($1, $2, $3, $4, CURRENT_TIMESTAMP, 'active', $5, 'tag_add', 0, 1)
+          `;
+          
+          await sqlClient.query(assignmentInsertQuery, [
+            assignmentId,
+            companyID,
+            employeeData.employee_id,
+            contactID,
+            currentMonthKey
+          ]);
+
+          // Increase employee's assigned_contacts count
+          const increaseEmployeeCountQuery = `
+            UPDATE employees
+            SET assigned_contacts = assigned_contacts + 1
+            WHERE company_id = $1 AND employee_id = $2
+          `;
+          await sqlClient.query(increaseEmployeeCountQuery, [companyID, employeeData.employee_id]);
+
+          // Update monthly assignments (increase)
+          const monthlyAssignmentUpsertQuery = `
+            INSERT INTO employee_monthly_assignments (employee_id, company_id, month_key, assignments_count, last_updated)
+            VALUES ($1, $2, $3, 1, CURRENT_TIMESTAMP)
+            ON CONFLICT (employee_id, month_key) DO UPDATE
+            SET assignments_count = employee_monthly_assignments.assignments_count + 1,
+                last_updated = CURRENT_TIMESTAMP
+          `;
+          
+          await sqlClient.query(monthlyAssignmentUpsertQuery, [
+            employeeData.id,
+            companyID,
+            currentMonthKey
+          ]);
+        }
       } else {
         console.log(`Tag "${tag}" already exists for contact ${contactID}`);
       }
