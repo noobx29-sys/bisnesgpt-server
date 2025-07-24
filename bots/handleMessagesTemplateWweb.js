@@ -22,7 +22,6 @@ const pdf = require("pdf-parse");
 const { fromPath } = require("pdf2pic");
 const SKCSpreadsheet = require("../spreadsheet/SKCSpreadsheet");
 const CarCareSpreadsheet = require("../blast/bookingCarCareGroup");
-const { broadcastNewMessageToChat } = require('../server.js'); // Adjust path as needed
 
 const { neon, neonConfig } = require("@neondatabase/serverless");
 const { Pool } = require("pg");
@@ -1690,8 +1689,8 @@ async function listAssignedContacts(companyId, assigneeName, limit = 10) {
 
     const query = `
       SELECT 
-        contact_id as "phoneNumber", 
-        contact_name as "contactName", 
+        phone as "phoneNumber", 
+        name as "contactName", 
         tags
       FROM public.contacts 
       WHERE company_id = $1 
@@ -2276,6 +2275,19 @@ async function prepareContactData(
       extractedNumber,
     thread_id: threadID ?? "",
     profile_pic_url: profilePicUrl,
+    last_message: {
+      chat_id: msg.from,
+      from: msg.from ?? "",
+      from_me: msg.fromMe ?? false,
+      id: msg.id._serialized ?? "",
+      source: chat.deviceType ?? "",
+      status: "delivered",
+      text: {
+        body: msg.body ?? "",
+      },
+      timestamp: msg.timestamp ?? 0,
+      type: msg.type === "chat" ? "text" : msg.type,
+    },
   };
 
   if (!contactData) {
@@ -2298,7 +2310,7 @@ async function checkKeywordMatch(response, message, keywordSource) {
 async function handleAIVideoResponses({
   client,
   message,
-  from,
+  chatId,
   extractedNumber,
   idSubstring,
   contactName,
@@ -2322,7 +2334,7 @@ async function handleAIVideoResponses({
           const media = await MessageMedia.fromUrl(videoUrl);
           if (!media) throw new Error("Failed to load video from URL");
 
-          const videoMessage = await client.sendMessage(from, media, {
+          const videoMessage = await client.sendMessage(chatId, media, {
             caption,
             sendVideoAsGif: false,
           });
@@ -2346,7 +2358,7 @@ async function handleAIVideoResponses({
 async function handleAIVoiceResponses({
   client,
   message,
-  from,
+  chatId,
   extractedNumber,
   idSubstring,
   contactName,
@@ -2367,7 +2379,7 @@ async function handleAIVoiceResponses({
           const caption = response.captions?.[i] || "";
           const voiceMessage = await sendVoiceMessage(
             client,
-            from,
+            chatId,
             response.voiceUrls[i],
             caption
           );
@@ -2393,7 +2405,7 @@ async function handleAIVoiceResponses({
 async function handleAIImageResponses({
   client,
   message,
-  from,
+  chatId,
   extractedNumber,
   idSubstring,
   contactName,
@@ -2412,7 +2424,7 @@ async function handleAIImageResponses({
       for (const imageUrl of response.imageUrls) {
         try {
           const media = await MessageMedia.fromUrl(imageUrl);
-          const imageMessage = await client.sendMessage(from, media);
+          const imageMessage = await client.sendMessage(chatId, media);
           await addMessageToPostgres(
             imageMessage,
             idSubstring,
@@ -2431,7 +2443,7 @@ async function handleAIImageResponses({
 async function handleAIDocumentResponses({
   client,
   message,
-  from,
+  chatId,
   extractedNumber,
   idSubstring,
   contactName,
@@ -2460,7 +2472,7 @@ async function handleAIDocumentResponses({
             media.mimetype ||
             getMimeTypeFromExtension(path.extname(documentName));
 
-          const documentMessage = await client.sendMessage(from, media, {
+          const documentMessage = await client.sendMessage(chatId, media, {
             sendMediaAsDocument: true,
           });
 
@@ -2586,7 +2598,7 @@ function getMimeTypeFromExtension(ext) {
 }
 
 async function handleAIFollowUpResponses({
-  msg,
+  message,
   extractedNumber,
   idSubstring,
   contactName,
@@ -3048,15 +3060,6 @@ async function processImmediateActions(client, msg, botName, phoneIndex) {
   const extractedNumber = "+" + msg.from.split("@")[0];
   console.log(`�� [IMMEDIATE_ACTIONS] Extracted number: ${extractedNumber}`);
   const contactID = idSubstring + "-" + (extractedNumber.startsWith("+") ? extractedNumber.slice(1) : extractedNumber);
-  if (contactID) {
-    broadcastNewMessageToChat(contactID, {
-      type: "new_message",
-      chatId,
-      message: messageBody,
-      extractedNumber,
-      // Optionally add more fields, e.g. whapiToken
-    });
-  }
   
   // Handle special cases first
   if (
@@ -3119,7 +3122,7 @@ async function processImmediateActions(client, msg, botName, phoneIndex) {
     if (contactData) {
       console.log(`�� [IMMEDIATE_ACTIONS] Found existing contact:`, {
         contact_id: contactData.contact_id,
-        contact_name: contactData.contact_name,
+        contact_name: contactData.name,
         name: contactData.name,
         phone: contactData.phone,
         company_id: contactData.company_id
@@ -3138,7 +3141,9 @@ async function processImmediateActions(client, msg, botName, phoneIndex) {
       const thread = await createThread();
       threadID = thread.id;
       console.log(`�� [IMMEDIATE_ACTIONS] Saving thread ID: ${threadID} for contact: ${extractedNumber}`);
-      await saveThreadIDPostgres(extractedNumber, threadID, idSubstring);
+      if (contactData) {
+        await saveThreadIDPostgres(extractedNumber, threadID, idSubstring);
+      }
     } else {
       console.log(`�� [IMMEDIATE_ACTIONS] Using existing thread ID: ${threadID}`);
     }
@@ -3256,7 +3261,12 @@ async function processImmediateActions(client, msg, botName, phoneIndex) {
     }
 
     if (contactTags !== undefined) {
-      if (contactTags.toLowerCase().includes("stop bot")) {
+      if (
+        Array.isArray(contactTags) &&
+        contactTags.some(
+          (tag) => typeof tag === "string" && tag.toLowerCase() === "stop bot"
+        )
+      ) {
         console.log(
           `Bot stopped for contact ${extractedNumber} for Company ${idSubstring}`
         );
@@ -3514,7 +3524,7 @@ async function processMessage(
   const idSubstring = botName;
   const chatId = msg.from;
   console.log(
-    `�� [CONTACT_TRACKING] Processing immediate actions for Company ${botName} from chat ${chatId}`
+    `�� [CONTACT_TRACKING] Processing immediate actions for Company ${botName} from chat ${chatId} with phone index ${phoneIndex}`
   );
 
   try {
@@ -3570,7 +3580,7 @@ async function processMessage(
     if (contactData) {
       console.log(`�� [CONTACT_TRACKING] Found existing contact:`, {
         contact_id: contactData.contact_id,
-        contact_name: contactData.contact_name,
+        contact_name: contactData.name,
         name: contactData.name,
         phone: contactData.phone,
         company_id: contactData.company_id
@@ -3593,7 +3603,10 @@ async function processMessage(
       return;
     }
 
-    if (stopTag.toLowerCase().includes("stop bot")) {
+    if (
+      Array.isArray(stopTag) &&
+      stopTag.some((tag) => typeof tag === "string" && tag.toLowerCase() === "stop bot")
+    ) {
       console.log(
         `Bot stopped for this message from ${sender.to} for Company ${idSubstring}`
       );
@@ -3601,15 +3614,15 @@ async function processMessage(
     }
 
     // Get or create thread ID
-    if (contactData?.threadid) {
-      threadID = contactData.threadid;
+    if (contactData?.thread_id) {
+      threadID = contactData.thread_id;
       console.log(`�� [CONTACT_TRACKING] Using existing thread ID: ${threadID}`);
     } else {
       const thread = await createThread();
       threadID = thread.id;
       console.log(`�� [CONTACT_TRACKING] Created new thread ID: ${threadID}`);
       
-      const contactIDForThread = contactData?.contact_id || extractedNumber;
+      const contactIDForThread = contactData?.phone || extractedNumber;
       console.log(`�� [CONTACT_TRACKING] Saving thread ID for contact: ${contactIDForThread}`);
       await saveThreadIDPostgres(
         contactIDForThread,
@@ -3720,6 +3733,7 @@ async function processMessage(
         combinedMessage,
         stopTag,
         contactData,
+        phoneIndex,
       });
 
       query = typeAnalysis
@@ -3737,7 +3751,8 @@ async function processMessage(
         contactData?.contact_name ||
           contactData?.name ||
           contact.pushname ||
-          extractedNumber
+          extractedNumber,
+        phoneIndex
       );
 
       if (answer) {
@@ -4132,6 +4147,7 @@ async function handleMessageByType({
   combinedMessage,
   stopTag,
   contactData,
+  phoneIndex = 0,
 }) {
   if (msg.type === "document" && msg._data.mimetype === "application/pdf") {
     return await handlePDFMessage(
@@ -4140,7 +4156,8 @@ async function handleMessageByType({
       threadID,
       client,
       idSubstring,
-      extractedNumber
+      extractedNumber,
+      phoneIndex
     );
   } else if (msg.type === "location") {
     return "The user sent a location message";
@@ -4151,7 +4168,8 @@ async function handleMessageByType({
       threadID,
       client,
       idSubstring,
-      extractedNumber
+      extractedNumber,
+      phoneIndex
     );
   }
   return null;
@@ -5303,7 +5321,8 @@ async function handleImageMessage(
   threadID,
   client,
   idSubstring,
-  extractedNumber
+  extractedNumber,
+  phoneIndex
 ) {
   try {
     const media = await msg.downloadMedia();
@@ -5347,7 +5366,8 @@ async function handlePDFMessage(
   threadID,
   client,
   idSubstring,
-  extractedNumber
+  extractedNumber,
+  phoneIndex
 ) {
   try {
     console.log("Processing PDF document...");
@@ -5482,7 +5502,6 @@ async function getFollowUpTemplates(companyId) {
 }
 
 async function getAIAssignResponses(companyId) {
-  console.log("Starting getAIAssignResponses for companyId:", companyId);
   const responses = [];
   const sqlClient = await pool.connect();
 
@@ -5505,19 +5524,11 @@ async function getAIAssignResponses(companyId) {
         AND status = 'active'
     `;
 
-    console.log("Fetching active aiAssignResponses...");
     const result = await sqlClient.query(query, [companyId]);
-    console.log("Found aiAssignResponses records:", result.rows.length);
 
     for (const row of result.rows) {
-      console.log("\nProcessing record:", row.response_id);
-      console.log("Record data:", row);
-
       const assignedEmployees = row.assigned_employees || [];
-      console.log("Assigned employees array:", assignedEmployees);
-
       if (assignedEmployees.length === 0) {
-        console.log("No assigned employees found, skipping record");
         continue;
       }
 
@@ -5532,13 +5543,11 @@ async function getAIAssignResponses(companyId) {
         status: row.status || "active",
       };
 
-      console.log("Adding response object:", responseObj);
       responses.push(responseObj);
     }
 
     await sqlClient.query("COMMIT");
-    console.log("\nFinal responses array:", responses);
-    return responses;
+      return responses;
   } catch (error) {
     await sqlClient.query("ROLLBACK");
     console.error("Error in getAIAssignResponses:", error);
@@ -5546,7 +5555,6 @@ async function getAIAssignResponses(companyId) {
     throw error;
   } finally {
     sqlClient.release();
-    console.log("Database client released back to the pool");
   }
 }
 
@@ -5809,7 +5817,6 @@ async function sendVoiceMessage(client, chatId, voiceUrl, caption = "") {
 }
 
 function formatPhoneNumber(phoneNumber) {
-  console.log("Formatting phone number:", phoneNumber);
   // Remove all non-digit characters
   let cleaned = phoneNumber.replace(/\D/g, "");
 
@@ -5821,9 +5828,9 @@ function formatPhoneNumber(phoneNumber) {
   // Ensure the number starts with '+60'
   cleaned = "+60" + cleaned;
 
-  console.log("Formatted phone number:", cleaned);
   return cleaned;
 }
+
 function extractAppointmentInfo(messageBody) {
   const lines = messageBody.split("\n");
   const info = {};
@@ -7708,10 +7715,11 @@ async function runAssistant(
   phoneNumber,
   name,
   companyName,
-  contact
+  contact,
+  phoneIndex = 0
 ) {
   console.log("Running assistant for thread: " + threadId);
-  const currentAssistantId = await getCompanyAssistantId(idSubstring);
+  const currentAssistantId = await getCompanyAssistantId(idSubstring, phoneIndex);
   console.log(
     `Running assistant ${currentAssistantId} for company ${idSubstring}`
   );
@@ -7736,7 +7744,7 @@ async function runAssistant(
   return answer;
 }
 
-async function getCompanyAssistantId(idSubstring) {
+async function getCompanyAssistantId(idSubstring, phoneIndex = 0) {
   try {
     const sqlClient = await pool.connect();
 
@@ -7744,7 +7752,7 @@ async function getCompanyAssistantId(idSubstring) {
       await sqlClient.query("BEGIN");
 
       const query = `
-        SELECT assistant_id
+        SELECT assistant_ids
         FROM public.companies
         WHERE company_id = $1
       `;
@@ -7757,7 +7765,20 @@ async function getCompanyAssistantId(idSubstring) {
         throw new Error(`No config found for company ${idSubstring}`);
       }
 
-      const assistantId = result.rows[0].assistant_id;
+      const assistantIds = result.rows[0].assistant_ids;
+      let assistantId;
+      if (Array.isArray(assistantIds)) {
+        assistantId = assistantIds[phoneIndex] || assistantIds[0];
+      } else if (typeof assistantIds === "string") {
+        try {
+          const parsed = JSON.parse(assistantIds);
+          assistantId = Array.isArray(parsed)
+        ? parsed[phoneIndex] || parsed[0]
+        : parsed;
+        } catch {
+          assistantId = assistantIds;
+        }
+      }
 
       if (!assistantId) {
         throw new Error(`No assistant ID found for company ${idSubstring}`);
@@ -9574,13 +9595,14 @@ async function setLeadTemperature(idSubstring, phoneNumber, temperature) {
     await sqlClient.query("BEGIN");
 
     const leadTemperatureTags = ["cold", "medium", "hot"];
+    const contactID = `${idSubstring}-${phoneNumber.startsWith("+") ? phoneNumber.slice(1) : phoneNumber}`;
 
     const checkQuery = `
       SELECT tags FROM public.contacts 
       WHERE contact_id = $1 AND company_id = $2
     `;
     const checkResult = await sqlClient.query(checkQuery, [
-      phoneNumber,
+      contactID,
       idSubstring,
     ]);
 
@@ -9605,7 +9627,7 @@ async function setLeadTemperature(idSubstring, phoneNumber, temperature) {
     `;
     await sqlClient.query(updateQuery, [
       JSON.stringify(updatedTags),
-      phoneNumber,
+      contactID,
       idSubstring,
     ]);
 
@@ -9678,7 +9700,8 @@ async function handleOpenAIAssistant(
   phoneNumber,
   idSubstring,
   client,
-  name
+  name,
+  phoneIndex
 ) {
   console.log(companyConfig.assistantId);
   let assistantId = companyConfig.assistantId;
@@ -10386,7 +10409,8 @@ async function handleOpenAIAssistant(
     phoneNumber,
     name,
     contactData.companyName,
-    contactData
+    contactData,
+    phoneIndex
   );
   return answer;
 }

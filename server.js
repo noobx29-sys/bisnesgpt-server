@@ -63,8 +63,6 @@ const {
   handleNewMessagesTemplateWweb,
 } = require("./bots/handleMessagesTemplateWweb.js");
 const { handleTagFollowUp } = require("./blast/tag.js");
-// const { broadcastNewMessageToChat } = require("./utils/broadcast.js");
-// const { chatSubscriptions } = require("./utils/chatSubscriptions.js");
 
 // Import logging system
 const ServerLogger = require('./logger');
@@ -185,7 +183,8 @@ const storage = multer.diskStorage({
   destination: MEDIA_DIR,
   filename: (req, file, cb) => {
     const ext = path.extname(file.originalname);
-    const uniqueName = `${uuidv4()}${ext}`;
+    const baseName = path.basename(file.originalname, ext);
+    const uniqueName = `${uuidv4()}_${baseName}${ext}`;
     cb(null, uniqueName);
   }
 });
@@ -612,25 +611,6 @@ app.get("/api/bot-status/:companyId", async (req, res) => {
     res.status(500).json({ error: "Failed to get status" });
   }
 });
-
-function broadcastNewMessageToChat(chatId, message, whapiToken) {
-  if (chatSubscriptions.has(chatId)) {
-    for (const ws of chatSubscriptions.get(chatId)) {
-      if (ws.readyState === ws.OPEN) {
-        ws.send(
-          JSON.stringify({
-            type: "new_message",
-            chatId,
-            message,
-            whapiToken,
-          })
-        );
-      }
-    }
-  }
-}
-
-module.exports = { broadcastNewMessageToChat };
 
 // Handle WebSocket connections
 wss.on("connection", (ws, req) => {
@@ -3216,14 +3196,14 @@ async function syncSingleContact(client, companyId, contactPhone, phoneIndex = 0
       `Syncing single contact ${contactPhone} for company ${companyId}, phone ${phoneIndex}`
     );
 
-    // Format the contact ID to match WhatsApp format
-    const chatId = `${contactPhone}@c.us`;
     const phoneWithPlus = contactPhone.startsWith("+") ? contactPhone : `+${contactPhone}`;
+    const phoneWithoutPlus = contactPhone.startsWith("+") ? contactPhone.slice(1) : contactPhone;
+    const chatId = `${phoneWithoutPlus}@c.us`;
     
     try {
       const chat = await client.getChatById(chatId);
       const contact = await chat.getContact();
-      const contactID = `${companyId}-${contactPhone}`;
+      const contactID = `${companyId}-${phoneWithoutPlus}`;
 
       const profilePicUrl = await contact.getProfilePicUrl();
 
@@ -3427,15 +3407,17 @@ async function syncSingleContactName(client, companyId, contactPhone, phoneIndex
     );
 
     // Format the contact ID to match WhatsApp format
-    const chatId = `${contactPhone}@c.us`;
+    const phoneWithPlus = contactPhone.startsWith("+") ? contactPhone : `+${contactPhone}`;
+    const phoneWithoutPlus = contactPhone.startsWith("+") ? contactPhone.slice(1) : contactPhone;
+    const chatId = `${phoneWithoutPlus}@c.us`;
 
     try {
       const chat = await client.getChatById(chatId);
       const contact = await chat.getContact();
-      const contactID = `${companyId}-${contactPhone}`;
+      const contactID = `${companyId}-${phoneWithoutPlus}`;
 
       const profilePicUrl = await contact.getProfilePicUrl();
-      const potentialName = contact.name || contact.pushname || contact.shortName || contactPhone;
+      const potentialName = contact.name || contact.pushname || contact.shortName || phoneWithPlus;
 
       // Helper: is just a phone number
       function isJustPhoneNumber(str) {
@@ -3459,7 +3441,7 @@ async function syncSingleContactName(client, companyId, contactPhone, phoneIndex
         shouldSaveName = false;
       } else if (hasMixedContent(potentialName)) {
         shouldSaveName = true;
-      } else if (potentialName !== contactPhone) {
+      } else if (potentialName !== phoneWithPlus) {
         shouldSaveName = true;
       }
 
@@ -4516,11 +4498,11 @@ async function scheduleAllMessages() {
       const queue = getQueueForBot(companyId);
 
       const messagesQuery = `
-  SELECT * FROM scheduled_messages
-  WHERE company_id = $1
-  AND status != 'sent'
-  AND id::text = schedule_id::text
-`;
+        SELECT * FROM scheduled_messages
+        WHERE company_id = $1
+        AND status != 'sent'
+        AND id::text = schedule_id::text
+      `;
       const messagesResult = await client.query(messagesQuery, [companyId]);
 
       for (const message of messagesResult.rows) {
@@ -9274,6 +9256,49 @@ app.put("/api/contacts/:contact_id", async (req, res) => {
     });
   }
 });
+
+app.put("/api/contacts/:contact_id/pinned", async (req, res) => {
+  try {
+    const { contact_id } = req.params;
+    const { companyId, pinned } = req.body;
+
+    if (!companyId || !contact_id || typeof pinned !== "boolean") {
+      return res.status(400).json({
+        success: false,
+        message: "Missing required fields (companyId, contact_id, pinned)",
+      });
+    }
+
+    const query = `
+      UPDATE contacts
+      SET pinned = $1, updated_at = CURRENT_TIMESTAMP
+      WHERE contact_id = $2 AND company_id = $3
+      RETURNING contact_id, pinned
+    `;
+    const result = await sqlDb.query(query, [pinned, contact_id, companyId]);
+
+    if (result.rows.length === 0) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Contact not found" });
+    }
+
+    res.json({
+      success: true,
+      contact_id: result.rows[0].contact_id,
+      pinned: result.rows[0].pinned,
+      message: "Pinned status updated successfully",
+    });
+  } catch (error) {
+    console.error("Error updating pinned status:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to update pinned status",
+      details: error.message,
+    });
+  }
+});
+
 
 // API to reset unread_count to 0 for a contact
 app.put("/api/contacts/:contact_id/reset-unread", async (req, res) => {
