@@ -2228,24 +2228,65 @@ async function prepareContactData(
   const contactTags = contactData?.tags || [];
   const profilePicUrl = await getProfilePicUrl(contact);
 
+  // Helper function to determine a proper display name
+  function getDisplayName(contactData, contact, extractedNumber) {
+    // Get candidate names
+    const candidateName =
+      contactData?.contact_name || contactData?.name || contact?.name || "";
+    const pushname = contact.pushname || "";
+
+    // Helper to check if a string is a phone number (digits only, possibly with +)
+    function isPhoneNumber(str) {
+      if (!str) return false;
+      const cleaned = str.replace(/\D/g, "");
+      const extractedClean = extractedNumber.replace(/\D/g, "");
+      return (
+        cleaned.length > 5 &&
+        (cleaned === extractedClean ||
+          cleaned === extractedClean.replace(/^60/, "") ||
+          cleaned === extractedClean.replace(/^0/, ""))
+      );
+    }
+
+    // If candidate name is missing or looks like a phone number
+    if (!candidateName || isPhoneNumber(candidateName)) {
+      // If pushname exists and is not a phone number, use it
+      if (pushname && !isPhoneNumber(pushname)) {
+        return pushname;
+      }
+      // Otherwise, fallback to extractedNumber
+      return extractedNumber;
+    }
+    // Otherwise, use the candidate name
+    return candidateName;
+  }
+
+  const displayName = getDisplayName(contactData, contact, extractedNumber);
+
   const data = {
     additional_emails: [],
     address1: null,
     assigned_to: null,
     business_id: null,
     phone: extractedNumber,
-    contact_id: idSubstring + "-" + (extractedNumber.startsWith("+") ? extractedNumber.slice(1) : extractedNumber),
+    contact_id:
+      idSubstring +
+      "-" +
+      (extractedNumber.startsWith("+")
+        ? extractedNumber.slice(1)
+        : extractedNumber),
     tags: contactTags,
     unread_count: (contactData?.unread_count || 0) + 1,
     last_updated: new Date(msg.timestamp * 1000),
     chat_data: {
-      contact_id: idSubstring + "-" + (extractedNumber.startsWith("+") ? extractedNumber.slice(1) : extractedNumber),
+      contact_id:
+        idSubstring +
+        "-" +
+        (extractedNumber.startsWith("+")
+          ? extractedNumber.slice(1)
+          : extractedNumber),
       id: msg.from,
-      name:
-        contactData?.contact_name ||
-        contactData?.name ||
-        contact.pushname ||
-        extractedNumber,
+      name: displayName,
       not_spam: true,
       tags: contactTags,
       timestamp: chat.timestamp || Date.now(),
@@ -2268,11 +2309,7 @@ async function prepareContactData(
     chat_id: msg.from,
     city: null,
     company: companyName || null,
-    name:
-      contactData?.contact_name ||
-      contactData?.name ||
-      contact.pushname ||
-      extractedNumber,
+    name: displayName,
     thread_id: threadID ?? "",
     profile_pic_url: profilePicUrl,
     last_message: {
@@ -3215,34 +3252,6 @@ async function processImmediateActions(client, msg, botName, phoneIndex) {
       contactDataForDB.name
     );
 
-    const handlerParams = {
-      client: client,
-      msg: messageBody,
-      idSubstring: idSubstring,
-      extractedNumber: extractedNumber,
-      contactName:
-        contactData?.contact_name ||
-        contactData?.name ||
-        contact.pushname ||
-        extractedNumber,
-      phoneIndex: phoneIndex,
-    };
-
-    // Handle user-triggered responses
-    await processAIResponses({
-      ...handlerParams,
-      keywordSource: "user",
-      handlers: {
-        assign: true,
-        tag: true,
-        followUp: true,
-        document: false,
-        image: false,
-        video: false,
-        voice: false,
-      },
-    });
-
     // Reset bot command
     if (msg.body.includes("/resetbot")) {
       console.log(`�� [IMMEDIATE_ACTIONS] Reset bot command detected`);
@@ -3283,6 +3292,34 @@ async function processImmediateActions(client, msg, botName, phoneIndex) {
       );
       return;
     }
+
+    const handlerParams = {
+      client: client,
+      msg: messageBody,
+      idSubstring: idSubstring,
+      extractedNumber: extractedNumber,
+      contactName:
+        contactData?.contact_name ||
+        contactData?.name ||
+        contact.pushname ||
+        extractedNumber,
+      phoneIndex: phoneIndex,
+    };
+
+    // Handle user-triggered responses
+    await processAIResponses({
+      ...handlerParams,
+      keywordSource: "user",
+      handlers: {
+        assign: true,
+        tag: true,
+        followUp: true,
+        document: false,
+        image: false,
+        video: false,
+        voice: false,
+      },
+    });
 
     console.log("�� [IMMEDIATE_ACTIONS] Message processed immediately:", msg.id._serialized);
   } catch (error) {
@@ -3843,8 +3880,9 @@ async function addMessageToPostgres(msg, idSubstring, extractedNumber, contactNa
   console.log(`�� [CONTACT_TRACKING] idSubstring: ${idSubstring}`);
   console.log(`�� [CONTACT_TRACKING] extractedNumber: ${extractedNumber}`);
   console.log(`�� [CONTACT_TRACKING] contactName: ${contactName}`);
+  console.log(`�� [CONTACT_TRACKING] msg:`, msg);
 
-  if (!extractedNumber || !extractedNumber.startsWith("+60") && !extractedNumber.startsWith("+65")) {
+  if (!extractedNumber || !extractedNumber.startsWith("+")) {
     console.error("Invalid extractedNumber for database:", extractedNumber);
     return;
   }
@@ -3908,6 +3946,9 @@ async function addMessageToPostgres(msg, idSubstring, extractedNumber, contactNa
   if (msg.from.includes("@g.us") && basicInfo.author) {
     const authorData = await getContactDataFromDatabaseByPhone(basicInfo.author, idSubstring);
     author = authorData ? authorData.contactName : basicInfo.author;
+    console.log(`�� [CONTACT_TRACKING] Author found: ${author}`);
+    console.log(`�� [CONTACT_TRACKING] Author contact data:`, authorData);
+    console.log(`�� [CONTACT_TRACKING] Author basic info: ${basicInfo.author}`);
   }
 
   try {
