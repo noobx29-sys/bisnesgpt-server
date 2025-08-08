@@ -2,17 +2,20 @@ module.exports = {
   apps: [{
     name: 'whatsapp-service',
     script: 'server.js',
-    instances: 4,
-    exec_mode: 'cluster',
+    instances: 1,
+    exec_mode: 'fork',
     wait_ready: true,
     listen_timeout: 50000,
     kill_timeout: 15000,
-    max_memory_restart: '2G',
     env: {
       NODE_ENV: 'production',
-      PORT: 8443
+      PORT: 8441,
     },
-    exp_backoff_restart_delay: 100,
-    restart_delay: 4000
+    // Disable automatic restarts - only manual restarts allowed
+    max_restarts: 0,
+    autorestart: false,
+    // Add this to prevent any other restart triggers
+    min_uptime: '0s',
+    restart_delay: 0,
   }]
-}; 
+};

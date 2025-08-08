@@ -1,5 +1,7 @@
 const { neon, neonConfig } = require("@neondatabase/serverless");
 const { Pool } = require("pg");
+require('dotenv').config({ path: '.env' });
+
 
 // Configure Neon for WebSocket pooling
 neonConfig.webSocketConstructor = require("ws");
@@ -9,10 +11,17 @@ const sql = neon(process.env.DATABASE_URL);
 
 // For connection pooling
 const pool = new Pool({
+  // Connection pooling
   connectionString: process.env.DATABASE_URL,
-  max: 2000,
-  idleTimeoutMillis: 30000,
-  connectionTimeoutMillis: 2000
+  max: 500,
+  min: 5,
+  idleTimeoutMillis: 60000,
+  connectionTimeoutMillis: 10000,
+  acquireTimeoutMillis: 30000,
+  createTimeoutMillis: 10000,
+  destroyTimeoutMillis: 5000,
+  reapIntervalMillis: 1000,
+  createRetryIntervalMillis: 100,
 });
 
 // Helper function to execute SQL queries
@@ -189,6 +198,8 @@ async function getSetting(companyId, settingType, settingKey) {
 }
 
 module.exports = {
+  sql,
+  pool,
   query,
   getRow,
   getRows,

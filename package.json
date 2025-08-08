@@ -11,6 +11,8 @@
     "bottleneck": "^2.19.5",
     "bullmq": "^5.10.3",
     "cli-table3": "^0.6.5",
+    "convertapi": "^1.15.0",
+    "convertapi-js": "^1.0.8",
     "cors": "^2.8.5",
     "crypto-js": "^4.2.0",
     "csv-parser": "^3.0.0",

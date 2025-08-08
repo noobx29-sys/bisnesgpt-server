@@ -19,6 +19,7 @@ const { Readable } = require('stream');
 const express = require("express");
 const bodyParser = require("body-parser");
 const cors = require("cors");
+const { setupNeonWebhooks } = require('./neon-webhook-integration');
 
 // API Clients & Communication
 const axios = require("axios");
@@ -67,10 +68,42 @@ const { handleTagFollowUp } = require("./blast/tag.js");
 // Import logging system
 const ServerLogger = require('./logger');
 const LogManager = require('./logManager');
+const feedbackFormsRouter = require('./routes/feedbackForms.js');
+const eventsRouter = require('./routes/events');
+const enrolleesRouter = require('./routes/enrollees');
+const participantsRouter = require('./routes/participants');
+const attendanceEventsRouter = require('./routes/attendanceEvents');
+const feedbackResponsesRouter = require('./routes/feedbackResponse');
 
 // Initialize logger
 const logger = new ServerLogger();
 const logManager = new LogManager();
+
+// Add rate limiting configuration at the top of the file
+const RATE_LIMIT_DELAY = 5000; // 5 seconds between requests
+const MAX_REQUESTS_PER_MINUTE = 60;
+const requestCounts = new Map();
+
+// Rate limiting function
+function checkRateLimit(identifier) {
+  const now = Date.now();
+  const minuteAgo = now - 60000;
+  
+  if (!requestCounts.has(identifier)) {
+    requestCounts.set(identifier, []);
+  }
+  
+  const requests = requestCounts.get(identifier);
+  const recentRequests = requests.filter(time => time > minuteAgo);
+  
+  if (recentRequests.length >= MAX_REQUESTS_PER_MINUTE) {
+    return false;
+  }
+  
+  recentRequests.push(now);
+  requestCounts.set(identifier, recentRequests);
+  return true;
+}
 
 // ======================
 // 2. CONFIGURATION
@@ -100,13 +133,446 @@ let companyConfig = {};
 // ======================
 
 // Database connections
-const sql = neon(process.env.DATABASE_URL); // Direct SQL queries
+// Database connections
+const sql = neon(process.env.DATABASE_URL); // // ======================
+// ENHANCED DATABASE CONNECTION MANAGEMENT
+// ======================
+
+// Improved database pool configuration with better limits
 const pool = new Pool({
-  // Connection pooling
   connectionString: process.env.DATABASE_URL,
-  max: 2000,
-  idleTimeoutMillis: 30000,
-  connectionTimeoutMillis: 2000
+  max: 5, // Reduced from 10 to prevent overwhelming
+  min: 1, // Reduced from 2
+  idleTimeoutMillis: 30000, // 30 seconds
+  connectionTimeoutMillis: 5000, // 5 seconds - reduced from 10000
+  acquireTimeoutMillis: 10000, // 10 seconds - reduced from 30000
+  createTimeoutMillis: 5000, // 5 seconds - reduced from 10000
+  destroyTimeoutMillis: 5000,
+  reapIntervalMillis: 1000,
+  createRetryIntervalMillis: 100,
+  allowExitOnIdle: false,
+  connectionRetryInterval: 500,
+  maxConnectionRetries: 5, // Reduced from 10
+  // Add statement timeout to prevent long-running queries
+  statement_timeout: 15000, // 15 seconds - reduced from 30000
+  // Add query timeout
+  query_timeout: 15000, // 15 seconds - reduced from 30000
+  // Add idle in transaction timeout
+  idle_in_transaction_session_timeout: 15000, // 15 seconds - reduced from 30000
+});
+
+// Enhanced connection management functions
+async function safeRollback(sqlClient) {
+  if (sqlClient && typeof sqlClient.query === 'function') {
+    try {
+      await sqlClient.query("ROLLBACK");
+      console.log("Transaction rolled back successfully");
+    } catch (rollbackError) {
+      console.error("Error during rollback:", rollbackError);
+    }
+  }
+}
+
+async function safeRelease(sqlClient) {
+  if (sqlClient && typeof sqlClient.release === 'function') {
+    try {
+      await sqlClient.release();
+      console.log("Database connection released successfully");
+    } catch (releaseError) {
+      console.error("Error releasing connection:", releaseError);
+    }
+  }
+}
+
+// Enhanced connection acquisition with timeout and retry
+async function getDatabaseConnection(timeoutMs = 5000) {
+  const startTime = Date.now();
+  let attempts = 0;
+  const maxAttempts = 3;
+
+  while (attempts < maxAttempts) {
+    try {
+      console.log(`Attempting to get database connection (attempt ${attempts + 1}/${maxAttempts})`);
+      
+      const client = await Promise.race([
+        pool.connect(),
+        new Promise((_, reject) => 
+          setTimeout(() => reject(new Error('Connection timeout')), timeoutMs)
+        )
+      ]);
+
+      console.log(`Database connection acquired successfully in ${Date.now() - startTime}ms`);
+      return client;
+    } catch (error) {
+      attempts++;
+      console.error(`Database connection attempt ${attempts} failed:`, error.message);
+      
+      if (attempts >= maxAttempts) {
+        throw new Error(`Failed to get database connection after ${maxAttempts} attempts: ${error.message}`);
+      }
+      
+      // Wait before retrying
+      await new Promise(resolve => setTimeout(resolve, 1000 * attempts));
+    }
+  }
+}
+
+// Enhanced worker creation with better // ======================
+// COMPLETE FIXED WORKER CODE WITH SAFE JSON PARSING
+// ======================
+
+const createQueueAndWorker = (botId) => {
+  const queue = new Queue(`scheduled-messages-${botId}`, {
+    connection: {
+      host: process.env.REDIS_HOST,
+      port: process.env.REDIS_PORT,
+      password: process.env.REDIS_PASSWORD,
+    },
+    defaultJobOptions: {
+      removeOnComplete: false,
+      removeOnFail: false,
+      attempts: 3,
+      backoff: {
+        type: 'exponential',
+        delay: 5000, // Increased from 2000
+      },
+    },
+  });
+
+  // Enhanced worker with better concurrency control and safe JSON parsing
+ // ======================
+// FIXED WORKER CODE - HANDLE BOTH JSON STRINGS AND PARSED ARRAYS
+// ======================
+
+// Enhanced worker with better concurrency control and safe JSON parsing
+const worker = new Worker(
+  `scheduled-messages-${botId}`,
+  async (job) => {
+    if (job.name === "send-message-batch") {
+      const { companyId, messageId, batchId, isDuplicate } = job.data;
+      console.log(`Bot ${botId} - Processing scheduled message batch:`, {
+        messageId,
+        batchId,
+      });
+
+      if (isDuplicate) {
+        console.log(`Bot ${botId} - Skipping duplicate job ${job.id} for batch ${batchId}`);
+        return { skipped: true, reason: "Duplicate message" };
+      }
+
+      let client = null;
+      try {
+        // Get database connection with timeout
+        client = await getDatabaseConnection(5000);
+        
+        await client.query("BEGIN");
+
+        const batchQuery = `
+          SELECT * FROM scheduled_messages 
+          WHERE id = $1 AND company_id = $2
+          FOR UPDATE
+        `;
+        const batchResult = await client.query(batchQuery, [batchId, companyId]);
+
+        if (batchResult.rowCount === 0) {
+          throw new Error(`Batch ${batchId} not found in database`);
+        }
+
+        const batchData = batchResult.rows[0];
+
+        if (batchData.status === "skipped") {
+          console.log(`Bot ${botId} - Batch ${batchId} was already marked as skipped`);
+          return {
+            skipped: true,
+            reason: batchData.skipped_reason || "Already skipped",
+          };
+        }
+
+        if (batchData.status === "sent") {
+          console.log(`Bot ${botId} - Batch ${batchId} was already sent`);
+          return {
+            skipped: true,
+            reason: "Already sent",
+          };
+        }
+
+        // FIXED: Handle both JSON strings and parsed arrays for chat_ids
+        let chatIdsCount = 0;
+        let chatIds = [];
+        
+        try {
+          if (batchData.chat_ids) {
+            // Check if it's already an array (parsed by database driver)
+            if (Array.isArray(batchData.chat_ids)) {
+              chatIds = batchData.chat_ids;
+              chatIdsCount = chatIds.length;
+              console.log(`Bot ${botId} - chat_ids is already an array with ${chatIdsCount} items`);
+            } else if (typeof batchData.chat_ids === 'string') {
+              // It's a JSON string, parse it
+              chatIds = JSON.parse(batchData.chat_ids);
+              chatIdsCount = Array.isArray(chatIds) ? chatIds.length : 0;
+              console.log(`Bot ${botId} - chat_ids parsed from JSON string with ${chatIdsCount} items`);
+            } else {
+              console.warn(`Bot ${botId} - chat_ids is neither array nor string:`, typeof batchData.chat_ids);
+              chatIdsCount = 0;
+            }
+          }
+        } catch (parseError) {
+          console.error(`Bot ${botId} - Error parsing chat_ids for batch ${batchId}:`, {
+            error: parseError.message,
+            chat_ids: batchData.chat_ids,
+            chat_ids_type: typeof batchData.chat_ids,
+            batchId: batchId
+          });
+          
+          // Mark this batch as failed due to malformed data
+          await client.query(
+            "UPDATE scheduled_messages SET status = $1, skipped_reason = $2 WHERE id = $3",
+            ["failed", `Malformed chat_ids data: ${parseError.message}`, batchId]
+          );
+          
+          await client.query("COMMIT");
+          return {
+            skipped: true,
+            reason: `Malformed data: ${parseError.message}`,
+          };
+        }
+
+        console.log(`Bot ${botId} - Sending scheduled message batch:`, {
+          batchId,
+          messageId,
+          status: batchData.status,
+          chatIds: chatIdsCount,
+          chatIdsSample: chatIds.slice(0, 3), // Show first 3 chat IDs for debugging
+        });
+
+        const result = await sendScheduledMessage(batchData);
+
+        if (result.success) {
+          console.log(`Bot ${botId} - Successfully sent batch ${batchId} for message ${messageId}`);
+          
+          await client.query(
+            "UPDATE scheduled_messages SET status = $1, sent_at = NOW() WHERE id = $2",
+            ["sent", batchId]
+          );
+          
+          // Check if all batches are now processed
+          const batchesCheckQuery = `
+            SELECT COUNT(*) as pending_count,
+                   (SELECT status FROM scheduled_messages WHERE id = $1::uuid) as main_status
+            FROM scheduled_messages 
+            WHERE schedule_id = $1::uuid
+            AND company_id = $2 
+            AND status != 'sent'
+            AND id::uuid != schedule_id::uuid
+          `;
+          const batchesCheck = await client.query(batchesCheckQuery, [messageId, companyId]);
+
+          console.log(`Bot ${botId} - Batch status check:`, {
+            pendingCount: batchesCheck.rows[0].pending_count,
+            mainStatus: batchesCheck.rows[0].main_status
+          });
+          
+          if (batchesCheck.rows[0].pending_count === 0) {
+            if (batchesCheck.rows[0].main_status !== 'sent') {
+              await client.query(
+                "UPDATE scheduled_messages SET status = $1, sent_at = NOW() WHERE id = $2",
+                ["sent", messageId]
+              );
+              console.log(`Bot ${botId} - All batches completed for message ${messageId}`);
+            }
+          }
+        } else {
+          throw new Error(`Failed to send batch: ${result.error || 'Unknown error'}`);
+        }
+
+        await client.query("COMMIT");
+      } catch (error) {
+        if (client) {
+          await safeRollback(client);
+        }
+        console.error(`Bot ${botId} - Error processing scheduled message batch:`, {
+          error: error.message,
+          stack: error.stack,
+          batchId: batchId,
+          messageId: messageId,
+        });
+        throw error;
+      } finally {
+        if (client) {
+          await safeRelease(client);
+        }
+      }
+
+      } else if (job.name === "send-single-message") {
+        const { companyId, messageId } = job.data;
+        console.log(`Bot ${botId} - Processing scheduled single message:`, {
+          messageId,
+        });
+
+        let client = null;
+        try {
+          // Get database connection with timeout
+          client = await getDatabaseConnection(5000);
+          
+          await client.query("BEGIN");
+
+          const messageQuery = `
+            SELECT * FROM scheduled_messages 
+            WHERE id = $1 AND company_id = $2
+            FOR UPDATE
+          `;
+          const messageResult = await client.query(messageQuery, [messageId, companyId]);
+
+          if (messageResult.rowCount === 0) {
+            throw new Error(`Message ${messageId} not found in database`);
+          }
+
+          const messageData = messageResult.rows[0];
+
+          if (messageData.status === "skipped" || messageData.status === "sent") {
+            console.log(`Bot ${botId} - Message ${messageId} was already ${messageData.status}`);
+            return {
+              skipped: true,
+              reason: `Already ${messageData.status}`,
+            };
+          }
+
+          console.log(`Bot ${botId} - Sending scheduled single message:`, {
+            messageId,
+            status: messageData.status,
+          });
+
+          const result = await sendScheduledMessage(messageData);
+
+          if (result.success) {
+            await client.query(
+              "UPDATE scheduled_messages SET status = $1, sent_at = NOW() WHERE id = $2",
+              ["sent", messageId]
+            );
+          } else {
+            throw new Error(`Failed to send message: ${result.error || 'Unknown error'}`);
+          }
+
+          await client.query("COMMIT");
+        } catch (error) {
+          if (client) {
+            await safeRollback(client);
+          }
+          console.error(`Bot ${botId} - Error processing scheduled single message:`, {
+            error: error.message,
+            stack: error.stack,
+            messageId: messageId,
+          });
+          throw error;
+        } finally {
+          if (client) {
+            await safeRelease(client);
+          }
+        }
+      }
+    },
+    {
+      connection: {
+        host: process.env.REDIS_HOST,
+        port: process.env.REDIS_PORT,
+        password: process.env.REDIS_PASSWORD,
+      },
+      concurrency: 1, // Reduced to 1 to prevent overwhelming database
+      limiter: {
+        max: 3, // Reduced from 5
+        duration: 1000,
+      },
+      lockDuration: 30000,
+      maxStalledCount: 1,
+      settings: {
+        stalledInterval: 15000,
+        lockRenewTime: 10000,
+      },
+    }
+  );
+
+  // Enhanced completed event handler
+  worker.on("completed", async (job) => {
+    console.log(`Bot ${botId} - Job ${job.id} completed successfully`);
+    
+    try {
+      await job.updateProgress(100);
+      await job.updateData({
+        ...job.data,
+        completedAt: new Date().toISOString(),
+        status: "completed",
+        success: true,
+      });
+    } catch (error) {
+      console.error(`Bot ${botId} - Error updating completed job data:`, error);
+    }
+  });
+
+  // Enhanced failed event handler
+  worker.on("failed", async (job, err) => {
+    console.error(`Bot ${botId} - Job ${job.id} failed:`, {
+      error: err.message,
+      stack: err.stack,
+      attempts: job.attemptsMade,
+      maxAttempts: job.opts?.attempts || 3,
+    });
+    
+    try {
+      await job.updateData({
+        ...job.data,
+        failedAt: new Date().toISOString(),
+        error: {
+          message: err?.message || 'Unknown error',
+          stack: err?.stack || 'No stack trace',
+          name: err?.name || 'Error',
+        },
+        status: "failed",
+        finalAttempt: job.attemptsMade >= (job.opts?.attempts || 3),
+      });
+    } catch (updateError) {
+      console.error(`Bot ${botId} - Error updating failed job data:`, updateError);
+    }
+  });
+
+  // Enhanced error event handler
+  worker.on("error", async (err) => {
+    console.error(`Bot ${botId} - Worker error:`, {
+      message: err.message,
+      stack: err.stack,
+      name: err.name,
+      timestamp: new Date().toISOString(),
+    });
+  });
+
+  // Enhanced stalled event handler
+  worker.on("stalled", async (jobId) => {
+    console.warn(`Bot ${botId} - Job ${jobId} stalled`);
+  });
+
+  // Store references
+  botQueues.set(botId, queue);
+  botWorkers.set(botId, worker);
+  return { queue, worker };
+};
+
+
+// Add pool error handling to prevent crashes
+pool.on('error', (err) => {
+  console.error('Unexpected error on idle client', err);
+  // Don't exit the process, just log the error
+});
+
+pool.on('connect', (client) => {
+  console.log('New database connection established');
+});
+
+pool.on('acquire', (client) => {
+  console.log('Database connection acquired from pool');
+});
+
+pool.on('release', (client) => {
+  console.log('Database connection released back to pool');
 });
 
 // Redis connection
@@ -144,9 +610,9 @@ const app = express();
 const server = createServer(app);
 const wss = new WebSocket.Server({ server });
 const db = admin.firestore();
-
+global.wss = wss;
 // CORS Configuration
-const whitelist = ['http://localhost:5173', 'https://juta-dev.ngrok.dev', 'https://juta.ngrok.app', 'https://d178-2001-e68-5409-64f-f850-607e-e056-2a9e.ngrok-free.app'];
+const whitelist = ['https://juta-crm-v3.vercel.app','http://localhost:5173', 'https://juta-dev.ngrok.dev', 'https://juta-dev.ngrok.dev', 'https://d178-2001-e68-5409-64f-f850-607e-e056-2a9e.ngrok-free.app','https://web.jutateknologi.com','https://app.omniyal.com'];
 const corsOptions = {
   origin: function (origin, callback) {
     if (whitelist.indexOf(origin) !== -1 || !origin) {
@@ -264,7 +730,13 @@ app.get('/api/logs/files', async (req, res) => {
     res.status(500).json({ success: false, error: error.message });
   }
 });
+app.use('/api/feedback-forms', feedbackFormsRouter);
 
+app.use('/api/events', eventsRouter);
+app.use('/api/enrollees', enrolleesRouter);
+app.use('/api/participants', participantsRouter);
+app.use('/api/attendance-events', attendanceEventsRouter);
+app.use('/api/feedback-responses', feedbackResponsesRouter);
 // Read specific log file
 app.get('/api/logs/read/:filename', async (req, res) => {
   try {
@@ -418,6 +890,47 @@ app.get('/api/logs/tail/:filename', async (req, res) => {
 const port = process.env.PORT;
 server.listen(port, () => console.log(`Server is running on port ${port}`));
 
+
+// ======================
+// 8. LOG BROADCASTING SETUP
+// ======================
+
+// Function to broadcast logs to WebSocket clients
+function broadcastLog(logData) {
+  wss.clients.forEach((client) => {
+    if (client.readyState === WebSocket.OPEN && client.isLogsViewer) {
+      client.send(JSON.stringify({
+        type: "log",
+        data: logData,
+        timestamp: new Date().toISOString()
+      }));
+    }
+  });
+}
+
+// Override console methods to capture logs
+const originalConsoleLog = console.log;
+const originalConsoleError = console.error;
+const originalConsoleWarn = console.warn;
+
+console.log = function(...args) {
+  const logMessage = args.map(arg => typeof arg === 'object' ? JSON.stringify(arg) : String(arg)).join(' ');
+  originalConsoleLog.apply(console, args);
+  broadcastLog(logMessage);
+};
+
+console.error = function(...args) {
+  const logMessage = args.map(arg => typeof arg === 'object' ? JSON.stringify(arg) : String(arg)).join(' ');
+  originalConsoleError.apply(console, args);
+  broadcastLog(`ERROR: ${logMessage}`);
+};
+
+console.warn = function(...args) {
+  const logMessage = args.map(arg => typeof arg === 'object' ? JSON.stringify(arg) : String(arg)).join(' ');
+  originalConsoleWarn.apply(console, args);
+  broadcastLog(`WARN: ${logMessage}`);
+};
+
 // ============================================
 // AUTOMATED LOG MANAGEMENT
 // ============================================
@@ -487,7 +1000,7 @@ async function saveMediaLocally(base64Data, mimeType, filename) {
   const buffer = Buffer.from(base64Data, "base64");
   const uniqueFilename = `${uuidv4()}_${filename}`;
   const filePath = path.join(MEDIA_DIR, uniqueFilename);
-  const baseUrl = process.env.URL || 'http://localhost:8443';
+  const baseUrl = 'https://juta-dev.ngrok.dev';
 
   await writeFileAsync(filePath, buffer);
 
@@ -499,118 +1012,12 @@ app.post('/api/upload-media', upload.single('file'), (req, res) => {
   if (!req.file) {
     return res.status(400).json({ error: 'No file uploaded' });
   }
-  const baseUrl = process.env.URL;
+  const baseUrl = 'https://juta-dev.ngrok.dev';
   const fileUrl = `${baseUrl}/media/${req.file.filename}`;
   res.json({ url: fileUrl });
 });
 
-// Add this new API endpoint
-app.get("/api/bot-status/:companyId", async (req, res) => {
-  const { companyId } = req.params;
-  console.log("Calling bot-status");
 
-  // Add CORS headers explicitly
-  res.header("Access-Control-Allow-Origin", "http://localhost:5173");
-  res.header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
-  res.header("Access-Control-Allow-Headers", "Content-Type, Authorization");
-  res.header("Access-Control-Allow-Credentials", "true");
-
-  try {
-    // First get the company from database
-    const companyData = await sqlDb.getRow(
-      "SELECT * FROM companies WHERE company_id = $1::varchar",
-      [companyId]
-    );
-
-    if (!companyData) {
-      return res.status(404).json({ error: "Company not found" });
-    }
-
-    // Then get the bot status
-    const botData = botMap.get(companyId);
-
-    if (botData && Array.isArray(botData)) {
-      if (botData.length === 1) {
-        // Single phone
-        const { status, qrCode } = botData[0];
-        let phoneInfo = null;
-
-        if (botData[0]?.client) {
-          try {
-            const info = await botData[0].client.info;
-            phoneInfo = info?.wid?.user || null;
-          } catch (err) {
-            console.error(
-              `Error getting client info for company ${companyId}:`,
-              err
-            );
-          }
-        }
-
-        res.json({
-          status,
-          qrCode,
-          phoneInfo,
-          companyId,
-          v2: companyData.v2,
-          trialEndDate: companyData.trial_end_date,
-          apiUrl: companyData.api_url,
-          phoneCount: companyData.phone_count,
-        });
-      } else {
-        // Multiple phones
-        const statusArray = await Promise.all(
-          botData.map(async (phone, index) => {
-            let phoneInfo = null;
-
-            if (phone?.client) {
-              try {
-                const info = await phone.client.info;
-                phoneInfo = info?.wid?.user || null;
-              } catch (err) {
-                console.error(
-                  `Error getting client info for company ${companyId} phone ${index}:`,
-                  err
-                );
-              }
-            }
-
-            return {
-              phoneIndex: index,
-              status: phone.status,
-              qrCode: phone.qrCode,
-              phoneInfo,
-            };
-          })
-        );
-
-        res.json({
-          phones: statusArray,
-          companyId,
-          v2: companyData.v2,
-          trialEndDate: companyData.trial_end_date,
-          apiUrl: companyData.api_url,
-          phoneCount: companyData.phone_count,
-        });
-      }
-    } else {
-      // Bot not initialized yet
-      res.json({
-        status: "initializing",
-        qrCode: null,
-        phoneInfo: null,
-        companyId,
-        v2: companyData.v2,
-        trialEndDate: companyData.trial_end_date,
-        apiUrl: companyData.api_url,
-        phoneCount: companyData.phone_count,
-      });
-    }
-  } catch (error) {
-    console.error(`Error getting status for company ${companyId}:`, error);
-    res.status(500).json({ error: "Failed to get status" });
-  }
-});
 
 // Handle WebSocket connections
 wss.on("connection", (ws, req) => {
@@ -622,15 +1029,61 @@ wss.on("connection", (ws, req) => {
   const companyId = urlParts[3];
 
   // Add these two lines to set the properties
-  ws.pathname = req.url.startsWith("/status") ? "/status" : "/ws";
+  ws.pathname = req.url.startsWith("/status") ? "/status" : 
+                req.url.startsWith("/logs") ? "/logs" : "/ws";
   ws.companyId = companyId;
   ws.subscribedChatId = null;
+
+  // Mark logs viewers
+  if (ws.pathname === "/logs") {
+    ws.isLogsViewer = true;
+  }
+
+  // If this is a status page connection, send current bot statuses
+  if (ws.pathname === "/status") {
+    // Send current statuses for all bots
+    setTimeout(async () => {
+      try {
+        for (const [botName, botData] of botMap.entries()) {
+          if (Array.isArray(botData)) {
+            botData.forEach((phoneData, phoneIndex) => {
+              if (phoneData && phoneData.status) {
+                const statusMessage = {
+                  type: "status_update",
+                  botName,
+                  status: phoneData.status,
+                  phoneIndex,
+                  qrCode: phoneData.qrCode || null,
+                  timestamp: new Date().toISOString(),
+                };
+                
+                if (ws.readyState === WebSocket.OPEN) {
+                  ws.send(JSON.stringify(statusMessage));
+                }
+              }
+            });
+          }
+        }
+      } catch (error) {
+        console.error("Error sending initial status to status page client:", error);
+      }
+    }, 100); // Small delay to ensure connection is fully established
+  }
 
   // Handle messages from client
   ws.on("message", async (message) => {
     try {
       const data = JSON.parse(message);
       // Handle chat subscription
+      if (data.type === "subscribe" && data.companyId) {
+        ws.companyId = data.companyId;
+        console.log(`WebSocket subscribed to company: ${data.companyId}`);
+        ws.send(JSON.stringify({ 
+          type: "subscribed", 
+          companyId: data.companyId 
+        }));
+        return;
+      }
       if (data.type === "subscribe" && data.chatId) {
         ws.subscribedChatId = data.chatId;
 
@@ -693,6 +1146,92 @@ wss.on("connection", (ws, req) => {
           })
         );
       }
+
+      // Handle logs WebSocket messages
+      if (ws.pathname === "/logs") {
+        if (data.type === "restart" && data.password) {
+          // Verify password (you should use environment variable for this)
+          const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "P@ssw0rd123";
+          
+          if (data.password === ADMIN_PASSWORD) {
+            try {
+              // Execute PM2 restart command
+              const { exec } = require("child_process");
+              exec("pm2 restart all", (error, stdout, stderr) => {
+                if (error) {
+                  console.error("Restart error:", error);
+                  ws.send(JSON.stringify({
+                    type: "restart",
+                    success: false,
+                    message: `Restart failed: ${error.message}`
+                  }));
+                } else {
+                  console.log("PM2 restart successful:", stdout);
+                  ws.send(JSON.stringify({
+                    type: "restart",
+                    success: true,
+                    message: "Server restart initiated successfully"
+                  }));
+                }
+              });
+            } catch (error) {
+              ws.send(JSON.stringify({
+                type: "restart",
+                success: false,
+                message: `Restart failed: ${error.message}`
+              }));
+            }
+          } else {
+            ws.send(JSON.stringify({
+              type: "restart",
+              success: false,
+              message: "Invalid password"
+            }));
+          }
+        }
+
+        if (data.type === "deleteSessions" && data.password && data.sessions) {
+          const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "P@ssw0rd123";
+          
+          if (data.password === ADMIN_PASSWORD) {
+            try {
+              const fs = require("fs");
+              const path = require("path");
+              let deletedCount = 0;
+              
+              for (const session of data.sessions) {
+                const sessionPath = path.join(__dirname, ".wwebjs_auth", session);
+                try {
+                  if (fs.existsSync(sessionPath)) {
+                    fs.rmSync(sessionPath, { recursive: true, force: true });
+                    deletedCount++;
+                  }
+                } catch (err) {
+                  console.error(`Error deleting session ${session}:`, err);
+                }
+              }
+              
+              ws.send(JSON.stringify({
+                type: "sessionsDeleted",
+                success: true,
+                message: `Successfully deleted ${deletedCount} session(s)`
+              }));
+            } catch (error) {
+              ws.send(JSON.stringify({
+                type: "sessionsDeleted",
+                success: false,
+                message: `Delete failed: ${error.message}`
+              }));
+            }
+          } else {
+            ws.send(JSON.stringify({
+              type: "sessionsDeleted",
+              success: false,
+              message: "Invalid password"
+            }));
+          }
+        }
+      }
     } catch (error) {
       console.error("WebSocket error:", error);
       ws.send(
@@ -715,7 +1254,110 @@ wss.on("connection", (ws, req) => {
     console.log(`WebSocket closed for ${email}`);
   });
 });
+// ... existing code ...
 
+app.post('/api/prompt-engineer-neon/', async (req, res) => {
+  try {
+    const userInput = req.query.message;
+    const email = req.query.email;
+    const { currentPrompt } = req.body;
+
+    // Log only relevant data
+    console.log('Prompt Engineer Neon Request:', {
+      userInput,
+      email,
+      currentPrompt
+    });
+
+    let threadID;
+    const contactData = await getContactDataFromDatabaseByEmail(email);
+
+    if (contactData?.thread_id) {
+      threadID = contactData.thread_id;
+    } else {
+      const thread = await createThread();
+      threadID = thread.id;
+      await saveThreadIDPostgres(email, threadID);
+    }
+
+    const promptInstructions = `As a prompt engineering expert, help me with the following prompt request. 
+  
+      When modifying an existing prompt:
+      - Return the COMPLETE prompt with all sections
+      - Only modify the specific elements requested by the user
+      - Keep all other sections exactly as they are, word for word
+      - Do not omit or summarize any sections
+      - Do not add [AI's primary function] style placeholders to unchanged sections
+      - Preserve all formatting, line breaks and structure
+      
+      Your response must be structured in two clearly separated parts using these exact markers:
+      [ANALYSIS_START]
+      Briefly explain what specific changes you made and why
+      [ANALYSIS_END]
+      
+      [PROMPT_START]
+      ${currentPrompt ? 'The complete prompt with ONLY the requested changes:' :
+        'Create a new prompt using this structure:'}
+      ${currentPrompt || `#ROLE: [AI's primary function and identity]
+      #CONTEXT: [Business context and background]
+      #CAPABILITIES: [Specific tasks and functions]
+      #CONSTRAINTS: [Boundaries and limitations]
+      #COMMUNICATION STYLE: [Tone and interaction approach]
+      #WORKFLOW: [Process for handling requests]`}
+      [PROMPT_END]
+      
+      ${currentPrompt ?
+        `Current Prompt:\n${currentPrompt}\n\nRequested Changes:\n${userInput}` :
+        `Create a new prompt with these requirements:\n${userInput}`}`;
+
+    // Call OpenAI with o1-mini model
+    const completion = await openai.chat.completions.create({
+      model: "gpt-4.1-mini",
+      messages: [
+        {
+          role: "user",
+          content: promptInstructions
+        }
+      ],
+    });
+
+    const answer = completion.choices[0].message.content;
+
+    // Parse the response to separate analysis and prompt
+    const analysisMatch = answer.match(/\[ANALYSIS_START\]([\s\S]*?)\[ANALYSIS_END\]/);
+    const promptMatch = answer.match(/\[PROMPT_START\]([\s\S]*?)\[PROMPT_END\]/);
+
+    const analysis = analysisMatch ? analysisMatch[1].trim() : '';
+    const updatedPrompt = promptMatch ? promptMatch[1].trim() : '';
+
+    // Save the interaction to the thread
+    await addMessageAssistant(threadID, `User Request: ${userInput}\nCurrent Prompt: ${currentPrompt || 'None'}\nResponse: ${answer}`);
+
+    // Send structured response
+    res.json({
+      success: true,
+      data: {
+        analysis: analysis,
+        updatedPrompt: updatedPrompt,
+        originalPrompt: currentPrompt || null
+      }
+    });
+
+  } catch (error) {
+    console.error('Prompt engineering Neon error:', {
+      name: error.name,
+      message: error.message,
+      code: error.code
+    });
+    res.status(500).json({
+      success: false,
+      error: error.code,
+      details: error.message
+    });
+  }
+});
+
+// ... existing code ...
 app.get("/api/lalamove/quote", async (req, res) => {
   res.header("Access-Control-Allow-Origin", "https://storeguru.com.my");
   res.header("Access-Control-Allow-Methods", "GET, POST");
@@ -1207,27 +1849,229 @@ app.get("/api/facebook-lead-webhook", (req, res) => {
 
 app.put("/api/update-user", async (req, res) => {
   try {
-    const { uid, email, phoneNumber, password, displayName } = req.body;
-    const user = await admin.auth().getUserByEmail(uid);
-    if (!uid) {
-      return res.status(400).json({ error: "UID is required" });
+    const { 
+      contactId, // email of user to update
+      name,
+      phoneNumber,
+      email,
+      password,
+      role,
+      companyId,
+      group,
+      employeeId,
+      notes,
+      quotaLeads,
+      invoiceNumber,
+      imageUrl,
+      viewEmployees,
+      phoneAccess,
+      weightages
+    } = req.body;
+
+    if (!contactId) {
+      return res.status(400).json({ error: "Contact ID (email) is required" });
     }
 
-    // Call the function to update the user
+    // Start transaction
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
 
-    await admin.auth().updateUser(user.uid, {
-      email: email,
-      phoneNumber: phoneNumber,
-      password: password,
-      displayName: displayName,
-    });
+      // Update users table - only update if values are provided
+      const userUpdateFields = [];
+      const userUpdateValues = [];
+      let paramIndex = 1;
 
-    // Send success response
-    res.json({ message: "User updated successfully" });
+      if (name) {
+        userUpdateFields.push(`name = $${paramIndex++}`);
+        userUpdateValues.push(name);
+      }
+      if (role) {
+        userUpdateFields.push(`role = $${paramIndex++}`);
+        userUpdateValues.push(role);
+      }
+      if (password) {
+        userUpdateFields.push(`password = $${paramIndex++}`);
+        userUpdateValues.push(password);
+      }
+
+      if (userUpdateFields.length > 0) {
+        userUpdateFields.push(`last_updated = CURRENT_TIMESTAMP`);
+        userUpdateValues.push(contactId, companyId);
+        
+        const userUpdateQuery = `
+          UPDATE users 
+          SET ${userUpdateFields.join(', ')}
+          WHERE email = $${paramIndex++} AND company_id = $${paramIndex++}
+        `;
+        
+        await client.query(userUpdateQuery, userUpdateValues);
+      }
+
+      // Update or insert into employees table
+      const employeeCheckQuery = `
+        SELECT id FROM employees WHERE email = $1 AND company_id = $2
+      `;
+      const employeeCheck = await client.query(employeeCheckQuery, [contactId, companyId]);
+
+      if (employeeCheck.rows.length > 0) {
+        // Update existing employee
+        const empUpdateFields = [];
+        const empUpdateValues = [];
+        let empParamIndex = 1;
+
+        if (name) {
+          empUpdateFields.push(`name = $${empParamIndex++}`);
+          empUpdateValues.push(name);
+        }
+        if (role) {
+          empUpdateFields.push(`role = $${empParamIndex++}`);
+          empUpdateValues.push(role);
+        }
+        if (phoneNumber) {
+          empUpdateFields.push(`phone_number = $${empParamIndex++}`);
+          empUpdateValues.push(phoneNumber);
+        }
+        if (employeeId !== undefined) {
+          empUpdateFields.push(`employee_id = $${empParamIndex++}`);
+          empUpdateValues.push(employeeId);
+        }
+        if (phoneAccess !== undefined) {
+          empUpdateFields.push(`phone_access = $${empParamIndex++}`);
+          empUpdateValues.push(JSON.stringify(phoneAccess));
+        }
+        if (weightages !== undefined) {
+          empUpdateFields.push(`weightages = $${empParamIndex++}`);
+          empUpdateValues.push(JSON.stringify(weightages));
+        }
+        if (imageUrl !== undefined) {
+          empUpdateFields.push(`image_url = $${empParamIndex++}`);
+          empUpdateValues.push(imageUrl);
+        }
+        if (notes !== undefined) {
+          empUpdateFields.push(`notes = $${empParamIndex++}`);
+          empUpdateValues.push(notes);
+        }
+        if (quotaLeads !== undefined) {
+          empUpdateFields.push(`quota_leads = $${empParamIndex++}`);
+          empUpdateValues.push(quotaLeads);
+        }
+        if (viewEmployees !== undefined) {
+          empUpdateFields.push(`view_employees = $${empParamIndex++}`);
+          empUpdateValues.push(JSON.stringify(viewEmployees));
+        }
+        if (invoiceNumber !== undefined) {
+          empUpdateFields.push(`invoice_number = $${empParamIndex++}`);
+          empUpdateValues.push(invoiceNumber);
+        }
+        if (group !== undefined) {
+          empUpdateFields.push(`emp_group = $${empParamIndex++}`);
+          empUpdateValues.push(group);
+        }
+
+        if (empUpdateFields.length > 0) {
+          empUpdateFields.push(`last_updated = CURRENT_TIMESTAMP`);
+          empUpdateValues.push(contactId, companyId);
+          
+          const employeeUpdateQuery = `
+            UPDATE employees 
+            SET ${empUpdateFields.join(', ')}
+            WHERE email = $${empParamIndex++} AND company_id = $${empParamIndex++}
+          `;
+          
+          await client.query(employeeUpdateQuery, empUpdateValues);
+        }
+      } else {
+        // Insert new employee record if it doesn't exist
+        const employeeInsertQuery = `
+          INSERT INTO employees (
+            company_id, name, email, role, phone_number, employee_id,
+            phone_access, weightages, image_url, notes, quota_leads,
+            view_employees, invoice_number, emp_group
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+        `;
+        
+        await client.query(employeeInsertQuery, [
+          companyId, name, contactId, role, phoneNumber, employeeId || null,
+          JSON.stringify(phoneAccess || {}), JSON.stringify(weightages || {}),
+          imageUrl || null, notes || null, quotaLeads || 0,
+          JSON.stringify(viewEmployees || []), invoiceNumber || null, group || null
+        ]);
+      }
+
+      // Update Firebase Auth if password is provided
+      if (password) {
+        try {
+          const user = await admin.auth().getUserByEmail(contactId);
+          await admin.auth().updateUser(user.uid, {
+            password: password,
+            displayName: name
+          });
+        } catch (authError) {
+          console.error("Error updating Firebase Auth:", authError);
+          // Don't fail the entire operation for auth errors
+        }
+      }
+
+      await client.query('COMMIT');
+      res.json({ message: "User updated successfully" });
+
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      await safeRelease(client);
+    }
+
   } catch (error) {
-    // Handle other errors
     console.error("Error updating user:", error);
     res.status(500).json({ error: "Failed to update user" });
+  }
+});
+
+// Delete user endpoint
+app.delete("/api/delete-user", async (req, res) => {
+  try {
+    const { email, companyId } = req.body;
+
+    if (!email) {
+      return res.status(400).json({ error: "Email is required" });
+    }
+
+    if (!companyId) {
+      return res.status(400).json({ error: "Company ID is required" });
+    }
+
+    // Start transaction
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      // Delete from employees table
+      await client.query(
+        'DELETE FROM employees WHERE email = $1 AND company_id = $2',
+        [email, companyId]
+      );
+
+      // Deactivate user in users table (soft delete)
+      await client.query(
+        'UPDATE users SET active = false, last_updated = CURRENT_TIMESTAMP WHERE email = $1 AND company_id = $2',
+        [email, companyId]
+      );
+
+      await client.query('COMMIT');
+      res.json({ success: true, message: "User deleted successfully" });
+
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      await safeRelease(client);
+    }
+
+  } catch (error) {
+    console.error("Error deleting user:", error);
+    res.status(500).json({ success: false, error: "Failed to delete user" });
   }
 });
 
@@ -1251,8 +2095,180 @@ async function createNeonAuthUser(email, name) {
   return response.data;
 }
 
+app.post("/api/channel/create/:companyID", async (req, res) => {
+  const { companyID } = req.params;
+  const phoneCount = 1;
+
+  // Get additional data from request body
+  const {
+    name,
+    companyName,
+    phoneNumber,
+    email,
+    password,
+    plan = 'blaster', // Default plan
+    country
+  } = req.body || {};
+
+  try {
+    // Check if company exists first
+    let companyResult = await sqlDb.query(
+      "SELECT * FROM companies WHERE company_id = $1",
+      [companyID]
+    );
+    
+    let company = companyResult.rows[0];
+    let companyCreated = false;
+
+    // If company doesn't exist, create it with the provided data
+    if (!company) {
+      console.log(`Company ${companyID} not found, creating new company...`);
+      
+      try {
+        // Create company with the provided information including apiUrl
+        await sqlDb.query(
+          `INSERT INTO companies (
+            company_id, 
+            name, 
+            email, 
+            phone, 
+            status, 
+            enabled, 
+            created_at, 
+            updated_at,
+            plan,
+            company,
+            api_url
+          ) VALUES ($1, $2, $3, $4, $5, $6, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, $7, $8, $9)`,
+          [
+            companyID,
+            name || `Company_${companyID}`, // Use provided name or default
+            email || `company_${companyID}@example.com`, // Use provided email or default
+            phoneNumber || "", // Use provided phone or empty
+            "active",
+            true,
+            plan, // Store the selected plan
+            companyName || `Company_${companyID}`, // Use provided company name or default
+            "https://juta-dev.ngrok.dev", // Set the API URL
+          ]
+        );
+        
+        // Fetch the newly created company
+        companyResult = await sqlDb.query(
+          "SELECT * FROM companies WHERE company_id = $1",
+          [companyID]
+        );
+        company = companyResult.rows[0];
+        companyCreated = true;
+        
+        console.log(`Company ${companyID} created successfully with plan: ${plan} and apiUrl: https://juta-dev.ngrok.dev/`);
+      } catch (createError) {
+        console.error("Error creating company:", createError);
+        return res.status(500).json({
+          success: false,
+          error: "Failed to create company",
+          details: createError.message,
+        });
+      }
+    } else {
+      // If company exists, update it with the new information if provided
+      if (name || email || phoneNumber || plan || companyName) {
+        const updateFields = [];
+        const updateValues = [];
+        let paramIndex = 1;
+
+        if (name) {
+          updateFields.push(`name = $${paramIndex++}`);
+          updateValues.push(name);
+        }
+        if (email) {
+          updateFields.push(`email = $${paramIndex++}`);
+          updateValues.push(email);
+        }
+        if (phoneNumber) {
+          updateFields.push(`phone = $${paramIndex++}`);
+          updateValues.push(phoneNumber);
+        }
+        if (plan) {
+          updateFields.push(`plan = $${paramIndex++}`);
+          updateValues.push(plan);
+        }
+        if (companyName) {
+          updateFields.push(`company = $${paramIndex++}`);
+          updateValues.push(companyName);
+        }
+
+        // Always update apiUrl for existing companies too
+        updateFields.push(`api_url = $${paramIndex++}`);
+        updateValues.push("https://juta-dev.ngrok.dev/");
+
+        if (updateFields.length > 0) {
+          updateFields.push(`updated_at = CURRENT_TIMESTAMP`);
+          updateValues.push(companyID);
+
+          await sqlDb.query(
+            `UPDATE companies SET ${updateFields.join(', ')} WHERE company_id = $${paramIndex}`,
+            updateValues
+          );
+
+          // Fetch the updated company
+          companyResult = await sqlDb.query(
+            "SELECT * FROM companies WHERE company_id = $1",
+            [companyID]
+          );
+          company = companyResult.rows[0];
+        }
+      }
+    }
+
+    // Create the assistant with proper error handling
+    let assistantId;
+    try {
+      assistantId = await createAssistant(companyID);
+    } catch (assistantError) {
+      console.error("Failed to create assistant:", assistantError);
+      // Continue without assistant - don't fail the entire request
+      assistantId = null;
+    }
+
+    // Respond to the client immediately
+    res.json({
+      success: true,
+      message: companyCreated 
+        ? "Company and channel created successfully. Bot initialization in progress."
+        : "Channel created successfully. Bot initialization in progress.",
+      companyId: companyID,
+      company: company,
+      botStatus: "initializing",
+      assistantId: assistantId,
+      companyCreated: companyCreated,
+      plan: plan,
+      apiUrl: "https://juta-dev.ngrok.dev/",
+    });
+
+    // Now initialize the bot in the background
+    initializeBot(companyID, phoneCount)
+      .then(() => {
+        console.log(`Bot initialized for company ${companyID}`);
+      })
+      .catch((error) => {
+        console.error(
+          `Error initializing bot for company ${companyID}:`,
+          error
+        );
+        // Optionally: log to DB or notify admin
+      });
+  } catch (error) {
+    console.error("Error creating channel and initializing new bot:", error);
+    res.status(500).json({
+      success: false,
+      error: "Failed to create channel and initialize new bot",
+      details: error.message,
+    });
+  }
+});
 app.post(
-  "/api/create-user/:email/:phoneNumber/:password/:role",
+  "/api/create-user/:email/:phoneNumber/:password/:role/:companyId",
   async (req, res) => {
     try {
       const decodedEmail = decodeURIComponent(req.params.email);
@@ -1265,47 +2281,58 @@ app.post(
         phoneNumber: req.params.phoneNumber,
         password: req.params.password,
         role: req.params.role,
+        companyId: req.params.companyId, // Get companyId from params
       };
       const name = decodedEmail.split("@")[0];
       console.log("Creating user in Neon Auth:", userData, name);
+      
       // Create user in Neon Auth
       const neonUser = await createNeonAuthUser(decodedEmail, name);
 
-      // Generate a unique user ID and company ID
+      // Generate a unique user ID
       const userId = uuidv4();
-      const companyId = `0${Date.now()}`;
 
-      // Create company in database
-      await sqlDb.query(
-        `INSERT INTO companies (company_id, name, email, phone, status, enabled, created_at) 
-        VALUES ($1, $2, $3, $4, $5, $6, CURRENT_TIMESTAMP)`,
-        [
-          companyId,
-          userData.email.split("@")[0],
-          userData.email,
-          userData.phoneNumber,
-          "active",
-          true,
-        ]
+      // Create company in database if it doesn't exist
+      const companyCheck = await sqlDb.query(
+        "SELECT company_id FROM companies WHERE company_id = $1",
+        [userData.companyId]
       );
 
+      if (companyCheck.rows.length === 0) {
+        // Create company if it doesn't exist
+        await sqlDb.query(
+          `INSERT INTO companies (company_id, name, email, phone, status, enabled, created_at) 
+          VALUES ($1, $2, $3, $4, $5, $6, CURRENT_TIMESTAMP)`,
+          [
+            userData.companyId,
+            userData.email.split("@")[0],
+            userData.email,
+            userData.phoneNumber,
+            "active",
+            true,
+          ]
+        );
+      }
+
+      // Create user in database
       await sqlDb.query(
         `INSERT INTO users (user_id, company_id, email, phone, role, active, created_at, password) 
          VALUES ($1, $2, $3, $4, $5, $6, CURRENT_TIMESTAMP, $7)`,
         [
           userId,
-          companyId,
+          userData.companyId,
           userData.email,
-          userData.phoneNumber,
+          0,
           userData.role,
           true,
           userData.password,
         ]
       );
+      
       res.json({
         message: "User created successfully",
         userId,
-        companyId,
+        companyId: userData.companyId,
         neonUserId: neonUser.id,
         role: userData.role,
         email: userData.email,
@@ -1368,7 +2395,7 @@ app.post(
 
       // Insert into users table with flexible field handling
       const userFields = ['user_id', 'company_id', 'email', 'phone', 'role', 'active', 'created_at', 'password'];
-      const userValues = [userId, companyId, decodedEmail, phoneNumber, role, true, password];
+      const userValues = [userId, companyId, decodedEmail, 0, role, true, password];
       let userPlaceholders = '$1, $2, $3, $4, $5, $6, CURRENT_TIMESTAMP, $7';
       let paramIndex = 8;
 
@@ -1702,11 +2729,11 @@ async function processContact(row, companyId, tags) {
 
     await client.query("COMMIT");
   } catch (error) {
-    await client.query("ROLLBACK");
+    await safeRollback(client);
     console.error("Error processing contact:", error);
     throw error;
   } finally {
-    client.release();
+    await safeRelease(client);
   }
 }
 
@@ -1928,9 +2955,9 @@ app.post("/api/schedule-message/:companyId", async (req, res) => {
           scheduled_time, status, created_at, chat_id, phone_index, is_media,
           document_url, file_name, caption, chat_ids, batch_quantity, repeat_interval,
           repeat_unit, message_delays, infinite_loop, min_delay, max_delay, activate_sleep,
-          sleep_after_messages, sleep_duration, active_hours, from_me, messages
+          sleep_after_messages, sleep_duration, active_hours, from_me, messages, template_id
         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, 
-          $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31)
+          $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32)
       `;
       const scheduledTime = toPgTimestamp(scheduledMessage.scheduledTime);
       await client.query(mainMessageQuery, [
@@ -1971,6 +2998,7 @@ app.post("/api/schedule-message/:companyId", async (req, res) => {
         scheduledMessage.messages
           ? JSON.stringify(scheduledMessage.messages)
           : null,
+        scheduledMessage.template_id || null,
       ]);
 
       const queue = getQueueForBot(companyId);        
@@ -2095,10 +3123,10 @@ app.post("/api/schedule-message/:companyId", async (req, res) => {
         success: true,
       });
     } catch (error) {
-      await client.query("ROLLBACK");
+      await safeRollback(client);
       throw error;
     } finally {
-      client.release();
+      await safeRelease(client);
     }
   } catch (error) {
     console.error("Error scheduling message:", error);
@@ -2182,7 +3210,7 @@ app.put("/api/schedule-message/:companyId/:messageId", async (req, res) => {
         console.log(`Message status changed to ${updatedMessage.status}, removing jobs from queue if they exist`);
         
         // Get all batch IDs associated with this message
-        const batchesQuery = "SELECT id FROM scheduled_messages WHERE (id::text = $1::text OR schedule_id::text = $1::text) AND company_id = $2";
+        const batchesQuery = "SELECT id FROM scheduled_messages WHERE (id::text = $1::text OR schedule_id = $1) AND company_id = $2";
         const batchesResult = await client.query(batchesQuery, [messageId, companyId]);
         const batchIds = batchesResult.rows.map(row => row.id);
         
@@ -2210,11 +3238,11 @@ app.put("/api/schedule-message/:companyId/:messageId", async (req, res) => {
         success: true,
       });
     } catch (error) {
-      await client.query("ROLLBACK");
+      await safeRollback(client);
       console.error("Error during scheduled message update transaction:", error);
       throw error;
     } finally {
-      client.release();
+      await safeRelease(client);
     }
   } catch (error) {
     console.error("Error updating scheduled message:", error);
@@ -2298,16 +3326,92 @@ app.delete("/api/schedule-message/:companyId/:messageId", async (req, res) => {
         jobsRemoved: batchIds.length
       });
     } catch (error) {
-      await client.query("ROLLBACK");
+      await safeRollback(client);
       throw error;
     } finally {
-      client.release();
+      await safeRelease(client);
     }
   } catch (error) {
     console.error("Error deleting scheduled message:", error);
     res.status(500).json({
       success: false,
       error: error.message || "Failed to delete scheduled message",
+    });
+  }
+});
+
+// DELETE endpoint to remove scheduled messages by template_id
+app.delete("/api/schedule-message/:companyId/template/:templateId/contact/:contactId", async (req, res) => {
+  const { companyId, templateId, contactId } = req.params;
+
+  try {
+    const client = await pool.connect();
+
+    try {
+      await client.query("BEGIN");
+
+      // Find all scheduled messages for this template and contact
+      const findQuery = `
+        SELECT id FROM scheduled_messages
+        WHERE company_id = $1
+          AND template_id = $2
+          AND (
+            contact_id = $3
+            OR (contact_ids IS NOT NULL AND contact_ids::jsonb ? $3)
+          )
+      `;
+      const findResult = await client.query(findQuery, [companyId, templateId, contactId]);
+      const messageIds = findResult.rows.map(row => row.id);
+
+      if (messageIds.length === 0) {
+        await client.query("ROLLBACK");
+        return res.status(404).json({
+          success: false,
+          error: "No scheduled messages found for this template and contact",
+        });
+      }
+
+      // Delete from database
+      const deleteQuery = `
+        DELETE FROM scheduled_messages
+        WHERE company_id = $1
+          AND template_id = $2
+          AND (
+            contact_id = $3
+            OR (contact_ids IS NOT NULL AND contact_ids::jsonb ? $3)
+          )
+      `;
+      const deleteResult = await client.query(deleteQuery, [companyId, templateId, contactId]);
+
+      // Remove jobs from queue
+      const queue = getQueueForBot(companyId);
+      for (const id of messageIds) {
+        try {
+          await queue.remove(id);
+        } catch (e) {
+          // Job might not exist, which is fine
+        }
+      }
+
+      await client.query("COMMIT");
+
+      res.json({
+        success: true,
+        deletedCount: deleteResult.rowCount,
+        jobsRemoved: messageIds.length,
+        message: `Deleted ${deleteResult.rowCount} scheduled message(s) for template and contact`,
+      });
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
+  } catch (error) {
+    console.error("Error deleting scheduled messages by template/contact:", error);
+    res.status(500).json({
+      success: false,
+      error: error.message || "Failed to delete scheduled messages",
     });
   }
 });
@@ -2374,10 +3478,10 @@ app.post(
           message: "Message stopped successfully",
         });
       } catch (error) {
-        await client.query("ROLLBACK");
+        await safeRollback(client);
         throw error;
       } finally {
-        client.release();
+        await safeRelease(client);
       }
     } catch (error) {
       console.error("Error stopping message:", error);
@@ -2901,6 +4005,600 @@ function getCurrentMonthKey() {
   return `${month}-${year}`;
 }
 
+// ... existing code ...
+
+function mapFirestoreContactToNeon(contact, companyId) {
+  // Fix timestamp handling for last_message
+  if (contact.last_message && contact.last_message.timestamp) {
+    const timestamp = contact.last_message.timestamp;
+    let timestampMs;
+    
+    // Handle different timestamp formats
+    if (typeof timestamp === 'string') {
+      // Try to parse as ISO string first
+      const parsedDate = new Date(timestamp);
+      if (!isNaN(parsedDate.getTime())) {
+        timestampMs = parsedDate.getTime();
+      } else {
+        // If it's an invalid string, use current time
+        timestampMs = Date.now();
+      }
+    } else if (typeof timestamp === 'number') {
+      // Check if it's seconds or milliseconds
+      timestampMs = timestamp < 1000000000000 ? timestamp * 1000 : timestamp;
+    } else {
+      // Fallback to current time
+      timestampMs = Date.now();
+    }
+    
+    const messageDate = new Date(timestampMs);
+    const now = new Date();
+    
+    // If timestamp is in the future or invalid, use current time
+    if (messageDate > now || isNaN(messageDate.getTime())) {
+      timestampMs = Date.now();
+    }
+    
+    // Update the timestamp in the contact data
+    contact.last_message.timestamp = timestampMs;
+  }
+  
+  // Handle customFields properly
+  let customFieldsJson = null;
+  if (contact.customFields) {
+    // If customFields is already an object, stringify it
+    if (typeof contact.customFields === 'object' && contact.customFields !== null) {
+      customFieldsJson = JSON.stringify(contact.customFields);
+    } else if (typeof contact.customFields === 'string') {
+      // If it's already a string, use it as is
+      customFieldsJson = contact.customFields;
+    }
+  }
+  
+// ... existing code ...
+return {
+  contact_id: companyId + "-" + contact.phone.split("+")[1] || null,
+  company_id: companyId,
+  name: contact.name || contact.contactName || null,
+  contact_name: contact.contactName || contact.name || null,
+  phone: contact.phone || null,
+  email: contact.email || null,
+  phone_index: contact.phoneIndex || 0,
+  chat_id: contact.chat_id || contact.id || null,
+  tags: JSON.stringify(contact.tags || []),
+  unread_count: contact.unreadCount || 0,
+  last_message: contact.last_message ? JSON.stringify({
+    ...contact.last_message,
+    phone_index: contact.last_message.phoneIndex || 0,
+    timestamp: contact.last_message.timestamp
+  }) : null,
+  profile_pic_url: contact.profilePicUrl || null,
+  not_spam: contact.not_spam || false,
+  pinned: contact.pinned || false,
+  address1: contact.address1 || null,
+  assigned_to: contact.assignedTo || null,
+  business_id: contact.businessId || null,
+  thread_id: contact.threadid || contact.thread_id || null,
+  branch: contact.branch || null,
+  expiry_date: contact.expiryDate || null,
+  vehicle_number: contact.vehicleNumber || null,
+  ic: contact.ic || null,
+  lead_number: contact.leadNumber || null,
+  custom_fields: customFieldsJson,
+  created_at: new Date(),
+  updated_at: new Date(),
+};
+// ... existing code ...
+}
+// ... existing code ...
+
+function mapFirestoreMessageToNeon(msg, companyId, contactId) {
+
+  
+  // Fix timestamp handling for messages
+  let messageTimestamp;
+  
+  if (msg.timestamp) {
+    if (typeof msg.timestamp === 'string') {
+      // Try to parse as ISO string first
+      const parsedDate = new Date(msg.timestamp);
+      if (!isNaN(parsedDate.getTime())) {
+        messageTimestamp = parsedDate;
+      } else {
+        // If it's an invalid string, use current time
+        messageTimestamp = new Date();
+      }
+    } else if (typeof msg.timestamp === 'number') {
+      // Check if it's seconds or milliseconds
+      const timestampMs = msg.timestamp < 1000000000000 ? msg.timestamp * 1000 : msg.timestamp;
+      messageTimestamp = new Date(timestampMs);
+    } else {
+      // Fallback to current time
+      messageTimestamp = new Date();
+    }
+    
+    // Validate the timestamp
+    if (isNaN(messageTimestamp.getTime()) || messageTimestamp > new Date()) {
+      messageTimestamp = new Date();
+    }
+  } else {
+    messageTimestamp = new Date();
+  }
+
+  // Handle different message types and extract content appropriately
+  let content = "";
+  let mediaUrl = null;
+  let mediaData = null;
+  let mediaMetadata = null;
+  let messageType = msg.type || "text";
+
+  // Handle image messages - check multiple possible structures
+  if (msg.type === "image") {
+   
+    
+    // Check if image data is in msg.image object
+    if (msg.image) {
+     
+      content = msg.image.caption || "";
+      mediaUrl = msg.image.data || null;
+      mediaData = msg.image.data || null;
+      mediaMetadata = {
+        filename: msg.image.filename || "",
+        height: msg.image.height || null,
+        width: msg.image.width || null,
+        mimetype: msg.image.mimetype || "image/jpeg",
+        mediaKey: msg.image.mediaKey || null
+      };
+    }
+    // Check if image data is directly in msg
+    else if (msg.data) {
+     // console.log(`Found image data directly in msg.data`);
+      content = msg.caption || "";
+      mediaUrl = msg.data || null;
+      mediaData = msg.data || null;
+      mediaMetadata = {
+        filename: msg.filename || "",
+        height: msg.height || null,
+        width: msg.width || null,
+        mimetype: msg.mimetype || "image/jpeg",
+        mediaKey: msg.mediaKey || null
+      };
+    }
+    // Check if image data is in msg.text (some structures have this)
+    else if (msg.text && msg.text.data) {
+      //console.log(`Found image data in msg.text.data`);
+      content = msg.text.body || "";
+      mediaUrl = msg.text.data || null;
+      mediaData = msg.text.data || null;
+      mediaMetadata = {
+        filename: msg.text.filename || "",
+        height: msg.text.height || null,
+        width: msg.text.width || null,
+        mimetype: msg.text.mimetype || "image/jpeg",
+        mediaKey: msg.text.mediaKey || null
+      };
+    }
+    // If no image data found, treat as text with image type
+    else {
+     // console.log(`No image data found, treating as text with image type`);
+      content = msg.text?.body || msg.body || "";
+      messageType = "text"; // Change to text since no media data
+    }
+    messageType = "image";
+  }
+  // Handle document messages
+  else if (msg.type === "document") {
+   // console.log(`Processing document message: ${msg.id}`);
+    
+    if (msg.document) {
+     // console.log(`Found document data in msg.document:`, msg.document);
+      content = msg.document.caption || "";
+      mediaUrl = msg.document.data || null;
+      mediaData = msg.document.data || null;
+      mediaMetadata = {
+        filename: msg.document.filename || "",
+        mimetype: msg.document.mimetype || "application/octet-stream",
+        mediaKey: msg.document.mediaKey || null
+      };
+    } else if (msg.data) {
+      //console.log(`Found document data directly in msg.data`);
+      content = msg.caption || "";
+      mediaUrl = msg.data || null;
+      mediaData = msg.data || null;
+      mediaMetadata = {
+        filename: msg.filename || "",
+        mimetype: msg.mimetype || "application/octet-stream",
+        mediaKey: msg.mediaKey || null
+      };
+    } else {
+      //console.log(`No document data found, treating as text with document type`);
+      content = msg.text?.body || msg.body || "";
+      messageType = "text"; // Change to text since no media data
+    }
+    messageType = "document";
+  }
+  // Handle video messages
+  else if (msg.type === "video") {
+   // console.log(`Processing video message: ${msg.id}`);
+    
+    if (msg.video) {
+    //  console.log(`Found video data in msg.video:`, msg.video);
+      content = msg.video.caption || "";
+      mediaUrl = msg.video.data || null;
+      mediaData = msg.video.data || null;
+      mediaMetadata = {
+        filename: msg.video.filename || "",
+        height: msg.video.height || null,
+        width: msg.video.width || null,
+        mimetype: msg.video.mimetype || "video/mp4",
+        mediaKey: msg.video.mediaKey || null
+      };
+    } else if (msg.data) {
+     // console.log(`Found video data directly in msg.data`);
+      content = msg.caption || "";
+      mediaUrl = msg.data || null;
+      mediaData = msg.data || null;
+      mediaMetadata = {
+        filename: msg.filename || "",
+        height: msg.height || null,
+        width: msg.width || null,
+        mimetype: msg.mimetype || "video/mp4",
+        mediaKey: msg.mediaKey || null
+      };
+    } else {
+     // console.log(`No video data found, treating as text with video type`);
+      content = msg.text?.body || msg.body || "";
+      messageType = "text"; // Change to text since no media data
+    }
+    messageType = "video";
+  }
+  // Handle audio messages
+  else if (msg.type === "audio") {
+    // console.log(`Processing audio message: ${msg.id}`);
+    
+    if (msg.audio) {
+     // console.log(`Found audio data in msg.audio:`, msg.audio);
+      content = msg.audio.caption || "";
+      mediaUrl = msg.audio.data || null;
+      mediaData = msg.audio.data || null;
+      mediaMetadata = {
+        filename: msg.audio.filename || "",
+        mimetype: msg.audio.mimetype || "audio/ogg",
+        mediaKey: msg.audio.mediaKey || null
+      };
+    } else if (msg.data) {
+     // console.log(`Found audio data directly in msg.data`);
+      content = msg.caption || "";
+      mediaUrl = msg.data || null;
+      mediaData = msg.data || null;
+      mediaMetadata = {
+        filename: msg.filename || "",
+        mimetype: msg.mimetype || "audio/ogg",
+        mediaKey: msg.mediaKey || null
+      };
+    } else {
+     // console.log(`No audio data found, treating as text with audio type`);
+      content = msg.text?.body || msg.body || "";
+      messageType = "text"; // Change to text since no media data
+    }
+    messageType = "audio";
+  }
+  // Handle text messages
+  else {
+    content = msg.text?.body || msg.body || "";
+    messageType = "text";
+  }
+ 
+  
+  return {
+    message_id: msg.id || msg.message_id || null,
+    company_id: companyId,
+    contact_id: contactId,
+    content: content,
+    message_type: messageType,
+    media_url: mediaUrl,
+    media_data: mediaData,
+    media_metadata: mediaMetadata ? JSON.stringify(mediaMetadata) : null,
+    timestamp: messageTimestamp,
+    direction: msg.from_me ? "outbound" : "inbound",
+    status: msg.status || "delivered",
+    from_me: msg.from_me || false,
+    chat_id: msg.chat_id || null,
+    author: msg.author || null,
+    phone_index: msg.phoneIndex || 0,
+    quoted_message: msg.quoted_message ? JSON.stringify(msg.quoted_message) : null,
+    thread_id: msg.threadid || msg.thread_id || null,
+    customer_phone: msg.customer_phone || null,
+    created_at: new Date(),
+    updated_at: new Date(),
+  };
+}
+
+// ... existing code ...
+
+// ... existing code ...
+// ... existing code ...
+
+// ... existing code ...
+
+function mapFirestorePrivateNoteToNeon(note, companyId, contactId) {
+  // Fix timestamp handling for private notes
+  let noteTimestamp;
+  
+  if (note.timestamp || note.createdAt) {
+    const timestamp = note.timestamp || note.createdAt;
+    
+    if (typeof timestamp === 'string') {
+      // Try to parse as ISO string first
+      const parsedDate = new Date(timestamp);
+      if (!isNaN(parsedDate.getTime())) {
+        noteTimestamp = parsedDate;
+      } else {
+        // If it's an invalid string, use current time
+        noteTimestamp = new Date();
+      }
+    } else if (typeof timestamp === 'number') {
+      // Check if it's seconds or milliseconds
+      const timestampMs = timestamp < 1000000000000 ? timestamp * 1000 : timestamp;
+      noteTimestamp = new Date(timestampMs);
+    } else {
+      // Fallback to current time
+      noteTimestamp = new Date();
+    }
+    
+    // Validate the timestamp
+    if (isNaN(noteTimestamp.getTime()) || noteTimestamp > new Date()) {
+      noteTimestamp = new Date();
+    }
+  } else {
+    noteTimestamp = new Date();
+  }
+  
+  return {
+    id: note.id || uuidv4(),
+    company_id: companyId,
+    contact_id: contactId,
+    text: note.text?.body || note.text || "",
+    from: note.from || note.from_name || null,
+    from_email: note.fromEmail || null,
+    timestamp: noteTimestamp,
+    type: "privateNote",
+    created_at: new Date(),
+    updated_at: new Date(),
+  };
+}
+
+// ... existing code ...
+
+// ... existing code ...
+async function syncContactsFromFirebaseToNeon(companyId, phoneIndex = 0) {
+  console.log(`=== Starting Firebase to Neon sync for company: ${companyId}, phone: ${phoneIndex} ===`);
+  
+  try {
+    const contactsRef = db.collection("companies").doc(companyId).collection("contacts");
+    const contactsSnapshot = await contactsRef.get();
+    console.log(`Found ${contactsSnapshot.docs.length} contacts in Firestore`);
+
+    let processedContacts = 0;
+    let processedMessages = 0;
+    let processedPrivateNotes = 0;
+    let errors = [];
+
+    // Process contacts in batches of 10 concurrently
+    const batchSize = 10;
+    const contactBatches = [];
+    
+    for (let i = 0; i < contactsSnapshot.docs.length; i += batchSize) {
+      contactBatches.push(contactsSnapshot.docs.slice(i, i + batchSize));
+    }
+
+    for (let batchIndex = 0; batchIndex < contactBatches.length; batchIndex++) {
+      const batch = contactBatches[batchIndex];
+      console.log(`Processing batch ${batchIndex + 1}/${contactBatches.length} (${batch.length} contacts)`);
+      
+      // Process contacts in current batch concurrently
+      const contactPromises = batch.map(async (doc) => {
+        try {
+          const contact = doc.data();
+          let contactId = contact.contact_id || contact.id || doc.id;
+          if (!contactId) {
+            console.warn(`Skipping contact with missing contact_id. Firestore doc ID: ${doc.id}`);
+            errors.push({ type: 'missing_contact_id', docId: doc.id });
+            return { processed: false };
+          }
+          
+          const neonContact = mapFirestoreContactToNeon(contact, companyId);
+          console.log(`---> Syncing contact: ${neonContact.contact_id} (Firestore doc ID: ${doc.id})`);
+
+          if (!neonContact.contact_id || !neonContact.company_id) {
+            console.warn(`Skipping contact with missing required fields. contact_id: ${neonContact.contact_id}, company_id: ${neonContact.company_id}`);
+            errors.push({ type: 'missing_required_fields', contactId, neonContact });
+            return { processed: false };
+          }
+
+          // Upsert contact
+          const contactFields = Object.keys(neonContact);
+          const contactValues = Object.values(neonContact);
+          const contactPlaceholders = contactFields.map((_, i) => `$${i + 1}`);
+          const contactUpdateSet = contactFields
+            .filter(f => f !== "contact_id" && f !== "company_id" && f !== "created_at" && f !== "updated_at")
+            .map(f => `${f} = EXCLUDED.${f}`)
+            .join(", ");
+
+          const contactQuery = `
+            INSERT INTO contacts (${contactFields.join(", ")})
+            VALUES (${contactPlaceholders.join(", ")})
+            ON CONFLICT (contact_id, company_id) DO UPDATE SET
+            ${contactUpdateSet}${contactUpdateSet ? ', ' : ''}updated_at = CURRENT_TIMESTAMP
+          `;
+          await sqlDb.query(contactQuery, contactValues);
+          
+          // Fetch and upsert messages for this contact
+          const messagesRef = contactsRef.doc(doc.id).collection("messages");
+          const messagesSnapshot = await messagesRef.get();
+          
+          // Limit to 50 messages max per contact
+          const limitedMessages = messagesSnapshot.docs.slice(0, 50);
+          
+          if (limitedMessages.length > 0) {
+            // Process messages in smaller batches of 10 concurrently
+            const messageBatchSize = 10;
+            const messageBatches = [];
+            
+            for (let j = 0; j < limitedMessages.length; j += messageBatchSize) {
+              messageBatches.push(limitedMessages.slice(j, j + messageBatchSize));
+            }
+            
+            for (const messageBatch of messageBatches) {
+              const messagePromises = messageBatch.map(async (msgDoc) => {
+                try {
+                  const msg = msgDoc.data();
+                  
+                  // Handle private notes separately
+                  if (msg.type === "privateNote") {
+                    const neonNote = mapFirestorePrivateNoteToNeon(msg, companyId, neonContact.contact_id);
+                    
+                    if (!neonNote.id || !neonNote.company_id || !neonNote.contact_id) {
+                      console.warn(`  Skipping private note with missing required fields. id: ${neonNote.id}, company_id: ${neonNote.company_id}, contact_id: ${neonNote.contact_id}`);
+                      errors.push({ type: 'missing_private_note_fields', msgDocId: msgDoc.id });
+                      return { processed: false };
+                    }
+
+                    // Upsert private note
+                    const noteFields = Object.keys(neonNote);
+                    const noteValues = Object.values(neonNote);
+                    const notePlaceholders = noteFields.map((_, i) => `$${i + 1}`);
+                    const noteUpdateSet = noteFields
+                      .filter(f => f !== "id" && f !== "company_id" && f !== "created_at" && f !== "updated_at")
+                      .map(f => `${f} = EXCLUDED.${f}`)
+                      .join(", ");
+                  
+                    const noteQuery = `
+                      INSERT INTO private_notes (${noteFields.join(", ")})
+                      VALUES (${notePlaceholders.join(", ")})
+                      ON CONFLICT (id) DO UPDATE SET
+                      ${noteUpdateSet}${noteUpdateSet ? ', ' : ''}updated_at = CURRENT_TIMESTAMP
+                    `;
+                    await sqlDb.query(noteQuery, noteValues);
+                    
+                    // Also insert as a message for compatibility
+                    const neonMsg = mapFirestoreMessageToNeon(msg, companyId, neonContact.contact_id);
+                    const msgFields = Object.keys(neonMsg).filter(f => f !== "updated_at");
+                    const msgValues = msgFields.map(f => neonMsg[f]);
+                    const msgPlaceholders = msgFields.map((_, i) => `$${i + 1}`);
+                    const msgUpdateSet = msgFields
+                      .filter(f => f !== "message_id" && f !== "company_id" && f !== "created_at")
+                      .map(f => `${f} = EXCLUDED.${f}`)
+                      .join(", ");
+                  
+                    const msgQuery = `
+                      INSERT INTO messages (${msgFields.join(", ")})
+                      VALUES (${msgPlaceholders.join(", ")})
+                      ON CONFLICT (message_id, company_id) DO UPDATE SET
+                      ${msgUpdateSet}
+                    `;
+                    await sqlDb.query(msgQuery, msgValues);
+                    
+                    return { processed: true, type: 'private_note' };
+                  } else {
+                    // Handle regular messages
+                    const neonMsg = mapFirestoreMessageToNeon(msg, companyId, neonContact.contact_id);
+
+                    if (!neonMsg.message_id || !neonMsg.company_id || !neonMsg.contact_id) {
+                      console.warn(`  Skipping message with missing required fields. message_id: ${neonMsg.message_id}, company_id: ${neonMsg.company_id}, contact_id: ${neonMsg.contact_id}`);
+                      errors.push({ type: 'missing_message_fields', msgDocId: msgDoc.id });
+                      return { processed: false };
+                    }
+
+                    // Remove updated_at from both fields and values for messages
+                    const msgFields = Object.keys(neonMsg).filter(f => f !== "updated_at");
+                    const msgValues = msgFields.map(f => neonMsg[f]);
+                    const msgPlaceholders = msgFields.map((_, i) => `$${i + 1}`);
+                    const msgUpdateSet = msgFields
+                      .filter(f => f !== "message_id" && f !== "company_id" && f !== "created_at")
+                      .map(f => `${f} = EXCLUDED.${f}`)
+                      .join(", ");
+                  
+                    const msgQuery = `
+                      INSERT INTO messages (${msgFields.join(", ")})
+                      VALUES (${msgPlaceholders.join(", ")})
+                      ON CONFLICT (message_id, company_id) DO UPDATE SET
+                      ${msgUpdateSet}
+                    `;
+                    await sqlDb.query(msgQuery, msgValues);
+                    return { processed: true, type: 'message' };
+                  }
+                  
+                } catch (msgError) {
+                  console.error(`  Error processing message ${msgDoc.id}: ${msgError.message}`);
+                  errors.push({ type: 'message_error', msgDocId: msgDoc.id, error: msgError.message });
+                  return { processed: false };
+                }
+              });
+              
+              // Wait for current message batch to complete
+              const messageResults = await Promise.all(messagePromises);
+              processedMessages += messageResults.filter(r => r.processed && r.type === 'message').length;
+              processedPrivateNotes += messageResults.filter(r => r.processed && r.type === 'private_note').length;
+              
+              // Small delay between message batches
+              await new Promise(resolve => setTimeout(resolve, 100));
+            }
+          }
+          
+          return { processed: true };
+          
+        } catch (contactError) {
+          console.error(`Error processing contact ${doc.id}: ${contactError.message}`);
+          errors.push({ type: 'contact_error', docId: doc.id, error: contactError.message });
+          return { processed: false };
+        }
+      });
+      
+      // Wait for current contact batch to complete
+      const contactResults = await Promise.all(contactPromises);
+      processedContacts += contactResults.filter(r => r.processed).length;
+      
+      // Small delay between contact batches
+      await new Promise(resolve => setTimeout(resolve, 200));
+    }
+
+    console.log(`=== Sync Summary ===`);
+    console.log(`Processed: ${processedContacts} contacts, ${processedMessages} messages, ${processedPrivateNotes} private notes`);
+    if (errors.length > 0) {
+      console.warn(`Encountered ${errors.length} errors. See above for details.`);
+    } else {
+      console.log(`No errors encountered.`);
+    }
+
+    return {
+      success: true,
+      processedContacts,
+      processedMessages,
+      processedPrivateNotes,
+      errors
+    };
+
+  } catch (error) {
+    console.error(`Fatal sync error: ${error.message}`);
+    throw error;
+  }
+}
+// ... existing code ...
+
+// ... existing code ...
+
+// ... existing code ...
+app.post("/api/sync-firebase-to-neon/:companyId", async (req, res) => {
+  const { companyId } = req.params;
+  try {
+    await syncContactsFromFirebaseToNeon(companyId);
+    res.json({ success: true, message: "Contacts and messages synced from Firebase to Neon." });
+  } catch (error) {
+    console.error("Sync error:", error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
 async function syncContacts(client, companyId, phoneIndex = 0) {
   try {
     const chats = await client.getChats();
@@ -3201,6 +4899,12 @@ async function syncSingleContact(client, companyId, contactPhone, phoneIndex = 0
     const chatId = `${phoneWithoutPlus}@c.us`;
     
     try {
+      const sync = await client.syncHistory(chatId);
+      if (sync){
+        console.log('Synced Chat ID history');
+      } else {
+        console.log('Sync Failed');
+      }
       const chat = await client.getChatById(chatId);
       const contact = await chat.getContact();
       const contactID = `${companyId}-${phoneWithoutPlus}`;
@@ -3234,7 +4938,7 @@ async function syncSingleContact(client, companyId, contactPhone, phoneIndex = 0
       ]);
 
       // Fetch and insert messages using the same method as addMessageToPostgres
-      const messages = await chat.fetchMessages({ limit: 100 }); // Fetch more messages for single contact
+      const messages = await chat.fetchMessages(); // Fetch more messages for single contact
       let lastMessage = null;
 
       const totalMessages = messages.length;
@@ -3514,450 +5218,7 @@ const botQueues = new Map();
 const botWorkers = new Map();
 const processingChatIds = new Map();
 
-// Create a worker factory function with duplicate message prevention
-const createQueueAndWorker = (botId) => {
-  const queue = new Queue(`scheduled-messages-${botId}`, {
-    connection: {
-      host: process.env.REDIS_HOST,
-      port: process.env.REDIS_PORT,
-      password: process.env.REDIS_PASSWORD,
-    },
-    defaultJobOptions: {
-      removeOnComplete: false,
-      removeOnFail: false,
-      attempts: 3,
-    },
-  });
 
-  queue.on("active", async (job) => {
-    if (job.name === "send-message-batch") {
-      const { companyId, messageId, batchId } = job.data;
-
-      try {
-        const client = await pool.connect();
-        try {
-          const batchQuery = `
-            SELECT * FROM scheduled_messages 
-            WHERE id = $1 AND company_id = $2
-          `;
-          const batchResult = await client.query(batchQuery, [
-            batchId,
-            companyId,
-          ]);
-
-          if (batchResult.rowCount === 0) {
-            console.error(`Bot ${botId} - Batch ${batchId} not found`);
-            return;
-          }
-
-          const batchData = batchResult.rows[0];
-          
-          // Get chat IDs for duplicate detection - prioritize from chat_ids field
-          let chatIdsForDetection = [];
-          if (batchData.chat_ids) {
-            try {
-              chatIdsForDetection = Array.isArray(batchData.chat_ids) 
-                ? batchData.chat_ids 
-                : JSON.parse(batchData.chat_ids);
-            } catch (e) {
-              chatIdsForDetection = [batchData.chat_ids];
-            }
-          }
-          
-          // Fallback to messages array if available
-          if (chatIdsForDetection.length === 0 && batchData.messages) {
-            try {
-              const messages = JSON.parse(batchData.messages);
-              chatIdsForDetection = messages.map(m => m.chatId).filter(Boolean);
-            } catch (e) {
-              console.warn(`Bot ${botId} - Could not parse messages for duplicate detection`);
-            }
-          }
-
-          if (chatIdsForDetection.length > 0) {
-            const firstChatId = chatIdsForDetection[0];
-            const duplicateKey = `${companyId}_${firstChatId}`;
-
-            if (processingChatIds.has(duplicateKey)) {
-              const processingStartTime = processingChatIds.get(duplicateKey);
-              const currentTime = Date.now();
-              const processingTime = (currentTime - processingStartTime) / 1000;
-
-              console.log(
-                `Bot ${botId} - Detected duplicate message for chatId ${firstChatId} (already processing for ${processingTime}s)`
-              );
-
-              if (processingTime < 300) {
-                job.data.isDuplicate = true;
-                await job.updateData(job.data);
-
-                await client.query(
-                  `UPDATE scheduled_messages SET 
-                    status = $1, 
-                    skipped_reason = $2, 
-                    skipped_at = NOW() 
-                   WHERE id = $3`,
-                  ["skipped", "Duplicate message for same chatId", batchId]
-                );
-
-                console.log(
-                  `Bot ${botId} - Marked job ${job.id} as duplicate for chatId ${firstChatId}`
-                );
-              }
-            } else {
-              processingChatIds.set(duplicateKey, Date.now());
-              console.log(
-                `Bot ${botId} - Reserved chatId ${firstChatId} for processing`
-              );
-            }
-          }
-        } finally {
-          client.release();
-        }
-      } catch (error) {
-        console.error(`Bot ${botId} - Error in pre-processing check:`, error);
-      }
-    }
-  });
-
-  const worker = new Worker(
-    `scheduled-messages-${botId}`,
-    async (job) => {
-      if (job.name === "send-message-batch") {
-        const { companyId, messageId, batchId, isDuplicate } = job.data;
-        console.log(`Bot ${botId} - Processing scheduled message batch:`, {
-          messageId,
-          batchId,
-        });
-
-        if (isDuplicate) {
-          console.log(
-            `Bot ${botId} - Skipping duplicate job ${job.id} for batch ${batchId}`
-          );
-          return { skipped: true, reason: "Duplicate message" };
-        }
-
-        const client = await pool.connect();
-        try {
-          await client.query("BEGIN");
-
-          const batchQuery = `
-            SELECT * FROM scheduled_messages 
-            WHERE id = $1 AND company_id = $2
-            FOR UPDATE
-          `;
-          const batchResult = await client.query(batchQuery, [
-            batchId,
-            companyId,
-          ]);
-
-          if (batchResult.rowCount === 0) {
-            console.error(`Bot ${botId} - Batch ${batchId} not found`);
-            return;
-          }
-
-          const batchData = batchResult.rows[0];
-
-          if (batchData.status === "skipped") {
-            console.log(
-              `Bot ${botId} - Batch ${batchId} was already marked as skipped, not processing`
-            );
-            return {
-              skipped: true,
-              reason: batchData.skipped_reason || "Already skipped",
-            };
-          }
-
-          try {
-            console.log(
-              `Bot ${botId} - Sending scheduled message batch:`,
-              batchData
-            );
-            const result = await sendScheduledMessage(batchData);
-
-            if (result.success) {
-              console.log(`Bot ${botId} - Successfully sent batch ${batchId} for message ${messageId}`);
-              
-              await client.query(
-                "UPDATE scheduled_messages SET status = $1, sent_at = NOW() WHERE id = $2",
-                ["sent", batchId]
-              );
-              
-              // Check if all batches are now processed
-              const batchesCheckQuery = `
-              SELECT COUNT(*) as pending_count,
-                     (SELECT status FROM scheduled_messages WHERE id = $1::uuid) as main_status
-              FROM scheduled_messages 
-              WHERE schedule_id = $1::uuid
-              AND company_id = $2 
-              AND status != 'sent'
-              AND id::uuid != schedule_id::uuid
-            `;
-              const batchesCheck = await client.query(batchesCheckQuery, [
-                messageId,
-                companyId,
-              ]);
-
-              console.log(`Bot ${botId} - Batch status check:`, {
-                pendingCount: batchesCheck.rows[0].pending_count,
-                mainStatus: batchesCheck.rows[0].main_status
-              });
-              
-              if (batchesCheck.rows[0].pending_count === 0) {
-                // All batches have been processed, update the main entry to "sent" status
-                if (batchesCheck.rows[0].main_status !== 'sent') {
-                  await client.query(
-                    "UPDATE scheduled_messages SET status = $1, sent_at = NOW() WHERE id = $2",
-                    ["sent", messageId]
-                  );
-                  console.log(`Bot ${botId} - All batches completed for message ${messageId}, main entry updated to "sent" status`);
-                } else {
-                  console.log(`Bot ${botId} - All batches completed for message ${messageId}, main entry already has "sent" status`);
-                }
-              }
-            } else {
-              console.error(
-                `Bot ${botId} - Failed to send batch ${batchId}:`,
-                result.error
-              );
-              await client.query(
-                "UPDATE scheduled_messages SET status = $1 WHERE id = $2",
-                ["failed", batchId]
-              );
-              
-              // We'll only update the main entry to failed if ALL batches have failed
-              // Check if any batches are still pending or sent successfully
-              const batchStatusCheckQuery = `
-                SELECT 
-                  COUNT(*) FILTER (WHERE status = 'scheduled') as pending_count,
-                  COUNT(*) FILTER (WHERE status = 'sent') as sent_count,
-                  COUNT(*) FILTER (WHERE status = 'failed') as failed_count
-                FROM scheduled_messages 
-                WHERE schedule_id = $1::uuid
-                AND company_id = $2
-                AND id::uuid != schedule_id::uuid
-              `;
-              
-              const batchStatusCheck = await client.query(batchStatusCheckQuery, [messageId, companyId]);
-              const { pending_count, sent_count, failed_count } = batchStatusCheck.rows[0];
-              
-              console.log(`Bot ${botId} - Batch failure status:`, { pending_count, sent_count, failed_count });
-              
-              // Only mark main entry as failed if all batches have failed and none are pending
-              if (pending_count === 0 && sent_count === 0) {
-                await client.query(
-                  "UPDATE scheduled_messages SET status = $1 WHERE id = $2",
-                  ["failed", messageId]
-                );
-                console.log(`Bot ${botId} - All batches failed for message ${messageId}, marking main entry as failed`);
-              } else {
-                console.log(`Bot ${botId} - Some batches still pending or sent for message ${messageId}, not marking main as failed`);
-              }
-            }
-
-            await client.query("COMMIT");
-          } catch (error) {
-            await client.query("ROLLBACK");
-            console.error(
-              `Bot ${botId} - Error processing scheduled message batch:`,
-              error
-            );
-            throw error;
-          }
-        } catch (error) {
-          console.error(
-            `Bot ${botId} - Error processing scheduled message batch:`,
-            error
-          );
-          throw error;
-        } finally {
-          client.release();
-        }
-      } else if (job.name === "send-single-message") {
-        const { companyId, messageId } = job.data;
-        console.log(`Bot ${botId} - Processing scheduled single message:`, {
-          messageId,
-        });
-
-        const client = await pool.connect();
-        try {
-          await client.query("BEGIN");
-
-          const messageQuery = `
-            SELECT * FROM scheduled_messages 
-            WHERE id = $1 AND company_id = $2
-            FOR UPDATE
-          `;
-          const messageResult = await client.query(messageQuery, [
-            messageId,
-            companyId,
-          ]);
-
-          if (messageResult.rowCount === 0) {
-            console.error(`Bot ${botId} - Message ${messageId} not found`);
-            return;
-          }
-
-          const messageData = messageResult.rows[0];
-
-          if (messageData.status === "skipped" || messageData.status === "sent") {
-            console.log(
-              `Bot ${botId} - Message ${messageId} was already ${messageData.status}, not processing`
-            );
-            return {
-              skipped: true,
-              reason: `Already ${messageData.status}`,
-            };
-          }
-
-          try {
-            console.log(
-              `Bot ${botId} - Sending scheduled single message:`,
-              messageData
-            );
-            const result = await sendScheduledMessage(messageData);
-
-            if (result.success) {
-              await client.query(
-                "UPDATE scheduled_messages SET status = $1, sent_at = NOW() WHERE id = $2",
-                ["sent", messageId]
-              );
-            } else {
-              console.error(
-                `Bot ${botId} - Failed to send message ${messageId}:`,
-                result.error
-              );
-              await client.query(
-                "UPDATE scheduled_messages SET status = $1 WHERE id = $2",
-                ["failed", messageId]
-              );
-            }
-
-            await client.query("COMMIT");
-          } catch (error) {
-            await client.query("ROLLBACK");
-            console.error(
-              `Bot ${botId} - Error processing scheduled single message:`,
-              error
-            );
-            throw error;
-          }
-        } catch (error) {
-          console.error(
-            `Bot ${botId} - Error processing scheduled single message:`,
-            error
-          );
-          throw error;
-        } finally {
-          client.release();
-        }
-      }
-    },
-    {
-      connection: {
-        host: process.env.REDIS_HOST,
-        port: process.env.REDIS_PORT,
-        password: process.env.REDIS_PASSWORD,
-      },
-      concurrency: 50,
-      limiter: {
-        max: 100,
-        duration: 1000,
-      },
-      lockDuration: 30000,
-      maxStalledCount: 1,
-      settings: {
-        stalledInterval: 15000,
-        lockRenewTime: 10000,
-      },
-    }
-  );
-
-  worker.on("completed", async (job) => {
-    console.log(`Bot ${botId} - Job ${job.id} completed successfully`);
-
-    if (
-      job.name === "send-message-batch" &&
-      job.data.companyId &&
-      job.data.batchId
-    ) {
-      try {
-        const client = await pool.connect();
-        try {
-          const batchQuery = `
-            SELECT chat_ids, messages FROM scheduled_messages 
-            WHERE id = $1 AND company_id = $2
-          `;
-          const batchResult = await client.query(batchQuery, [
-            job.data.batchId,
-            job.data.companyId,
-          ]);
-
-          if (batchResult.rowCount > 0) {
-            const { chat_ids, messages } = batchResult.rows[0];
-            let chatIds = [];
-
-            // Try to get chatIds from chat_ids field first
-            if (chat_ids) {
-              try {
-                chatIds = Array.isArray(chat_ids) ? chat_ids : JSON.parse(chat_ids);
-              } catch (parseError) {
-                chatIds = [chat_ids];
-              }
-            }
-
-            // Fallback to messages array
-            if (chatIds.length === 0 && messages) {
-              try {
-                const messagesArray = JSON.parse(messages);
-                chatIds = messagesArray.map(m => m.chatId).filter(Boolean);
-              } catch (parseError) {
-                console.warn(`Bot ${botId} - Could not parse messages for chat ID release`);
-              }
-            }
-
-            if (chatIds.length > 0) {
-              const firstChatId = chatIds[0];
-              const duplicateKey = `${job.data.companyId}_${firstChatId}`;
-              if (processingChatIds.has(duplicateKey)) {
-                processingChatIds.delete(duplicateKey);
-                console.log(
-                  `Bot ${botId} - Released chatId ${firstChatId} after processing`
-                );
-              }
-            }
-          }
-        } finally {
-          client.release();
-        }
-      } catch (error) {
-        console.error(`Bot ${botId} - Error releasing chatId:`, error);
-      }
-    }
-
-    await job.updateProgress(100);
-    await job.updateData({
-      ...job.data,
-      completedAt: new Date(),
-      status: "completed",
-    });
-  });
-
-  worker.on("failed", async (job, err) => {
-    console.error(`Bot ${botId} - Job ${job.id} failed:`, err);
-    await job.updateData({
-      ...job.data,
-      failedAt: new Date(),
-      error: err.message,
-      status: "failed",
-    });
-  });
-
-  // Store references
-  botQueues.set(botId, queue);
-  botWorkers.set(botId, worker);
-  return { queue, worker };
-};
 
 setInterval(() => {
   const now = Date.now();
@@ -3971,7 +5232,7 @@ setInterval(() => {
       processingChatIds.delete(chatId);
     }
   }
-}, 60000);
+}, 600000);
 
 // Function to get or create a bot's queue
 const getQueueForBot = (botId) => {
@@ -3983,118 +5244,359 @@ const getQueueForBot = (botId) => {
   return botQueues.get(botId);
 };
 
+// ======================
+// ENHANCED DATABASE CONNECTION MANAGEMENT
+// ======================
+
+// Enhanced sendScheduledMessage function with better connection management
+// Enhanced JSON parsing with better error handling
+const safeJsonParse = (data, defaultValue = null, context = '') => {
+  if (!data) {
+    console.log(`[JSON Parse] No data provided for ${context}, using default:`, defaultValue);
+    return defaultValue;
+  }
+
+  // If it's already an array or object, return it
+  if (Array.isArray(data) || (typeof data === 'object' && data !== null)) {
+    console.log(`[JSON Parse] Data is already parsed for ${context}:`, data);
+    return data;
+  }
+
+  // If it's a string, try to parse it
+  if (typeof data === 'string') {
+    try {
+      // Check if it looks like JSON
+      const trimmed = data.trim();
+      if ((trimmed.startsWith('[') && trimmed.endsWith(']')) || 
+          (trimmed.startsWith('{') && trimmed.endsWith('}'))) {
+        const parsed = JSON.parse(trimmed);
+        console.log(`[JSON Parse] Successfully parsed JSON for ${context}:`, parsed);
+        return parsed;
+      } else {
+        // It's not JSON, treat as single value
+        console.log(`[JSON Parse] Data is not JSON for ${context}, treating as single value:`, data);
+        return [data];
+      }
+    } catch (error) {
+      console.error(`[JSON Parse] Error parsing JSON for ${context}:`, {
+        error: error.message,
+        data: data,
+        position: error.message.match(/position (\d+)/)?.[1] || 'unknown',
+        context: context
+      });
+      
+      // If it's a string that's not JSON, treat it as a single value
+      if (typeof data === 'string') {
+        console.log(`[JSON Parse] Treating non-JSON string as single value for ${context}:`, data);
+        return [data];
+      }
+      
+      return defaultValue;
+    }
+  }
+
+  // For other types, return as is
+  console.log(`[JSON Parse] Data is not string for ${context}, returning as is:`, data);
+  return data;
+};
+// ======================
+// CLEANUP OLD PROBLEMATIC JOBS
+// ======================
+
+// Function to clean up old jobs with JSON parsing errors
+async function cleanupOldJobs() {
+  console.log("Starting cleanup of old problematic jobs...");
+  
+  try {
+    // Get all bot queues
+    for (const [botId, queue] of botQueues.entries()) {
+      console.log(`Cleaning up jobs for bot ${botId}...`);
+      
+      try {
+        // Get all jobs in different states
+        const waitingJobs = await queue.getJobs(['waiting']);
+        const delayedJobs = await queue.getJobs(['delayed']);
+        const activeJobs = await queue.getJobs(['active']);
+        const failedJobs = await queue.getJobs(['failed']);
+        
+        console.log(`Bot ${botId} - Found jobs:`, {
+          waiting: waitingJobs.length,
+          delayed: delayedJobs.length,
+          active: activeJobs.length,
+          failed: failedJobs.length
+        });
+        
+        // Remove all jobs that might have JSON parsing issues
+        const allJobs = [...waitingJobs, ...delayedJobs, ...activeJobs, ...failedJobs];
+        
+        for (const job of allJobs) {
+          try {
+            // Check if job data contains problematic JSON
+            const jobData = job.data;
+            
+            // Look for common problematic fields
+            const problematicFields = ['chat_ids', 'messages', 'contact_ids', 'active_hours'];
+            let hasProblematicData = false;
+            
+            for (const field of problematicFields) {
+              if (jobData[field] && typeof jobData[field] === 'string') {
+                try {
+                  JSON.parse(jobData[field]);
+                } catch (e) {
+                  console.log(`Bot ${botId} - Job ${job.id} has problematic ${field}:`, jobData[field]);
+                  hasProblematicData = true;
+                  break;
+                }
+              }
+            }
+            
+            if (hasProblematicData) {
+              console.log(`Bot ${botId} - Removing problematic job ${job.id}`);
+              await job.remove();
+            }
+          } catch (error) {
+            console.error(`Bot ${botId} - Error processing job ${job.id}:`, error.message);
+            // Remove job if we can't process it
+            try {
+              await job.remove();
+            } catch (removeError) {
+              console.error(`Bot ${botId} - Error removing job ${job.id}:`, removeError.message);
+            }
+          }
+        }
+        
+        console.log(`Bot ${botId} - Cleanup completed`);
+        
+      } catch (error) {
+        console.error(`Bot ${botId} - Error during cleanup:`, error.message);
+      }
+    }
+    
+    console.log("Cleanup of old problematic jobs completed");
+    
+          } catch (error) {
+    console.error("Error during cleanup:", error.message);
+  }
+}
+
+// Function to clean up specific bot's jobs
+async function cleanupBotJobs(botId) {
+  console.log(`Cleaning up jobs for bot ${botId}...`);
+  
+  try {
+    const queue = botQueues.get(botId);
+    if (!queue) {
+      console.log(`Bot ${botId} - No queue found`);
+            return;
+          }
+
+    // Get all jobs
+    const waitingJobs = await queue.getJobs(['waiting']);
+    const delayedJobs = await queue.getJobs(['delayed']);
+    const activeJobs = await queue.getJobs(['active']);
+    const failedJobs = await queue.getJobs(['failed']);
+    
+    const allJobs = [...waitingJobs, ...delayedJobs, ...activeJobs, ...failedJobs];
+    
+    console.log(`Bot ${botId} - Found ${allJobs.length} jobs to check`);
+    
+    let removedCount = 0;
+    
+    for (const job of allJobs) {
+      try {
+        // Remove all jobs for this bot (since they're likely problematic)
+        await job.remove();
+        removedCount++;
+        console.log(`Bot ${botId} - Removed job ${job.id}`);
+          } catch (error) {
+        console.error(`Bot ${botId} - Error removing job ${job.id}:`, error.message);
+      }
+    }
+    
+    console.log(`Bot ${botId} - Cleanup completed, removed ${removedCount} jobs`);
+    
+  } catch (error) {
+    console.error(`Bot ${botId} - Error during cleanup:`, error.message);
+  }
+}
+
+// Add cleanup endpoints
+app.post('/api/cleanup-jobs', async (req, res) => {
+  try {
+    await cleanupOldJobs();
+    res.json({ success: true, message: 'Job cleanup completed' });
+  } catch (error) {
+    console.error('Error during job cleanup:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.post('/api/cleanup-jobs/:botId', async (req, res) => {
+  try {
+    const { botId } = req.params;
+    await cleanupBotJobs(botId);
+    res.json({ success: true, message: `Job cleanup completed for bot ${botId}` });
+      } catch (error) {
+    console.error('Error during bot job cleanup:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Auto-cleanup on server startup
+setTimeout(async () => {
+  console.log("Running automatic job cleanup on startup...");
+  await cleanupOldJobs();
+}, 10000); // Wait 10 seconds after startup
+// Enhanced sendScheduledMessage function with better JSON parsing
 async function sendScheduledMessage(message) {
   const companyId = message.company_id;
-  const client = await pool.connect();
+  let client = null;
+  const startTime = Date.now();
+  
+  // FIXED: Declare messages variable at function scope
+  let messages = [];
+  let totalMessagesSent = 0;
+  let totalMessagesSkipped = 0;
+  let totalErrors = 0;
+  let dayCount = 1;
 
   try {
-    console.log(
-      `\n=== [Company ${companyId}] Starting sendScheduledMessage ===`
-    );
+    console.log(`\n=== [Company ${companyId}] Starting sendScheduledMessage ===`);
+    console.log(`[Company ${companyId}] Message ID: ${message.id}`);
+    console.log(`[Company ${companyId}] Schedule ID: ${message.schedule_id}`);
+    console.log(`[Company ${companyId}] Status: ${message.status}`);
+    console.log(`[Company ${companyId}] Phone Index: ${message.phone_index}`);
 
+    // Get database connection with timeout
+    client = await getDatabaseConnection(10000);
+    console.log(`[Company ${companyId}] Database connection established`);
+
+    // Validate phone_index
     if (message.phone_index === null || message.phone_index === undefined) {
+      console.log(`[Company ${companyId}] Phone index is null/undefined, defaulting to 0`);
       message.phone_index = 0;
     }
     message.phone_index = parseInt(message.phone_index);
     if (isNaN(message.phone_index)) {
+      console.log(`[Company ${companyId}] Phone index is NaN, defaulting to 0`);
       message.phone_index = 0;
     }
 
     const botData = botMap.get(companyId);
-    console.log(
-      "Available phone indices:",
-      botData ? botData.map((_, i) => i) : []
-    );
-    console.log("Client status:", {
+    console.log(`[Company ${companyId}] Available phone indices:`, botData ? botData.map((_, i) => i) : []);
+    console.log(`[Company ${companyId}] Client status:`, {
       phoneIndex: message.phone_index,
       hasClient: Boolean(botData?.[message.phone_index]?.client),
-      clientInfo: botData?.[message.phone_index]?.client
-        ? "Client exists"
-        : null,
+      clientInfo: botData?.[message.phone_index]?.client ? "Client exists" : null,
+      totalBots: botData ? botData.length : 0,
     });
 
     if (!botData?.[message.phone_index]?.client) {
-      throw new Error(
-        `No active WhatsApp client found for phone index: ${message.phone_index}`
-      );
+      const error = new Error(`No active WhatsApp client found for phone index: ${message.phone_index}`);
+      console.error(`[Company ${companyId}] Client not found:`, {
+        phoneIndex: message.phone_index,
+        availableIndices: botData ? botData.map((_, i) => i) : [],
+        botDataExists: Boolean(botData),
+        botDataLength: botData ? botData.length : 0,
+      });
+      throw error;
     }
+
+    // Log client info
+    const whatsappClient = botData[message.phone_index].client;
+    console.log(`[Company ${companyId}] WhatsApp client info:`, {
+      hasInfo: Boolean(whatsappClient.info),
+      info: whatsappClient.info ? {
+        wid: whatsappClient.info.wid?._serialized,
+        platform: whatsappClient.info.platform,
+        pushname: whatsappClient.info.pushname,
+      } : null,
+      isReady: Boolean(whatsappClient.info),
+    });
 
     if (message) {
       console.log(`\n=== [Company ${companyId}] Processing V2 Message ===`);
 
-      let messages = [];
       let chatIds = [];
       
-      // Parse chat_ids first
-      if (message.chat_ids) {
-        if (Array.isArray(message.chat_ids)) {
-          chatIds = message.chat_ids;
-        } else if (typeof message.chat_ids === "string") {
-          try {
-            chatIds = JSON.parse(message.chat_ids);
-            if (typeof chatIds === "string") {
+      // Parse chat_ids with safe JSON parsing
+      console.log(`[Company ${companyId}] Parsing chat_ids:`, message.chat_ids);
+      chatIds = safeJsonParse(message.chat_ids, [], `chat_ids for company ${companyId}`);
+      
+      if (Array.isArray(chatIds)) {
+        console.log(`[Company ${companyId}] chat_ids parsed as array with ${chatIds.length} items`);
+      } else {
+        console.log(`[Company ${companyId}] chat_ids parsed as single value:`, chatIds);
               chatIds = [chatIds];
-            }
-          } catch (e) {
-            chatIds = [message.chat_ids];
-          }
-        } else {
-          chatIds = [message.chat_ids];
-        }
       }
 
-      // Parse messages array
-      if (message.messages) {
-        try {
+      // Parse messages array with safe JSON parsing
           console.log(`[Company ${companyId}] Parsing messages field:`, message.messages);
-          if (Array.isArray(message.messages)) {
-            messages = message.messages;
-          } else if (typeof message.messages === "string") {
-            messages = JSON.parse(message.messages);
-            if (!Array.isArray(messages)) {
-              // Sometimes it's a stringified object, not array
+      messages = safeJsonParse(message.messages, [], `messages for company ${companyId}`);
+      
+      if (Array.isArray(messages)) {
+        console.log(`[Company ${companyId}] messages parsed as array with ${messages.length} items`);
+      } else {
+        console.log(`[Company ${companyId}] messages parsed as single value:`, messages);
               messages = [messages];
-            }
-          } else {
-            messages = [];
-          }
-        } catch (e) {
-          console.warn(`[Company ${companyId}] Could not parse messages field:`, e);
-          messages = [];
-        }
       }
 
       // If no messages array, create from individual message fields
       if (!messages || messages.length === 0) {
-        messages = chatIds.map((chatId) => ({
+        console.log(`[Company ${companyId}] Creating messages from individual fields`);
+        messages = chatIds.map((chatId) => {
+          const delay = message.min_delay && message.max_delay 
+            ? Math.floor(Math.random() * (message.max_delay - message.min_delay + 1) + message.min_delay)
+            : 0;
+          
+          const messageObj = {
           chatId: chatId,
           message: message.message_content,
-          delay: message.min_delay && message.max_delay 
-            ? Math.floor(Math.random() * (message.max_delay - message.min_delay + 1) + message.min_delay)
-            : 0,
+            delay: delay,
           mediaUrl: message.media_url || "",
           documentUrl: message.document_url || "",
           fileName: message.file_name || "",
           caption: message.caption || ""
-        }));
+          };
+          
+          console.log(`[Company ${companyId}] Created message for ${chatId}:`, {
+            messageLength: messageObj.message?.length,
+            delay: messageObj.delay,
+            hasMedia: Boolean(messageObj.mediaUrl || messageObj.documentUrl),
+          });
+          
+          return messageObj;
+        });
       }
 
-      console.log(`[Company ${companyId}] Batch details:`, {
+      console.log(`[Company ${companyId}] Final batch details:`, {
         messageId: message.id,
         infiniteLoop: message.infinite_loop,
-        activeHours: message.active_hours
-          ? JSON.parse(message.active_hours)
-          : null,
-        messages: messages.map((m) => ({
+        activeHours: message.active_hours ? safeJsonParse(message.active_hours, null, `active_hours for company ${companyId}`) : null,
+        totalMessages: messages.length,
+        messages: messages.map((m, index) => ({
+          index: index,
           chatId: m.chatId,
           messageLength: m.message?.length,
           delay: m.delay,
           hasMedia: Boolean(m.mediaUrl || m.documentUrl),
+          mediaUrl: m.mediaUrl || null,
+          documentUrl: m.documentUrl || null,
         })),
       });
 
       const processMessage = (messageText, contact) => {
-        if (!messageText) return "";
+        if (!messageText) {
+          console.log(`[Company ${companyId}] No message text to process`);
+          return "";
+        }
+
+        console.log(`[Company ${companyId}] Processing message with placeholders:`, {
+          originalLength: messageText.length,
+          hasContact: Boolean(contact),
+          contactName: contact?.contact_name || null,
+          contactPhone: contact?.phone || null,
+        });
 
         let processedMessage = messageText;
         const placeholders = {
@@ -4109,39 +5611,64 @@ async function sendScheduledMessage(message) {
           ic: contact?.ic || "",
         };
 
+        // Log available placeholders
+        console.log(`[Company ${companyId}] Available placeholders:`, placeholders);
+
         Object.entries(placeholders).forEach(([key, value]) => {
           const placeholder = `@{${key}}`;
+          const originalMessage = processedMessage;
           processedMessage = processedMessage.replace(
             new RegExp(placeholder, "g"),
             value
           );
+          if (originalMessage !== processedMessage) {
+            console.log(`[Company ${companyId}] Replaced ${placeholder} with: ${value}`);
+          }
         });
 
         if (contact?.custom_fields) {
-          const customFields =
-            typeof contact.custom_fields === "string"
-              ? JSON.parse(contact.custom_fields)
-              : contact.custom_fields;
+          console.log(`[Company ${companyId}] Processing custom fields`);
+          const customFields = safeJsonParse(contact.custom_fields, {}, `custom_fields for contact ${contact.contact_id}`);
+
+          console.log(`[Company ${companyId}] Custom fields:`, customFields);
 
           Object.entries(customFields).forEach(([key, value]) => {
             const customPlaceholder = `@{${key}}`;
             const stringValue =
               value !== null && value !== undefined ? String(value) : "";
+            const originalMessage = processedMessage;
             processedMessage = processedMessage.replace(
               new RegExp(customPlaceholder, "g"),
               stringValue
             );
+            if (originalMessage !== processedMessage) {
+              console.log(`[Company ${companyId}] Replaced ${customPlaceholder} with: ${stringValue}`);
+            }
           });
         }
+
+        console.log(`[Company ${companyId}] Message processing complete:`, {
+          originalLength: messageText.length,
+          processedLength: processedMessage.length,
+          hasChanges: messageText !== processedMessage,
+        });
 
         return processedMessage;
       };
 
       const isWithinActiveHours = () => {
-        if (!message.active_hours) return true;
+        if (!message.active_hours) {
+          console.log(`[Company ${companyId}] No active hours set, always active`);
+          return true;
+        }
         
         try {
-          const activeHours = JSON.parse(message.active_hours);
+          const activeHours = safeJsonParse(message.active_hours, null, `active_hours for company ${companyId}`);
+          if (!activeHours) {
+            console.log(`[Company ${companyId}] No active hours parsed, assuming active`);
+            return true;
+          }
+          
           const now = new Date();
           const currentHour = now.getHours();
           const currentMinute = now.getMinutes();
@@ -4152,9 +5679,19 @@ async function sendScheduledMessage(message) {
           const endTime = activeHours.end ? 
             (parseInt(activeHours.end.split(':')[0]) * 60 + parseInt(activeHours.end.split(':')[1])) : 1440;
           
-          return currentTime >= startTime && currentTime <= endTime;
+          const isActive = currentTime >= startTime && currentTime <= endTime;
+          
+          console.log(`[Company ${companyId}] Active hours check:`, {
+            currentTime: `${currentHour}:${currentMinute}`,
+            startTime: activeHours.start,
+            endTime: activeHours.end,
+            isActive: isActive,
+          });
+          
+          return isActive;
         } catch (e) {
-          return true; // If parsing fails, assume active
+          console.warn(`[Company ${companyId}] Error parsing active hours, assuming active:`, e);
+          return true;
         }
       };
 
@@ -4165,327 +5702,519 @@ async function sendScheduledMessage(message) {
         tomorrow.setHours(0, 0, 0, 0);
 
         const timeUntilTomorrow = tomorrow - now;
-        console.log(
-          `Waiting ${timeUntilTomorrow / 1000 / 60} minutes until next day`
-        );
+        console.log(`[Company ${companyId}] Waiting until next day:`, {
+          currentTime: now.toISOString(),
+          tomorrowTime: tomorrow.toISOString(),
+          waitMinutes: timeUntilTomorrow / 1000 / 60,
+        });
 
+        try {
         const messageCheck = await client.query(
           "SELECT status FROM scheduled_messages WHERE id = $1",
           [message.id]
         );
 
-        if (
-          messageCheck.rowCount === 0 ||
-          messageCheck.rows[0].status === "stopped"
-        ) {
-          console.log("Message sequence stopped");
+          if (messageCheck.rowCount === 0) {
+            console.log(`[Company ${companyId}] Message not found in database, stopping`);
           return true;
         }
 
+          if (messageCheck.rows[0].status === "stopped") {
+            console.log(`[Company ${companyId}] Message sequence stopped`);
+            return true;
+          }
+
+          console.log(`[Company ${companyId}] Waiting ${timeUntilTomorrow / 1000 / 60} minutes until next day`);
         await new Promise((resolve) => setTimeout(resolve, timeUntilTomorrow));
         return false;
+        } catch (error) {
+          console.error(`[Company ${companyId}] Error checking message status:`, error);
+          return true; // Stop on error
+        }
       };
 
       let currentMessageIndex = 0;
-      let dayCount = 1;
+      let consecutiveErrors = 0;
+      const MAX_CONSECUTIVE_ERRORS = 5;
+
+      console.log(`[Company ${companyId}] Starting message processing loop`);
 
       while (true) {
-        // Check if we're within active hours
-        if (!isWithinActiveHours()) {
-          console.log(`[Company ${companyId}] Outside active hours, waiting...`);
-          await new Promise(resolve => setTimeout(resolve, 60000)); // Wait 1 minute
-          continue;
-        }
-
-        console.log(`\n=== [Company ${companyId}] Processing Message Item ===`);
-        const messageItem = messages[currentMessageIndex];
-        console.log(`[Company ${companyId}] Current message item:`, {
-          index: currentMessageIndex,
-          chatId: messageItem.chatId,
-          messageLength: messageItem.message?.length,
-          delay: messageItem.delay,
-        });
-
-        const { chatId, message: messageText, delay } = messageItem;
-        const phone = '+' + chatId.split("@")[0];
-
-        console.log(`[Company ${companyId}] Fetching contact data for:`, phone);
-        
-        let contactData = {};
-        
-        // Determine which contacts to get for this batch
-        let contactIds = [];
-        if (message.multiple && message.contact_ids) {
-          try {
-            contactIds = JSON.parse(message.contact_ids);
-          } catch (e) {
-            console.warn(`[Company ${companyId}] Could not parse contact_ids:`, e);
-          }
-        } else if (message.contact_id) {
-          contactIds = [message.contact_id];
-        }
-        
-        // Fetch contact by ID if available, otherwise by phone
-        if (contactIds.length > 0) {
-          // For batched messages, find the contact that matches this chatId
-          const contactQuery = `
-            SELECT * FROM contacts 
-            WHERE company_id = $1 AND contact_id = ANY($2::text[]) AND phone = $3
-          `;
-          const contactResult = await client.query(contactQuery, [
-            companyId,
-            contactIds,
-            phone,
-          ]);
+        try {
+          const loopStartTime = Date.now();
           
-          if (contactResult.rowCount > 0) {
-            contactData = contactResult.rows[0];
+          // Check if we're within active hours
+          if (!isWithinActiveHours()) {
+            console.log(`[Company ${companyId}] Outside active hours, waiting 10 minutes...`);
+            await new Promise(resolve => setTimeout(resolve, 600000));
+            continue;
+          }
+
+          // Add rate limiting check
+          if (!checkRateLimit(`message_processing_${companyId}`)) {
+            console.log(`[Company ${companyId}] Rate limit reached, waiting 1 minute...`);
+            await new Promise(resolve => setTimeout(resolve, 60000));
+            continue;
+          }
+
+          // Add a longer delay between processing cycles to reduce network load
+          console.log(`[Company ${companyId}] Waiting 10 seconds between cycles...`);
+          await new Promise(resolve => setTimeout(resolve, 10000));
+
+          // FIXED: Check if currentMessageIndex is within bounds
+          if (currentMessageIndex >= messages.length) {
+            console.log(`[Company ${companyId}] Reached end of messages array (${currentMessageIndex}/${messages.length})`);
+            
+            if (!message.infinite_loop) {
+              console.log(`[Company ${companyId}] Sequence complete - ending`);
+              break;
+            }
+
+            console.log(`[Company ${companyId}] Day ${dayCount} complete - preparing for next day`);
+            const shouldStop = await waitUntilNextDay();
+            if (shouldStop) {
+              console.log(`[Company ${companyId}] Sequence stopped during day transition`);
+              break;
+            }
+
+            currentMessageIndex = 0;
+            dayCount++;
+            console.log(`[Company ${companyId}] Starting day ${dayCount}`);
+            continue; // Skip to next iteration to process first message again
+          }
+
+          console.log(`\n=== [Company ${companyId}] Processing Message Item ${currentMessageIndex + 1}/${messages.length} ===`);
+          const messageItem = messages[currentMessageIndex];
+          
+          // FIXED: Validate messageItem exists
+          if (!messageItem) {
+            console.error(`[Company ${companyId}] Message item at index ${currentMessageIndex} is undefined`);
+            console.log(`[Company ${companyId}] Messages array:`, messages);
+            console.log(`[Company ${companyId}] Messages length:`, messages.length);
+            console.log(`[Company ${companyId}] Current index:`, currentMessageIndex);
+            
+            // Skip this message and move to next
+            currentMessageIndex++;
+            continue;
+          }
+          
+          console.log(`[Company ${companyId}] Current message item:`, {
+            index: currentMessageIndex,
+            chatId: messageItem.chatId,
+            messageLength: messageItem.message?.length,
+            delay: messageItem.delay,
+            hasMedia: Boolean(messageItem.mediaUrl || messageItem.documentUrl),
+            mediaUrl: messageItem.mediaUrl || null,
+            documentUrl: messageItem.documentUrl || null,
+          });
+
+          const { chatId, message: messageText, delay } = messageItem;
+          
+          // FIXED: Validate chatId exists
+          if (!chatId) {
+            console.error(`[Company ${companyId}] chatId is undefined for message item at index ${currentMessageIndex}`);
+            currentMessageIndex++;
+            continue;
+          }
+          
+          const phone = '+' + chatId.split("@")[0];
+
+          console.log(`[Company ${companyId}] Processing chat:`, {
+            chatId: chatId,
+            phone: phone,
+            originalPhone: chatId.split("@")[0],
+          });
+
+          console.log(`[Company ${companyId}] Fetching contact data for:`, phone);
+          
+          let contactData = {};
+          
+          // Determine which contacts to get for this batch
+          let contactIds = [];
+          if (message.multiple && message.contact_ids) {
+            try {
+              contactIds = safeJsonParse(message.contact_ids, [], `contact_ids for company ${companyId}`);
+              console.log(`[Company ${companyId}] Using multiple contact IDs:`, contactIds);
+            } catch (e) {
+              console.warn(`[Company ${companyId}] Could not parse contact_ids:`, {
+                error: e.message,
+                contact_ids: message.contact_ids,
+                type: typeof message.contact_ids,
+              });
+              contactIds = [];
+            }
+          } else if (message.contact_id) {
+            contactIds = [message.contact_id];
+            console.log(`[Company ${companyId}] Using single contact ID:`, contactIds);
           } else {
-            // Fallback to phone lookup if contact ID lookup fails
-            const phoneContactQuery = `
+            console.log(`[Company ${companyId}] No contact IDs specified, will use phone lookup`);
+          }
+          
+          // Fetch contact by ID if available, otherwise by phone
+          if (contactIds.length > 0) {
+            console.log(`[Company ${companyId}] Looking up contact by ID and phone`);
+            const contactQuery = `
+              SELECT * FROM contacts 
+              WHERE company_id = $1 AND contact_id = ANY($2::text[]) AND phone = $3
+            `;
+            const contactResult = await client.query(contactQuery, [
+              companyId,
+              contactIds,
+              phone,
+            ]);
+            
+            if (contactResult.rowCount > 0) {
+              contactData = contactResult.rows[0];
+              console.log(`[Company ${companyId}] Found contact by ID and phone:`, {
+                contactId: contactData.contact_id,
+                name: contactData.contact_name,
+                phone: contactData.phone,
+              });
+            } else {
+              console.log(`[Company ${companyId}] No contact found by ID and phone, trying phone-only lookup`);
+              const phoneContactQuery = `
+                SELECT * FROM contacts 
+                WHERE company_id = $1 AND phone = $2
+              `;
+              const phoneContactResult = await client.query(phoneContactQuery, [
+                companyId,
+                phone,
+              ]);
+              contactData = phoneContactResult.rowCount > 0 ? phoneContactResult.rows[0] : {};
+              console.log(`[Company ${companyId}] Phone-only lookup result:`, {
+                found: phoneContactResult.rowCount > 0,
+                contactId: contactData.contact_id || null,
+                name: contactData.contact_name || null,
+              });
+            }
+          } else {
+            console.log(`[Company ${companyId}] Looking up contact by phone only`);
+            const contactQuery = `
               SELECT * FROM contacts 
               WHERE company_id = $1 AND phone = $2
             `;
-            const phoneContactResult = await client.query(phoneContactQuery, [
+            const contactResult = await client.query(contactQuery, [
               companyId,
               phone,
             ]);
-            contactData = phoneContactResult.rowCount > 0 ? phoneContactResult.rows[0] : {};
+            contactData = contactResult.rowCount > 0 ? contactResult.rows[0] : {};
+            console.log(`[Company ${companyId}] Phone lookup result:`, {
+              found: contactResult.rowCount > 0,
+              contactId: contactData.contact_id || null,
+              name: contactData.contact_name || null,
+            });
           }
-        } else {
-          // Original phone-based lookup
-          const contactQuery = `
-            SELECT * FROM contacts 
-            WHERE company_id = $1 AND phone = $2
+          
+          console.log(`[Company ${companyId}] Contact data summary:`, {
+            exists: Object.keys(contactData).length > 0,
+            contactId: contactData.contact_id || null,
+            name: contactData.contact_name || null,
+            phone: contactData.phone || null,
+            tags: contactData.tags || null,
+            customFields: contactData.custom_fields ? 'Present' : 'None',
+          });
+
+          // Check for stop bot tag
+          if (
+            companyId === "0128" &&
+            contactData.tags &&
+            contactData.tags.includes("stop bot")
+          ) {
+            console.log(`[Company ${companyId}] Skipping message - contact has 'stop bot' tag`);
+            totalMessagesSkipped++;
+            currentMessageIndex++;
+            continue;
+          }
+
+          const processedMessageText = processMessage(
+            messageText || message.message_content,
+            contactData
+          );
+
+          const today = new Date().toISOString().split("T")[0];
+          const contentHash = Buffer.from(processedMessageText)
+            .toString("base64")
+            .substring(0, 20);
+          const messageIdentifier = `${today}_${currentMessageIndex}_${contentHash}`;
+
+          console.log(`[Company ${companyId}] Message identifier:`, {
+            today: today,
+            currentIndex: currentMessageIndex,
+            contentHash: contentHash,
+            identifier: messageIdentifier,
+          });
+
+          const sentCheckQuery = `
+            SELECT 1 FROM sent_messages 
+            WHERE company_id = $1 AND chat_id = $2 AND identifier = $3
           `;
-          const contactResult = await client.query(contactQuery, [
+          const sentCheck = await client.query(sentCheckQuery, [
             companyId,
-            phone,
+            chatId,
+            messageIdentifier,
           ]);
-          contactData = contactResult.rowCount > 0 ? contactResult.rows[0] : {};
-        }
-        
-        console.log(
-          `[Company ${companyId}] Contact exists:`,
-          Object.keys(contactData).length > 0
-        );
 
-        if (
-          companyId === "0128" &&
-          contactData.tags &&
-          contactData.tags.includes("stop bot")
-        ) {
-          console.log(
-            `[Company ${companyId}] Skipping message - contact has 'stop bot' tag`
-          );
-          currentMessageIndex++;
-          continue;
-        }
-
-        const processedMessageText = processMessage(
-          messageText || message.message_content,
-          contactData
-        );
-
-        const today = new Date().toISOString().split("T")[0];
-        const contentHash = Buffer.from(processedMessageText)
-          .toString("base64")
-          .substring(0, 20);
-        const messageIdentifier = `${today}_${currentMessageIndex}_${contentHash}`;
-
-        const sentCheckQuery = `
-          SELECT 1 FROM sent_messages 
-          WHERE company_id = $1 AND chat_id = $2 AND identifier = $3
-        `;
-        const sentCheck = await client.query(sentCheckQuery, [
-          companyId,
-          chatId,
-          messageIdentifier,
-        ]);
-
-        if (sentCheck.rowCount > 0) {
-          console.log(
-            `[Company ${companyId}] Message already sent to ${chatId}, skipping...`
-          );
-          currentMessageIndex++;
-          continue;
-        }
-
-        console.log(`[Company ${companyId}] Message prepared:`, {
-          originalLength: messageText?.length,
-          processedLength: processedMessageText?.length,
-          hasPlaceholders: messageText !== processedMessageText,
-        });
-
-        if (delay > 0) {
-          console.log(
-            `[Company ${companyId}] Adding delay of ${delay} seconds`
-          );
-          await new Promise((resolve) => setTimeout(resolve, delay * 1000));
-        }
-
-        try {
-          console.log(`\n=== [Company ${companyId}] Sending Message ===`);
-
-          const mediaUrl = messageItem.mediaUrl || message.media_url || "";
-          const documentUrl =
-            messageItem.documentUrl || message.document_url || "";
-          const fileName = messageItem.fileName || message.file_name || "";
-
-          const endpoint = mediaUrl
-            ? "image"
-            : documentUrl
-            ? "document"
-            : "text";
-
-          const url = `${process.env.URL}/api/v2/messages/${endpoint}/${companyId}/${chatId}`;
-
-          console.log(`[Company ${companyId}] Request details:`, {
-            endpoint,
-            url,
-            phoneIndex: message.phone_index,
-            hasMedia: Boolean(mediaUrl || documentUrl),
-          });
-
-          const response = await fetch(url, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(
-              mediaUrl
-                ? {
-                    imageUrl: mediaUrl,
-                    caption: processedMessageText,
-                    phoneIndex: message.phone_index,
-                  }
-                : documentUrl
-                ? {
-                    documentUrl: documentUrl,
-                    filename: fileName,
-                    caption: processedMessageText,
-                    phoneIndex: message.phone_index,
-                  }
-                : {
-                    message: processedMessageText || message.message_content,
-                    phoneIndex: message.phone_index,
-                  }
-            ),
-          });
-
-          console.log(`[Company ${companyId}] Send response:`, {
-            status: response.status,
-            ok: response.ok,
-          });
-
-          if (!response.ok) {
-            throw new Error(`Failed to send message: ${response.status}`);
+          if (sentCheck.rowCount > 0) {
+            console.log(`[Company ${companyId}] Message already sent to ${chatId}, skipping...`);
+            totalMessagesSkipped++;
+            currentMessageIndex++;
+            continue;
           }
 
-          await client.query(
-            `INSERT INTO sent_messages (
-              company_id, chat_id, identifier, sent_at, 
-              message_index, message_content, message_type,
-              media_url, document_url
-            ) VALUES ($1, $2, $3, NOW(), $4, $5, $6, $7, $8)`,
-            [
-              companyId,
-              chatId,
-              messageIdentifier,
-              currentMessageIndex,
-              processedMessageText,
-              endpoint,
-              mediaUrl || null,
-              documentUrl || null,
-            ]
-          );
+          console.log(`[Company ${companyId}] Message prepared:`, {
+            originalLength: messageText?.length,
+            processedLength: processedMessageText?.length,
+            hasPlaceholders: messageText !== processedMessageText,
+            identifier: messageIdentifier,
+          });
 
-          console.log(
-            `[Company ${companyId}] Recorded message as sent with ID: ${messageIdentifier}`
-          );
-        } catch (error) {
-          console.error(`\n=== [Company ${companyId}] Message Send Error ===`);
-          console.error(`[Company ${companyId}] Error:`, error);
-
-          await client.query(
-            `INSERT INTO error_logs (
-              company_id, message_id, error_type, 
-              error_message, stack_trace, timestamp
-            ) VALUES ($1, $2, $3, $4, $5, NOW())`,
-            [
-              companyId,
-              message.id || "No messageId",
-              error.name,
-              error.message,
-              error.stack,
-            ]
-          );
-
-          throw error;
-        }
-
-        currentMessageIndex++;
-        
-        // Check if we need to sleep after a certain number of messages
-        if (message.activate_sleep && message.sleep_after_messages && message.sleep_duration) {
-          if (currentMessageIndex % message.sleep_after_messages === 0) {
-            console.log(`[Company ${companyId}] Sleeping for ${message.sleep_duration} seconds after ${message.sleep_after_messages} messages`);
-            await new Promise(resolve => setTimeout(resolve, message.sleep_duration * 1000));
-          }
-        }
-        
-        console.log(`\n=== [Company ${companyId}] Sequence Status ===`);
-        console.log({
-          currentIndex: currentMessageIndex,
-          totalMessages: messages.length,
-          dayCount,
-          willContinue:
-            currentMessageIndex < messages.length || message.infinite_loop,
-        });
-
-        if (currentMessageIndex >= messages.length) {
-          if (!message.infinite_loop) {
-            console.log(`[Company ${companyId}] Sequence complete - ending`);
-            break;
+          if (delay > 0) {
+            console.log(`[Company ${companyId}] Adding delay of ${delay} seconds`);
+            await new Promise((resolve) => setTimeout(resolve, delay * 1000));
           }
 
-          console.log(
-            `[Company ${companyId}] Day ${dayCount} complete - preparing for next day`
-          );
-          const shouldStop = await waitUntilNextDay();
-          if (shouldStop) {
-            console.log(
-              `[Company ${companyId}] Sequence stopped during day transition`
+          try {
+            console.log(`\n=== [Company ${companyId}] Sending Message ===`);
+
+            const mediaUrl = messageItem.mediaUrl || message.media_url || "";
+            const documentUrl = messageItem.documentUrl || message.document_url || "";
+            const fileName = messageItem.fileName || message.file_name || "";
+
+            const endpoint = mediaUrl ? "image" : documentUrl ? "document" : "text";
+
+            // FIXED: Properly construct the URL without double slashes
+            const baseUrl = (process.env.URL || 'http://localhost:3000').replace(/\/$/, ''); // Remove trailing slash
+            const url = `${baseUrl}/api/v2/messages/${endpoint}/${companyId}/${chatId}`;
+
+            console.log(`[Company ${companyId}] URL construction:`, {
+              baseUrl: baseUrl,
+              endpoint: endpoint,
+              companyId: companyId,
+              chatId: chatId,
+              fullUrl: url,
+              envUrl: process.env.URL,
+              originalBaseUrl: process.env.URL || 'http://localhost:3000',
+            });
+
+            console.log(`[Company ${companyId}] Request details:`, {
+              endpoint: endpoint,
+              url: url,
+              phoneIndex: message.phone_index,
+              hasMedia: Boolean(mediaUrl || documentUrl),
+              mediaUrl: mediaUrl || null,
+              documentUrl: documentUrl || null,
+              fileName: fileName || null,
+              messageLength: processedMessageText?.length,
+            });
+
+            const requestBody = mediaUrl
+                  ? {
+                      imageUrl: mediaUrl,
+                      caption: processedMessageText,
+                      phoneIndex: message.phone_index,
+                    }
+                  : documentUrl
+                  ? {
+                      documentUrl: documentUrl,
+                      filename: fileName,
+                      caption: processedMessageText,
+                      phoneIndex: message.phone_index,
+                    }
+                  : {
+                      message: processedMessageText || message.message_content,
+                      phoneIndex: message.phone_index,
+                };
+
+            console.log(`[Company ${companyId}] Request body:`, requestBody);
+
+            const response = await fetch(url, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(requestBody),
+            });
+
+            console.log(`[Company ${companyId}] Send response:`, {
+              status: response.status,
+              ok: response.ok,
+              statusText: response.statusText,
+            });
+
+            if (!response.ok) {
+              const errorText = await response.text();
+              console.error(`[Company ${companyId}] Response error:`, {
+                status: response.status,
+                statusText: response.statusText,
+                errorText: errorText,
+                url: url,
+              });
+              throw new Error(`Failed to send message: ${response.status} - ${errorText}`);
+            }
+
+            const responseData = await response.json();
+            console.log(`[Company ${companyId}] Response data:`, responseData);
+
+            await client.query(
+              `INSERT INTO sent_messages (
+                company_id, chat_id, identifier, sent_at, 
+                message_index, message_content, message_type,
+                media_url, document_url
+              ) VALUES ($1, $2, $3, NOW(), $4, $5, $6, $7, $8)`,
+              [
+                companyId,
+                chatId,
+                messageIdentifier,
+                currentMessageIndex,
+                processedMessageText,
+                endpoint,
+                mediaUrl || null,
+                documentUrl || null,
+              ]
             );
-            break;
+
+            console.log(`[Company ${companyId}] Recorded message as sent with ID: ${messageIdentifier}`);
+            totalMessagesSent++;
+
+            const messageTime = Date.now() - loopStartTime;
+            console.log(`[Company ${companyId}] Message sent successfully in ${messageTime}ms`);
+
+          } catch (error) {
+            console.error(`\n=== [Company ${companyId}] Message Send Error ===`);
+            console.error(`[Company ${companyId}] Error details:`, {
+              name: error.name,
+              message: error.message,
+              stack: error.stack,
+              chatId: chatId,
+              phone: phone,
+              messageIndex: currentMessageIndex,
+            });
+
+            await client.query(
+              `INSERT INTO error_logs (
+                company_id, message_id, error_type, 
+                error_message, stack_trace, timestamp
+              ) VALUES ($1, $2, $3, $4, $5, NOW())`,
+              [
+                companyId,
+                message.id || "No messageId",
+                error.name,
+                error.message,
+                error.stack,
+              ]
+            );
+
+            totalErrors++;
+            throw error;
           }
 
-          currentMessageIndex = 0;
-          dayCount++;
-          console.log(`[Company ${companyId}] Starting day ${dayCount}`);
+          currentMessageIndex++;
+          
+          // Check if we need to sleep after a certain number of messages
+          if (message.activate_sleep && message.sleep_after_messages && message.sleep_duration) {
+            if (currentMessageIndex % message.sleep_after_messages === 0) {
+              console.log(`[Company ${companyId}] Sleeping for ${message.sleep_duration} seconds after ${message.sleep_after_messages} messages`);
+              await new Promise(resolve => setTimeout(resolve, message.sleep_duration * 1000));
+            }
+          }
+          
+          console.log(`\n=== [Company ${companyId}] Sequence Status ===`);
+          console.log({
+            currentIndex: currentMessageIndex,
+            totalMessages: messages.length,
+            dayCount: dayCount,
+            willContinue: currentMessageIndex < messages.length || message.infinite_loop,
+            totalSent: totalMessagesSent,
+            totalSkipped: totalMessagesSkipped,
+            totalErrors: totalErrors,
+            consecutiveErrors: consecutiveErrors,
+          });
+
+          consecutiveErrors = 0; // Reset on successful message
+
+        } catch (error) {
+          console.error(`[Company ${companyId}] Error in message processing:`, {
+            error: error.message,
+            stack: error.stack,
+            currentIndex: currentMessageIndex,
+            consecutiveErrors: consecutiveErrors + 1,
+            messagesLength: messages.length,
+            messageItem: messages[currentMessageIndex] || 'undefined',
+          });
+          
+          consecutiveErrors++;
+          totalErrors++;
+          
+          if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
+            console.error(`[Company ${companyId}] Max consecutive errors reached (${MAX_CONSECUTIVE_ERRORS}), stopping sequence`);
+            break;
+          }
+          
+          console.log(`[Company ${companyId}] Waiting 1 minute before retrying...`);
+          await new Promise(resolve => setTimeout(resolve, 60000));
         }
       }
+
+      const totalTime = Date.now() - startTime;
+      console.log(`\n=== [Company ${companyId}] sendScheduledMessage Complete ===`);
+      console.log(`[Company ${companyId}] Final statistics:`, {
+        totalTime: `${totalTime}ms`,
+        totalMessages: messages.length,
+        totalSent: totalMessagesSent,
+        totalSkipped: totalMessagesSkipped,
+        totalErrors: totalErrors,
+        dayCount: dayCount,
+        success: true,
+      });
+
     } else {
       console.log(`[Company ${companyId}] Message is not V2 - skipping`);
     }
 
-    console.log(
-      `\n=== [Company ${companyId}] sendScheduledMessage Complete ===`
-    );
-    return { success: true };
+    // FIXED: Return statement now has access to all variables
+    return { 
+      success: true,
+      statistics: {
+        totalTime: Date.now() - startTime,
+        totalMessages: messages.length,
+        totalSent: totalMessagesSent,
+        totalSkipped: totalMessagesSkipped,
+        totalErrors: totalErrors,
+        dayCount: dayCount,
+      }
+    };
+
   } catch (error) {
-    console.error(
-      `\n=== [Company ${companyId}] sendScheduledMessage Error ===`
-    );
-    console.error(`[Company ${companyId}] Error:`, error);
-    return { success: false, error };
+    const totalTime = Date.now() - startTime;
+    console.error(`\n=== [Company ${companyId}] sendScheduledMessage Error ===`);
+    console.error(`[Company ${companyId}] Error details:`, {
+      name: error.name,
+      message: error.message,
+      stack: error.stack,
+      totalTime: `${totalTime}ms`,
+      phoneIndex: message.phone_index,
+      messageId: message.id,
+    });
+
+    return { 
+      success: false, 
+      error: error.message,
+      details: {
+        name: error.name,
+        stack: error.stack,
+        totalTime: totalTime,
+        phoneIndex: message.phone_index,
+        messageId: message.id,
+      }
+    };
   } finally {
-    client.release();
+    if (client) {
+    await safeRelease(client);
   }
 }
-
+}
 async function scheduleAllMessages() {
   const client = await pool.connect();
   try {
-    console.log("scheduleAllMessages");
+    console.log("Scheduling all previous scheduled messages...");
 
     const companiesQuery = `
       SELECT DISTINCT company_id FROM scheduled_messages
@@ -4495,6 +6224,17 @@ async function scheduleAllMessages() {
 
     for (const companyRow of companiesResult.rows) {
       const companyId = companyRow.company_id;
+
+      const apiUrlQuery = `
+        SELECT api_url FROM companies WHERE company_id = $1
+      `;
+      const apiUrlResult = await client.query(apiUrlQuery, [companyId]);
+      const companyApiUrl = apiUrlResult.rows[0]?.api_url;
+
+      if (companyApiUrl !== 'https://juta-dev.ngrok.app') {
+        continue;
+      }
+
       const queue = getQueueForBot(companyId);
 
       const messagesQuery = `
@@ -4547,16 +6287,47 @@ async function scheduleAllMessages() {
   } catch (error) {
     console.error("Error in scheduleAllMessages:", error);
   } finally {
-    client.release();
+    await safeRelease(client);
   }
 }
+
+// Add this import at the top of server.js
+const { broadcastNewMessageToCompany } = require('./utils/broadcast');
 
 function setupMessageHandler(client, botName, phoneIndex) {
   client.on("message", async (msg) => {
     try {
+      console.log(`🔔 [MESSAGE_HANDLER] ===== INCOMING MESSAGE =====`);
+      console.log(`🔔 [MESSAGE_HANDLER] Bot: ${botName}`);
+      console.log(`🔔 [MESSAGE_HANDLER] From: ${msg.from}`);
+      console.log(`🔔 [MESSAGE_HANDLER] Body: ${msg.body}`);
+      console.log(`🔔 [MESSAGE_HANDLER] Type: ${msg.type}`);
+      console.log(`🔔 [MESSAGE_HANDLER] From Me: ${msg.fromMe}`);
+      console.log(`🔔 [MESSAGE_HANDLER] Timestamp: ${msg.timestamp}`);
+      console.log(`🔔 [MESSAGE_HANDLER] ID: ${msg.id._serialized}`);
+      
       await handleNewMessagesTemplateWweb(client, msg, botName, phoneIndex);
+      
+      // Add broadcast call here
+      const extractedNumber = msg.from.replace("@c.us", "").replace("@g.us", "");
+      const messageData = {
+        chatId: msg.from,
+        message: msg.body,
+        extractedNumber: `+${extractedNumber}`,
+        contactId: `${botName}-${extractedNumber}`,
+        fromMe: msg.fromMe,
+        timestamp: Math.floor(Date.now() / 1000),
+        messageType: msg.type,
+        contactName: msg.notifyName || extractedNumber
+      };
+      
+      console.log(`🔔 [MESSAGE_HANDLER] Calling broadcastNewMessageToCompany with company: ${botName}`);
+      broadcastNewMessageToCompany(botName, messageData);
+      
+      console.log(`🔔 [MESSAGE_HANDLER] ✅ Message processed successfully`);
+      console.log(`🔔 [MESSAGE_HANDLER] ===== INCOMING MESSAGE END =====`);
     } catch (error) {
-      console.error(`ERROR in message handling for bot ${botName}:`, error);
+      console.error(`🔔 [MESSAGE_HANDLER] ❌ Error in message handling:`, error);
     }
   });
 }
@@ -4684,7 +6455,22 @@ function setupMessageCreateHandler(client, botName, phoneIndex) {
             video: true,
             voice: true,
           },
-        });
+        });// Add broadcast call here
+        const messageData = {
+          chatId: msg.to,
+          message: msg.body,
+          extractedNumber: `+${extractedNumber}`,
+          contactId: `${botName}-${extractedNumber}`,
+          fromMe: msg.fromMe,
+          timestamp: Math.floor(Date.now() / 1000),
+          messageType: msg.type,
+          contactName: extractedNumber
+        };
+        
+        console.log(`🔔 [MESSAGE_CREATE] Calling broadcastNewMessageToCompany with company: ${botName}`);
+        broadcastNewMessageToCompany(botName, messageData);
+        
+        // ... rest of existing code ...l
 
         // 5. Handle bot tags for certain companies
         if (
@@ -4746,7 +6532,7 @@ async function fetchConfigFromDatabase(idSubstring) {
     console.error("Error fetching config:", error);
   } finally {
     if (sqlClient) {
-      sqlClient.release();
+      await safeRelease(sqlClient);
     }
   }
 }
@@ -4830,7 +6616,57 @@ async function processAIResponses({
     });
   }
 }
+// ... existing code around line 1010 ...
 
+app.post('/api/upload-media', upload.single('file'), (req, res) => {
+  if (!req.file) {
+    return res.status(400).json({ error: 'No file uploaded' });
+  }
+  const baseUrl = 'https://juta-dev.ngrok.dev';
+  const fileUrl = `${baseUrl}/media/${req.file.filename}`;
+  res.json({ url: fileUrl });
+});
+
+// New file upload endpoint for general file uploads
+app.post('/api/upload-file', upload.single('file'), (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: 'No file uploaded' });
+    }
+
+    // Get additional parameters
+    const { fileName, companyId } = req.body;
+    
+    // Validate required fields
+    if (!fileName) {
+      return res.status(400).json({ error: 'fileName is required' });
+    }
+
+    const baseUrl = 'https://juta-dev.ngrok.dev';
+    const fileUrl = `${baseUrl}/media/${req.file.filename}`;
+    
+    // Log the upload for debugging
+    console.log(`File uploaded: ${req.file.originalname} -> ${req.file.filename}`);
+    console.log(`Company ID: ${companyId}`);
+    console.log(`Requested filename: ${fileName}`);
+    
+    res.json({ 
+      success: true,
+      url: fileUrl,
+      filename: req.file.filename,
+      originalName: req.file.originalname,
+      size: req.file.size
+    });
+  } catch (error) {
+    console.error('Error uploading file:', error);
+    res.status(500).json({ 
+      success: false,
+      error: 'Failed to upload file' 
+    });
+  }
+});
+
+// ... rest of existing code ...
 // Create a new follow-up template
 app.post('/api/followup-templates', async (req, res) => {
   console.log("=== Starting POST /api/followup-templates ===");
@@ -4990,7 +6826,7 @@ app.post('/api/followup-templates', async (req, res) => {
     });
 
   } catch (error) {
-    await sqlClient.query("ROLLBACK");
+    await safeRollback(sqlClient);
     console.error("=== Error in POST /api/followup-templates ===");
     console.error("Error message:", error.message);
     console.error("Error stack:", error.stack);
@@ -5002,7 +6838,7 @@ app.post('/api/followup-templates', async (req, res) => {
       error: error.message
     });
   } finally {
-    sqlClient.release();
+    await safeRelease(sqlClient);
     console.log("Database client released");
   }
 });
@@ -5060,11 +6896,11 @@ async function getFollowUpTemplates(companyId) {
     await sqlClient.query("COMMIT");
     return templates;
   } catch (error) {
-    await sqlClient.query("ROLLBACK");
+    await safeRollback(sqlClient);
     console.error("Error in getFollowUpTemplates:", error);
     throw error;
   } finally {
-    sqlClient.release();
+    await safeRelease(sqlClient);
   }
 }
 
@@ -5130,7 +6966,7 @@ app.post('/api/followup-templates/:templateId/messages', async (req, res) => {
     
     if (templateCheckResult.rows.length === 0) {
       console.error(`Template not found: ${templateId}`);
-      await sqlClient.query("ROLLBACK");
+      await safeRollback(sqlClient);
       return res.status(404).json({ 
         success: false, 
         message: 'Template not found or inactive' 
@@ -5154,7 +6990,7 @@ app.post('/api/followup-templates/:templateId/messages', async (req, res) => {
 
     if (duplicateCheckResult.rows.length > 0) {
       console.error(`Duplicate message found: day ${dayNumber}, sequence ${sequence}`);
-      await sqlClient.query("ROLLBACK");
+      await safeRollback(sqlClient);
       return res.status(409).json({ 
         success: false, 
         message: 'A message with this day and sequence number already exists' 
@@ -5192,9 +7028,9 @@ app.post('/api/followup-templates/:templateId/messages', async (req, res) => {
       sequence, // sequence
       status, // status
       createdAt ? new Date(createdAt) : new Date(), // created_at
-      document, // document
-      image, // image
-      video, // video
+      document ? JSON.stringify({ url: document }) : null, // document
+      image ? JSON.stringify({ url: image }) : null, // image
+      video ? JSON.stringify({ url: video }) : null, // video
       delayAfter ? JSON.stringify(delayAfter) : null, // delay_after
       specificNumbers ? JSON.stringify(specificNumbers) : null, // specific_numbers
       useScheduledTime, // use_scheduled_time
@@ -5240,7 +7076,7 @@ app.post('/api/followup-templates/:templateId/messages', async (req, res) => {
     });
 
   } catch (error) {
-    await sqlClient.query("ROLLBACK");
+    await safeRollback(sqlClient);
     console.error("=== Error in POST /api/followup-templates/:templateId/messages ===");
     console.error("Template ID:", templateId);
     console.error("Error message:", error.message);
@@ -5253,7 +7089,7 @@ app.post('/api/followup-templates/:templateId/messages', async (req, res) => {
       error: error.message
     });
   } finally {
-    sqlClient.release();
+    await safeRelease(sqlClient);
     console.log("Database client released");
   }
 });
@@ -5326,11 +7162,11 @@ async function getMessagesForTemplate(templateId) {
     console.log("\nFinal messages array:", messages);
     return messages;
   } catch (error) {
-    await sqlClient.query("ROLLBACK");
+    await safeRollback(sqlClient);
     console.error("Error in getMessagesForTemplate:", error);
     throw error;
   } finally {
-    sqlClient.release();
+    await safeRelease(sqlClient);
   }
 }
 
@@ -5362,6 +7198,394 @@ app.get('/api/followup-templates/:templateId/messages', async (req, res) => {
   } catch (error) {
     console.error('Error fetching template messages:', error);
     res.status(500).json({ success: false, message: 'Server error' });
+  }
+});
+
+
+// Update a follow-up template
+app.put('/api/followup-templates/:templateId', async (req, res) => {
+  console.log("=== Starting PUT /api/followup-templates/:templateId ===");
+  console.log("Template ID:", req.params.templateId);
+  console.log("Request body:", JSON.stringify(req.body, null, 2));
+  
+  const { templateId } = req.params;
+  const {
+    name,
+    status,
+    trigger_tags = [],
+    trigger_keywords = [],
+    batchSettings = {}
+  } = req.body;
+
+  // Validation
+  if (!templateId) {
+    console.error("Missing templateId");
+    return res.status(400).json({ success: false, message: 'Missing templateId' });
+  }
+  
+  if (!name || !name.trim()) {
+    console.error("Missing or empty template name");
+    return res.status(400).json({ success: false, message: 'Template name is required' });
+  }
+
+  const sqlClient = await pool.connect();
+
+  try {
+    await sqlClient.query("BEGIN");
+    console.log("Database transaction started");
+
+    // Update the template
+    const updateTemplateQuery = `
+      UPDATE public.followup_templates 
+      SET 
+        name = $1,
+        updated_at = $2,
+        trigger_keywords = $3,
+        trigger_tags = $4,
+        status = $5
+      WHERE template_id = $6
+      RETURNING *
+    `;
+
+    const templateParams = [
+      name.trim(),
+      new Date(),
+      Array.isArray(trigger_keywords) ? trigger_keywords : [],
+      Array.isArray(trigger_tags) ? trigger_tags : [],
+      status || 'active',
+      templateId
+    ];
+
+    console.log("Executing template update with params:", templateParams);
+    const templateResult = await sqlClient.query(updateTemplateQuery, templateParams);
+    
+    if (templateResult.rows.length === 0) {
+      await sqlClient.query("ROLLBACK");
+      return res.status(404).json({ success: false, message: 'Template not found' });
+    }
+
+    console.log("Template updated successfully:", templateResult.rows[0]);
+
+    await sqlClient.query("COMMIT");
+    console.log("Database transaction committed successfully");
+
+    // Return the updated template
+    const updatedTemplate = {
+      id: templateResult.rows[0].id,
+      templateId: templateResult.rows[0].template_id,
+      companyId: templateResult.rows[0].company_id,
+      name: templateResult.rows[0].name,
+      createdAt: templateResult.rows[0].created_at,
+      updatedAt: templateResult.rows[0].updated_at,
+      triggerKeywords: templateResult.rows[0].trigger_keywords || [],
+      triggerTags: templateResult.rows[0].trigger_tags || [],
+      keywordSource: templateResult.rows[0].keyword_source,
+      status: templateResult.rows[0].status,
+      content: templateResult.rows[0].content,
+      delayHours: templateResult.rows[0].delay_hours
+    };
+
+    console.log("Returning updated template:", updatedTemplate);
+    console.log("=== Completed PUT /api/followup-templates/:templateId ===");
+
+    res.status(200).json({
+      success: true,
+      message: 'Template updated successfully',
+      template: updatedTemplate
+    });
+
+  } catch (error) {
+    await sqlClient.query("ROLLBACK");
+    console.error("=== Error in PUT /api/followup-templates/:templateId ===");
+    console.error("Error message:", error.message);
+    console.error("Error stack:", error.stack);
+    
+    res.status(500).json({
+      success: false,
+      message: 'Failed to update template',
+      error: error.message
+    });
+  } finally {
+    sqlClient.release();
+    console.log("Database client released");
+  }
+});
+
+// Delete a follow-up template
+app.delete('/api/followup-templates/:templateId', async (req, res) => {
+  console.log("=== Starting DELETE /api/followup-templates/:templateId ===");
+  console.log("Template ID:", req.params.templateId);
+  
+  const { templateId } = req.params;
+
+  // Validation
+  if (!templateId) {
+    console.error("Missing templateId");
+    return res.status(400).json({ success: false, message: 'Missing templateId' });
+  }
+
+  const sqlClient = await pool.connect();
+
+  try {
+    await sqlClient.query("BEGIN");
+    console.log("Database transaction started");
+
+    // First, delete all messages associated with this template
+    const deleteMessagesQuery = `
+      DELETE FROM public.followup_messages 
+      WHERE template_id = $1
+    `;
+
+    console.log("Deleting messages for template:", templateId);
+    const messagesResult = await sqlClient.query(deleteMessagesQuery, [templateId]);
+    console.log("Deleted messages count:", messagesResult.rowCount);
+
+    // Then delete the template
+    const deleteTemplateQuery = `
+      DELETE FROM public.followup_templates 
+      WHERE template_id = $1
+      RETURNING *
+    `;
+
+    console.log("Deleting template:", templateId);
+    const templateResult = await sqlClient.query(deleteTemplateQuery, [templateId]);
+    
+    if (templateResult.rows.length === 0) {
+      await sqlClient.query("ROLLBACK");
+      return res.status(404).json({ success: false, message: 'Template not found' });
+    }
+
+    console.log("Template deleted successfully:", templateResult.rows[0]);
+
+    await sqlClient.query("COMMIT");
+    console.log("Database transaction committed successfully");
+
+    console.log("=== Completed DELETE /api/followup-templates/:templateId ===");
+
+    res.status(200).json({
+      success: true,
+      message: 'Template and associated messages deleted successfully'
+    });
+
+  } catch (error) {
+    await sqlClient.query("ROLLBACK");
+    console.error("=== Error in DELETE /api/followup-templates/:templateId ===");
+    console.error("Error message:", error.message);
+    console.error("Error stack:", error.stack);
+    
+    res.status(500).json({
+      success: false,
+      message: 'Failed to delete template',
+      error: error.message
+    });
+  } finally {
+    sqlClient.release();
+    console.log("Database client released");
+  }
+});
+
+// Update a follow-up message
+app.put('/api/followup-templates/:templateId/messages/:messageId', async (req, res) => {
+  console.log("=== Starting PUT /api/followup-templates/:templateId/messages/:messageId ===");
+  console.log("Template ID:", req.params.templateId);
+  console.log("Message ID:", req.params.messageId);
+  console.log("Request body:", JSON.stringify(req.body, null, 2));
+  
+  const { templateId, messageId } = req.params;
+  const {
+    message,
+    dayNumber = 1,
+    sequence = 1,
+    status = 'active',
+    document = null,
+    image = null,
+    video = null,
+    delayAfter = null,
+    specificNumbers = null,
+    useScheduledTime = false,
+    scheduledTime = '',
+    addTags = [],
+    removeTags = []
+  } = req.body;
+
+  // Validation
+  if (!templateId || !messageId) {
+    console.error("Missing templateId or messageId");
+    return res.status(400).json({ success: false, message: 'Missing templateId or messageId' });
+  }
+
+  if (!message || !message.trim()) {
+    console.error("Missing or empty message content");
+    return res.status(400).json({ success: false, message: 'Message content is required' });
+  }
+
+  const sqlClient = await pool.connect();
+
+  try {
+    await sqlClient.query("BEGIN");
+    console.log("Database transaction started");
+
+    // Update the message
+    const updateMessageQuery = `
+      UPDATE public.followup_messages 
+      SET 
+        message = $1,
+        day_number = $2,
+        sequence = $3,
+        status = $4,
+        document = $5,
+        image = $6,
+        video = $7,
+        delay_after = $8,
+        specific_numbers = $9,
+        use_scheduled_time = $10,
+        scheduled_time = $11,
+        add_tags = $12,
+        remove_tags = $13,
+        updated_at = $14
+      WHERE id = $15 AND template_id = $16
+      RETURNING *
+    `;
+
+    const messageParams = [
+      message.trim(),
+      dayNumber,
+      sequence,
+      status,
+      document,
+      image,
+      video,
+      delayAfter ? JSON.stringify(delayAfter) : null,
+      specificNumbers ? JSON.stringify(specificNumbers) : null,
+      useScheduledTime,
+      scheduledTime,
+      Array.isArray(addTags) ? addTags : [],
+      Array.isArray(removeTags) ? removeTags : [],
+      new Date(),
+      messageId,
+      templateId
+    ];
+
+    console.log("Executing message update with params:", messageParams);
+    const messageResult = await sqlClient.query(updateMessageQuery, messageParams);
+    
+    if (messageResult.rows.length === 0) {
+      await sqlClient.query("ROLLBACK");
+      return res.status(404).json({ success: false, message: 'Message not found' });
+    }
+
+    console.log("Message updated successfully:", messageResult.rows[0]);
+
+    await sqlClient.query("COMMIT");
+    console.log("Database transaction committed successfully");
+
+    // Return the updated message
+    const updatedMessage = {
+      id: messageResult.rows[0].id,
+      templateId: messageResult.rows[0].template_id,
+      message: messageResult.rows[0].message,
+      dayNumber: messageResult.rows[0].day_number,
+      sequence: messageResult.rows[0].sequence,
+      status: messageResult.rows[0].status,
+      createdAt: messageResult.rows[0].created_at,
+      document: messageResult.rows[0].document,
+      image: messageResult.rows[0].image,
+      video: messageResult.rows[0].video,
+      delayAfter: messageResult.rows[0].delay_after,
+      specificNumbers: messageResult.rows[0].specific_numbers,
+      useScheduledTime: messageResult.rows[0].use_scheduled_time,
+      scheduledTime: messageResult.rows[0].scheduled_time,
+      addTags: messageResult.rows[0].add_tags || [],
+      removeTags: messageResult.rows[0].remove_tags || []
+    };
+
+    console.log("Returning updated message:", updatedMessage);
+    console.log("=== Completed PUT /api/followup-templates/:templateId/messages/:messageId ===");
+
+    res.status(200).json({
+      success: true,
+      message: 'Message updated successfully',
+      data: updatedMessage
+    });
+
+  } catch (error) {
+    await sqlClient.query("ROLLBACK");
+    console.error("=== Error in PUT /api/followup-templates/:templateId/messages/:messageId ===");
+    console.error("Error message:", error.message);
+    console.error("Error stack:", error.stack);
+    
+    res.status(500).json({
+      success: false,
+      message: 'Failed to update message',
+      error: error.message
+    });
+  } finally {
+    sqlClient.release();
+    console.log("Database client released");
+  }
+});
+
+// Delete a follow-up message
+app.delete('/api/followup-templates/:templateId/messages/:messageId', async (req, res) => {
+  console.log("=== Starting DELETE /api/followup-templates/:templateId/messages/:messageId ===");
+  console.log("Template ID:", req.params.templateId);
+  console.log("Message ID:", req.params.messageId);
+  
+  const { templateId, messageId } = req.params;
+
+  // Validation
+  if (!templateId || !messageId) {
+    console.error("Missing templateId or messageId");
+    return res.status(400).json({ success: false, message: 'Missing templateId or messageId' });
+  }
+
+  const sqlClient = await pool.connect();
+
+  try {
+    await sqlClient.query("BEGIN");
+    console.log("Database transaction started");
+
+    // Delete the message
+    const deleteMessageQuery = `
+      DELETE FROM public.followup_messages 
+      WHERE id = $1 AND template_id = $2
+      RETURNING *
+    `;
+
+    console.log("Deleting message:", messageId, "from template:", templateId);
+    const messageResult = await sqlClient.query(deleteMessageQuery, [messageId, templateId]);
+    
+    if (messageResult.rows.length === 0) {
+      await sqlClient.query("ROLLBACK");
+      return res.status(404).json({ success: false, message: 'Message not found' });
+    }
+
+    console.log("Message deleted successfully:", messageResult.rows[0]);
+
+    await sqlClient.query("COMMIT");
+    console.log("Database transaction committed successfully");
+
+    console.log("=== Completed DELETE /api/followup-templates/:templateId/messages/:messageId ===");
+
+    res.status(200).json({
+      success: true,
+      message: 'Message deleted successfully'
+    });
+
+  } catch (error) {
+    await sqlClient.query("ROLLBACK");
+    console.error("=== Error in DELETE /api/followup-templates/:templateId/messages/:messageId ===");
+    console.error("Error message:", error.message);
+    console.error("Error stack:", error.stack);
+    
+    res.status(500).json({
+      success: false,
+      message: 'Failed to delete message',
+      error: error.message
+    });
+  } finally {
+    sqlClient.release();
+    console.log("Database client released");
   }
 });
 
@@ -5418,12 +7642,12 @@ async function getAIAssignResponses(companyId) {
     await sqlClient.query("COMMIT");
     return responses;
   } catch (error) {
-    await sqlClient.query("ROLLBACK");
+    await safeRollback(sqlClient);
     console.error("Error in getAIAssignResponses:", error);
     console.error("Full error:", error.stack);
     throw error;
   } finally {
-    sqlClient.release();
+    await safeRelease(sqlClient);
   }
 }
 
@@ -5464,11 +7688,11 @@ async function getAITagResponses(companyId) {
     await sqlClient.query("COMMIT");
     return responses;
   } catch (error) {
-    await sqlClient.query("ROLLBACK");
+    await safeRollback(sqlClient);
     console.error("Error fetching AI tag responses:", error);
     throw error;
   } finally {
-    sqlClient.release();
+    await safeRelease(sqlClient);
   }
 }
 
@@ -5506,11 +7730,11 @@ async function getAIImageResponses(companyId) {
     await sqlClient.query("COMMIT");
     return responses;
   } catch (error) {
-    await sqlClient.query("ROLLBACK");
+    await safeRollback(sqlClient);
     console.error("Error fetching AI image responses:", error);
     throw error;
   } finally {
-    sqlClient.release();
+    await safeRelease(sqlClient);
   }
 }
 
@@ -5550,11 +7774,11 @@ async function getAIVideoResponses(companyId) {
     await sqlClient.query("COMMIT");
     return responses;
   } catch (error) {
-    await sqlClient.query("ROLLBACK");
+    await safeRollback(sqlClient);
     console.error("Error fetching AI video responses:", error);
     throw error;
   } finally {
-    sqlClient.release();
+    await safeRelease(sqlClient);
   }
 }
 
@@ -5593,11 +7817,11 @@ async function getAIVoiceResponses(companyId) {
     await sqlClient.query("COMMIT");
     return responses;
   } catch (error) {
-    await sqlClient.query("ROLLBACK");
+    await safeRollback(sqlClient);
     console.error("Error fetching AI voice responses:", error);
     throw error;
   } finally {
-    sqlClient.release();
+    await safeRelease(sqlClient);
   }
 }
 
@@ -5636,11 +7860,11 @@ async function getAIDocumentResponses(companyId) {
     await sqlClient.query("COMMIT");
     return responses;
   } catch (error) {
-    await sqlClient.query("ROLLBACK");
+    await safeRollback(sqlClient);
     console.error("Error fetching AI document responses:", error);
     throw error;
   } finally {
-    sqlClient.release();
+    await safeRelease(sqlClient);
   }
 }
 
@@ -5648,6 +7872,15 @@ async function checkKeywordMatch(response, message, keywordSource) {
   return (
     response.keywordSource === keywordSource &&
     response.keywords.some((kw) =>
+      message.toLowerCase().includes(kw.toLowerCase())
+    )
+  );
+}
+
+async function checkKeywordMatchTemplate(keywords, message, tempKeywordSource, keywordSource) {
+  return (
+    keywordSource === tempKeywordSource &&
+    keywords.some((kw) =>
       message.toLowerCase().includes(kw.toLowerCase())
     )
   );
@@ -6012,7 +8245,7 @@ async function handleAIFollowUpResponses({
   followUpTemplates,
 }) {
   for (const template of followUpTemplates) {
-    if (await checkKeywordMatch(response, message, keywordSource)) {
+    if (await checkKeywordMatchTemplate(template.triggerKeywords, msg, template.keywordSource, keywordSource)) {
       console.log("Follow-up trigger found for template:", template.name);
 
       try {
@@ -6157,56 +8390,96 @@ async function addTagToPostgres(contactID, tag, companyID, remove = false) {
 
     if (remove) {
       console.log("Executing tag removal...");
+      
+      // First check if tag exists
+      const tagExistsQuery = `
+        SELECT (tags ? $1::text) AS tag_exists 
+        FROM public.contacts 
+        WHERE contact_id = $2 AND company_id = $3
+      `;
+      const tagExistsResult = await sqlClient.query(tagExistsQuery, [
+        tag,
+        fullContactID,
+        companyID,
+      ]);
+      
+      const tagExists = tagExistsResult.rows[0]?.tag_exists || false;
+      console.log(`Tag "${tag}" exists before removal: ${tagExists}`);
+
+      // Remove the tag
       const removeQuery = `
         UPDATE public.contacts 
         SET 
           tags = CASE 
-            WHEN tags ? $1 THEN 
-              (SELECT jsonb_agg(t) FROM jsonb_array_elements_text(tags) t WHERE t != $1)
+            WHEN tags ? $1::text THEN 
+              (SELECT jsonb_agg(t) FROM jsonb_array_elements_text(tags) t WHERE t != $1::text)
             ELSE 
               tags 
           END,
           last_updated = CURRENT_TIMESTAMP
         WHERE contact_id = $2 AND company_id = $3
-        RETURNING (tags ? $1) AS tag_existed_before, tags
       `;
-      const removeResult = await sqlClient.query(removeQuery, [
+      await sqlClient.query(removeQuery, [
         tag,
         fullContactID,
         companyID,
       ]);
 
-      console.log("Tag removal result:", removeResult.rows[0]);
-
-      if (removeResult.rows[0].tag_existed_before) {
+      if (tagExists) {
         console.log(`Tag "${tag}" removed successfully from contact ${fullContactID}`);
+        
+        // Handle monthly assignment tracking for employee tags
+        if (await isEmployeeTag(tag, companyID)) {
+          console.log(`Decrementing monthly assignment for employee: ${tag}`);
+          await decrementMonthlyAssignment(companyID, tag, sqlClient);
+        }
       } else {
         console.log(`Tag "${tag}" doesn't exist for contact ${fullContactID}`);
       }
     } else {
       console.log("Executing tag addition...");
+      
+      // First check if tag already exists
+      const tagExistsQuery = `
+        SELECT (tags ? $1::text) AS tag_exists 
+        FROM public.contacts 
+        WHERE contact_id = $2 AND company_id = $3
+      `;
+      const tagExistsResult = await sqlClient.query(tagExistsQuery, [
+        tag,
+        fullContactID,
+        companyID,
+      ]);
+      
+      const tagExists = tagExistsResult.rows[0]?.tag_exists || false;
+      console.log(`Tag "${tag}" exists before addition: ${tagExists}`);
+
+      // Add the tag
       const addQuery = `
         UPDATE public.contacts 
         SET 
           tags = CASE 
-            WHEN tags IS NULL THEN jsonb_build_array($1)
-            WHEN NOT tags ? $1 THEN tags || jsonb_build_array($1)
+            WHEN tags IS NULL THEN jsonb_build_array($1::text)
+            WHEN NOT tags ? $1::text THEN tags || jsonb_build_array($1::text)
             ELSE tags
           END,
           last_updated = CURRENT_TIMESTAMP
         WHERE contact_id = $2 AND company_id = $3
-        RETURNING (tags ? $1) AS tag_existed_before_update, tags
       `;
-      const addResult = await sqlClient.query(addQuery, [
+      await sqlClient.query(addQuery, [
         tag,
         fullContactID,
         companyID,
       ]);
 
-      console.log("Tag addition result:", addResult.rows[0]);
-
-      if (!addResult.rows[0].tag_existed_before_update) {
+      if (!tagExists) {
         console.log(`Tag "${tag}" added successfully to contact ${fullContactID}`);
+        
+        // Handle monthly assignment tracking for employee tags
+        if (await isEmployeeTag(tag, companyID)) {
+          console.log(`Incrementing monthly assignment for employee: ${tag}`);
+          await incrementMonthlyAssignment(companyID, tag, sqlClient);
+        }
       } else {
         console.log(`Tag "${tag}" already exists for contact ${fullContactID}`);
       }
@@ -6226,7 +8499,82 @@ async function addTagToPostgres(contactID, tag, companyID, remove = false) {
   }
 }
 
-addTagToPostgres
+async function isEmployeeTag(tag, companyID) {
+  console.log(`Checking if tag "${tag}" is an employee for company ${companyID}`);
+  const sqlClient = await pool.connect();
+  
+  try {
+    const query = `
+      SELECT 1 FROM public.employees 
+      WHERE company_id = $1 AND name = $2
+    `;
+    const result = await sqlClient.query(query, [companyID, tag]);
+    const isEmployee = result.rows.length > 0;
+    console.log(`Tag "${tag}" is employee: ${isEmployee}`);
+    return isEmployee;
+  } catch (error) {
+    console.error("Error checking if tag is employee:", error);
+    return false;
+  } finally {
+    sqlClient.release();
+  }
+}
+
+async function incrementMonthlyAssignment(companyID, employeeName, sqlClient) {
+  console.log(`Incrementing monthly assignment for employee: ${employeeName}`);
+  
+  try {
+    const currentMonth = getCurrentMonthKey();
+    console.log(`Current month key: ${currentMonth}`);
+    
+    const upsertQuery = `
+      INSERT INTO public.employee_monthly_assignments (company_id, employee_name, month, assignment_count)
+      VALUES ($1, $2, $3, 1)
+      ON CONFLICT (company_id, employee_name, month)
+      DO UPDATE SET assignment_count = employee_monthly_assignments.assignment_count + 1
+      RETURNING assignment_count
+    `;
+    
+    const result = await sqlClient.query(upsertQuery, [companyID, employeeName, currentMonth]);
+    const newCount = result.rows[0].assignment_count;
+    console.log(`Monthly assignment count for ${employeeName} is now: ${newCount}`);
+    
+    return newCount;
+  } catch (error) {
+    console.error("Error incrementing monthly assignment:", error);
+    throw error;
+  }
+}
+
+async function decrementMonthlyAssignment(companyID, employeeName, sqlClient) {
+  console.log(`Decrementing monthly assignment for employee: ${employeeName}`);
+  
+  try {
+    const currentMonth = getCurrentMonthKey();
+    console.log(`Current month key: ${currentMonth}`);
+    
+    const updateQuery = `
+      UPDATE public.employee_monthly_assignments 
+      SET assignment_count = GREATEST(assignment_count - 1, 0)
+      WHERE company_id = $1 AND employee_name = $2 AND month = $3
+      RETURNING assignment_count
+    `;
+    
+    const result = await sqlClient.query(updateQuery, [companyID, employeeName, currentMonth]);
+    
+    if (result.rows.length > 0) {
+      const newCount = result.rows[0].assignment_count;
+      console.log(`Monthly assignment count for ${employeeName} is now: ${newCount}`);
+      return newCount;
+    } else {
+      console.log(`No monthly assignment record found for ${employeeName} in ${currentMonth}`);
+      return 0;
+    }
+  } catch (error) {
+    console.error("Error decrementing monthly assignment:", error);
+    throw error;
+  }
+}
 
 async function handleEmployeeAssignment(
   response,
@@ -6402,10 +8750,10 @@ Thank you.`;
 
       await sqlClient.query("COMMIT");
     } catch (error) {
-      await sqlClient.query("ROLLBACK");
+      await safeRollback(sqlClient);
       console.error("Error creating assignment record:", error);
     } finally {
-      sqlClient.release();
+      await safeRelease(sqlClient);
     }
   } catch (error) {
     console.error("Error in assignToEmployee database operations:", error);
@@ -6520,37 +8868,7 @@ async function handleFollowUpTemplateActivation(
     } else {
       console.log(`✗ Template "${template.name}" does not match tag "${tag}"`);
     }
-  }
-
-  if (tag === "pause followup") {
-    console.log("Processing pause followup logic...");
-    const contactResult = await pool.query(
-      "SELECT tags FROM contacts WHERE company_id = $1 AND phone = $2",
-      [idSubstring, extractedNumber]
-    );
-    const contactData = contactResult.rows[0];
-    const currentTags = contactData?.tags || [];
-    console.log("Current contact tags:", currentTags);
-
-    for (const template of followUpTemplates) {
-      if (
-        template.triggerTags?.some((templateTag) =>
-          currentTags.includes(templateTag)
-        )
-      ) {
-        console.log(`Pausing template: ${template.name}`);
-        await callFollowUpAPI(
-          "pauseTemplate",
-          extractedNumber,
-          null,
-          phoneIndex,
-          template.templateId, // Fixed: use templateId instead of id
-          idSubstring
-        );
-      }
-    }
-  }
-  
+  } 
   console.log("=== Completed handleFollowUpTemplateActivation ===");
 }
 
@@ -6651,7 +8969,7 @@ app.get('/api/scheduled-messages', async (req, res) => {
     });
 
   } catch (error) {
-    await sqlClient.query("ROLLBACK");
+    await safeRollback(sqlClient);
     console.error("Error fetching scheduled messages:", error);
     console.error("Full error:", error.stack);
     res.status(500).json({ 
@@ -6660,7 +8978,7 @@ app.get('/api/scheduled-messages', async (req, res) => {
       error: error.message 
     });
   } finally {
-    sqlClient.release();
+    await safeRelease(sqlClient);
   }
 });
 
@@ -6760,7 +9078,7 @@ app.get('/api/scheduled-messages/contact', async (req, res) => {
     });
 
   } catch (error) {
-    await sqlClient.query("ROLLBACK");
+    await safeRollback(sqlClient);
     console.error("Error fetching scheduled messages for contact:", error);
     res.status(500).json({
       success: false,
@@ -6768,7 +9086,7 @@ app.get('/api/scheduled-messages/contact', async (req, res) => {
       error: error.message
     });
   } finally {
-    sqlClient.release();
+    await safeRelease(sqlClient);
   }
 });
 
@@ -6780,149 +9098,34 @@ async function callFollowUpAPI(
   templateId,
   idSubstring
 ) {
-  console.log(`Starting callFollowUpAPI for action: ${action}, phone: ${phone}, templateId: ${templateId}, companyId: ${idSubstring}`);
-  const sqlClient = await pool.connect();
-
   try {
-    await sqlClient.query("BEGIN");
+    const response = await fetch(`${process.env.URL}/api/tag/followup`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        requestType: action,
+        phone: phone,
+        first_name: contactName || phone,
+        phoneIndex: phoneIndex || 0,
+        templateId: templateId,
+        idSubstring: idSubstring
+      })
+    });
 
-    // Get contact ID
-    const contactID = idSubstring + "-" + (phone.startsWith("+") ? phone.slice(1) : phone);
-
-    // Get template and messages
-    const templateQuery = `
-      SELECT * FROM public.followup_templates 
-      WHERE template_id = $1 AND company_id = $2 AND status = 'active'
-    `;
-    const templateResult = await sqlClient.query(templateQuery, [templateId, idSubstring]);
-    
-    if (templateResult.rows.length === 0) {
-      console.log(`Template not found or inactive: ${templateId}`);
-      await sqlClient.query("COMMIT");
-      return;
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`API request failed: ${response.status} - ${errorText}`);
     }
 
-    const template = templateResult.rows[0];
-    console.log("Template found:", template);
-
-    // Get followup messages for this template
-    const messagesQuery = `
-      SELECT * FROM public.followup_messages 
-      WHERE template_id = $1 AND status = 'active'
-      ORDER BY sequence ASC, day_number ASC
-    `;
-    const messagesResult = await sqlClient.query(messagesQuery, [templateId]);
-    const messages = messagesResult.rows;
-    console.log(`Found ${messages.length} messages for template`);
-
-    if (action === "startTemplate") {
-      console.log("Starting followup template sequence");
-      
-      // Delete any existing scheduled messages for this contact and template
-      await sqlClient.query(
-        `DELETE FROM scheduled_messages 
-         WHERE contact_id = $1 AND company_id = $2 
-         AND message_content LIKE $3`,
-        [contactID, idSubstring, `%${template.name}%`]
-      );
-
-      // Schedule all messages in the sequence
-      for (let i = 0; i < messages.length; i++) {
-        const message = messages[i];
-        const messageId = require('crypto').randomUUID();
-        
-        // Calculate scheduled time based on day_number and delay_after
-        let scheduledTime = new Date();
-        if (message.day_number > 0) {
-          scheduledTime.setDate(scheduledTime.getDate() + message.day_number);
-        }
-        
-        // Add delay_after if specified
-        if (message.delay_after) {
-          const delayData = message.delay_after;
-          if (delayData.hours) scheduledTime.setHours(scheduledTime.getHours() + delayData.hours);
-          if (delayData.minutes) scheduledTime.setMinutes(scheduledTime.getMinutes() + delayData.minutes);
-        }
-
-        // Use scheduled_time if specified
-        if (message.use_scheduled_time && message.scheduled_time) {
-          const [hour, minute] = message.scheduled_time.split(':').map(Number);
-          scheduledTime.setHours(hour, minute, 0, 0);
-        }
-
-        const insertQuery = `
-          INSERT INTO scheduled_messages (
-            id, schedule_id, company_id, contact_id, message_content, 
-            scheduled_time, status, created_at, phone_index, from_me,
-            multiple, contact_ids
-          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-        `;
-
-        await sqlClient.query(insertQuery, [
-          messageId,
-          messageId,
-          idSubstring,
-          contactID,
-          message.message,
-          scheduledTime,
-          "scheduled",
-          new Date(),
-          phoneIndex || 0,
-          true,
-          false,  // multiple = false for single contact followup
-          null    // contact_ids = null for single contact
-        ]);
-
-        console.log(`Scheduled message ${i + 1}/${messages.length} for ${scheduledTime}`);
-      }
-
-      // Record in sent_followups table
-      await sqlClient.query(
-        `INSERT INTO sent_followups (company_id, contact_id, template_id, sent_at)
-         VALUES ($1, $2, $3, CURRENT_TIMESTAMP)`,
-        [idSubstring, contactID, templateId]
-      );
-    } else if (action === "pauseTemplate") {
-      console.log("Pausing followup template sequence");
-      
-      // Update status of pending messages to 'paused'
-      await sqlClient.query(
-        `UPDATE scheduled_messages 
-         SET status = 'paused' 
-         WHERE contact_id = $1 AND company_id = $2 
-         AND status = 'scheduled' AND message_content LIKE $3`,
-        [contactID, idSubstring, `%${template.name}%`]
-      );
-
-    } else if (action === "removeTemplate") {
-      console.log("Removing followup template sequence");
-      
-      // Delete all scheduled messages for this contact and template
-      await sqlClient.query(
-        `DELETE FROM scheduled_messages 
-         WHERE contact_id = $1 AND company_id = $2 
-         AND message_content LIKE $3`,
-        [contactID, idSubstring, `%${template.name}%`]
-      );
-
-      // Remove from sent_followups table
-      await sqlClient.query(
-        `DELETE FROM sent_followups 
-         WHERE company_id = $1 AND contact_id = $2 AND template_id = $3`,
-        [idSubstring, contactID, templateId]
-      );
-    }
-
-    await sqlClient.query("COMMIT");
-    console.log(`Successfully completed ${action} for template ${templateId}`);
+    const result = await response.json();
+    console.log(`Successfully completed ${action} for template ${templateId} via API`);
+    return result;
 
   } catch (error) {
-    await sqlClient.query("ROLLBACK");
     console.error(`Error in callFollowUpAPI for ${action}:`, error);
-    console.error("Full error:", error.stack);
     throw error;
-  } finally {
-    sqlClient.release();
   }
 }
 
@@ -6954,7 +9157,7 @@ app.get("/api/storage-pricing", async (req, res) => {
     console.error("Error fetching storage pricing:", error);
     res.status(500).json({ error: "Failed to fetch pricing data" });
   } finally {
-    if (client) client.release();
+    if (client) await safeRelease(client);
   }
 });
 
@@ -6980,7 +9183,7 @@ async function addMessageToPostgres(
   userName
 ) {
   // Validate inputs
-  if (!extractedNumber || !(extractedNumber.startsWith("+60") || extractedNumber.startsWith("+65"))) {
+  if (!extractedNumber || !extractedNumber.startsWith("+")) {
     console.error("Invalid extractedNumber for database:", extractedNumber);
     return;
   }
@@ -7106,6 +9309,8 @@ async function addMessageToPostgres(
       }
 
       // Insert message
+     // ... existing code ...
+      // Insert message
       const messageQuery = `
         INSERT INTO public.messages (
           message_id, company_id, contact_id, content, message_type,
@@ -7113,9 +9318,10 @@ async function addMessageToPostgres(
           status, from_me, chat_id, author, phone_index, quoted_message,
           thread_id, customer_phone
         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
-        ON CONFLICT (message_id, company_id) DO NOTHING
+        ON CONFLICT (message_id) DO NOTHING
         RETURNING id
       `;
+// ... existing code ...
       const messageValues = [
         basicInfo.idSerialized,
         idSubstring,
@@ -7143,11 +9349,11 @@ async function addMessageToPostgres(
       console.log(`Message successfully added to PostgreSQL with ID: ${basicInfo.idSerialized}`);
       return { type: basicInfo.type };
     } catch (error) {
-      await client.query("ROLLBACK");
+      await safeRollback(client);
       console.error("Error in PostgreSQL transaction:", error);
       throw error;
     } finally {
-      client.release();
+      await safeRelease(client);
       await addNotificationToUser(idSubstring, messageBody, contactName);
     }
   } catch (error) {
@@ -7215,7 +9421,7 @@ async function addNotificationToUser(companyId, message, contactName) {
       await Promise.all(promises);
    
     } finally {
-      client.release();
+      await safeRelease(client);
     }
   } catch (error) {
     console.error("Error adding notification or sending FCM: ", error);
@@ -7791,50 +9997,67 @@ async function saveMessages(botName, phoneNumber, messages, isGroup) {
 
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+// ... existing code ...
+
+// Enhanced database connection with better error handling
 async function getContactDataFromDatabaseByPhone(phoneNumber, idSubstring) {
-  const sqlClient = await pool.connect();
+  const maxRetries = 3;
+  let lastError;
 
-  try {
-    if (!phoneNumber) {
-      throw new Error("Phone number is undefined or null");
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      if (!phoneNumber) {
+        throw new Error("Phone number is undefined or null");
+      }
+
+      // Use direct SQL query with timeout
+      const result = await Promise.race([
+        sql`
+          SELECT * FROM public.contacts
+          WHERE phone = ${phoneNumber} AND company_id = ${idSubstring}
+          LIMIT 1
+        `,
+        new Promise((_, reject) => 
+          setTimeout(() => reject(new Error('Database query timeout')), 10000)
+        )
+      ]);
+
+      if (result.length === 0) {
+        return null;
+      } else {
+        const contactData = result[0];
+        const contactName = contactData.contact_name || contactData.name;
+        const threadID = contactData.thread_id;
+
+        return {
+          ...contactData,
+          contactName,
+          threadID,
+        };
+      }
+    } catch (error) {
+      lastError = error;
+      console.error(`Database attempt ${attempt}/${maxRetries} failed:`, error.message);
+      
+      if (attempt < maxRetries) {
+        // Wait before retry with exponential backoff
+        await new Promise(resolve => setTimeout(resolve, Math.pow(2, attempt) * 1000));
+      }
     }
-
-    await sqlClient.query("BEGIN");
-
-    const query = `
-      SELECT * FROM public.contacts
-      WHERE phone = $1 AND company_id = $2
-      LIMIT 1
-    `;
-
-    const result = await sqlClient.query(query, [phoneNumber, idSubstring]);
-
-    await sqlClient.query("COMMIT");
-
-    if (result.rows.length === 0) {
-      console.log(
-        "No matching documents for contact in company." + idSubstring
-      );
-      return null;
-    } else {
-      const contactData = result.rows[0];
-      const contactName = contactData.contact_name || contactData.name;
-      const threadID = contactData.thread_id;
-
-      return {
-        ...contactData,
-        contactName,
-        threadID,
-      };
-    }
-  } catch (error) {
-    await sqlClient.query("ROLLBACK");
-    console.error("Error fetching contact data:", error);
-    throw error;
-  } finally {
-    sqlClient.release();
   }
+  
+  // If all retries failed, log the error but don't throw
+  console.error("All database retry attempts failed:", lastError);
+  return null; // Return null instead of throwing
 }
+
+setInterval(() => {
+  console.log('Pool status:', {
+    total: pool.totalCount,
+    idle: pool.idleCount,
+    waiting: pool.waitingCount
+  });
+}, 120000);
 
 async function processChats(client, botName, phoneIndex) {
   try {
@@ -7985,12 +10208,15 @@ app.get("/api/user/config", async (req, res) => {
     if (!user) {
       return res.status(404).json({ error: "User not found" });
     }
+    console.log("User object:", user);
+    console.log("User selected_phone:", user.selected_phone);
 
     res.json({
       name: user.name,
       company_id: user.company_id,
       role: user.role,
       email: user.email,
+      phone:user.selected_phone,
     });
   } catch (error) {
     console.error("Error fetching user config:", error);
@@ -8054,6 +10280,197 @@ app.get("/api/companies/:companyId/replies", async (req, res) => {
   }
 });
 
+app.get("/api/companies/:companyId/contacts/multi-phone", async (req, res) => {
+  try {
+    const { email, phoneIndex } = req.query;
+    const { companyId } = req.params;
+    
+    if (!email) {
+      return res.status(400).json({ error: "Email is required" });
+    }
+    
+    if (phoneIndex === undefined || phoneIndex === null) {
+      return res.status(400).json({ error: "phoneIndex is required" });
+    }
+
+    // Get user email from session
+    const userEmail = email;
+
+    // Verify user belongs to company
+    const userData = await sqlDb.getRow(
+      "SELECT role, name FROM users WHERE email = $1 AND company_id = $2 AND active = true",
+      [userEmail, companyId]
+    );
+
+    if (!userData) {
+      return res
+        .status(403)
+        .json({ error: "Forbidden - User not authorized for this company" });
+    }
+
+    // Fetch contacts with their latest message for the specific phone_index
+    const contacts = await sqlDb.getRows(
+      `
+      SELECT 
+        c.id,
+        c.contact_id,
+        c.name,
+        c.contact_name,
+        c.phone,
+        c.email,
+        c.chat_id,
+        c.profile,
+        c.profile_pic_url,
+        c.tags,
+        c.created_at,
+        c.last_updated,
+        c.phone_indexes,
+        c.unread_count,
+        c.custom_fields,
+        CASE 
+          WHEN c.chat_id LIKE '%@c.us' THEN true 
+          ELSE false 
+        END as is_individual,
+        (
+          SELECT jsonb_agg(e.name)
+          FROM assignments a
+          JOIN employees e ON a.employee_id = e.employee_id
+          WHERE a.contact_id = c.contact_id 
+          AND a.company_id = c.company_id
+          AND a.status = 'active'
+        ) as assigned_to,
+        (
+          SELECT jsonb_build_object(
+            'chat_id', m.chat_id,
+            'from', m.chat_id,
+            'from_me', m.from_me,
+            'id', m.message_id,
+            'source', '',
+            'status', m.status,
+            'text', jsonb_build_object('body', m.content),
+            'timestamp', EXTRACT(EPOCH FROM m.timestamp)::bigint,
+            'type', m.message_type,
+            'name', m.author,
+            'phone_index', m.phone_index
+          )
+          FROM messages m
+          WHERE m.contact_id = c.contact_id
+          AND m.company_id = c.company_id
+          AND m.phone_index = $2
+          ORDER BY m.timestamp DESC
+          LIMIT 1
+        ) as last_message,
+        (
+          SELECT m.phone_index
+          FROM messages m
+          WHERE m.contact_id = c.contact_id
+          AND m.company_id = c.company_id
+          AND m.phone_index = $2
+          ORDER BY m.timestamp DESC
+          LIMIT 1
+        ) as phoneIndex
+      FROM contacts c
+      WHERE c.company_id = $1
+      AND EXISTS (
+        SELECT 1 FROM messages m2 
+        WHERE m2.contact_id = c.contact_id 
+        AND m2.company_id = c.company_id 
+        AND m2.phone_index = $2
+      )
+      ORDER BY (
+        SELECT m.timestamp
+        FROM messages m
+        WHERE m.contact_id = c.contact_id
+        AND m.company_id = c.company_id
+        AND m.phone_index = $2
+        ORDER BY m.timestamp DESC
+        LIMIT 1
+      ) DESC NULLS LAST
+    `,
+      [companyId, phoneIndex]
+    );
+
+    // Process contacts to match frontend expectations
+    const processedContacts = contacts.map((contact) => {
+      // Parse tags from JSONB if they are a string, or use empty array if null/undefined
+      let tags = contact.tags;
+      try {
+        if (typeof tags === "string") {
+          tags = JSON.parse(tags);
+        }
+        // Ensure tags is an array and filter out empty values
+        tags = Array.isArray(tags) ? tags.filter((tag) => tag) : [];
+      } catch (error) {
+        console.error("Error parsing tags:", error);
+        tags = [];
+      }
+
+      // Parse phone_indexes from JSONB if they are a string, or use empty array if null/undefined
+      let phoneIndexes = contact.phone_indexes;
+      try {
+        if (typeof phoneIndexes === "string") {
+          phoneIndexes = JSON.parse(phoneIndexes);
+        }
+        phoneIndexes = Array.isArray(phoneIndexes) ? phoneIndexes.filter((v) => v !== undefined && v !== null) : [];
+      } catch (error) {
+        console.error("Error parsing phone_indexes:", error);
+        phoneIndexes = [];
+      }
+
+      // Parse assigned_to from JSONB if it exists
+      let assignedTo = contact.assigned_to;
+      try {
+        if (typeof assignedTo === "string") {
+          assignedTo = JSON.parse(assignedTo);
+        }
+        // Ensure assignedTo is an array
+        assignedTo = Array.isArray(assignedTo) ? assignedTo : [];
+      } catch (error) {
+        console.error("Error parsing assigned_to:", error);
+        assignedTo = [];
+      }
+
+      return {
+        id: contact.id,
+        contact_id: contact.contact_id,
+        name: contact.name || contact.contact_name || "",
+        phone: contact.phone || "",
+        email: contact.email || "",
+        chat_id: contact.chat_id || "",
+        profileUrl: contact.profile_pic_url || "",
+        profile: contact.profile || {},
+        tags: tags,
+        phoneIndexes: phoneIndexes,
+        phoneIndex: parseInt(phoneIndex), // Current phone index for this contact's latest message
+        assignedTo: assignedTo,
+        createdAt: contact.created_at,
+        lastUpdated: contact.last_updated,
+        isIndividual: contact.is_individual,
+        last_message: contact.last_message || null,
+        unreadCount: contact.unread_count || 0, 
+        customFields: contact.custom_fields || {},  
+      };
+    });
+
+    // Filter contacts based on user role
+    const filteredContacts = filterContactsByUserRole(processedContacts, userData.role, userData.name);
+
+    res.json({
+      success: true,
+      total: filteredContacts.length,
+      contacts: filteredContacts,
+      phoneIndex: parseInt(phoneIndex),
+    });
+  } catch (error) {
+    console.error("Error fetching multi-phone contacts:", error);
+    res.status(500).json({
+      success: false,
+      error: "Failed to fetch contacts",
+      message: error.message,
+    });
+  }
+});
+
 async function obiliterateAllJobs() {
   await messageQueue.obliterate({ force: true });
   console.log("Queue cleared successfully");
@@ -8068,14 +10485,21 @@ async function main(reinitialize = false) {
   //   ["0145"]
   // );
 
+ 
+  // WHEN WANT TO INITIALIZE ALL BOTS
   const companiesPromise = sqlDb.query(
-    "SELECT * FROM companies WHERE company_id = $1",
-    ["0150"]
+    "SELECT * FROM companies WHERE api_url = $1",
+    ["https://juta-dev.ngrok.dev"]
   );
   
   // const companiesPromise = sqlDb.query(
-  //   "SELECT * FROM companies WHERE company_id IN ($1, $2)",
-  //   ["0134", "0150"]
+  //   "SELECT * FROM companies WHERE company_id IN ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33)",
+  //   [
+  //     "0107", "0119", "0160", "0161", "0182", "0245", "0271", "0291", "0327", 
+  //     "0345", "0364", "0377", "0378", "063", "075", "079", "088", "098", 
+  //     "098410", "107145", "128137", "314648", "327971", "330643", "456236", 
+  //     "478608", "503217", "509387", "659516", "765943", "771344", "0123", "0380"
+  //   ]
   // );
 
   // 2. If reinitializing, start cleanup early
@@ -8170,7 +10594,7 @@ async function main(reinitialize = false) {
 
   // Replace the parallel initialization with sequential starts
   await initializeBotsWithDelay(botConfigs);
-
+  await setupNeonWebhooks(app, botMap);
   const automationInstances = {
     //skcSpreadsheet: new SKCSpreadsheet(botMap),
     //bhqSpreadsheet: new bhqSpreadsheet(botMap),
@@ -8178,15 +10602,15 @@ async function main(reinitialize = false) {
   };
 
   // 7. Initialize automation systems in parallel
-  const automationPromises = [
+  /*const automationPromises = [
     scheduleAllMessages(),
     //automationInstances.bhqSpreadsheet.initialize(),
     //automationInstances.skcSpreadsheet.initialize(),
     //automationInstances.constantcoSpreadsheet.initialize(),
     checkAndScheduleDailyReport(),
     initializeDailyReports(),
-  ];
-  await Promise.all(automationPromises);
+  ];*/
+ // await Promise.all(automationPromises);
 
   console.log("Initialization complete");
   if (process.send) process.send("ready");
@@ -8218,6 +10642,16 @@ async function initializeDailyReports() {
     for (const row of settingsResult.rows) {
       const companyId = row.company_id;
       const settings = row.setting_value;
+
+      const companyQuery = `
+        SELECT api_url FROM companies WHERE company_id = $1
+      `;
+      const companyResult = await sqlDb.query(companyQuery, [companyId]);
+      const apiUrl = companyResult.rows[0]?.api_url;
+
+      if (apiUrl !== 'https://juta-dev.ngrok.dev') {
+        continue;
+      }
 
       if (settings && settings.enabled && settings.time && settings.groupId) {
         const [hour, minute] = settings.time.split(":");
@@ -8282,7 +10716,7 @@ async function checkAndScheduleDailyReport() {
       await sqlClient.query("BEGIN");
 
       const companiesQuery = `
-        SELECT company_id 
+        SELECT company_id , api_url
         FROM public.companies
       `;
 
@@ -8295,6 +10729,11 @@ async function checkAndScheduleDailyReport() {
 
       for (const company of companies) {
         const companyId = company.company_id;
+        const apiUrl = company.api_url;
+
+        if (apiUrl !== 'https://juta-dev.ngrok.dev') {
+          continue;
+        }
 
         try {
           const settingsQuery = `
@@ -8425,10 +10864,10 @@ async function checkAndScheduleDailyReport() {
       await sqlClient.query("COMMIT");
       console.log("All daily reports have been set up successfully");
     } catch (error) {
-      await sqlClient.query("ROLLBACK");
+      await safeRollback(sqlClient);
       console.error(`Error in checkAndScheduleDailyReport:`, error);
     } finally {
-      sqlClient.release();
+      await safeRelease(sqlClient);
     }
   } catch (connectionError) {
     console.error(`Database connection error:`, connectionError);
@@ -8490,7 +10929,7 @@ async function sendDailyContactReport(client, idSubstring) {
     );
     return { success: false, error: error.message };
   } finally {
-    sqlClient.release();
+    await safeRelease(sqlClient);
   }
 }
 
@@ -8608,19 +11047,11 @@ async function fetchCompanyConfigSql(companyId) {
   try {
     const companyQuery = `
       SELECT 
-        assistant_id, 
-        name, 
-        phone_count, 
-        profile->>'assistantId2' as assistant_id_2,
-        profile->>'assistantId3' as assistant_id_3,
-        profile->>'phone1' as phone_1,
-        profile->>'phone2' as phone_2,
-        profile->>'phone3' as phone_3,
-        profile->>'ghl_accessToken' as ghl_access_token,
-        profile->>'apiUrl' as api_url,         -- Added
-        profile->>'aiDelay' as ai_delay,       -- Added
-        profile->>'aiAutoResponse' as ai_auto_response, -- Added
-        daily_report                           -- Added the daily_report JSONB column
+      assistant_ids, 
+      name, 
+      phone_count, 
+      daily_report,
+      phone_numbers
       FROM companies 
       WHERE company_id = $1
     `;
@@ -8631,6 +11062,48 @@ async function fetchCompanyConfigSql(companyId) {
       return null;
     }
 
+    let phoneNames = [];
+    if (companyData.phone_numbers) {
+      console.log("Parsing phone numbers:", companyData.phone_numbers);
+      try {
+      if (Array.isArray(companyData.phone_numbers)) {
+        phoneNames = companyData.phone_numbers.map(phone => phone.trim());
+      } else if (typeof companyData.phone_numbers === 'string') {
+        phoneNames = companyData.phone_numbers.split(',').map(phone => phone.trim());
+      } else {
+        phoneNames = [];
+      }
+      } catch (e) {
+      phoneNames = [];
+      }
+    }
+    // Set phone1, phone2, phone3, phone4 from phoneNames array
+    const phone1 = phoneNames[0] || null;
+    const phone2 = phoneNames[1] || null;
+    const phone3 = phoneNames[2] || null;
+    const phone4 = phoneNames[3] || null;
+
+    // Parse assistant_ids as array and set assistantId1, assistantId2, etc.
+    let assistantIds = [];
+    if (companyData.assistant_ids) {
+      console.log("Parsing assistant IDs:", companyData.assistant_ids);
+      try {
+        if (Array.isArray(companyData.assistant_ids)) {
+          assistantIds = companyData.assistant_ids.map(id => id.trim());
+        } else if (typeof companyData.assistant_ids === 'string') {
+          assistantIds = companyData.assistant_ids.split(',').map(id => id.trim());
+        } else {
+          assistantIds = [];
+        }
+      } catch (e) {
+        assistantIds = [];
+      }
+    }
+    const assistantId1 = assistantIds[0] || null;
+    const assistantId2 = assistantIds[1] || null;
+    const assistantId3 = assistantIds[2] || null;
+    const assistantId4 = assistantIds[3] || null;
+
     const openaiTokenQuery =
       "SELECT config_value FROM system_config WHERE config_key = $1";
     const openaiTokenResult = await sqlDb.query(openaiTokenQuery, [
@@ -8640,19 +11113,21 @@ async function fetchCompanyConfigSql(companyId) {
 
     return {
       companyData: {
-        assistantId: companyData.assistant_id,
-        name: companyData.name,
-        phoneCount: parseInt(companyData.phone_count || "1"),
-        assistantId2: companyData.assistant_id_2,
-        assistantId3: companyData.assistant_id_3,
-        phone1: companyData.phone_1,
-        phone2: companyData.phone_2,
-        phone3: companyData.phone_3,
-        ghl_accessToken: companyData.ghl_access_token,
-        apiUrl: companyData.api_url,
-        aiDelay: parseInt(companyData.ai_delay || "0"), // Ensure it's parsed as int
-        aiAutoResponse: companyData.ai_auto_response === "true", // Convert string 'true'/'false' to boolean
-        dailyReport: companyData.daily_report, // Pass the entire daily_report JSONB
+      assistantId: assistantId1,
+      assistantId2,
+      assistantId3,
+      assistantId4,
+      name: companyData.name,
+      phoneCount: parseInt(companyData.phone_count || "1"),
+      phone1,
+      phone2,
+      phone3,
+      phone4,
+      ghl_accessToken: companyData.ghl_access_token,
+      apiUrl: companyData.api_url,
+      aiDelay: parseInt(companyData.ai_delay || "0"),
+      aiAutoResponse: companyData.ai_auto_response === "true",
+      dailyReport: companyData.daily_report,
       },
       openaiApiKey: openaiToken,
     };
@@ -8685,6 +11160,73 @@ app.get("/api/user-data/:email", async (req, res) => {
   } catch (error) {
     console.error("Error fetching user data:", error);
     res.status(500).json({ error: "Failed to fetch user data" });
+  }
+});
+
+// PUT endpoint to update user data (specifically company_id)
+app.put("/api/user-data/:userEmail", async (req, res) => {
+  try {
+    const { userEmail } = req.params;
+    const { company_id } = req.body;
+
+    if (!userEmail) {
+      return res.status(400).json({ error: "User email is required" });
+    }
+
+    if (!company_id) {
+      return res.status(400).json({ error: "Company ID is required" });
+    }
+
+    // Start transaction
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      // Update users table
+      const userUpdateQuery = `
+        UPDATE users 
+        SET company_id = $1, last_updated = CURRENT_TIMESTAMP
+        WHERE email = $2
+        RETURNING email, company_id
+      `;
+      
+      const userResult = await client.query(userUpdateQuery, [company_id, userEmail]);
+
+      if (userResult.rows.length === 0) {
+        await client.query('ROLLBACK');
+        return res.status(404).json({ error: "User not found" });
+      }
+
+      // Update employees table if the user exists there
+      const employeeUpdateQuery = `
+        UPDATE employees 
+        SET company_id = $1, last_updated = CURRENT_TIMESTAMP
+        WHERE email = $2
+      `;
+      
+      await client.query(employeeUpdateQuery, [company_id, userEmail]);
+
+      await client.query('COMMIT');
+      
+      res.json({ 
+        success: true, 
+        message: "User company ID updated successfully",
+        data: {
+          email: userResult.rows[0].email,
+          company_id: userResult.rows[0].company_id
+        }
+      });
+
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      await safeRelease(client);
+    }
+
+  } catch (error) {
+    console.error("Error updating user company ID:", error);
+    res.status(500).json({ error: "Failed to update user company ID" });
   }
 });
 
@@ -8831,11 +11373,11 @@ async function updateMonthlyAssignmentsSql(
     await client.query("COMMIT"); // Commit transaction
     return { success: true };
   } catch (error) {
-    await client.query("ROLLBACK"); // Rollback on error
+    await safeRollback(client); // Rollback on error
     console.error("Error in updateMonthlyAssignmentsSql transaction:", error);
     throw error; // Re-throw to be caught by the API endpoint
   } finally {
-    client.release(); // Release client back to the pool
+    await safeRelease(client); // Release client back to the pool
   }
 }
 
@@ -9060,73 +11602,115 @@ app.post("/api/contacts/bulk", async (req, res) => {
         .json({ success: false, message: "No contacts provided" });
     }
 
-    // Prepare the SQL for bulk upsert
-    const values = [];
-    const placeholders = [];
-    let idx = 1;
-
+    // Deduplicate contacts based on contact_id and company_id combination
+    const uniqueContacts = [];
+    const seenCombinations = new Set();
+    
     for (const contact of contacts) {
-      placeholders.push(
-        `($${idx++}, $${idx++}, $${idx++}, $${idx++}, $${idx++}, $${idx++}, $${idx++}, $${idx++}, $${idx++}, $${idx++}, $${idx++}, $${idx++}, $${idx++}, $${idx++}, $${idx++}, $${idx++}, $${idx++}, $${idx++}, $${idx++}, $${idx++})`
-      );
-      values.push(
-        contact.contact_id,
-        contact.companyId,
-        contact.name || contact.contactName || null,
-        contact.last_name || contact.lastName || null,
-        contact.email || null,
-        contact.phone || null,
-        contact.address1 || null,
-        contact.companyName || null,
-        contact.locationId || null,
-        contact.dateAdded || new Date().toISOString(),
-        contact.unreadCount || 0,
-        contact.points || 0,
-        contact.branch || null,
-        contact.expiryDate || null,
-        contact.vehicleNumber || null,
-        contact.ic || null,
-        contact.chat_id || null,
-        contact.notes || null,
-        contact.customFields ? JSON.stringify(contact.customFields) : null,
-        contact.tags ? JSON.stringify(contact.tags) : null
-      );
+      const key = `${contact.contact_id}-${contact.companyId}`;
+      if (!seenCombinations.has(key)) {
+        seenCombinations.add(key);
+        uniqueContacts.push(contact);
+      } else {
+        console.log(`Skipping duplicate contact: ${contact.contact_id} for company: ${contact.companyId}`);
+      }
     }
 
-    const query = `
-      INSERT INTO contacts (
-        contact_id, company_id, name, last_name, email, phone, address1, company, location_id,
-        created_at, unread_count, points, branch, expiry_date, vehicle_number, ic, chat_id, notes, custom_fields, tags
-      ) VALUES
-        ${placeholders.join(",\n")}
-      ON CONFLICT (contact_id, company_id) DO UPDATE SET
-        name = EXCLUDED.name,
-        last_name = EXCLUDED.last_name,
-        email = EXCLUDED.email,
-        phone = EXCLUDED.phone,
-        address1 = EXCLUDED.address1,
-        company = EXCLUDED.company,
-        location_id = EXCLUDED.location_id,
-        unread_count = EXCLUDED.unread_count,
-        points = EXCLUDED.points,
-        branch = EXCLUDED.branch,
-        expiry_date = EXCLUDED.expiry_date,
-        vehicle_number = EXCLUDED.vehicle_number,
-        ic = EXCLUDED.ic,
-        chat_id = EXCLUDED.chat_id,
-        notes = EXCLUDED.notes,
-        custom_fields = EXCLUDED.custom_fields,
-        tags = EXCLUDED.tags,
-        updated_at = CURRENT_TIMESTAMP
-      RETURNING contact_id
-    `;
+    if (uniqueContacts.length === 0) {
+      return res
+        .status(400)
+        .json({ success: false, message: "No unique contacts to import after deduplication" });
+    }
 
-    const result = await sqlDb.query(query, values);
+    console.log(`Original contacts: ${contacts.length}, Unique contacts: ${uniqueContacts.length}`);
+
+    // Process contacts individually to avoid constraint violations
+    const results = [];
+    const errors = [];
+    
+    for (const contact of uniqueContacts) {
+      try {
+        const query = `
+          INSERT INTO contacts (
+            contact_id, company_id, name, last_name, email, phone, address1, company, location_id,
+            created_at, unread_count, points, branch, expiry_date, vehicle_number, ic, chat_id, notes, custom_fields, tags
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
+          ON CONFLICT (contact_id, company_id) DO UPDATE SET
+            name = EXCLUDED.name,
+            last_name = EXCLUDED.last_name,
+            email = EXCLUDED.email,
+            phone = EXCLUDED.phone,
+            address1 = EXCLUDED.address1,
+            company = EXCLUDED.company,
+            location_id = EXCLUDED.location_id,
+            unread_count = EXCLUDED.unread_count,
+            points = EXCLUDED.points,
+            branch = EXCLUDED.branch,
+            expiry_date = EXCLUDED.expiry_date,
+            vehicle_number = EXCLUDED.vehicle_number,
+            ic = EXCLUDED.ic,
+            chat_id = EXCLUDED.chat_id,
+            notes = EXCLUDED.notes,
+            custom_fields = EXCLUDED.custom_fields,
+            tags = EXCLUDED.tags,
+            updated_at = CURRENT_TIMESTAMP
+          RETURNING contact_id
+        `;
+
+        const values = [
+          contact.contact_id,
+          contact.companyId,
+          contact.name || contact.contactName || null,
+          contact.last_name || contact.lastName || null,
+          contact.email || null,
+          contact.phone || null,
+          contact.address1 || null,
+          contact.companyName || null,
+          contact.locationId || null,
+          contact.dateAdded || new Date().toISOString(),
+          contact.unreadCount || 0,
+          contact.points || 0,
+          contact.branch || null,
+          contact.expiryDate || null,
+          contact.vehicleNumber || null,
+          contact.ic || null,
+          contact.chat_id || null,
+          contact.notes || null,
+          // Handle customFields properly
+          (() => {
+            if (contact.customFields) {
+              // If customFields is already an object, stringify it
+              if (typeof contact.customFields === 'object' && contact.customFields !== null) {
+                return JSON.stringify(contact.customFields);
+              } else if (typeof contact.customFields === 'string') {
+                // If it's already a string, use it as is
+                return contact.customFields;
+              }
+            }
+            return null;
+          })(),
+          contact.tags ? JSON.stringify(contact.tags) : null
+        ];
+
+        const result = await sqlDb.query(query, values);
+        results.push(result.rows[0].contact_id);
+      } catch (error) {
+        console.error(`Error importing contact ${contact.contact_id}:`, error);
+        errors.push({
+          contact_id: contact.contact_id,
+          error: error.message
+        });
+      }
+    }
 
     res.json({
       success: true,
-      imported: result.rowCount,
-      contact_ids: result.rows.map((r) => r.contact_id),
+      imported: results.length,
+      contact_ids: results,
+      original_count: contacts.length,
+      unique_count: uniqueContacts.length,
+      duplicates_removed: contacts.length - uniqueContacts.length,
+      errors: errors.length > 0 ? errors : undefined
     });
   } catch (error) {
     console.error("Error importing contacts in bulk:", error);
@@ -9623,6 +12207,209 @@ app.post("/api/bots/reinitialize", async (req, res) => {
   }
 });
 
+
+// Disconnect phone endpoint
+app.post("/api/bots/:botName/disconnect", async (req, res) => {
+  try {
+    const { botName } = req.params;
+    const { phoneIndex } = req.body;
+
+    if (!botName) {
+      return res.status(400).json({ error: "botName is required" });
+    }
+
+    const botData = botMap.get(botName);
+
+    if (!botData || !Array.isArray(botData)) {
+      return res.status(404).json({ error: "Bot not found" });
+    }
+
+    if (phoneIndex !== undefined) {
+      // Disconnect specific phone
+      if (phoneIndex >= 0 && phoneIndex < botData.length && botData[phoneIndex]?.client) {
+        try {
+          await destroyClient(botData[phoneIndex].client);
+          botData[phoneIndex] = {
+            client: null,
+            status: "disconnected",
+            qrCode: null,
+            initializationStartTime: null,
+          };
+          
+          // Broadcast the disconnection status
+          broadcastAuthStatus(botName, "disconnected", null, phoneIndex);
+          
+          res.json({
+            success: true,
+            message: `Phone ${phoneIndex + 1} disconnected successfully`,
+            phoneIndex,
+          });
+        } catch (error) {
+          console.error(`Error disconnecting ${botName} phone ${phoneIndex}:`, error);
+          res.status(500).json({
+            error: "Failed to disconnect phone",
+            details: error.message,
+          });
+        }
+      } else {
+        res.status(400).json({ error: "Invalid phone index or phone not connected" });
+      }
+    } else {
+      // Disconnect all phones
+      try {
+        await Promise.all(
+          botData.map(async (data, index) => {
+            if (data?.client) {
+              try {
+                await destroyClient(data.client);
+                botData[index] = {
+                  client: null,
+                  status: "disconnected",
+                  qrCode: null,
+                  initializationStartTime: null,
+                };
+                broadcastAuthStatus(botName, "disconnected", null, index);
+              } catch (error) {
+                console.error(`Error disconnecting ${botName} phone ${index}:`, error);
+              }
+            }
+          })
+        );
+
+        res.json({
+          success: true,
+          message: "All phones disconnected successfully",
+        });
+      } catch (error) {
+        console.error(`Error disconnecting all phones for ${botName}:`, error);
+        res.status(500).json({
+          error: "Failed to disconnect all phones",
+          details: error.message,
+        });
+      }
+    }
+  } catch (error) {
+    console.error("Error in disconnect endpoint:", error);
+    res.status(500).json({
+      error: "Failed to disconnect bot",
+      details: error.message,
+    });
+  }
+});
+
+// Get all bot statuses for status page
+app.get("/api/bot-statuses", async (req, res) => {
+  let client;
+  try {
+    client = await pool.connect();
+    
+    // Get all companies with v2 = true
+    const botsQuery = `
+      SELECT 
+      c.company_id AS id,
+      c.name,
+      c.phone_count AS "phoneCount",
+      c.category,
+      ARRAY(
+        SELECT e.email 
+        FROM employees e 
+        WHERE e.company_id = c.company_id AND e.email IS NOT NULL
+      ) AS "employeeEmails"
+      FROM companies c
+      WHERE c.v2 = true
+      AND c.api_url = $1
+      ORDER BY c.company_id
+    `;
+
+    const companiesResult = await client.query(botsQuery, [process.env.URL]);
+    console.log("Fetched companies:", companiesResult.rows.length);
+    console.log("url:", process.env.URL);
+    console.log("Companies result:", companiesResult);
+
+    // Get status for each bot
+    const botStatuses = await Promise.all(
+      companiesResult.rows.map(async (company) => {
+        const phoneCount = company.phoneCount || 1;
+        const phoneStatuses = [];
+        
+        // Get status for each phone
+        for (let i = 0; i < phoneCount; i++) {
+          let status = "unknown";
+          let phoneNumber = null;
+          
+          try {
+            // Check if bot is in memory
+            const botData = botMap.get(company.id);
+            if (botData && Array.isArray(botData) && botData[i]) {
+              status = botData[i].status || "unknown";
+              
+              // Try to get phone number from client info
+              if (botData[i].client) {
+                try {
+                  const info = await botData[i].client.info;
+                  phoneNumber = info?.wid?.user || null;
+                } catch (err) {
+                  // Ignore error
+                }
+              }
+            }
+            
+            // Also check database status
+            const dbStatusQuery = `
+              SELECT status, phone_number 
+              FROM phone_status 
+              WHERE company_id = $1 AND phone_index = $2 
+              ORDER BY updated_at DESC 
+              LIMIT 1
+            `;
+            const dbResult = await client.query(dbStatusQuery, [company.id, i]);
+            
+            if (dbResult.rows.length > 0) {
+              const dbStatus = dbResult.rows[0].status;
+              const dbPhoneNumber = dbResult.rows[0].phone_number;
+              
+              // Use database status if more recent or if in-memory status is unknown
+              if (status === "unknown" || dbStatus) {
+                status = dbStatus;
+              }
+              
+              if (!phoneNumber && dbPhoneNumber) {
+                phoneNumber = dbPhoneNumber;
+              }
+            }
+          } catch (error) {
+            console.error(`Error getting status for ${company.id} phone ${i}:`, error);
+          }
+          
+          phoneStatuses.push({
+            phoneIndex: i,
+            status: status || "unknown",
+            phoneNumber: phoneNumber
+          });
+        }
+        
+        return {
+          botName: company.id,
+          name: company.name,
+          phoneCount: phoneCount,
+          category: company.category || "juta",
+          employeeEmails: company.employeeEmails || [],
+          phones: phoneStatuses
+        };
+      })
+    );
+    
+    res.json(botStatuses);
+  } catch (error) {
+    console.error("Error fetching bot statuses:", error);
+    res.status(500).json({ error: "Failed to fetch bot statuses" });
+  } finally {
+    if (client) {
+      client.release();
+    }
+  }
+});
+
 async function getContactDataFromDatabaseByEmail(email) {
   const client = await pool.connect();
 
@@ -9647,7 +12434,7 @@ async function getContactDataFromDatabaseByEmail(email) {
     console.error("Error fetching document:", error);
     throw error;
   } finally {
-    client.release();
+    await safeRelease(client);
   }
 }
 
@@ -9671,7 +12458,7 @@ async function saveThreadIDPostgres(email, threadID) {
   } catch (error) {
     console.error("Error saving Thread ID to PostgreSQL:", error);
   } finally {
-    client.release();
+    await safeRelease(client);
   }
 }
 
@@ -9720,7 +12507,7 @@ async function waitForCompletion(threadId, runId) {
         clearInterval(pollingInterval);
         resolve(answer);
       }
-    }, 1000);
+    }, 10000); // Changed from 1000ms to 10000ms (10 seconds)
   });
 }
 
@@ -9810,7 +12597,7 @@ async function getSessionDataFromDatabase(sessionId) {
     console.error("Error fetching session data:", error);
     throw error;
   } finally {
-    if (client) client.release();
+    if (client) await safeRelease(client);
   }
 }
 
@@ -9841,7 +12628,7 @@ async function saveThreadIDForSession(sessionId, threadID) {
     console.error("Error saving Thread ID for session:", error);
     throw error;
   } finally {
-    if (client) client.release();
+    if (client) await safeRelease(client);
   }
 }
 
@@ -9884,6 +12671,13 @@ app.get(
       // Fetch all chats from WhatsApp API
       if (token !== "none") {
         while (true) {
+          // Add rate limiting for WhatsApp API calls
+          if (!checkRateLimit(`whatsapp_api_${companyId}`)) {
+            console.log(`Rate limit reached for WhatsApp API, waiting...`);
+            await new Promise(resolve => setTimeout(resolve, 5000)); // Wait 5 seconds
+            continue;
+          }
+
           const response = await fetch(
             `https://gate.whapi.cloud/chats?count=${count}&offset=${offset}`,
             {
@@ -9899,11 +12693,21 @@ app.get(
           allChats = allChats.concat(data.chats);
           fetchedChats += data.chats.length; // Update the number of fetched chats
           offset += count;
+          
+          // Add delay between API calls to prevent overwhelming the network
+          await new Promise(resolve => setTimeout(resolve, 2000)); // 2 second delay
         }
         count = 500;
         offset = 0;
         if (companyId === "018") {
           while (true) {
+            // Add rate limiting for second WhatsApp API calls
+            if (!checkRateLimit(`whatsapp_api2_${companyId}`)) {
+              console.log(`Rate limit reached for WhatsApp API2, waiting...`);
+              await new Promise(resolve => setTimeout(resolve, 5000)); // Wait 5 seconds
+              continue;
+            }
+
             const response = await fetch(
               `https://gate.whapi.cloud/chats?count=${count}&offset=${offset}`,
               {
@@ -9918,6 +12722,9 @@ app.get(
             allChats = allChats.concat(data.chats);
             fetchedChats += data.chats.length; // Update the number of fetched chats
             offset += count;
+            
+            // Add delay between API calls to prevent overwhelming the network
+            await new Promise(resolve => setTimeout(resolve, 2000)); // 2 second delay
           }
         }
       }
@@ -9926,6 +12733,13 @@ app.get(
       let maxContacts = 3000;
       let maxRetries = 3;
       while (totalContacts < maxContacts) {
+        // Add rate limiting for contact fetching
+        if (!checkRateLimit(`contact_fetch_${companyId}`)) {
+          console.log(`Rate limit reached for contact fetching, waiting...`);
+          await new Promise(resolve => setTimeout(resolve, 3000)); // Wait 3 seconds
+          continue;
+        }
+
         let retries = 0;
         let contacts = []; // Initialize contacts outside the retry loop
 
@@ -10369,7 +13183,7 @@ app.post("/api/create-contact", async (req, res) => {
       error: "An error occurred while adding the contact: " + error.message,
     });
   } finally {
-    client.release();
+    await safeRelease(client);
   }
 });
 
@@ -10398,9 +13212,11 @@ app.get("/api/bots", async (req, res) => {
         ) AS "employeeEmails"
       FROM companies c
       WHERE c.v2 = true
+      AND c.api_url = $1
     `;
 
-    const companiesResult = await client.query(botsQuery);
+    const apiUrl = 'https://juta-dev.ngrok.dev';
+    const companiesResult = await client.query(botsQuery, [apiUrl]);
 
     const botsPromises = companiesResult.rows.map(async (company) => {
       const botData = botMap.get(company.id);
@@ -10457,7 +13273,7 @@ app.get("/api/bots", async (req, res) => {
     });
   } finally {
     if (client) {
-      client.release();
+      await safeRelease(client);
     }
   }
 });
@@ -10560,11 +13376,21 @@ app.delete("/api/bots/:botId/trial-end-date", async (req, res) => {
 
 app.get("/api/bot-status/:companyId", async (req, res) => {
   const { companyId } = req.params;
-  console.log("Calling bot-status");
-  res.header("Access-Control-Allow-Origin", "http://localhost:5173");
+  
+// Allow both localhost for development and your Vercel domain for production
+const allowedOrigins = [
+  "http://localhost:5173",
+  "https://juta-crm-v3.vercel.app"
+];
+
+const origin = req.headers.origin;
+if (allowedOrigins.includes(origin)) {
+  res.header("Access-Control-Allow-Origin", origin);
+}
   res.header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
   res.header("Access-Control-Allow-Headers", "Content-Type, Authorization");
   res.header("Access-Control-Allow-Credentials", "true");
+  
   try {
     // First get the company from database
     const companyData = await sqlDb.getRow(
@@ -10573,16 +13399,17 @@ app.get("/api/bot-status/:companyId", async (req, res) => {
     );
 
     if (!companyData) {
+      console.log("ERROR: Company not found in database");
       return res.status(404).json({ error: "Company not found" });
     }
-
+    
     // Then get the bot status
     const botData = botMap.get(companyId);
 
-    if (botData && Array.isArray(botData)) {
+    if (botData && Array.isArray(botData)) {      
       if (botData.length === 1) {
-        // Single phone
         const { status, qrCode } = botData[0];
+        
         let phoneInfo = null;
 
         if (botData[0]?.client) {
@@ -10594,10 +13421,13 @@ app.get("/api/bot-status/:companyId", async (req, res) => {
               `Error getting client info for company ${companyId}:`,
               err
             );
+            console.error("Error stack:", err.stack);
           }
+        } else {
+          console.log("No client object found in bot data");
         }
 
-        res.json({
+        const response = {
           status,
           qrCode,
           phoneInfo,
@@ -10606,11 +13436,11 @@ app.get("/api/bot-status/:companyId", async (req, res) => {
           trialEndDate: companyData.trial_end_date,
           apiUrl: companyData.api_url,
           phoneCount: companyData.phone_count,
-        });
+        };
+        res.json(response);
       } else {
-        // Multiple phones
         const statusArray = await Promise.all(
-          botData.map(async (phone, index) => {
+          botData.map(async (phone, index) => {            
             let phoneInfo = null;
 
             if (phone?.client) {
@@ -10622,30 +13452,34 @@ app.get("/api/bot-status/:companyId", async (req, res) => {
                   `Error getting client info for company ${companyId} phone ${index}:`,
                   err
                 );
+                console.error(`Phone ${index} error stack:`, err.stack);
               }
+            } else {
+              console.log(`Phone ${index} has no client object`);
             }
 
-            return {
+            const phoneResult = {
               phoneIndex: index,
               status: phone.status,
               qrCode: phone.qrCode,
               phoneInfo,
             };
+            return phoneResult;
           })
         );
 
-        res.json({
+        const response = {
           phones: statusArray,
           companyId,
           v2: companyData.v2,
           trialEndDate: companyData.trial_end_date,
           apiUrl: companyData.api_url,
           phoneCount: companyData.phone_count,
-        });
+        };
+        res.json(response);
       }
-    } else {
-      // Bot not initialized yet
-      res.json({
+    } else {    
+      const response = {
         status: "initializing",
         qrCode: null,
         phoneInfo: null,
@@ -10654,10 +13488,16 @@ app.get("/api/bot-status/:companyId", async (req, res) => {
         trialEndDate: companyData.trial_end_date,
         apiUrl: companyData.api_url,
         phoneCount: companyData.phone_count,
-      });
-    }
+      };
+      res.json(response);
+    }   
   } catch (error) {
+    console.error("=== BOT STATUS REQUEST FAILED ===");
     console.error(`Error getting status for company ${companyId}:`, error);
+    console.error("Error message:", error.message);
+    console.error("Error stack:", error.stack);
+    console.error("Error name:", error.name);
+    console.error("Error code:", error.code);
     res.status(500).json({ error: "Failed to get status" });
   }
 });
@@ -10718,7 +13558,7 @@ app.get('/api/ai-responses', async (req, res) => {
       error: error.message
     });
   } finally {
-    sqlClient.release();
+    await safeRelease(sqlClient);
     console.log("Database client released");
   }
 });
@@ -10897,7 +13737,7 @@ app.post('/api/ai-responses', async (req, res) => {
     });
 
   } catch (error) {
-    await sqlClient.query("ROLLBACK");
+    await safeRollback(sqlClient);
     console.error("=== Error in POST /api/ai-responses ===");
     console.error("Error message:", error.message);
     console.error("Error stack:", error.stack);
@@ -10908,7 +13748,7 @@ app.post('/api/ai-responses', async (req, res) => {
       error: error.message
     });
   } finally {
-    sqlClient.release();
+    await safeRelease(sqlClient);
     console.log("Database client released");
   }
 });
@@ -11099,7 +13939,7 @@ app.put('/api/ai-responses/:id', async (req, res) => {
     
     if (result.rowCount === 0) {
       console.error("No response found with id:", id);
-      await sqlClient.query("ROLLBACK");
+      await safeRollback(sqlClient);
       return res.status(404).json({
         success: false,
         message: `${type} response not found with id: ${id}`
@@ -11119,7 +13959,7 @@ app.put('/api/ai-responses/:id', async (req, res) => {
     });
 
   } catch (error) {
-    await sqlClient.query("ROLLBACK");
+    await safeRollback(sqlClient);
     console.error("=== Error in PUT /api/ai-responses/:id ===");
     console.error("Error message:", error.message);
     console.error("Error stack:", error.stack);
@@ -11130,7 +13970,7 @@ app.put('/api/ai-responses/:id', async (req, res) => {
       error: error.message
     });
   } finally {
-    sqlClient.release();
+    await safeRelease(sqlClient);
     console.log("Database client released");
   }
 });
@@ -11180,7 +14020,7 @@ app.delete('/api/ai-responses/:id', async (req, res) => {
     
     if (result.rowCount === 0) {
       console.error("No response found with id:", id);
-      await sqlClient.query("ROLLBACK");
+      await safeRollback(sqlClient);
       return res.status(404).json({
         success: false,
         message: `${type} response not found with id: ${id}`
@@ -11200,7 +14040,7 @@ app.delete('/api/ai-responses/:id', async (req, res) => {
     });
 
   } catch (error) {
-    await sqlClient.query("ROLLBACK");
+    await safeRollback(sqlClient);
     console.error("=== Error in DELETE /api/ai-responses/:id ===");
     console.error("Error message:", error.message);
     console.error("Error stack:", error.stack);
@@ -11211,7 +14051,7 @@ app.delete('/api/ai-responses/:id', async (req, res) => {
       error: error.message
     });
   } finally {
-    sqlClient.release();
+    await safeRelease(sqlClient);
     console.log("Database client released");
   }
 });
@@ -11322,8 +14162,8 @@ app.post("/api/v2/messages/text/:companyId/:chatId", async (req, res) => {
         companyId
       );
 
-      // WIP - SentMessage Hilang Tibe2
-      // await addAuthorToPostgres(sentMessage, companyId, userName);
+      // Add author username after sending message
+      await findAndUpdateMessageAuthor(message, contactID, companyId, userName);
 
       // 5. Handle OpenAI integration for the receiver's contact
       if (contactData?.thread_id) {
@@ -11419,67 +14259,60 @@ app.post("/api/v2/messages/text/:companyId/:chatId", async (req, res) => {
   }
 });
 
-async function addAuthorToPostgres(msg, companyId, userName) {
-  console.log("Preparing to add author to message in PostgreSQL");
+async function findAndUpdateMessageAuthor(messageContent, contactId, companyId, userName) {
+  console.log("Finding and updating message author based on content");
   
-  await new Promise(resolve => setTimeout(resolve, 5000));
-  
-  const basicInfo = await extractBasicMessageInfo(msg);
-  const messageId = basicInfo.idSerialized;
-  
-  let author = userName;
-  if (!author && msg.from.includes("@g.us") && basicInfo.author) {
-    const authorData = await getContactDataFromDatabaseByPhone(basicInfo.author, companyId);
-    author = authorData ? authorData.contactName : basicInfo.author;
-  }
-
-  if (!author) {
-    console.log("No author information available to add");
-    return;
-  }
-
   try {
     const client = await pool.connect();
     try {
       await client.query("BEGIN");
 
-      const messageCheckQuery = `
-        SELECT id, author FROM public.messages 
-        WHERE message_id = $1 AND company_id = $2
+      // Search for the latest message with matching content for this contact
+      const findMessageQuery = `
+        SELECT id, message_id, content, author, timestamp 
+        FROM public.messages 
+        WHERE contact_id = $1 AND company_id = $2 AND content = $3 AND from_me = true
+        ORDER BY timestamp DESC, id DESC
+        LIMIT 1
         FOR UPDATE
       `;
-      const messageResult = await client.query(messageCheckQuery, [messageId, companyId]);
+      
+      const messageResult = await client.query(findMessageQuery, [contactId, companyId, messageContent]);
 
       if (messageResult.rows.length === 0) {
-        console.log("Message not found in database, cannot add author");
-        await client.query("ROLLBACK");
-        return;
+        console.log("No matching message found with content:", messageContent.substring(0, 50) + "...");
+        await safeRollback(client);
+        return null;
       }
 
-      const existingMessage = messageResult.rows[0];
-      
-      if (existingMessage.author !== author) {
+      const foundMessage = messageResult.rows[0];
+      console.log(`Found message ID: ${foundMessage.id} with timestamp: ${foundMessage.timestamp}`);
+
+      // Update the author if it's different or null
+      if (!foundMessage.author || foundMessage.author !== userName) {
         const updateQuery = `
           UPDATE public.messages
-          SET author = $1,
-              last_updated = NOW()
+          SET author = $1
           WHERE id = $2
-          RETURNING id
+          RETURNING id, author
         `;
-        const updateResult = await client.query(updateQuery, [author, existingMessage.id]);
+        const updateResult = await client.query(updateQuery, [userName, foundMessage.id]);
         
-        console.log(`Successfully updated author for message ID: ${updateResult.rows[0].id}`);
+        console.log(`Successfully updated author for message ID: ${updateResult.rows[0].id} to: ${updateResult.rows[0].author}`);
+        
+        await client.query("COMMIT");
+        return updateResult.rows[0].id;
       } else {
         console.log("Author already set to the same value, no update needed");
+        await client.query("COMMIT");
+        return foundMessage.id;
       }
-
-      await client.query("COMMIT");
     } catch (error) {
-      await client.query("ROLLBACK");
-      console.error("Error updating author in PostgreSQL:", error);
+      await safeRollback(client);
+      console.error("Error finding/updating message author in PostgreSQL:", error);
       throw error;
     } finally {
-      client.release();
+      await safeRelease(client);
     }
   } catch (error) {
     console.error("PostgreSQL connection error:", error);
@@ -11636,18 +14469,18 @@ app.put("/api/v2/messages/:companyId/:chatId/:messageId", async (req, res) => {
         const result = await client.query(updateQuery, updateValues);
 
         if (result.rowCount === 0) {
-          await client.query("ROLLBACK");
+          await safeRollback(client);
           return res.status(404).json({ success: false, error: "Message not found in database" });
         }
 
         await client.query("COMMIT");
         res.json({ success: true, messageId: messageId });
       } catch (error) {
-        await client.query("ROLLBACK");
+        await safeRollback(client);
         console.error("Error updating message in PostgreSQL:", error);
         res.status(500).send("Internal Server Error");
       } finally {
-        client.release();
+        await safeRelease(client);
       }
     } else {
       res.status(400).json({ success: false, error: "Failed to edit message" });
@@ -11775,6 +14608,11 @@ app.post("/api/v2/messages/image/:companyId/:chatId", async (req, res) => {
       userName
     );
 
+    const contactID = companyId + "-" + chatId.split("@")[0];
+    if (caption) {
+      await findAndUpdateMessageAuthor(caption, contactID, companyId, userName);
+    }
+
     res.json({ success: true, messageId: sentMessage.id._serialized });
   } catch (error) {
     console.error("Error sending image message:", error);
@@ -11853,6 +14691,11 @@ app.post("/api/v2/messages/audio/:companyId/:chatId", async (req, res) => {
       phoneIndex,
       userName
     );
+
+    const contactID = companyId + "-" + chatId.split("@")[0];
+    if (caption) {
+      await findAndUpdateMessageAuthor(caption, contactID, companyId, userName);
+    }
 
     res.json({ success: true, messageId: sentMessage.id._serialized });
   } catch (error) {
@@ -12118,7 +14961,7 @@ app.post("/api/contacts/:companyId/:contactId/assign-employee", async (req, res)
       ]);
 
       if (updateResult.rows.length === 0) {
-        await client.query("ROLLBACK");
+        await safeRollback(client);
         return res.status(404).json({ error: "Contact not found" });
       }
 
@@ -12136,7 +14979,7 @@ app.post("/api/contacts/:companyId/:contactId/assign-employee", async (req, res)
       ]);
 
       if (employeeResult.rows.length === 0) {
-        await client.query("ROLLBACK");
+        await safeRollback(client);
         return res.status(404).json({ error: "Employee not found" });
       }
 
@@ -12148,7 +14991,7 @@ app.post("/api/contacts/:companyId/:contactId/assign-employee", async (req, res)
       const contactResult = await client.query(contactQuery, [phoneNumber, companyId]);
       
       if (contactResult.rows.length === 0) {
-        await client.query("ROLLBACK");
+        await safeRollback(client);
         return res.status(404).json({ error: "Contact not found in database" });
       }
 
@@ -12201,10 +15044,10 @@ app.post("/api/contacts/:companyId/:contactId/assign-employee", async (req, res)
       });
 
     } catch (error) {
-      await client.query("ROLLBACK");
+      await safeRollback(client);
       throw error;
     } finally {
-      client.release();
+      await safeRelease(client);
     }
 
   } catch (error) {
@@ -12246,7 +15089,7 @@ app.post("/api/contacts/:companyId/:contactId/unassign-employee", async (req, re
       const contactResult = await client.query(getContactQuery, [phoneNumber, companyId]);
       
       if (contactResult.rows.length === 0) {
-        await client.query("ROLLBACK");
+        await safeRollback(client);
         return res.status(404).json({ error: "Contact not found" });
       }
 
@@ -12281,7 +15124,7 @@ app.post("/api/contacts/:companyId/:contactId/unassign-employee", async (req, re
       ]);
 
       if (employeeResult.rows.length === 0) {
-        await client.query("ROLLBACK");
+        await safeRollback(client);
         return res.status(404).json({ error: "Employee not found" });
       }
 
@@ -12334,10 +15177,10 @@ app.post("/api/contacts/:companyId/:contactId/unassign-employee", async (req, re
       });
 
     } catch (error) {
-      await client.query("ROLLBACK");
+      await safeRollback(client);
       throw error;
     } finally {
-      client.release();
+      await safeRelease(client);
     }
 
   } catch (error) {
@@ -12374,7 +15217,7 @@ app.delete("/api/contacts/:companyId/:contactId/assignments", async (req, res) =
       const contactResult = await client.query(getContactQuery, [phoneNumber, companyId]);
       
       if (contactResult.rows.length === 0) {
-        await client.query("ROLLBACK");
+        await safeRollback(client);
         return res.status(404).json({ error: "Contact not found" });
       }
 
@@ -12394,7 +15237,7 @@ app.delete("/api/contacts/:companyId/:contactId/assignments", async (req, res) =
       ]);
 
       if (assignmentsResult.rows.length === 0) {
-        await client.query("ROLLBACK");
+        await safeRollback(client);
         return res.status(404).json({ error: "No active assignments found for this contact" });
       }
 
@@ -12478,10 +15321,10 @@ app.delete("/api/contacts/:companyId/:contactId/assignments", async (req, res) =
       });
 
     } catch (error) {
-      await client.query("ROLLBACK");
+      await safeRollback(client);
       throw error;
     } finally {
-      client.release();
+      await safeRelease(client);
     }
 
   } catch (error) {
@@ -12572,7 +15415,7 @@ app.get("/api/contacts/:companyId/:contactId/assignments", async (req, res) => {
     } catch (error) {
       throw error;
     } finally {
-      client.release();
+      await safeRelease(client);
     }
 
   } catch (error) {
@@ -12636,6 +15479,11 @@ app.post("/api/v2/messages/video/:companyId/:chatId", async (req, res) => {
       userName
     );
 
+    const contactID = companyId + "-" + chatId.split("@")[0];
+    if (caption) {
+      await findAndUpdateMessageAuthor(caption, contactID, companyId, userName);
+    }
+
     res.json({ success: true, messageId: sentMessage.id._serialized });
   } catch (error) {
     console.error("Error sending video message:", error);
@@ -12667,26 +15515,11 @@ app.post('/api/v2/messages/document/:companyId/:chatId', async (req, res) => {
     let client;
     // 1. Get the client for this company from botMap
     const botData = botMap.get(companyId);
-    console.log("Bot data found:", Boolean(botData));
     if (!botData) {
       console.error('WhatsApp client not found for this company');
       return res.status(404).send('WhatsApp client not found for this company');
     }
     client = botData[phoneIndex].client;
-    console.log("Client status:", {
-      phoneIndex,
-      hasClient: Boolean(client),
-      clientInfo: client ? {
-        info: (() => {
-          try {
-            return client.info;
-          } catch (e) {
-            return "Error getting info";
-          }
-        })(),
-        isConnected: client.isConnected,
-      } : null,
-    });
 
     if (!client) {
       console.error('No active WhatsApp client found for this company');
@@ -12694,13 +15527,7 @@ app.post('/api/v2/messages/document/:companyId/:chatId', async (req, res) => {
     }
 
     // 2. Use wwebjs to send the document message
-    console.log("Preparing to send document message with:", { documentUrl, filename, caption });
     const media = await MessageMedia.fromUrl(documentUrl, { unsafeMime: true, filename: filename });
-    console.log("Media object created:", {
-      mimetype: media.mimetype,
-      filename: media.filename,
-      dataLength: media.data ? media.data.length : 0,
-    });
     const sentMessage = await client.sendMessage(chatId, media, { caption });
     console.log("Message sent successfully:", {
       messageId: sentMessage?.id?._serialized ?? 'no id',
@@ -12710,12 +15537,10 @@ app.post('/api/v2/messages/document/:companyId/:chatId', async (req, res) => {
     let phoneNumber = '+' + (chatId).split('@')[0];
 
     // 3. Save the message to Database
-    console.log("Fetching contact data for phone:", phoneNumber, "companyId:", companyId);
     const contactData = await getContactDataFromDatabaseByPhone(
       phoneNumber,
       companyId
     );
-    console.log("Contact data:", contactData);
 
     await addMessageToPostgres(
       sentMessage,
@@ -12725,7 +15550,11 @@ app.post('/api/v2/messages/document/:companyId/:chatId', async (req, res) => {
       phoneIndex,
       userName
     );
-    console.log("Message saved to database");
+
+    const contactID = companyId + "-" + chatId.split("@")[0];
+    if (caption) {
+      await findAndUpdateMessageAuthor(caption, contactID, companyId, userName);
+    }
 
     res.json({ success: true, messageId: sentMessage.id._serialized });
   } catch (error) {
@@ -12734,116 +15563,133 @@ app.post('/api/v2/messages/document/:companyId/:chatId', async (req, res) => {
   }
 });
 
-app.get("/api/update-phone-indices/:companyId", async (req, res) => {
-  const { companyId } = req.params;
-
+app.post("/api/user/update-phone", async (req, res) => {
   try {
-    console.log(`Starting phone index update for company ${companyId}...`);
+    const { email, phoneIndex } = req.body;
+    console.log("updating phone index", email, phoneIndex);
+    if (!email || phoneIndex === undefined) {
+      return res.status(400).json({ 
+        error: "Email and phoneIndex are required" 
+      });
+    }
 
-    // Get reference to contacts collection
-    const contactsRef = db
-      .collection("companies")
-      .doc(companyId)
-      .collection("contacts");
+    // Validate phoneIndex is a number
+    const validatedPhoneIndex = parseInt(phoneIndex);
+    if (isNaN(validatedPhoneIndex) || validatedPhoneIndex < 0) {
+      return res.status(400).json({ 
+        error: "phoneIndex must be a valid non-negative number" 
+      });
+    }
 
-    // Get all contacts with phoneIndex 2
-    const snapshot = await contactsRef.where("phoneIndex", "==", 2).get();
+    console.log(`Updating phone index for user ${email} to ${validatedPhoneIndex}`);
 
-    let updatedCount = 0;
-    let errors = [];
+    // Update the user's phone field in the users table
+    const updateResult = await sqlDb.query(
+      `UPDATE users 
+       SET phone = $1, last_updated = CURRENT_TIMESTAMP
+       WHERE email = $2
+       RETURNING user_id, name, email, phone, company_id`,
+      [validatedPhoneIndex, email]
+    );
 
-    // Process each contact
-    for (const doc of snapshot.docs) {
+    if (updateResult.rowCount === 0) {
+      return res.status(404).json({ 
+        error: "User not found" 
+      });
+    }
+
+    console.log(`Successfully updated phone index for user ${email} to ${validatedPhoneIndex}`);
+
+    res.json({
+      success: true,
+      message: "Phone index updated successfully",
+      data: {
+        email: updateResult.rows[0].email,
+        name: updateResult.rows[0].name,
+        phoneIndex: updateResult.rows[0].phone,
+        userId: updateResult.rows[0].user_id,
+        companyId: updateResult.rows[0].company_id
+      }
+    });
+
+  } catch (error) {
+    console.error("Error updating user phone index:", error);
+    res.status(500).json({ 
+      error: "Failed to update phone index",
+      details: error.message 
+    });
+  }
+});
+
+app.put("/api/update-phone-name", async (req, res) => {
+  try {
+    const { companyId, phoneIndex, phoneName } = req.body;
+    console.log("Updating phone name:", { companyId, phoneIndex, phoneName });
+
+    if (!companyId || phoneIndex === undefined || phoneName === undefined) {
+      return res.status(400).json({ error: "Company ID, phone index, and phone name are required" });
+    }
+
+    // Fetch current phone_numbers array
+    const companyResult = await sqlDb.query(
+      "SELECT phone_numbers FROM companies WHERE company_id = $1",
+      [companyId]
+    );
+    if (companyResult.rows.length === 0) {
+      return res.status(404).json({ error: "Company not found" });
+    }
+
+    console.log("Raw phone_numbers from database:", companyResult.rows[0].phone_numbers);
+    let phoneNumbers = [];
+    if (companyResult.rows[0].phone_numbers) {
       try {
-        const updateData = {
-          phoneIndex: 0,
-          "last_message.phoneIndex": 0,
-        };
-
-        await contactsRef.doc(doc.id).update(updateData);
-        updatedCount++;
-
-        if (updatedCount % 100 === 0) {
-          console.log(`Processed ${updatedCount} contacts...`);
+        // Accept both stringified array and array
+        if (typeof companyResult.rows[0].phone_numbers === "string") {
+          phoneNumbers = JSON.parse(companyResult.rows[0].phone_numbers);
+        } else if (Array.isArray(companyResult.rows[0].phone_numbers)) {
+          phoneNumbers = companyResult.rows[0].phone_numbers;
         }
-      } catch (docError) {
-        errors.push({
-          contactId: doc.id,
-          error: docError.message,
-        });
+      } catch (e) {
+        phoneNumbers = [];
       }
     }
 
-    const response = {
-      success: true,
-      message: `Update complete for company ${companyId}`,
-      stats: {
-        totalProcessed: snapshot.size,
-        updated: updatedCount,
-        errors: errors.length,
-      },
-    };
+    console.log("Before update - Current array:", phoneNumbers);
+    console.log("Target phoneIndex:", phoneIndex, "New phoneName:", phoneName);
 
-    if (errors.length > 0) {
-      response.errors = errors;
+    // Ensure the array is long enough, only extending if needed
+    while (phoneNumbers.length <= phoneIndex) {
+      phoneNumbers.push("");
     }
+    phoneNumbers[phoneIndex] = phoneName;
 
-    console.log(`Completed updating phone indices for ${companyId}`);
-    res.json(response);
-  } catch (error) {
-    console.error("Error updating phone indices:", error);
-    res.status(500).json({
-      error: "Failed to update phone indices",
-      details: error.message,
-    });
-  }
-});
+    console.log("After update - New array:", phoneNumbers);
 
-app.post("/api/channel/create/:companyID", async (req, res) => {
-  const { companyID } = req.params;
-  const phoneCount = 1;
-
-  try {
-    // Optionally, fetch company info from the database
-    const companyResult = await sqlDb.query(
-      "SELECT * FROM companies WHERE company_id = $1",
-      [companyID]
+    // Update the phone_numbers array in the database
+    await sqlDb.query(
+      "UPDATE companies SET phone_numbers = $1 WHERE company_id = $2",
+      [JSON.stringify(phoneNumbers), companyId]
     );
-    const company = companyResult.rows[0];
+    console.log("Phone name updated successfully:", phoneNumbers);
 
-    // Create the assistant
-    await createAssistant(companyID);
+    res.json({ success: true, message: "Phone name updated successfully", phoneNumbers });
 
-    // Respond to the client immediately
-    res.json({
-      success: true,
-      message: "Channel created successfully. Bot initialization in progress.",
-      companyId: companyID,
-      company: company || null,
-      botStatus: "initializing",
-    });
-
-    // Now initialize the bot in the background
-    initializeBot(companyID, phoneCount)
-      .then(() => {
-        console.log(`Bot initialized for company ${companyID}`);
-      })
-      .catch((error) => {
-        console.error(
-          `Error initializing bot for company ${companyID}:`,
-          error
-        );
-        // Optionally: log to DB or notify admin
-      });
   } catch (error) {
-    console.error("Error creating channel and initializing new bot:", error);
-    res.status(500).json({
-      success: false,
-      error: "Failed to create channel and initialize new bot",
-      details: error.message,
-    });
+    console.error("Error updating phone name:", error);
+    res.status(500).json({ success: false, error: "Failed to update phone name" });
   }
 });
+
+// Add this right after your existing endpoint (around line 12640)
+app.get("/api/debug-routes", (req, res) => {
+  res.json({ 
+    message: "Debug endpoint working",
+    timestamp: new Date().toISOString(),
+    testEndpoint: "/api/user/update-phone should be available"
+  });
+});
+
+
 
 async function copyDirectory(source, target, options = {}) {
   const {
@@ -13058,6 +15904,8 @@ async function initializeBot(botName, phoneCount = 1, specificPhoneIndex) {
 }
 
 // Add new function to manage phone status
+// Around line 15955, replace the second updatePhoneStatus function:
+// Around line 15955, replace the second updatePhoneStatus function:
 async function updatePhoneStatus(
   companyId,
   phoneIndex,
@@ -13065,6 +15913,17 @@ async function updatePhoneStatus(
   metadata = {}
 ) {
   try {
+    // First check if the company exists
+    const companyResult = await sqlDb.query(
+      "SELECT company_id FROM companies WHERE company_id = $1",
+      [companyId]
+    );
+
+    if (companyResult.rows.length === 0) {
+      console.log(`Company ${companyId} not found, skipping phone status update`);
+      return;
+    }
+
     // Get phone number if status is 'ready'
     let phoneNumber = null;
     if (status === 'ready') {
@@ -13074,37 +15933,57 @@ async function updatePhoneStatus(
       }
     }
 
-    await sqlDb.query(
-      `
-      INSERT INTO phone_status (company_id, phone_index, status, last_seen, metadata, updated_at, phone_number)
-      VALUES ($1, $2, $3, CURRENT_TIMESTAMP, $4, CURRENT_TIMESTAMP, $5)
-      ON CONFLICT (company_id, phone_index) DO UPDATE
-      SET status = EXCLUDED.status,
-          last_seen = CURRENT_TIMESTAMP,
-          metadata = EXCLUDED.metadata,
-          updated_at = CURRENT_TIMESTAMP,
-          phone_number = EXCLUDED.phone_number
-      `,
-      [
-        companyId,
-        phoneIndex,
-        status,
-        Object.keys(metadata).length ? JSON.stringify(metadata) : null,
-        phoneNumber,
-      ]
+    // If no phone number is available, use a placeholder or skip
+    if (!phoneNumber) {
+      phoneNumber = `phone_${phoneIndex}`; // Use a placeholder
+    }
+
+    // Check if a record already exists for this company and phone_index
+    const existingResult = await sqlDb.query(
+      "SELECT id FROM phone_status WHERE company_id = $1 AND phone_index = $2",
+      [companyId, phoneIndex.toString()]
     );
-    console.log(
-      `Updated status for ${companyId} Phone ${phoneIndex} to ${status} (SQL)${phoneNumber ? ` with phone number ${phoneNumber}` : ''}`
-    );
-    broadcastStatus(companyId, status, phoneIndex);
+
+    if (existingResult.rows.length > 0) {
+      // Update existing record
+      await sqlDb.query(
+        `
+        UPDATE phone_status 
+        SET phone_number = $1, status = $2, last_seen = CURRENT_TIMESTAMP, 
+            metadata = $3, updated_at = CURRENT_TIMESTAMP
+        WHERE company_id = $4 AND phone_index = $5
+        `,
+        [
+          phoneNumber,
+          status,
+          Object.keys(metadata).length ? JSON.stringify(metadata) : null,
+          companyId,
+          phoneIndex.toString()
+        ]
+      );
+    } else {
+      // Insert new record
+      await sqlDb.query(
+        `
+        INSERT INTO phone_status (company_id, phone_index, phone_number, status, last_seen, metadata, updated_at)
+        VALUES ($1, $2, $3, $4, CURRENT_TIMESTAMP, $5, CURRENT_TIMESTAMP)
+        `,
+        [
+          companyId,
+          phoneIndex.toString(),
+          phoneNumber,
+          status,
+          Object.keys(metadata).length ? JSON.stringify(metadata) : null,
+        ]
+      );
+    }
+    
+    console.log(`Phone status updated for company ${companyId}, phone ${phoneNumber}: ${status}`);
   } catch (error) {
-    console.error(
-      `Error updating phone status in SQL for ${companyId} Phone ${phoneIndex}:`,
-      error
-    );
+    console.error(`Error updating phone status in SQL for ${companyId} Phone ${phoneIndex}:`, error);
+    // Don't throw the error - just log it to prevent cascading failures
   }
 }
-
 const monitoringIntervals = new Map();
 
 function startPhoneMonitoring(botName, phoneIndex) {
@@ -13791,20 +16670,38 @@ function broadcastStatus(botName, status, phoneIndex = 0) {
   }
 
   wss.clients.forEach((client) => {
-    if (client.readyState === WebSocket.OPEN && client.isLogsViewer) {
-      client.send(
-        JSON.stringify({
-          type: "status_update",
-          botName,
-          status,
-          phoneIndex,
-          clientPhone,
-          timestamp: new Date().toISOString(),
-        })
-      );
+    if (client.readyState === WebSocket.OPEN) {
+      // Send to logs viewers
+      if (client.isLogsViewer) {
+        client.send(
+          JSON.stringify({
+            type: "status_update",
+            botName,
+            status,
+            phoneIndex,
+            clientPhone,
+            timestamp: new Date().toISOString(),
+          })
+        );
+      }
+      // Send to status page viewers
+      else if (client.pathname === "/status") {
+        client.send(
+          JSON.stringify({
+            type: "status_update",
+            botName,
+            status,
+            phoneIndex,
+            clientPhone,
+            timestamp: new Date().toISOString(),
+          })
+        );
+      }
     }
   });
 }
+
+// ... existing code ...
 
 async function createAssistant(companyID) {
   const OPENAI_API_KEY = process.env.OPENAIKEY; // Ensure your environment variable is set
@@ -13833,143 +16730,101 @@ async function createAssistant(companyID) {
     );
     const company = companyResult.rows[0];
 
-    // Save the whapiToken to a new document
-    await companiesCollection.doc(companyID).set(
-      {
-        assistantId: assistantId,
-        v2: true,
-      },
-      { merge: true }
+    // Get existing assistant_ids or initialize empty array
+    let existingAssistantIds = [];
+    if (company && company.assistant_ids) {
+      if (Array.isArray(company.assistant_ids)) {
+        existingAssistantIds = company.assistant_ids;
+      } else if (typeof company.assistant_ids === 'string') {
+        try {
+          existingAssistantIds = JSON.parse(company.assistant_ids);
+        } catch (e) {
+          existingAssistantIds = [];
+        }
+      }
+    }
+
+    // Add the new assistant ID to the array
+    existingAssistantIds.push(assistantId);
+
+    // Update the companies table with the new assistant ID
+    await sqlDb.query(
+      `UPDATE companies 
+       SET assistant_ids = $1, 
+           v2 = true,
+           updated_at = CURRENT_TIMESTAMP
+       WHERE company_id = $2`,
+      [JSON.stringify(existingAssistantIds), companyID]
     );
-    return;
+
+    console.log(`Assistant created successfully for company ${companyID}: ${assistantId}`);
+    console.log(`Updated assistant_ids for company ${companyID}:`, existingAssistantIds);
+    
+    return assistantId;
   } catch (error) {
     console.error(
       "Error creating OpenAI assistant:",
       error.response ? error.response.data : error.message
     );
-    res.status(500).json({ error: "Failed to create assistant" });
+    // Don't use res here since this function is called outside of Express context
+    throw error; // Re-throw the error to be handled by the caller
   }
 }
 
+// ... existing code ...
+
+// 1. Modify the main() error handler (around line 15678)
 main().catch((error) => {
   console.error("Error during initialization:", error);
-  process.exit(1);
+  // Don't exit - just log the error and continue
+  console.log("Continuing operation despite initialization error...");
 });
 
-// Handle graceful shutdown
+// 2. Modify the uncaughtException handler (around line 15802)
+process.on("uncaughtException", (error) => {
+  console.error("\n=== Uncaught Exception ===");
+  console.error("Error:", error);
+  // Don't shutdown - just log the error
+  console.log("Continuing operation despite uncaught exception...");
+});
+
+// 3. Modify the unhandledRejection handler (around line 15808)
+process.on("unhandledRejection", (reason, promise) => {
+  console.error("\n=== Unhandled Rejection ===");
+  console.error("Reason:", reason);
+  
+  // Only shutdown if it's a critical error, not database timeouts
+  if (reason.message && reason.message.includes('fetch failed')) {
+    console.error("Database connection error detected - continuing operation");
+    return; // Don't shutdown for database issues
+  }
+  
+  // For other errors, just log and continue instead of shutting down
+  console.log("Continuing operation despite unhandled rejection...");
+});
+
+// 4. Comment out or remove the worker restart logic (around line 15988)
+// Comment out these lines:
+// const { worker: newWorker } = createQueueAndWorker(botId);
+// botWorkers.set(botId, newWorker);
+// console.log(`Worker restarted for bot ${botId}`);
+
+// 5. Modify the graceful shutdown to only exit on manual signals
 process.on("SIGINT", async () => {
   console.log("\n=== Graceful Shutdown Initiated ===");
-
-  try {
-    // 1. Close Queue Workers
-    console.log("Closing queue workers...");
-    const workerShutdownPromises = [];
-    for (const [botId, worker] of botWorkers.entries()) {
-      workerShutdownPromises.push(
-        worker
-          .close()
-          .then(() => console.log(`Queue worker closed for bot ${botId}`))
-          .catch((err) =>
-            console.error(`Error closing queue worker for bot ${botId}:`, err)
-          )
-      );
-    }
-
-    // 2. Close WhatsApp Clients
-    console.log("Closing WhatsApp clients...");
-    const clientShutdownPromises = [];
-
-    for (const [botName, botData] of botMap.entries()) {
-      if (Array.isArray(botData)) {
-        // Multiple clients for this bot
-        for (const { client } of botData) {
-          if (client && typeof client.destroy === "function") {
-            clientShutdownPromises.push(
-              client
-                .destroy()
-                .then(() =>
-                  console.log(`WhatsApp client destroyed for bot ${botName}`)
-                )
-                .catch((err) =>
-                  console.error(
-                    `Error destroying WhatsApp client for bot ${botName}:`,
-                    err
-                  )
-                )
-            );
-
-            // Handle Puppeteer browser cleanup
-            if (client?.pupPage) {
-              clientShutdownPromises.push(
-                client.pupPage
-                  .browser()
-                  .close()
-                  .then(() => console.log(`Browser closed for bot ${botName}`))
-                  .catch((err) =>
-                    console.error(
-                      `Error closing browser for bot ${botName}:`,
-                      err
-                    )
-                  )
-              );
-            }
-          }
-        }
-      } else if (botData?.client?.destroy) {
-        // Single client for this bot
-        clientShutdownPromises.push(
-          botData.client
-            .destroy()
-            .then(() =>
-              console.log(`WhatsApp client destroyed for bot ${botName}`)
-            )
-            .catch((err) =>
-              console.error(
-                `Error destroying WhatsApp client for bot ${botName}:`,
-                err
-              )
-            )
-        );
-      }
-    }
-
-    // 3. Wait for all cleanup operations to complete
-    console.log("Waiting for all cleanup operations...");
-    await Promise.allSettled([
-      ...workerShutdownPromises,
-      ...clientShutdownPromises,
-    ]);
-
-    // 4. Clear all maps and connections
-    botWorkers.clear();
-    botQueues.clear();
-    botMap.clear();
-
-    // 5. Close Redis connection
-    if (connection) {
-      console.log("Closing Redis connection...");
-      await connection.disconnect();
-    }
-
-    console.log("\n=== Cleanup Complete ===");
-    console.log("Workers closed:", botWorkers.size === 0);
-    console.log("Queues cleared:", botQueues.size === 0);
-    console.log("WhatsApp clients cleared:", botMap.size === 0);
-
-    // Small delay to ensure all logs are written
-    await new Promise((resolve) => setTimeout(resolve, 1000));
-
+  // ... existing cleanup code ...
+  
+  // Only exit if it's a manual shutdown
+  if (process.env.MANUAL_SHUTDOWN === 'true') {
     process.exit(0);
-  } catch (error) {
-    console.error("\n=== Shutdown Error ===");
-    console.error("Error Type:", error.name);
-    console.error("Error Message:", error.message);
-    console.error("Stack:", error.stack);
-
-    // Force exit after error
-    process.exit(1);
+  } else {
+    console.log("Shutdown prevented - continuing operation...");
   }
 });
+
+// 6. Modify the shutdown error handler (around line 15792)
+// Replace process.exit(1) with:
+console.log("Shutdown error occurred but continuing operation...");
 
 // Also handle other termination signals
 process.on("SIGTERM", () => {
@@ -13983,12 +16838,19 @@ process.on("uncaughtException", (error) => {
   process.emit("SIGINT");
 });
 
-process.on("unhandledRejection", (reason, promise) => {
-  console.error("\n=== Unhandled Rejection ===");
-  console.error("Reason:", reason);
-  process.emit("SIGINT");
-});
+// Database health check
+async function checkDatabaseHealth() {
+  try {
+    await sql`SELECT 1`;
+    console.log('Database health check: OK');
+  } catch (error) {
+    console.error('Database health check failed:', error.message);
+    // Log but don't crash
+  }
+}
 
+// Run health check every 5 minutes
+setInterval(checkDatabaseHealth, 5 * 60 * 1000);
 // New endpoint to fetch message details from Firebase
 app.get(
   "/api/queue/message-details/:companyId/:messageId",
@@ -14047,7 +16909,7 @@ app.get(
         console.error("Error fetching message details:", error);
         throw error;
       } finally {
-        client.release();
+        await safeRelease(client);
       }
     } catch (error) {
       console.error("Error fetching message details:", error);
@@ -14287,16 +17149,22 @@ app.get("/api/user-company-data", async (req, res) => {
     let tags = [];
     if (companyData.v2) {
       const contactsResult = await sqlDb.getRows(
-        "SELECT DISTINCT jsonb_array_elements(CASE WHEN jsonb_typeof(tags) = 'array' THEN tags ELSE '[]'::jsonb END) as tag_name FROM contacts WHERE company_id = $1",
-        [companyId]
+      "SELECT DISTINCT jsonb_array_elements(CASE WHEN jsonb_typeof(tags) = 'array' THEN tags ELSE '[]'::jsonb END) as tag_name FROM contacts WHERE company_id = $1",
+      [companyId]
       );
 
       const employeeNames = employeeList.map((emp) =>
-        emp.name ? emp.name.trim().toLowerCase() : ""
+      emp.name ? emp.name.trim().toLowerCase() : ""
       );
       tags = contactsResult
-        .map((row) => ({ id: row.tag_name, name: row.tag_name }))
-        .filter((tag) => !employeeNames.includes(tag.name.toLowerCase()));
+      .map((row) => ({ id: row.tag_name, name: row.tag_name }))
+      .filter(
+        (tag) =>
+        typeof tag.name === "string" &&
+        tag.name.trim() !== "" &&
+        tag.name !== "{}" &&
+        !employeeNames.includes(tag.name.toLowerCase())
+      );
     }
 
     // Prepare response - added assistant_id to companyData
@@ -14327,6 +17195,8 @@ app.get("/api/user-company-data", async (req, res) => {
     res.status(500).json({ error: "Failed to fetch data" });
   }
 });
+
+// ... existing code ...
 
 app.get("/api/user-config", async (req, res) => {
   const { email } = req.query;
@@ -14361,12 +17231,26 @@ app.get("/api/user-config", async (req, res) => {
 
     const companyData = companyResult;
 
-    // Get phone count from phone_status table
-    const phoneCountResult = await sqlDb.getRow(
-      "SELECT COUNT(DISTINCT phone_number) as count FROM phone_status WHERE company_id = $1",
-      [companyId]
-    );
-    const phoneCount = phoneCountResult ? phoneCountResult.count : 1;
+    let phoneNamesData = {};
+    let phoneNames = [];
+    if (companyData.phone_numbers) {
+      try {
+        // Accept both stringified array and array
+        if (typeof companyData.phone_numbers === "string") {
+          phoneNames = JSON.parse(companyData.phone_numbers);
+        } else if (Array.isArray(companyData.phone_numbers)) {
+          phoneNames = companyData.phone_numbers;
+        }
+      } catch (e) {
+        phoneNames = [];
+      }
+    }
+    // Always fallback to default names if empty
+    for (let i = 0; i < (companyData.phone_count || 1); i++) {
+      phoneNamesData[i] = phoneNames[i] || `Phone ${i + 1}`;
+    }
+
+    const phoneCount = companyData.phone_count || 1;
 
     // Get employee data
     const employeeResult = await sqlDb.getRows(
@@ -14413,7 +17297,19 @@ app.get("/api/user-config", async (req, res) => {
       );
       tags = contactsResult
         .map((row) => ({ id: row.tag_name, name: row.tag_name }))
-        .filter((tag) => !employeeNames.includes(tag.name.toLowerCase()));
+        .filter((tag) => tag.name && !employeeNames.includes(tag.name.toLowerCase()));
+    }
+
+    let viewEmployeesArr = [];
+    try {
+      if (userData.view_employees) {
+      viewEmployeesArr = typeof userData.view_employees === 'string'
+        ? JSON.parse(userData.view_employees)
+        : userData.view_employees;
+      }
+    } catch (error) {
+      console.error("Error parsing view_employees:", error);
+      viewEmployeesArr = [];
     }
 
     // Prepare response
@@ -14423,13 +17319,14 @@ app.get("/api/user-config", async (req, res) => {
         email: userData.email,
         role: userData.role,
         companyId: userData.company_id,
-        viewEmployee: userData.view_employee,
+        viewEmployees: viewEmployeesArr,
+        phone: userData.phone, // Added selected_phone to userData
       },
       companyData: {
         name: companyData.name,
         plan: companyData.plan,
+        phoneNames: phoneNamesData,
         phoneCount: phoneCount,
-
         v2: companyData.v2,
       },
       employeeList,
@@ -14444,89 +17341,110 @@ app.get("/api/user-config", async (req, res) => {
   }
 });
 
+// ... existing code ...
+
 // Get contacts for a company with authentication
+// ... existing code ...
 app.get("/api/companies/:companyId/contacts", async (req, res) => {
   try {
+
+
     const { email } = req.query;
     const { companyId } = req.params;
     if (!email) {
+      console.log("Missing email in query");
       return res.status(400).json({ error: "Email is required" });
     }
 
     // Get user email from session
     const userEmail = email;
+    console.log("User email:", userEmail);
 
     // Verify user belongs to company
     const userData = await sqlDb.getRow(
       "SELECT role, name FROM users WHERE email = $1 AND company_id = $2 AND active = true",
       [userEmail, companyId]
     );
+   // console.log("User data from DB:", userData);
 
     if (!userData) {
+      console.log("User not authorized for this company");
       return res
         .status(403)
         .json({ error: "Forbidden - User not authorized for this company" });
     }
 
     // Fetch all contacts for the company
-    const contacts = await sqlDb.getRows(
-      `
-      SELECT 
-        c.id,
-        c.contact_id,
-        c.name,
-        c.contact_name,
-        c.phone,
-        c.email,
-        c.chat_id,
-        c.profile,
-        c.profile_pic_url,
-        c.tags,
-        c.created_at,
-        c.last_updated,
-        c.phone_indexes,
-        c.unread_count,
-        c.custom_fields,
-        CASE 
-          WHEN c.chat_id LIKE '%@c.us' THEN true 
-          ELSE false 
-        END as is_individual,
-        (
-          SELECT jsonb_agg(e.name)
-          FROM assignments a
-          JOIN employees e ON a.employee_id = e.employee_id
-          WHERE a.contact_id = c.contact_id 
-          AND a.company_id = c.company_id
-          AND a.status = 'active'
-        ) as assigned_to,
-        (
-          SELECT jsonb_build_object(
-            'chat_id', m.chat_id,
-            'from', m.chat_id,
-            'from_me', m.from_me,
-            'id', m.message_id,
-            'source', '',
-            'status', m.status,
-            'text', jsonb_build_object('body', m.content),
-            'timestamp', EXTRACT(EPOCH FROM m.timestamp)::bigint,
-            'type', m.message_type,
-            'name', m.author
-          )
-          FROM messages m
-          WHERE m.contact_id = c.contact_id
-          AND m.company_id = c.company_id
-          ORDER BY m.timestamp DESC
-          LIMIT 1
-        ) as last_message
-      FROM contacts c
-      WHERE c.company_id = $1
-      ORDER BY c.last_updated DESC
-    `,
-      [companyId]
-    );
+ // Fetch all contacts for the company
+const contacts = await sqlDb.getRows(
+  `
+  SELECT 
+    c.id,
+    c.contact_id,
+    c.name,
+    c.contact_name,
+    c.phone,
+    c.phone_index,
+    c.email,
+    c.chat_id,
+    c.profile,
+    c.profile_pic_url,
+    c.tags,
+    c.created_at,
+    c.last_updated,
+    c.phone_indexes,
+    c.unread_count,
+    c.custom_fields,
+    c.branch,
+    c.expiry_date,
+    c.vehicle_number,
+    c.ic,
+    c.address1,
+    c.company,
+    c.notes,
+    c.last_name,
+    c.points,
+    CASE 
+      WHEN c.chat_id LIKE '%@c.us' THEN true 
+      ELSE false 
+    END as is_individual,
+    (
+      SELECT jsonb_agg(e.name)
+      FROM assignments a
+      JOIN employees e ON a.employee_id = e.employee_id
+      WHERE a.contact_id = c.contact_id 
+      AND a.company_id = c.company_id
+      AND a.status = 'active'
+    ) as assigned_to,
+    (
+      SELECT jsonb_build_object(
+        'chat_id', m.chat_id,
+        'from', m.chat_id,
+        'from_me', m.from_me,
+        'id', m.message_id,
+        'source', '',
+        'status', m.status,
+        'text', jsonb_build_object('body', m.content),
+        'timestamp', EXTRACT(EPOCH FROM m.timestamp)::bigint,
+        'type', m.message_type,
+        'name', m.author
+      )
+      FROM messages m
+      WHERE m.contact_id = c.contact_id
+      AND m.company_id = c.company_id
+      ORDER BY m.timestamp DESC
+      LIMIT 1
+    ) as last_message
+  FROM contacts c
+  WHERE c.company_id = $1
+  ORDER BY c.last_updated DESC
+`,
+  [companyId]
+);
+
 
     // Process contacts to match frontend expectations
-    const processedContacts = contacts.map((contact) => {
+    const processedContacts = contacts.map((contact, idx) => {
       // Parse tags from JSONB if they are a string, or use empty array if null/undefined
       let tags = contact.tags;
       try {
@@ -14536,7 +17454,7 @@ app.get("/api/companies/:companyId/contacts", async (req, res) => {
         // Ensure tags is an array and filter out empty values
         tags = Array.isArray(tags) ? tags.filter((tag) => tag) : [];
       } catch (error) {
-        console.error("Error parsing tags:", error);
+        console.error(`Error parsing tags for contact[${idx}]:`, error, "Raw tags:", contact.tags);
         tags = [];
       }
 
@@ -14548,7 +17466,7 @@ app.get("/api/companies/:companyId/contacts", async (req, res) => {
         }
         phoneIndexes = Array.isArray(phoneIndexes) ? phoneIndexes.filter((v) => v !== undefined && v !== null) : [];
       } catch (error) {
-        console.error("Error parsing phone_indexes:", error);
+        console.error(`Error parsing phone_indexes for contact[${idx}]:`, error, "Raw phone_indexes:", contact.phone_indexes);
         phoneIndexes = [];
       }
 
@@ -14561,11 +17479,11 @@ app.get("/api/companies/:companyId/contacts", async (req, res) => {
         // Ensure assignedTo is an array
         assignedTo = Array.isArray(assignedTo) ? assignedTo : [];
       } catch (error) {
-        console.error("Error parsing assigned_to:", error);
+        console.error(`Error parsing assigned_to for contact[${idx}]:`, error, "Raw assigned_to:", contact.assigned_to);
         assignedTo = [];
       }
 
-      return {
+      const processed = {
         id: contact.id,
         contact_id: contact.contact_id,
         name: contact.name || contact.contact_name || "",
@@ -14575,6 +17493,7 @@ app.get("/api/companies/:companyId/contacts", async (req, res) => {
         profileUrl: contact.profile_pic_url || "",
         profile: contact.profile || {},
         tags: tags,
+        phoneIndex: contact.phone_index || 0,
         phoneIndexes: phoneIndexes,
         assignedTo: assignedTo,
         createdAt: contact.created_at,
@@ -14582,13 +17501,26 @@ app.get("/api/companies/:companyId/contacts", async (req, res) => {
         isIndividual: contact.is_individual,
         last_message: contact.last_message || null,
         unreadCount: contact.unread_count || 0, 
-        customFields: contact.custom_fields || {},  
+        customFields: contact.custom_fields || {},
+        // Add the missing fields
+        branch: contact.branch || null,
+        expiryDate: contact.expiry_date || null,
+        vehicleNumber: contact.vehicle_number || null,
+        ic: contact.ic || null,
+        address1: contact.address1 || null,
+        company: contact.company || null,
+        notes: contact.notes || null,
+        lastName: contact.last_name || null,
+        points: contact.points || 0,
       };
+    //  console.log(`Processed contact[${idx}]:`, processed);
+      return processed;
     });
 
     // Filter contacts based on user role
+   
     const filteredContacts = filterContactsByUserRole(processedContacts, userData.role, userData.name);
-
+   
     res.json({
       success: true,
       total: processedContacts.length,
@@ -14603,6 +17535,7 @@ app.get("/api/companies/:companyId/contacts", async (req, res) => {
     });
   }
 });
+// ... existing code ...
 
 // Function to filter contacts based on user role
 function filterContactsByUserRole(contacts, userRole, userName) {
@@ -14791,15 +17724,28 @@ app.get("/api/user-context", async (req, res) => {
     const companyData = companyResult.rows[0] || {};
     
     // Process phone names
-    const phoneNamesData = {};
     const phoneCount = companyData.phone_count || 0;
-    const apiUrl = companyData.api_url || "https://juta.ngrok.app";
+    const apiUrl = companyData.api_url || "https://juta-dev.ngrok.dev";
     const stopBot = companyData.stopbot || false;
     const stopBots = companyData.stopbots || {};
     
-    for (let i = 0; i < phoneCount; i++) {
-      const phoneName = companyData[`phone_${i + 1}`];
-      phoneNamesData[i] = phoneName || `Phone ${i + 1}`;
+    let phoneNamesData = {};
+    let phoneNames = [];
+    if (companyData.phone_numbers) {
+      try {
+      // Accept both stringified array and array
+      if (typeof companyData.phone_numbers === "string") {
+        phoneNames = JSON.parse(companyData.phone_numbers);
+      } else if (Array.isArray(companyData.phone_numbers)) {
+        phoneNames = companyData.phone_numbers;
+      }
+      } catch (e) {
+      phoneNames = [];
+      }
+    }
+    // Always fallback to default names if empty
+    for (let i = 0; i < (companyData.phone_count || 1); i++) {
+      phoneNamesData[i] = phoneNames[i] || `Phone ${i + 1}`;
     }
 
     // 3. Get all employees for the company
@@ -14816,6 +17762,7 @@ app.get("/api/user-context", async (req, res) => {
       ...userData,
       companyId,
       phoneNames: phoneNamesData,
+      phoneCount: phoneCount,
       employees: employeesResult.rows,
       apiUrl: apiUrl,
       stopBot: stopBot,
@@ -14847,6 +17794,280 @@ app.get("/api/user-details", async (req, res) => {
     }
 
     res.json(result.rows[0]);
+  } catch (error) {
+    console.error("Error fetching user details:", error);
+    res.status(500).json({ error: "Failed to fetch user details" });
+  }
+});
+
+// API endpoint to get all user context data (user + company + employees)
+app.get("/api/user-page-context", async (req, res) => {
+  try {
+    const { email } = req.query;
+
+    if (!email) {
+      return res.status(400).json({ error: "Email is required" });
+    }
+
+    // 1. Get user data from users table
+    const userResult = await sqlDb.query(
+      `SELECT u.*, e.employee_id, e.phone_access, e.weightages, e.image_url, 
+              e.notes, e.quota_leads, e.view_employees, e.invoice_number, e.emp_group
+       FROM users u
+       LEFT JOIN employees e ON u.email = e.email AND u.company_id = e.company_id
+       WHERE u.email = $1 AND u.active = true`, 
+      [email]
+    );
+
+    if (userResult.rows.length === 0) {
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    const userData = userResult.rows[0];
+    const companyId = userData.company_id;
+
+    // 2. Get company data (including phone info)
+    const companyResult = await sqlDb.query(
+      `SELECT * FROM companies WHERE company_id = $1`,
+      [companyId]
+    );
+    
+    const companyData = companyResult.rows[0] || {};
+    
+    let phoneNamesData = {};
+    let phoneNames = [];
+    if (companyData.phone_numbers) {
+      try {
+      // Accept both stringified array and array
+      if (typeof companyData.phone_numbers === "string") {
+        phoneNames = JSON.parse(companyData.phone_numbers);
+      } else if (Array.isArray(companyData.phone_numbers)) {
+        phoneNames = companyData.phone_numbers;
+      }
+      } catch (e) {
+      phoneNames = [];
+      }
+    }
+    // Always fallback to default names if empty
+    for (let i = 0; i < (companyData.phone_count || 1); i++) {
+      phoneNamesData[i] = phoneNames[i] || `Phone ${i + 1}`;
+    }
+    console.log("Phone names data:", phoneNamesData);
+
+    // 3. Get all employees for the company
+    const employeesResult = await sqlDb.query(
+      `SELECT 
+        id, name, email, role, employee_id, phone_number, assigned_contacts, image_url, view_employees, emp_group, phone_access, weightages
+       FROM employees 
+       WHERE company_id = $1 AND active = true
+       ORDER BY role, name`,
+      [companyId]
+    );
+
+    // Format employees data
+    const employeeListData = employeesResult.rows.map(employee => {
+      let phoneAccess = {};
+      let weightages = {};
+      let viewEmployees = [];
+      
+      // Parse JSON fields safely
+      try {
+        if (employee.phone_access) {
+          phoneAccess = typeof employee.phone_access === 'string' 
+            ? JSON.parse(employee.phone_access) 
+            : employee.phone_access;
+        }
+      } catch (error) {
+        console.error("Error parsing phone_access for employee:", employee.email, error);
+        phoneAccess = {};
+      }
+      
+      try {
+        if (employee.weightages) {
+          weightages = typeof employee.weightages === 'string' 
+            ? JSON.parse(employee.weightages) 
+            : employee.weightages;
+        }
+      } catch (error) {
+        console.error("Error parsing weightages for employee:", employee.email, error);
+        weightages = {};
+      }
+      
+      try {
+        if (employee.view_employees) {
+          viewEmployees = typeof employee.view_employees === 'string' 
+            ? JSON.parse(employee.view_employees) 
+            : employee.view_employees;
+        }
+      } catch (error) {
+        console.error("Error parsing view_employees for employee:", employee.email, error);
+        viewEmployees = [];
+      }
+      
+      return {
+        id: employee.id,
+        name: employee.name,
+        email: employee.email || employee.id,
+        role: employee.role,
+        employeeId: employee.employee_id,
+        phoneNumber: employee.phone_number,
+        assignedContacts: employee.assigned_contacts || 0,
+        imageUrl: employee.image_url || "",
+        viewEmployees: viewEmployees,
+        empGroup: employee.emp_group || "",
+        phoneAccess: phoneAccess,
+        weightages: weightages
+      };
+    });
+
+    // Parse current user's JSON fields
+    let currentUserPhoneAccess = {};
+    let currentUserWeightages = {};
+    let currentUserViewEmployees = [];
+    
+    try {
+      if (userData.phone_access) {
+        currentUserPhoneAccess = typeof userData.phone_access === 'string' 
+          ? JSON.parse(userData.phone_access) 
+          : userData.phone_access;
+      }
+    } catch (error) {
+      console.error("Error parsing current user phone_access:", error);
+      currentUserPhoneAccess = {};
+    }
+    
+    try {
+      if (userData.weightages) {
+        currentUserWeightages = typeof userData.weightages === 'string' 
+          ? JSON.parse(userData.weightages) 
+          : userData.weightages;
+      }
+    } catch (error) {
+      console.error("Error parsing current user weightages:", error);
+      currentUserWeightages = {};
+    }
+    
+    try {
+      if (userData.view_employees) {
+        currentUserViewEmployees = typeof userData.view_employees === 'string' 
+          ? JSON.parse(userData.view_employees) 
+          : userData.view_employees;
+      }
+    } catch (error) {
+      console.error("Error parsing current user view_employees:", error);
+      currentUserViewEmployees = [];
+    }
+
+    // Return combined data
+    res.json({
+      companyId,
+      role: userData.role,
+      email: userData.email,
+      name: userData.name,
+      phoneAccess: currentUserPhoneAccess,
+      weightages: currentUserWeightages,
+      viewEmployees: currentUserViewEmployees,
+      phoneNames: phoneNamesData,
+      employees: employeeListData,
+      companyData: {
+        phoneCount: phoneNames.length || 1,
+        ghl_accessToken: companyData.ghl_accesstoken,
+        apiUrl: companyData.api_url || "https://juta.ngrok.app",
+        v2: companyData.v2,
+        whapiToken: companyData.whapi_token,
+        stopBot: companyData.stopbot || false,
+        stopBots: companyData.stopbots || {}
+      }
+    });
+  } catch (error) {
+    console.error("Error fetching user context:", error);
+    res.status(500).json({ error: "Failed to fetch user context" });
+  }
+});
+
+// API endpoint to get detailed user data
+app.get("/api/user-page-details", async (req, res) => {
+  try {
+    const { id } = req.query; // This is the email
+
+    if (!id) {
+      return res.status(400).json({ error: "User ID (email) is required" });
+    }
+
+    // Get user and employee data with a LEFT JOIN
+    const query = `
+      SELECT u.name, u.phone, u.role, u.company_id, u.email, e.phone_number,
+             e.employee_id, e.phone_access, e.weightages, e.image_url, 
+             e.notes, e.quota_leads, e.view_employees, e.invoice_number, e.emp_group
+      FROM users u
+      LEFT JOIN employees e ON u.email = e.email AND u.company_id = e.company_id
+      WHERE u.email = $1 AND u.active = true
+    `;
+    const result = await sqlDb.query(query, [id]);
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    const userData = result.rows[0];
+    
+    // Parse JSON fields safely
+    let phoneAccess = {};
+    let weightages = {};
+    let viewEmployees = [];
+    
+    try {
+      if (userData.phone_access) {
+        phoneAccess = typeof userData.phone_access === 'string' 
+          ? JSON.parse(userData.phone_access) 
+          : userData.phone_access;
+      }
+    } catch (error) {
+      console.error("Error parsing phone_access:", error);
+      phoneAccess = {};
+    }
+    
+    try {
+      if (userData.weightages) {
+        weightages = typeof userData.weightages === 'string' 
+          ? JSON.parse(userData.weightages) 
+          : userData.weightages;
+      }
+    } catch (error) {
+      console.error("Error parsing weightages:", error);
+      weightages = {};
+    }
+    
+    try {
+      if (userData.view_employees) {
+        viewEmployees = typeof userData.view_employees === 'string' 
+          ? JSON.parse(userData.view_employees) 
+          : userData.view_employees;
+      }
+    } catch (error) {
+      console.error("Error parsing view_employees:", error);
+      viewEmployees = [];
+    }
+    
+    // Format the response to match the frontend expectations
+    const response = {
+      name: userData.name,
+      phoneNumber: userData.phone_number,
+      email: userData.email,
+      role: userData.role,
+      companyId: userData.company_id,
+      employeeId: userData.employee_id,
+      phone_access: phoneAccess,
+      weightages: weightages,
+      imageUrl: userData.image_url,
+      notes: userData.notes,
+      quotaLeads: userData.quota_leads || 0,
+      viewEmployees: viewEmployees,
+      invoiceNumber: userData.invoice_number,
+      group: userData.emp_group
+    };
+
+    res.json(response);
   } catch (error) {
     console.error("Error fetching user details:", error);
     res.status(500).json({ error: "Failed to fetch user details" });
@@ -15164,6 +18385,94 @@ app.delete("/api/quick-reply-categories", async (req, res) => {
   }
 });
 
+// Get AI settings
+app.get("/api/ai-settings", async (req, res) => {
+  try {
+    const { companyId } = req.query;
+    if (!companyId) {
+      return res.status(400).json({ error: "companyId is required" });
+    }
+    const result = await sqlDb.query(
+      `SELECT setting_key, setting_value 
+       FROM settings 
+       WHERE company_id = $1 AND setting_type = 'messaging' AND setting_key IN ('aiDelay', 'autoResponse')`,
+      [companyId]
+    );
+    const settings = {};
+    result.rows.forEach(row => {
+      try {
+        const parsed = typeof row.setting_value === "string"
+          ? JSON.parse(row.setting_value)
+          : row.setting_value;
+        settings[row.setting_key] = parsed.value;
+      } catch {
+        settings[row.setting_key] = row.setting_value;
+      }
+    });
+    res.json({ settings });
+  } catch (error) {
+    console.error("Error fetching AI settings:", error);
+    res.status(500).json({ error: "Failed to fetch AI settings" });
+  }
+});
+
+// Update AI settings
+app.put("/api/ai-settings", async (req, res) => {
+  try {
+    const { companyId, settings } = req.body;
+    if (!companyId || typeof settings !== "object" || !settings) {
+      return res.status(400).json({ error: "companyId and settings object are required" });
+    }
+    const allowedKeys = ["aiDelay", "autoResponse"];
+    const updates = [];
+    for (const key of allowedKeys) {
+      if (key in settings) {
+        // First, check if the entry exists
+        const checkResult = await sqlDb.query(
+          `SELECT id FROM settings WHERE company_id = $1 AND setting_type = 'messaging' AND setting_key = $2`,
+          [companyId, key]
+        );
+        if (checkResult.rows.length > 0) {
+          // Exists, update
+          updates.push(sqlDb.query(
+            `UPDATE settings SET setting_value = $1, last_updated = CURRENT_TIMESTAMP
+             WHERE company_id = $2 AND setting_type = 'messaging' AND setting_key = $3
+             RETURNING setting_key, setting_value`,
+            [JSON.stringify({ value: settings[key] }), companyId, key]
+          ));
+        } else {
+          // Doesn't exist, insert
+          updates.push(sqlDb.query(
+            `INSERT INTO settings (company_id, setting_type, setting_key, setting_value, last_updated, created_at)
+             VALUES ($1, 'messaging', $2, $3, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+             RETURNING setting_key, setting_value`,
+            [companyId, key, JSON.stringify({ value: settings[key] })]
+          ));
+        }
+      }
+    }
+    const results = await Promise.all(updates);
+    const responseSettings = {};
+    results.forEach(r => {
+      if (r.rows.length > 0) {
+        const row = r.rows[0];
+        try {
+          const parsed = typeof row.setting_value === "string"
+            ? JSON.parse(row.setting_value)
+            : row.setting_value;
+          responseSettings[row.setting_key] = parsed.value;
+        } catch {
+          responseSettings[row.setting_key] = row.setting_value;
+        }
+      }
+    });
+    res.json({ success: true, settings: responseSettings });
+  } catch (error) {
+    console.error("Error updating AI settings:", error);
+    res.status(500).json({ error: "Failed to update AI settings" });
+  }
+});
+
 // API endpoint to get company groups
 app.get("/api/company-groups", async (req, res) => {
   try {
@@ -15312,5 +18621,899 @@ app.post("/api/company/update-stopbot", async (req, res) => {
   } catch (error) {
     console.error("Error updating stopbot:", error);
     res.status(500).json({ error: "Failed to update stopbot", details: error.message });
+  }
+});
+
+
+// Get reminder settings
+app.get("/api/reminder-settings", async (req, res) => {
+  try {
+    const { email } = req.query;
+    if (!email) {
+      return res.status(400).json({ error: "Email is required" });
+    }
+
+    const user = await sqlDb.getRow("SELECT company_id FROM users WHERE email = $1", [email]);
+    if (!user) {
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    // Get reminder settings from settings table
+    const settingsResult = await sqlDb.getRow(
+      "SELECT setting_value FROM settings WHERE company_id = $1 AND setting_type = 'config' AND setting_key = 'reminder'",
+      [user.company_id]
+    );
+
+    let reminderSettings = [];
+    if (settingsResult && settingsResult.setting_value) {
+      reminderSettings = Array.isArray(settingsResult.setting_value) 
+        ? settingsResult.setting_value 
+        : [settingsResult.setting_value];
+    } else {
+      // Return default reminder settings
+      reminderSettings = [{
+        enabled: true,
+        hours_before: 24,
+        message_template: "Reminder: You have an appointment scheduled for {datetime}",
+        selected_employees: [],
+        recipient_type: "contacts"
+      }];
+    }
+
+    res.json({
+      company_id: user.company_id,
+      reminders: reminderSettings
+    });
+  } catch (error) {
+    console.error("Error fetching reminder settings:", error);
+    res.status(500).json({ error: "Failed to fetch reminder settings" });
+  }
+});
+
+// Update reminder settings
+app.put("/api/reminder-settings", async (req, res) => {
+  try {
+    const { email, reminders } = req.body;
+    if (!email) {
+      return res.status(400).json({ error: "Email is required" });
+    }
+
+    if (!Array.isArray(reminders)) {
+      return res.status(400).json({ error: "Reminders must be an array" });
+    }
+
+    const user = await sqlDb.getRow("SELECT company_id FROM users WHERE email = $1", [email]);
+    if (!user) {
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    // Check if setting exists
+    const existingSetting = await sqlDb.getRow(
+      "SELECT id FROM settings WHERE company_id = $1 AND setting_type = 'config' AND setting_key = 'reminder'",
+      [user.company_id]
+    );
+
+    if (existingSetting) {
+      // Update existing setting
+      await sqlDb.query(
+        "UPDATE settings SET setting_value = $1, last_updated = CURRENT_TIMESTAMP WHERE id = $2",
+        [JSON.stringify(reminders), existingSetting.id]
+      );
+    } else {
+      // Insert new setting
+      await sqlDb.query(
+        "INSERT INTO settings (company_id, setting_type, setting_key, setting_value, created_at, last_updated) VALUES ($1, $2, $3, $4, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+        [user.company_id, 'config', 'reminder', JSON.stringify(reminders)]
+      );
+    }
+
+    res.json({
+      company_id: user.company_id,
+      reminders: reminders
+    });
+  } catch (error) {
+    console.error("Error updating reminder settings:", error);
+    res.status(500).json({ error: "Failed to update reminder settings" });
+  }
+});
+
+// Get all appointments for a company
+app.get("/api/appointments", async (req, res) => {
+  try {
+    const { email, employeeId } = req.query;
+    if (!email) {
+      return res.status(400).json({ error: "Email is required" });
+    }
+
+    const user = await sqlDb.getRow("SELECT company_id FROM users WHERE email = $1", [email]);
+    if (!user) {
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    let query = `
+      SELECT 
+        a.id,
+        a.appointment_id,
+        a.title,
+        a.description as details,
+        a.scheduled_time as "startTime",
+        (a.scheduled_time + (COALESCE(a.duration_minutes, 60) * interval '1 minute')) as "endTime",
+        a.status as "appointmentStatus",
+        a.created_at as "dateAdded",
+        a.metadata,
+        a.staff_assigned as staff,
+        c.name as contact_name,
+        c.phone as contact_phone,
+        c.email as contact_email,
+        c.contact_id,
+        '' as address,
+        '#51484f' as color,
+        '[]' as tags
+      FROM appointments a
+      LEFT JOIN contacts c ON a.contact_id = c.contact_id AND a.company_id = c.company_id
+      WHERE a.company_id = $1
+    `;
+    
+    const params = [user.company_id];
+    
+    if (employeeId) {
+      query += ` AND (a.staff_assigned ? $2 OR a.metadata->'userEmail' = $2)`;
+      params.push(employeeId);
+    }
+    
+    query += ` ORDER BY a.scheduled_time DESC`;
+
+    const result = await sqlDb.query(query, params);
+    
+    // Transform the data to match the calendar component's expected format
+    const appointments = result.rows.map(appointment => ({
+      id: appointment.id,
+      title: appointment.title || 'Untitled Appointment',
+      startTime: appointment.startTime,
+      endTime: appointment.endTime,
+      address: appointment.address || '',
+      appointmentStatus: appointment.appointmentStatus || 'scheduled',
+      staff: appointment.staff || [],
+      tags: [],
+      color: appointment.color,
+      dateAdded: appointment.dateAdded,
+      contacts: appointment.contact_id ? [{
+        id: appointment.contact_id,
+        name: appointment.contact_name || 'Unknown',
+        phone: appointment.contact_phone || '',
+        email: appointment.contact_email || ''
+      }] : [],
+      details: appointment.details || '',
+      meetLink: ''
+    }));
+
+    res.json({ appointments });
+  } catch (error) {
+    console.error("Error fetching appointments:", error);
+    res.status(500).json({ error: "Failed to fetch appointments" });
+  }
+});
+
+// Get appointment tags - redirecting to existing endpoint
+app.get("/api/appointment-tags", async (req, res) => {
+  try {
+    const { email } = req.query;
+    if (!email) {
+      return res.status(400).json({ error: "Email is required" });
+    }
+
+    const user = await sqlDb.getRow("SELECT company_id FROM users WHERE email = $1", [email]);
+    if (!user) {
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    // Redirect to the existing company tags endpoint
+    const response = await fetch(`${req.protocol}://${req.get('host')}/api/companies/${user.company_id}/tags`);
+    const data = await response.json();
+    res.json(data);
+  } catch (error) {
+    console.error("Error fetching appointment tags:", error);
+    res.status(500).json({ error: "Failed to fetch appointment tags" });
+  }
+});
+
+app.get("/api/company-data-user", async (req, res) => {
+  try {
+    const { email } = req.query;
+    if (!email) {
+      return res.status(400).json({ error: "Email is required" });
+    }
+
+    const user = await sqlDb.getRow("SELECT company_id FROM users WHERE email = $1", [email]);
+    if (!user) {
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    const company = await sqlDb.getRow(
+      "SELECT * FROM companies WHERE company_id = $1",
+      [user.company_id]
+    );
+
+    if (!company) {
+      return res.status(404).json({ error: "Company not found" });
+    }
+
+    res.json(company);
+  } catch (error) {
+    console.error("Error fetching company data:", error);
+    res.status(500).json({ error: "Failed to fetch company data" });
+  }
+});
+
+app.get("/api/employees", async (req, res) => {
+  try {
+    const { email } = req.query;
+    if (!email) {
+      return res.status(400).json({ error: "Email is required" });
+    }
+
+    // Redirect to the existing user-context endpoint which includes employee data
+    const response = await fetch(`${req.protocol}://${req.get('host')}/api/user-context?email=${encodeURIComponent(email)}`);
+    const data = await response.json();
+    
+    // Extract and return employee information
+    res.json({
+      employees: data.employees || [],
+      userRole: data.userRole,
+      companyId: data.companyId
+    });
+  } catch (error) {
+    console.error("Error fetching employees:", error);
+    res.status(500).json({ error: "Failed to fetch employees" });
+  }
+});
+
+app.post("/api/send-whatsapp-notification", async (req, res) => {
+  try {
+    const { email, contacts, message, appointmentDetails } = req.body;
+    
+    if (!email || !contacts || !message) {
+      return res.status(400).json({ error: "Email, contacts, and message are required" });
+    }
+
+    const user = await sqlDb.getRow("SELECT company_id FROM users WHERE email = $1", [email]);
+    if (!user) {
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    const results = [];
+    
+    // Send notification to each contact
+    for (const contact of contacts) {
+      if (contact.phone) {
+        try {
+          // Clean phone number (remove any non-digit characters except +)
+          const cleanPhone = contact.phone.replace(/[^\d+]/g, '');
+          const chatId = cleanPhone.startsWith('+') ? cleanPhone : `+${cleanPhone}`;
+          
+          // Use the existing v2 messages API
+          const response = await fetch(`${req.protocol}://${req.get('host')}/api/v2/messages/text/${user.company_id}/${encodeURIComponent(chatId)}`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+              message: message,
+              phoneIndex: 0 // Default to first phone
+            })
+          });
+
+          if (response.ok) {
+            results.push({
+              contact: contact.name || contact.phone,
+              phone: contact.phone,
+              status: 'sent',
+              message: 'Notification sent successfully'
+            });
+          } else {
+            results.push({
+              contact: contact.name || contact.phone,
+              phone: contact.phone,
+              status: 'failed',
+              message: 'Failed to send notification'
+            });
+          }
+        } catch (error) {
+          console.error(`Error sending notification to ${contact.phone}:`, error);
+          results.push({
+            contact: contact.name || contact.phone,
+            phone: contact.phone,
+            status: 'error',
+            message: error.message
+          });
+        }
+      } else {
+        results.push({
+          contact: contact.name || 'Unknown',
+          phone: 'N/A',
+          status: 'skipped',
+          message: 'No phone number available'
+        });
+      }
+    }
+
+    res.json({
+      success: true,
+      message: 'Notification process completed',
+      results: results
+    });
+  } catch (error) {
+    console.error("Error sending WhatsApp notifications:", error);
+    res.status(500).json({ error: "Failed to send WhatsApp notifications" });
+  }
+});
+
+// Create appointment
+app.post("/api/appointments", async (req, res) => {
+  try {
+    // Accept all fields from request body
+    const requestData = { ...req.body };
+    console.log('Received appointment request data:', requestData);
+    
+    // Extract userEmail for authentication
+    const email = requestData.userEmail;
+    if (!email) {
+      return res.status(400).json({ error: "userEmail is required for authentication" });
+    }
+
+    const user = await sqlDb.getRow("SELECT company_id FROM users WHERE email = $1", [email]);
+    if (!user) {
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    // Define schema fields that map directly to database columns
+    const schemaFields = {
+      appointment_id: null,
+      company_id: user.company_id,
+      contact_id: null,
+      title: null,
+      description: null,
+      scheduled_time: null,
+      duration_minutes: null,
+      status: 'scheduled', // default status
+      metadata: {},
+      staff_assigned: [],
+      appointment_type: 'general' // default type
+    };
+
+    // Map common frontend field names to schema fields
+    const fieldMappings = {
+      // Frontend field -> Schema field
+      startTime: 'scheduled_time',
+      start_time: 'scheduled_time',
+      endTime: null, // Will be used to calculate duration_minutes
+      end_time: null, // Will be used to calculate duration_minutes
+      details: 'description',
+      description: 'description',
+      appointmentStatus: 'status',
+      appointmentType: 'appointment_type',
+      staff: 'staff_assigned',
+      contacts: 'contact_id' // Special handling needed
+    };
+
+    // Process each field from request
+    const metadataFields = {};
+    
+    for (const [key, value] of Object.entries(requestData)) {
+      if (key === 'userEmail') continue; // Skip auth field
+      
+      // Check if field has a direct mapping
+      if (fieldMappings.hasOwnProperty(key)) {
+        const mappedField = fieldMappings[key];
+        if (mappedField) {
+          schemaFields[mappedField] = value;
+        }
+        // Special handling for endTime/end_time to calculate duration
+        if ((key === 'endTime' || key === 'end_time') && value && schemaFields.scheduled_time) {
+          const startDate = new Date(schemaFields.scheduled_time);
+          const endDate = new Date(value);
+          schemaFields.duration_minutes = Math.round((endDate.getTime() - startDate.getTime()) / (1000 * 60));
+        }
+      }
+      // Check if field exists directly in schema
+      else if (schemaFields.hasOwnProperty(key)) {
+        schemaFields[key] = value;
+      }
+      // Everything else goes to metadata
+      else {
+        metadataFields[key] = value;
+      }
+    }
+
+    // Handle contacts field - extract contact_id
+    if (requestData.contacts) {
+      if (Array.isArray(requestData.contacts) && requestData.contacts.length > 0) {
+        schemaFields.contact_id = requestData.contacts[0].id || requestData.contacts[0].contact_id;
+      } else if (typeof requestData.contacts === 'string') {
+        schemaFields.contact_id = requestData.contacts;
+      } else {
+        schemaFields.contact_id = null;
+      }
+    }
+
+    // Handle staff_assigned as JSON
+    if (schemaFields.staff_assigned && !Array.isArray(schemaFields.staff_assigned)) {
+      schemaFields.staff_assigned = [schemaFields.staff_assigned];
+    }
+
+    // Generate appointment_id if not provided
+    if (!schemaFields.appointment_id) {
+      schemaFields.appointment_id = require('crypto').randomUUID();
+    }
+
+    // Calculate duration if not set but we have start and end times
+    if (!schemaFields.duration_minutes && schemaFields.scheduled_time && (requestData.endTime || requestData.end_time)) {
+      const startDate = new Date(schemaFields.scheduled_time);
+      const endDate = new Date(requestData.endTime || requestData.end_time);
+      schemaFields.duration_minutes = Math.round((endDate.getTime() - startDate.getTime()) / (1000 * 60));
+    }
+
+    // Validate required fields
+    if (!schemaFields.title || !schemaFields.scheduled_time) {
+      return res.status(400).json({ error: "title and scheduled_time (or startTime) are required" });
+    }
+
+    // Ensure contact_id is null if empty
+    schemaFields.contact_id = schemaFields.contact_id && String(schemaFields.contact_id).trim() !== '' ? schemaFields.contact_id : null;
+
+    // Merge additional metadata
+    schemaFields.metadata = { ...metadataFields, ...schemaFields.metadata };
+
+    console.log('Creating appointment with schema fields:', {
+      appointment_id: schemaFields.appointment_id,
+      company_id: schemaFields.company_id,
+      contact_id: schemaFields.contact_id,
+      title: schemaFields.title,
+      appointment_type: schemaFields.appointment_type,
+      status: schemaFields.status
+    });
+
+    const result = await sqlDb.query(`
+      INSERT INTO appointments (
+        appointment_id, company_id, contact_id, title, description, 
+        scheduled_time, duration_minutes, status, metadata, staff_assigned, appointment_type
+      )
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+      RETURNING *
+    `, [
+      schemaFields.appointment_id,
+      schemaFields.company_id,
+      schemaFields.contact_id,
+      schemaFields.title,
+      schemaFields.description,
+      schemaFields.scheduled_time,
+      schemaFields.duration_minutes,
+      schemaFields.status,
+      JSON.stringify(schemaFields.metadata),
+      JSON.stringify(schemaFields.staff_assigned),
+      schemaFields.appointment_type
+    ]);
+
+    // Transform response to match calendar component expectations
+    const appointment = result.rows[0];
+    const transformedAppointment = {
+      id: appointment.id,
+      title: appointment.title,
+      startTime: appointment.scheduled_time,
+      endTime: appointment.duration_minutes ? 
+        new Date(new Date(appointment.scheduled_time).getTime() + (appointment.duration_minutes * 60000)) : 
+        appointment.scheduled_time,
+      address: appointment.metadata?.location || appointment.metadata?.address || '',
+      appointmentStatus: appointment.status,
+      staff: appointment.staff_assigned || [],
+      tags: appointment.metadata?.tags || [],
+      color: appointment.metadata?.color || '#51484f',
+      dateAdded: appointment.created_at,
+      contacts: requestData.contacts || [],
+      details: appointment.description || '',
+      meetLink: appointment.metadata?.meetLink || '',
+      appointmentType: appointment.appointment_type,
+      ...appointment.metadata // Include all metadata fields in response
+    };
+
+    res.json(transformedAppointment);
+  } catch (error) {
+    console.error("Error creating appointment:", error);
+    res.status(500).json({ error: "Failed to create appointment", details: error.message });
+  }
+});
+
+// Update appointment
+app.put("/api/appointments/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+    // Accept all fields from request body
+    const requestData = { ...req.body };
+    console.log('Received appointment update request data:', requestData);
+
+    // Extract userEmail for authentication
+    const email = requestData.userEmail || requestData.email;
+    if (!email) {
+      return res.status(400).json({ error: "userEmail or email is required for authentication" });
+    }
+
+    const user = await sqlDb.getRow("SELECT company_id FROM users WHERE email = $1", [email]);
+    if (!user) {
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    // Get existing appointment to merge metadata
+    const existingAppointment = await sqlDb.getRow(
+      "SELECT * FROM appointments WHERE id = $1 AND company_id = $2",
+      [id, user.company_id]
+    );
+    
+    if (!existingAppointment) {
+      return res.status(404).json({ error: "Appointment not found" });
+    }
+
+    // Define schema fields that map directly to database columns
+    const updateFields = {};
+    
+    // Map common frontend field names to schema fields
+    const fieldMappings = {
+      startTime: 'scheduled_time',
+      start_time: 'scheduled_time',
+      endTime: null, // Will be used to calculate duration_minutes
+      end_time: null, // Will be used to calculate duration_minutes
+      details: 'description',
+      description: 'description',
+      appointmentStatus: 'status',
+      appointmentType: 'appointment_type',
+      staff: 'staff_assigned',
+      contacts: 'contact_id' // Special handling needed
+    };
+
+    // Process each field from request
+    const metadataFields = { ...(existingAppointment.metadata || {}) };
+    let endTime = null;
+    
+    for (const [key, value] of Object.entries(requestData)) {
+      if (key === 'userEmail' || key === 'email') continue; // Skip auth fields
+      
+      // Check if field has a direct mapping
+      if (fieldMappings.hasOwnProperty(key)) {
+        const mappedField = fieldMappings[key];
+        if (mappedField) {
+          updateFields[mappedField] = value;
+        }
+        // Store endTime for duration calculation
+        if (key === 'endTime' || key === 'end_time') {
+          endTime = value;
+        }
+      }
+      // Check if field exists directly in schema
+      else if (['appointment_id', 'contact_id', 'title', 'description', 'scheduled_time', 'duration_minutes', 'status', 'staff_assigned', 'appointment_type'].includes(key)) {
+        updateFields[key] = value;
+      }
+      // Everything else goes to metadata
+      else {
+        metadataFields[key] = value;
+      }
+    }
+
+    // Handle contacts field - extract contact_id
+    if (requestData.contacts) {
+      if (Array.isArray(requestData.contacts) && requestData.contacts.length > 0) {
+        updateFields.contact_id = requestData.contacts[0].id || requestData.contacts[0].contact_id;
+      } else if (typeof requestData.contacts === 'string') {
+        updateFields.contact_id = requestData.contacts;
+      } else {
+        updateFields.contact_id = null;
+      }
+    }
+
+    // Calculate duration if we have start time and end time
+    if ((updateFields.scheduled_time || existingAppointment.scheduled_time) && endTime) {
+      const startDate = new Date(updateFields.scheduled_time || existingAppointment.scheduled_time);
+      const endDate = new Date(endTime);
+      updateFields.duration_minutes = Math.round((endDate.getTime() - startDate.getTime()) / (1000 * 60));
+    }
+
+    // Handle staff_assigned as JSON
+    if (updateFields.staff_assigned && !Array.isArray(updateFields.staff_assigned)) {
+      updateFields.staff_assigned = [updateFields.staff_assigned];
+    }
+
+    // Ensure contact_id is null if empty
+    if (updateFields.contact_id !== undefined) {
+      updateFields.contact_id = updateFields.contact_id && String(updateFields.contact_id).trim() !== '' ? updateFields.contact_id : null;
+    }
+
+    // Always update metadata with merged fields
+    updateFields.metadata = metadataFields;
+
+    // Build the update query dynamically
+    const updateFieldsArray = [];
+    const updateValues = [];
+    let paramIndex = 1;
+
+    for (const [field, value] of Object.entries(updateFields)) {
+      updateFieldsArray.push(`${field} = $${paramIndex++}`);
+      if (field === 'metadata' || field === 'staff_assigned') {
+        updateValues.push(JSON.stringify(value));
+      } else {
+        updateValues.push(value);
+      }
+    }
+
+    if (updateFieldsArray.length === 0) {
+      return res.status(400).json({ error: "No fields to update" });
+    }
+
+    updateValues.push(id, user.company_id);
+
+    console.log('Updating appointment with fields:', Object.keys(updateFields));
+
+    const result = await sqlDb.query(`
+      UPDATE appointments SET
+        ${updateFieldsArray.join(', ')}
+      WHERE id = $${paramIndex++} AND company_id = $${paramIndex++}
+      RETURNING *
+    `, updateValues);
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: "Appointment not found" });
+    }
+
+    // Transform response to match calendar component expectations
+    const appointment = result.rows[0];
+    const transformedAppointment = {
+      id: appointment.id,
+      title: appointment.title,
+      startTime: appointment.scheduled_time,
+      endTime: appointment.duration_minutes ? 
+        new Date(new Date(appointment.scheduled_time).getTime() + (appointment.duration_minutes * 60000)) : 
+        appointment.scheduled_time,
+      address: appointment.metadata?.location || appointment.metadata?.address || '',
+      appointmentStatus: appointment.status,
+      staff: appointment.staff_assigned || [],
+      tags: appointment.metadata?.tags || [],
+      color: appointment.metadata?.color || '#51484f',
+      dateAdded: appointment.created_at,
+      contacts: requestData.contacts || [],
+      details: appointment.description || '',
+      meetLink: appointment.metadata?.meetLink || '',
+      appointmentType: appointment.appointment_type,
+      ...appointment.metadata // Include all metadata fields in response
+    };
+
+    res.json(transformedAppointment);
+  } catch (error) {
+    console.error("Error updating appointment:", error);
+    res.status(500).json({ error: "Failed to update appointment", details: error.message });
+  }
+});
+
+// Get specific appointment
+app.get("/api/appointments/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { email } = req.query;
+
+    if (!email) {
+      return res.status(400).json({ error: "Email is required" });
+    }
+
+    const user = await sqlDb.getRow("SELECT company_id FROM users WHERE email = $1", [email]);
+    if (!user) {
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    const appointment = await sqlDb.getRow(`
+      SELECT 
+        a.*,
+        c.name as contact_name, 
+        c.phone as contact_phone,
+        c.email as contact_email,
+        c.contact_id
+      FROM appointments a
+      LEFT JOIN contacts c ON a.contact_id = c.contact_id AND a.company_id = c.company_id
+      WHERE a.id = $1 AND a.company_id = $2
+    `, [id, user.company_id]);
+
+    if (!appointment) {
+      return res.status(404).json({ error: "Appointment not found" });
+    }
+
+    // Transform response to match calendar component expectations
+    const transformedAppointment = {
+      id: appointment.id,
+      title: appointment.title,
+      startTime: appointment.scheduled_time,
+      endTime: new Date(new Date(appointment.scheduled_time).getTime() + (appointment.duration_minutes * 60000)),
+      address: appointment.metadata?.location || '',
+      appointmentStatus: appointment.status,
+      staff: appointment.staff_assigned || [],
+      tags: appointment.metadata?.tags || [],
+      color: '#51484f',
+      dateAdded: appointment.created_at,
+      contacts: appointment.contact_id ? [{
+        id: appointment.contact_id,
+        name: appointment.contact_name || 'Unknown',
+        phone: appointment.contact_phone || '',
+        email: appointment.contact_email || ''
+      }] : [],
+      details: appointment.description || '',
+      meetLink: ''
+    };
+
+    res.json(transformedAppointment);
+  } catch (error) {
+    console.error("Error fetching appointment:", error);
+    res.status(500).json({ error: "Failed to fetch appointment" });
+  }
+});
+
+// Delete appointment
+app.delete("/api/appointments/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { email } = req.body;
+
+    if (!email) {
+      return res.status(400).json({ error: "Email is required" });
+    }
+
+    const user = await sqlDb.getRow("SELECT company_id FROM users WHERE email = $1", [email]);
+    if (!user) {
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    const result = await sqlDb.query(
+      "DELETE FROM appointments WHERE id = $1 AND company_id = $2 RETURNING appointment_id",
+      [id, user.company_id]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: "Appointment not found" });
+    }
+
+    res.json({ success: true, message: "Appointment deleted successfully" });
+  } catch (error) {
+    console.error("Error deleting appointment:", error);
+    res.status(500).json({ error: "Failed to delete appointment" });
+  }
+});
+
+// Get calendar configuration
+app.get("/api/calendar-config", async (req, res) => {
+  try {
+    const { email } = req.query;
+    if (!email) {
+      return res.status(400).json({ error: "Email is required" });
+    }
+
+    const user = await sqlDb.getRow("SELECT company_id FROM users WHERE email = $1", [email]);
+    if (!user) {
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    // Get calendar config from settings table
+    const settingsResult = await sqlDb.getRow(
+      "SELECT setting_value FROM settings WHERE company_id = $1 AND setting_type = 'config' AND setting_key = 'calendar'",
+      [user.company_id]
+    );
+
+    let calendarConfig = {
+      calendarId: "",
+      additionalCalendarIds: [],
+      startHour: 11,
+      endHour: 21,
+      slotDuration: 30,
+      daysAhead: 3
+    };
+
+    if (settingsResult && settingsResult.setting_value) {
+      // Parse the existing config or use defaults
+      const existingConfig = typeof settingsResult.setting_value === 'string' 
+        ? JSON.parse(settingsResult.setting_value) 
+        : settingsResult.setting_value;
+      
+      calendarConfig = { ...calendarConfig, ...existingConfig };
+    }
+
+    res.json({
+      company_id: user.company_id,
+      ...calendarConfig
+    });
+  } catch (error) {
+    console.error("Error fetching calendar config:", error);
+    res.status(500).json({ error: "Failed to fetch calendar config" });
+  }
+});
+
+// Update calendar configuration
+app.put("/api/calendar-config", async (req, res) => {
+  try {
+    const { email, config: { calendarId, additionalCalendarIds, startHour, endHour, slotDuration, daysAhead } } = req.body;
+    console.log("Updating calendar config with:", req.body);
+    if (!email) {
+      return res.status(400).json({ error: "Email is required" });
+    }
+
+    const user = await sqlDb.getRow("SELECT company_id FROM users WHERE email = $1", [email]);
+    if (!user) {
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    const calendarConfig = {
+      calendarId: calendarId || "",
+      additionalCalendarIds: additionalCalendarIds || [],
+      startHour: startHour || 11,
+      endHour: endHour || 21,
+      slotDuration: slotDuration || 30,
+      daysAhead: daysAhead || 3
+    };
+    console.log("Updating calendar config with:", calendarConfig);
+
+    // Check if setting exists
+    const existingSetting = await sqlDb.getRow(
+      "SELECT id FROM settings WHERE company_id = $1 AND setting_type = 'config' AND setting_key = 'calendar'",
+      [user.company_id]
+    );
+
+    if (existingSetting) {
+      // Update existing setting
+      await sqlDb.query(
+        "UPDATE settings SET setting_value = $1, last_updated = CURRENT_TIMESTAMP WHERE id = $2",
+        [JSON.stringify(calendarConfig), existingSetting.id]
+      );
+    } else {
+      // Insert new setting
+      await sqlDb.query(
+        "INSERT INTO settings (company_id, setting_type, setting_key, setting_value, created_at, last_updated) VALUES ($1, $2, $3, $4, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+        [user.company_id, 'config', 'calendar', JSON.stringify(calendarConfig)]
+      );
+    }
+
+    res.json({
+      company_id: user.company_id,
+      ...calendarConfig
+    });
+  } catch (error) {
+    console.error("Error updating calendar config:", error);
+    res.status(500).json({ error: "Failed to update calendar config" });
+  }
+});
+
+// Create expense
+app.post("/api/expenses", async (req, res) => {
+  try {
+    const {
+      email,
+      appointment_id,
+      amount,
+      description,
+      category,
+      date
+    } = req.body;
+
+    if (!email || !appointment_id || !amount) {
+      return res.status(400).json({ error: "Email, appointment_id, and amount are required" });
+    }
+
+    const user = await sqlDb.getRow("SELECT company_id FROM users WHERE email = $1", [email]);
+    if (!user) {
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    const result = await sqlDb.query(`
+      INSERT INTO expenses (
+        company_id, appointment_id, amount, description, category, date, created_at
+      )
+      VALUES ($1, $2, $3, $4, $5, $6, CURRENT_TIMESTAMP)
+      RETURNING *
+    `, [user.company_id, appointment_id, amount, description, category, date]);
+
+    res.json(result.rows[0]);
+  } catch (error) {
+    console.error("Error creating expense:", error);
+    res.status(500).json({ error: "Failed to create expense" });
   }
 });

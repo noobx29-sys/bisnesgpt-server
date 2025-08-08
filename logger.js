@@ -40,7 +40,26 @@ class ServerLogger {
     // Override console.log
     console.log = (...args) => {
       const timestamp = new Date().toISOString();
-      const message = args.map(arg => typeof arg === 'object' ? JSON.stringify(arg, null, 2) : arg).join(' ');
+      const message = args.map(arg => {
+        if (typeof arg === 'object' && arg !== null) {
+          try {
+            const seen = new WeakSet();
+            return JSON.stringify(arg, (key, value) => {
+              // Handle circular references
+              if (typeof value === 'object' && value !== null) {
+                if (seen.has(value)) {
+                  return '[Circular Reference]';
+                }
+                seen.add(value);
+              }
+              return value;
+            }, 2);
+          } catch (error) {
+            return '[Object with circular references]';
+          }
+        }
+        return arg;
+      }).join(' ');
       const logEntry = `[${timestamp}] [LOG] ${message}\n`;
       
       // Write to file
@@ -53,7 +72,26 @@ class ServerLogger {
     // Override console.error
     console.error = (...args) => {
       const timestamp = new Date().toISOString();
-      const message = args.map(arg => typeof arg === 'object' ? JSON.stringify(arg, null, 2) : arg).join(' ');
+      const message = args.map(arg => {
+        if (typeof arg === 'object' && arg !== null) {
+          try {
+            const seen = new WeakSet();
+            return JSON.stringify(arg, (key, value) => {
+              // Handle circular references
+              if (typeof value === 'object' && value !== null) {
+                if (seen.has(value)) {
+                  return '[Circular Reference]';
+                }
+                seen.add(value);
+              }
+              return value;
+            }, 2);
+          } catch (error) {
+            return '[Object with circular references]';
+          }
+        }
+        return arg;
+      }).join(' ');
       const logEntry = `[${timestamp}] [ERROR] ${message}\n`;
       
       // Write to both error and console log files
@@ -67,7 +105,26 @@ class ServerLogger {
     // Override console.warn
     console.warn = (...args) => {
       const timestamp = new Date().toISOString();
-      const message = args.map(arg => typeof arg === 'object' ? JSON.stringify(arg, null, 2) : arg).join(' ');
+      const message = args.map(arg => {
+        if (typeof arg === 'object' && arg !== null) {
+          try {
+            const seen = new WeakSet();
+            return JSON.stringify(arg, (key, value) => {
+              // Handle circular references
+              if (typeof value === 'object' && value !== null) {
+                if (seen.has(value)) {
+                  return '[Circular Reference]';
+                }
+                seen.add(value);
+              }
+              return value;
+            }, 2);
+          } catch (error) {
+            return '[Object with circular references]';
+          }
+        }
+        return arg;
+      }).join(' ');
       const logEntry = `[${timestamp}] [WARN] ${message}\n`;
       
       // Write to file
@@ -80,7 +137,26 @@ class ServerLogger {
     // Override console.info
     console.info = (...args) => {
       const timestamp = new Date().toISOString();
-      const message = args.map(arg => typeof arg === 'object' ? JSON.stringify(arg, null, 2) : arg).join(' ');
+      const message = args.map(arg => {
+        if (typeof arg === 'object' && arg !== null) {
+          try {
+            const seen = new WeakSet();
+            return JSON.stringify(arg, (key, value) => {
+              // Handle circular references
+              if (typeof value === 'object' && value !== null) {
+                if (seen.has(value)) {
+                  return '[Circular Reference]';
+                }
+                seen.add(value);
+              }
+              return value;
+            }, 2);
+          } catch (error) {
+            return '[Object with circular references]';
+          }
+        }
+        return arg;
+      }).join(' ');
       const logEntry = `[${timestamp}] [INFO] ${message}\n`;
       
       // Write to file
