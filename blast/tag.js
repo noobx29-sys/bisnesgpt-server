@@ -2,7 +2,6 @@ const fetch = require("node-fetch");
 const moment = require("moment-timezone");
 const path = require('path');
 require("dotenv").config({ path: path.resolve(__dirname, '../.env') });
-const axios = require("axios");
 const { Pool } = require('pg');
 
 const pool = new Pool({
@@ -12,6 +11,8 @@ const pool = new Pool({
   idleTimeoutMillis: 30000,
   connectionTimeoutMillis: 2000
 });
+
+const API_BASE_URL = process.env.URL || 'http://localhost:8443';
 
 async function handleTagFollowUp(req, res) {
   const idSubstring = req.body.idSubstring;
@@ -33,6 +34,7 @@ async function handleTagFollowUp(req, res) {
   }
   const phoneWithoutPlus = phoneWithPlus.replace("+", "");
   const chatId = `${phoneWithoutPlus}@c.us`;
+  const contactId = idSubstring + "-" + phoneWithoutPlus;
 
   try {
     // Get template from PostgreSQL
@@ -48,36 +50,31 @@ async function handleTagFollowUp(req, res) {
 
     const template = templateResult.rows[0];
 
-    // Get template messages from PostgreSQL
+    // Get template messages from PostgreSQL and sort properly
     const messagesQuery = `
       SELECT * FROM followup_messages 
       WHERE template_id = $1 AND status = 'active'
-      ORDER BY day_number, sequence
+      ORDER BY day_number ASC, sequence ASC
     `;
     const messagesResult = await pool.query(messagesQuery, [templateId]);
     template.messages = messagesResult.rows;
 
     switch (requestType) {
       case "startTemplate":
-        await scheduleFollowUpFromTemplate(chatId, idSubstring, first_name, template, phoneIndex);
-        break;
-      case "pauseTemplate":
-        await pauseFollowUpMessages(chatId, idSubstring, template);
-        break;
-      case "resumeTemplate":
-        await resumeFollowUpMessages(chatId, idSubstring, template);
+        await scheduleFollowUpFromTemplate(chatId, idSubstring, first_name, template, phoneIndex, contactId);
         break;
       case "removeTemplate":
-        await removeScheduledMessages(chatId, idSubstring, template);
+        await removeScheduledMessages(chatId, idSubstring, template, contactId);
         break;
       default:
         return res.status(400).json({
-          error: "Invalid request type. Must be one of: startTemplate, pauseTemplate, resumeTemplate, removeTemplate",
+          error: "Invalid request type. Must be one of: startTemplate, removeTemplate",
         });
     }
 
     res.json({ success: true });
   } catch (error) {
+    console.error("Error in handleTagFollowUp:", error);
     res.status(500).json({
       phone: phoneWithPlus,
       first_name,
@@ -87,7 +84,7 @@ async function handleTagFollowUp(req, res) {
   }
 }
 
-async function scheduleFollowUpFromTemplate(chatId, idSubstring, customerName, template, phoneIndex) {
+async function scheduleFollowUpFromTemplate(chatId, idSubstring, customerName, template, phoneIndex, contactId) {
   try {
     if (!template || !template.template_id) {
       throw new Error("Invalid template: template.template_id is required");
@@ -96,183 +93,85 @@ async function scheduleFollowUpFromTemplate(chatId, idSubstring, customerName, t
     console.log("Starting template scheduling with:", {
       templateId: template.template_id,
       templateName: template.name,
-      createdAt: template.created_at,
-      delayHours: template.delay_hours
+      contactId: contactId
     });
 
-    let baseScheduledTime;
-    if (template.is_custom_start_time) {
-      baseScheduledTime = moment(template.start_time);
-    } else {
-      const createdAt = moment(template.created_at);
-      const initialDelay = template.delay_hours || 24;
-      baseScheduledTime = moment().add(initialDelay, "hours");
-    }
+    // First, remove any existing scheduled messages from other templates for this contact
+    await removeExistingScheduledMessages(idSubstring, contactId);
 
-    console.log("Initial base scheduled time:", baseScheduledTime.format());
-
-    const lastMessageTimeByDay = {};
-    const messagesByDay = {};
-
-    // Group messages by day
-    template.messages.forEach(message => {
-      if (typeof message.day_number !== "number") {
-        console.warn(`Message ${message.id} has invalid dayNumber:`, message.day_number);
-        return;
+    // Start scheduling from current time
+    let currentScheduleTime = moment();
+    
+    // Sort messages by day_number first, then by sequence
+    const sortedMessages = template.messages.sort((a, b) => {
+      if (a.day_number !== b.day_number) {
+        return a.day_number - b.day_number;
       }
-      const dayNumber = message.day_number.toString();
-      if (!messagesByDay[dayNumber]) {
-        messagesByDay[dayNumber] = [];
-      }
-      messagesByDay[dayNumber].push(message);
+      return a.sequence - b.sequence;
     });
 
-    const DELAY_BETWEEN_MESSAGES = 60000;
+    console.log(`Processing ${sortedMessages.length} messages for template ${template.name}`);
 
-    let daysToAdd = 0;
-    for (const dayNumber of Object.keys(messagesByDay).sort()) {
-      const messages = messagesByDay[dayNumber];
-      console.log(`Processing day ${dayNumber} with ${messages.length} messages`);
+    for (let i = 0; i < sortedMessages.length; i++) {
+      const message = sortedMessages[i];
+      let scheduledTime;
 
-      for (const message of messages) {
-        if (message.use_scheduled_time && message.scheduled_time) {
-          const [hours, minutes] = message.scheduled_time.split(":").map(Number);
-          let testTime = baseScheduledTime
-            .clone()
-            .add(parseInt(dayNumber) - 1, "days")
-            .hour(hours)
-            .minute(minutes)
-            .second(0);
-
-          if (testTime.isBefore(moment())) {
-            const newDaysToAdd = Math.ceil(moment().diff(testTime, "days", true));
-            daysToAdd = Math.max(daysToAdd, newDaysToAdd);
-          }
+      // Check if this message uses scheduled time
+      if (message.use_scheduled_time && message.scheduled_time) {
+        // Use the specific scheduled time
+        const [hours, minutes] = message.scheduled_time.split(":").map(Number);
+        scheduledTime = moment().hour(hours).minute(minutes).second(0);
+        
+        // If the time has passed today, schedule for tomorrow
+        if (scheduledTime.isBefore(moment())) {
+          scheduledTime.add(1, "day");
         }
-      }
-    }
-
-    if (daysToAdd > 0) {
-      baseScheduledTime.add(daysToAdd, "days");
-      console.log(`Pushing all scheduled times forward by ${daysToAdd} days`);
-    }
-
-    for (const dayNumber of Object.keys(messagesByDay).sort()) {
-      const messages = messagesByDay[dayNumber];
-      const dayBaseTime = baseScheduledTime.clone().add(parseInt(dayNumber) - 1, "days");
-      lastMessageTimeByDay[dayNumber] = dayBaseTime.clone();
-
-      for (const message of messages) {
-        let scheduledTime;
-
-        if (message.use_scheduled_time && message.scheduled_time) {
-          const [hours, minutes] = message.scheduled_time.split(":").map(Number);
-          scheduledTime = dayBaseTime.clone().hour(hours).minute(minutes).second(0);
-
-          console.log(`Scheduling message for day ${dayNumber} at specific time:`, {
-            messageTime: message.scheduled_time,
-            calculatedTime: scheduledTime.format("YYYY-MM-DD HH:mm:ss"),
-            dayNumber: message.day_number,
-          });
-
-          if (scheduledTime.isBefore(moment())) {
-            scheduledTime.add(1, "day");
-            console.log("Time has passed, pushed to:", scheduledTime.format("YYYY-MM-DD HH:mm:ss"));
+        
+        // Adjust for the day number
+        if (message.day_number > 1) {
+          scheduledTime.add(message.day_number - 1, "days");
+        }
+        
+        console.log(`Message ${i + 1} scheduled for specific time: ${scheduledTime.format("YYYY-MM-DD HH:mm:ss")}`);
+      } else {
+        // Use delay_after logic
+        if (i === 0) {
+          // First message - schedule based on delay_after or immediately
+          if (message.delay_after) {
+            const delay = typeof message.delay_after === 'string' ? JSON.parse(message.delay_after) : message.delay_after;
+            if (delay.isInstantaneous) {
+              scheduledTime = moment().add(1, "minute"); // Small delay for instantaneous
+            } else {
+              scheduledTime = moment().add(delay.value, delay.unit);
+            }
+          } else {
+            scheduledTime = moment().add(1, "minute"); // Default 1 minute delay
           }
         } else {
-          if (message === messages[0]) {
-            if (dayNumber === "1" && message === messages[0] && message.delay_after) {
-              scheduledTime = dayBaseTime.clone();
-              
-              if (message.delay_after.isInstantaneous) {
-                scheduledTime.add(DELAY_BETWEEN_MESSAGES, "milliseconds");
-              } else {
-                scheduledTime.add(message.delay_after.value, message.delay_after.unit);
-              }
-              
-              console.log(`First message of template with delay:`, {
-                delay: `${message.delay_after.value} ${message.delay_after.unit}`,
-                scheduledTime: scheduledTime.format("YYYY-MM-DD HH:mm:ss")
-              });
+          // Subsequent messages - schedule based on previous message + delay_after
+          if (message.delay_after) {
+            const delay = typeof message.delay_after === 'string' ? JSON.parse(message.delay_after) : message.delay_after;
+            if (delay.isInstantaneous) {
+              scheduledTime = currentScheduleTime.clone().add(1, "minute"); // Small delay for instantaneous
             } else {
-              scheduledTime = dayBaseTime.clone();
+              scheduledTime = currentScheduleTime.clone().add(delay.value, delay.unit);
             }
           } else {
-            if (message.delay_after?.isInstantaneous) {
-              scheduledTime = lastMessageTimeByDay[dayNumber].clone().add(DELAY_BETWEEN_MESSAGES, "milliseconds");
-            } else if (message.delay_after) {
-              scheduledTime = lastMessageTimeByDay[dayNumber]
-                .clone()
-                .add(message.delay_after.value, message.delay_after.unit)
-                .add(DELAY_BETWEEN_MESSAGES, "milliseconds");
-            } else {
-              scheduledTime = lastMessageTimeByDay[dayNumber]
-                .clone()
-                .add(5, "minutes")
-                .add(DELAY_BETWEEN_MESSAGES, "milliseconds");
-            }
+            scheduledTime = currentScheduleTime.clone().add(5, "minutes"); // Default 5 minutes
           }
         }
-
-        console.log(`Final scheduled time for message:`, {
-          id: message.id,
-          dayNumber: message.day_number,
-          sequence: message.sequence,
-          scheduledTime: scheduledTime.format("YYYY-MM-DD HH:mm:ss"),
-          use_scheduled_time: message.use_scheduled_time,
-          specificTime: message.scheduled_time,
-          delay_after: message.delay_after ? 
-            `${message.delay_after.value} ${message.delay_after.unit} (isInstantaneous: ${!!message.delay_after.isInstantaneous})` : 
-            'none'
-        });
-
-        let recipientIds = [chatId];
-
-        if (message.specific_numbers?.enabled && message.specific_numbers.numbers?.length > 0) {
-          console.log("Message has specific numbers:", message.specific_numbers.numbers);
-          recipientIds = message.specific_numbers.numbers.map((number) => {
-            return number.includes("@c.us") ? number : `${number}@c.us`;
-          });
-        }
-
-        for (let i = 0; i < recipientIds.length; i++) {
-          const recipientId = recipientIds[i];
-          const recipientDelay = i * DELAY_BETWEEN_MESSAGES;
-          const recipientScheduledTime = scheduledTime.clone().add(recipientDelay, "milliseconds");
-
-          if (message.image) {
-            await scheduleImageMessage(
-              message.image.url,
-              message.message || "",
-              recipientScheduledTime.toDate(),
-              recipientId,
-              idSubstring,
-              template.name,
-              phoneIndex
-            );
-          } else if (message.document) {
-            continue;
-          } else {
-            let finalMessage = message.message;
-            if (customerName && !/\d/.test(customerName)) {
-              finalMessage = finalMessage.replace("{customerName}", customerName);
-            } else {
-              finalMessage = finalMessage.replace("{customerName}", "");
-            }
-            await scheduleReminderMessage(
-              finalMessage,
-              recipientScheduledTime.toDate(),
-              recipientId,
-              idSubstring,
-              template.name,
-              phoneIndex
-            );
-          }
-        }
-
-        lastMessageTimeByDay[dayNumber] = scheduledTime;
-        await customWait(1000);
+        
+        console.log(`Message ${i + 1} scheduled with delay: ${scheduledTime.format("YYYY-MM-DD HH:mm:ss")}`);
       }
+
+      // Schedule the actual message
+      await scheduleMessage(message, scheduledTime, chatId, idSubstring, template.name, phoneIndex, customerName, template.template_id);
+      
+      // Update current schedule time for next message
+      currentScheduleTime = scheduledTime.clone();
+      
+      // Small delay between API calls
+      await customWait(500);
     }
 
     console.log("Template scheduling completed successfully");
@@ -282,155 +181,141 @@ async function scheduleFollowUpFromTemplate(chatId, idSubstring, customerName, t
   }
 }
 
-async function pauseFollowUpMessages(chatId, idSubstring, template) {
+async function removeExistingScheduledMessages(companyId, contactId) {
   try {
-    console.log(`Pausing template messages for chat ${chatId}`);
+    // Get all active templates for this company to check for existing scheduled messages
+    const templatesResult = await pool.query(
+      `SELECT template_id FROM followup_templates WHERE company_id = $1 AND status = 'active'`,
+      [companyId]
+    );
 
-    // First, pause messages for the main chatId
-    const snapshot = await pool.query(`
-      SELECT id FROM scheduled_messages 
-      WHERE chat_ids @> $1 
-        AND status != 'completed' 
-        AND type = $2 
-        AND company_id = $3
-    `, [[chatId], template.name, idSubstring]);
-
-    if (snapshot.rows.length === 0) {
-      console.log("No scheduled messages found to pause.");
-      return;
-    }
-
-    for (const row of snapshot.rows) {
-      await pauseMessage(row.id, idSubstring, chatId);
-    }
-
-    console.log(`Paused ${snapshot.rows.length} scheduled messages for chat ${chatId}`);
-
-    // Then, check for specific numbers in template messages
-    for (const message of template.messages) {
-      if (message.specific_numbers?.enabled && message.specific_numbers.numbers?.length > 0) {
-        for (const specificNumber of message.specific_numbers.numbers) {
-          const specificChatId = `${specificNumber}@c.us`;
-          const specificSnapshot = await pool.query(`
-            SELECT id FROM scheduled_messages 
-            WHERE chat_ids @> $1 
-              AND status != 'completed' 
-              AND type = $2 
-              AND company_id = $3
-          `, [[specificChatId], template.name, idSubstring]);
-
-          for (const row of specificSnapshot.rows) {
-            await pauseMessage(row.id, idSubstring, specificNumber);
-          }
-
-          console.log(`Paused ${specificSnapshot.rows.length} messages for specific number: ${specificNumber}`);
+    // Remove scheduled messages for each template
+    for (const template of templatesResult.rows) {
+      const response = await fetch(`${API_BASE_URL}/api/schedule-message/${companyId}/template/${template.template_id}/contact/${contactId}`, {
+        method: 'DELETE',
+        headers: {
+          'Content-Type': 'application/json'
         }
+      });
+
+      if (response.ok) {
+        console.log(`Removed existing scheduled messages for template ${template.template_id} and contact ${contactId}`);
+      } else {
+        console.log(`No existing messages found for template ${template.template_id} and contact ${contactId}`);
       }
     }
   } catch (error) {
-    console.error("Error pausing template messages:", error);
-    throw error;
+    console.error("Error removing existing scheduled messages:", error);
+    // Don't throw error here as this is cleanup - continue with scheduling
   }
 }
 
-async function pauseMessage(messageId, idSubstring, chatId) {
+async function addTagsToContact(companyId, contactId, tags) {
   try {
-    const response = await axios.put(
-      `http://localhost:8443/api/schedule-message/${idSubstring}/${messageId}`,
-      {
-        status: "paused",
-        scheduledTime: {
-          seconds: Math.floor(Date.now() / 1000),
-          nanoseconds: 0,
-        }
+    for (const tag of tags) {
+      const response = await fetch(`${API_BASE_URL}/api/contacts/${companyId}/${contactId}/tags`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ tags: [tag] })
+      });
+
+      if (response.ok) {
+        console.log(`Added tag "${tag}" to contact ${contactId}`);
+      } else {
+        console.error(`Failed to add tag "${tag}" to contact ${contactId}:`, response.statusText);
       }
-    );
-    console.log(`Paused scheduled message ${messageId} for chatId: ${chatId}`);
+    }
   } catch (error) {
-    console.error(
-      `Error pausing scheduled message ${messageId}:`,
-      error.response ? error.response.data : error.message
-    );
+    console.error("Error adding tags to contact:", error);
   }
 }
 
-async function resumeFollowUpMessages(chatId, idSubstring, template) {
+async function removeTagsFromContact(companyId, contactId, tags) {
   try {
-    console.log(`Resuming template messages for chat ${chatId}`);
+    for (const tag of tags) {
+      const response = await fetch(`${API_BASE_URL}/api/contacts/${companyId}/${contactId}/tags`, {
+        method: 'DELETE',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ tags: [tag] })
+      });
 
-    // First, handle main chatId messages
-    const snapshot = await pool.query(`
-      SELECT id, scheduled_time FROM scheduled_messages 
-      WHERE chat_ids @> $1 
-        AND status = 'paused' 
-        AND type = $2 
-        AND company_id = $3
-      ORDER BY scheduled_time ASC
-    `, [[chatId], template.name, idSubstring]);
+      if (response.ok) {
+        console.log(`Removed tag "${tag}" from contact ${contactId}`);
+      } else {
+        console.error(`Failed to remove tag "${tag}" from contact ${contactId}:`, response.statusText);
+      }
+    }
+  } catch (error) {
+    console.error("Error removing tags from contact:", error);
+  }
+}
 
-    if (snapshot.rows.length > 0) {
-      await resumeMessagesGroup(snapshot.rows, idSubstring, chatId);
-      console.log(`Resumed ${snapshot.rows.length} messages for main chat ${chatId}`);
+async function scheduleMessage(message, scheduledTime, chatId, idSubstring, templateName, phoneIndex, customerName, templateId) {
+  try {
+    let messageContent = message.message || "";
+    
+    // Replace customer name placeholder
+    if (customerName && !/\d/.test(customerName)) {
+      messageContent = messageContent.replace(/\{customerName\}/g, customerName);
     } else {
-      console.log("No paused messages found for main chat.");
+      messageContent = messageContent.replace(/\{customerName\}/g, "");
     }
 
-    // Then, handle specific numbers from template messages
-    for (const message of template.messages) {
-      if (message.specific_numbers?.enabled && message.specific_numbers.numbers?.length > 0) {
-        for (const specificNumber of message.specific_numbers.numbers) {
-          const specificChatId = `${specificNumber}@c.us`;
-          const specificSnapshot = await pool.query(`
-            SELECT id, scheduled_time FROM scheduled_messages 
-            WHERE chat_ids @> $1 
-              AND status = 'paused' 
-              AND type = $2 
-              AND company_id = $3
-            ORDER BY scheduled_time ASC
-          `, [[specificChatId], template.name, idSubstring]);
-
-          if (specificSnapshot.rows.length > 0) {
-            await resumeMessagesGroup(specificSnapshot.rows, idSubstring, specificNumber);
-            console.log(`Resumed ${specificSnapshot.rows.length} messages for specific number: ${specificNumber}`);
-          }
-        }
-      }
+    // Process tags for this message
+    const contactId = chatId.replace("@c.us", "");
+    const fullContactId = idSubstring + "-" + contactId;
+    
+    // Schedule tag operations along with the message
+    if (message.add_tags && message.add_tags.length > 0) {
+      // Schedule tag addition slightly before the message
+      setTimeout(async () => {
+        await addTagsToContact(idSubstring, fullContactId, message.add_tags);
+      }, Math.max(0, scheduledTime.toDate().getTime() - Date.now() - 5000)); // 5 seconds before message
     }
+    
+    if (message.remove_tags && message.remove_tags.length > 0) {
+      // Schedule tag removal slightly before the message
+      setTimeout(async () => {
+        await removeTagsFromContact(idSubstring, fullContactId, message.remove_tags);
+      }, Math.max(0, scheduledTime.toDate().getTime() - Date.now() - 5000)); // 5 seconds before message
+    }
+
+    // Handle different message types
+    if (message.image && message.image.url) {
+      await scheduleMediaMessage(scheduledTime.toDate(), chatId, idSubstring, templateName, phoneIndex, {
+        type: 'image',
+        url: message.image.url,
+        caption: messageContent,
+        customerName: customerName
+      }, templateId);
+    } else if (message.document && message.document.url) {
+      await scheduleMediaMessage(scheduledTime.toDate(), chatId, idSubstring, templateName, phoneIndex, {
+        type: 'document',
+        url: message.document.url,
+        fileName: message.document.fileName || 'Document',
+        caption: messageContent,
+        customerName: customerName
+      }, templateId);
+    } else if (message.video && message.video.url) {
+      await scheduleMediaMessage(scheduledTime.toDate(), chatId, idSubstring, templateName, phoneIndex, {
+        type: 'video',
+        url: message.video.url,
+        caption: messageContent,
+        customerName: customerName
+      }, templateId);
+    } else {
+      // Text message
+      await scheduleTextMessage(messageContent, scheduledTime.toDate(), chatId, idSubstring, templateName, phoneIndex, templateId);
+    }
+
+    console.log(`Scheduled message for ${scheduledTime.format("YYYY-MM-DD HH:mm:ss")}`);
   } catch (error) {
-    console.error("Error resuming template messages:", error);
+    console.error("Error scheduling individual message:", error);
     throw error;
-  }
-}
-
-async function resumeMessagesGroup(rows, idSubstring, chatId) {
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-
-  const firstScheduledTime = new Date(rows[0].scheduled_time);
-  const timeDifference = today.getTime() - firstScheduledTime.getTime();
-
-  for (const row of rows) {
-    const originalTime = new Date(row.scheduled_time);
-    const newScheduledTime = new Date(originalTime.getTime() + timeDifference);
-
-    try {
-      await axios.put(
-        `http://localhost:8443/api/schedule-message/${idSubstring}/${row.id}`,
-        {
-          scheduledTime: {
-            seconds: Math.floor(newScheduledTime.getTime() / 1000),
-            nanoseconds: (newScheduledTime.getTime() % 1000) * 1e6,
-          },
-          status: "scheduled"
-        }
-      );
-      console.log(`Resumed and rescheduled message ${row.id} for chatId: ${chatId}`);
-    } catch (error) {
-      console.error(
-        `Error resuming and rescheduling message ${row.id}:`,
-        error.response ? error.response.data : error.message
-      );
-    }
   }
 }
 
@@ -438,173 +323,139 @@ async function customWait(milliseconds) {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
-async function scheduleImageMessage(imageUrl, caption, scheduledTime, chatId, idSubstring, type, phoneIndex) {
-  const scheduledTimeSeconds = Math.floor(scheduledTime.getTime() / 1000);
+async function scheduleMediaMessage(scheduledTime, chatId, idSubstring, templateName, phoneIndex, mediaData, templateId) {
+  let finalCaption = mediaData.caption || "";
+  if (mediaData.customerName && !/\d/.test(mediaData.customerName)) {
+    finalCaption = finalCaption.replace("{customerName}", mediaData.customerName);
+  } else {
+    finalCaption = finalCaption.replace("{customerName}", "");
+  }
 
-  const scheduledMessage = {
-    batchQuantity: 1,
-    chatIds: [chatId],
-    companyId: idSubstring,
-    createdAt: new Date(),
-    documentUrl: "",
-    fileName: null,
-    mediaUrl: imageUrl,
-    message: caption,
-    type: type,
-    messages: [
-      {
-        chatId: chatId,
-        message: caption,
+  try {
+    const contactID = idSubstring + '-' + chatId.split('@')[0];
+    const scheduledMessage = {
+      chatIds: [chatId],
+      companyId: idSubstring,
+      message: finalCaption,
+      scheduledTime: {
+        seconds: Math.floor(scheduledTime.getTime() / 1000),
+        nanoseconds: (scheduledTime.getTime() % 1000) * 1e6,
       },
-    ],
-    mimeType: "image/jpeg",
-    repeatInterval: 0,
-    repeatUnit: "days",
-    scheduledTime: {
-      seconds: scheduledTimeSeconds,
-      nanoseconds: 0,
-    },
-    status: "scheduled",
-    v2: true,
-    whapiToken: null,
-    phoneIndex: phoneIndex,
-  };
+      phoneIndex: phoneIndex || 0,
+      v2: true,
+      status: "scheduled",
+      type: templateName,
+      template_id: templateId,
+      batchQuantity: 1,
+      repeatInterval: 0,
+      repeatUnit: "days",
+      contact_id: contactID
+    };
 
-  try {
-    const response = await axios.post(`http://localhost:8443/api/schedule-message/${idSubstring}`, scheduledMessage);
-    console.log("Image message scheduled successfully:", response.data);
-  } catch (error) {
-    console.error("Error scheduling image message:", error.response ? error.response.data : error.message);
-  }
-}
-
-async function scheduleReminderMessage(eventSummary, startDateTime, chatId, idSubstring, type, phoneIndex) {
-  const scheduledTimeSeconds = Math.floor(startDateTime.getTime() / 1000);
-
-  console.log("Scheduling reminder for:", moment(startDateTime).format());
-  console.log("Scheduled time in seconds:", scheduledTimeSeconds);
-
-  const scheduledMessage = {
-    activateSleep: false,
-    activeHours: { start: "09:00", end: "17:00" },
-    batchQuantity: 1,
-    chatIds: [chatId],
-    companyId: idSubstring,
-    createdAt: new Date(),
-    documentUrl: "",
-    fileName: "",
-    infiniteLoop: false,
-    maxDelay: 2,
-    mediaUrl: "",
-    message: eventSummary,
-    messageDelays: [],
-    messages: [],
-    mimeType: "",
-    minDelay: 1,
-    numberOfBatches: 1,
-    phoneIndex: phoneIndex,
-    repeatInterval: 0,
-    repeatUnit: "days",
-    scheduledTime: {
-      seconds: scheduledTimeSeconds,
-      nanoseconds: 0,
-    },
-    sleepAfterMessages: null,
-    sleepDuration: null,
-    status: "scheduled",
-    v2: true,
-    whapiToken: null,
-  };
-
-  try {
-    console.log("Sending schedule request:", JSON.stringify(scheduledMessage));
-    const response = await axios.post(`http://localhost:8443/api/schedule-message/${idSubstring}`, scheduledMessage);
-    console.log("Reminder scheduled successfully:", response.data);
-  } catch (error) {
-    console.error("Error scheduling reminder:", error.response ? error.response.data : error.message);
-    if (error.response && error.response.data) {
-      console.error("Server response:", error.response.data);
-    }
-  }
-}
-
-async function removeScheduledMessages(chatId, idSubstring, template) {
-  try {
-    console.log(`Removing template messages for chat ${chatId}`);
-    
-    // First, remove messages for main chatId
-    const snapshot = await pool.query(`
-      SELECT id FROM scheduled_messages 
-      WHERE chat_ids @> $1 
-        AND v2 = true 
-        AND company_id = $2
-    `, [[chatId], idSubstring]);
-
-    console.log(`Found ${snapshot.rows.length} messages to delete for ${chatId}`);
-
-    await removeMessagesGroup(snapshot.rows, idSubstring, chatId);
-    console.log(`Deleted ${snapshot.rows.length} messages for main chat ${chatId}`);
-
-    // Also check for messages where chatId is a single string
-    const singleChatSnapshot = await pool.query(`
-      SELECT id FROM scheduled_messages 
-      WHERE chat_id = $1 
-        AND v2 = true 
-        AND company_id = $2
-    `, [chatId, idSubstring]);
-
-    if (singleChatSnapshot.rows.length > 0) {
-      console.log(`Found ${singleChatSnapshot.rows.length} additional messages with single chatId`);
-      await removeMessagesGroup(singleChatSnapshot.rows, idSubstring, chatId);
+    // Add media-specific fields
+    switch (mediaData.type) {
+      case 'image':
+      case 'video':
+        scheduledMessage.mediaUrl = mediaData.url;
+        scheduledMessage.mimeType = mediaData.type === 'image' ? "image/jpeg" : "video/mp4";
+        scheduledMessage.caption = finalCaption;
+        break;
+      case 'document':
+        scheduledMessage.documentUrl = mediaData.url;
+        scheduledMessage.fileName = mediaData.fileName || 'Document';
+        scheduledMessage.mimeType = "application/pdf";
+        scheduledMessage.caption = finalCaption;
+        break;
     }
 
-    // Then, handle specific numbers from template messages
-    for (const message of template.messages) {
-      if (message.specific_numbers?.enabled && message.specific_numbers.numbers?.length > 0) {
-        console.log("Processing specific numbers:", message.specific_numbers.numbers);
-        for (const number of message.specific_numbers.numbers) {
-          const specificChatId = number.includes("@c.us") ? number : `${number}@c.us`;
-          const specificSnapshot = await pool.query(`
-            SELECT id FROM scheduled_messages 
-            WHERE chat_ids @> $1 
-              AND v2 = true 
-              AND company_id = $2
-          `, [[specificChatId], idSubstring]);
+    const response = await fetch(`${API_BASE_URL}/api/schedule-message/${idSubstring}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(scheduledMessage)
+    });
 
-          if (specificSnapshot.rows.length > 0) {
-            await removeMessagesGroup(specificSnapshot.rows, idSubstring, specificChatId);
-            console.log(`Deleted ${specificSnapshot.rows.length} messages for specific number: ${specificChatId}`);
-          }
-        }
-      }
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`Failed to schedule ${mediaData.type}: ${response.status} ${errorText}`);
     }
+
+    const result = await response.json();
+    console.log(`${mediaData.type} message scheduled successfully for:`, scheduledTime, 'ID:', result.id);
+    return result.id;
   } catch (error) {
-    console.error("Error removing template messages:", error);
+    console.error(`Error scheduling ${mediaData.type} message:`, error.message);
     throw error;
   }
 }
 
-async function removeMessagesGroup(rows, idSubstring, chatId) {
-  for (const row of rows) {
-    const messageId = row.id;
-    let retries = 3;
-    
-    while (retries > 0) {
-      try {
-        const response = await axios.delete(`http://localhost:8443/api/schedule-message/${idSubstring}/${messageId}`);
-        console.log(`Successfully deleted message ${messageId} for ${chatId}:`, response.data);
-        break;
-      } catch (error) {
-        retries--;
-        if (retries === 0) {
-          console.error(
-            `Failed to delete message ${messageId} for ${chatId}:`,
-            error.response ? error.response.data : error.message
-          );
-        }
-        await new Promise((resolve) => setTimeout(resolve, 1000));
-      }
+async function scheduleTextMessage(message, scheduledTime, chatId, idSubstring, templateName, phoneIndex, templateId) {
+  console.log("Scheduling text message for:", scheduledTime);
+
+  try {
+    const contactID = idSubstring + '-' + chatId.split('@')[0];
+    const scheduledMessage = {
+      chatIds: [chatId],
+      companyId: idSubstring,
+      message: message,
+      scheduledTime: {
+        seconds: Math.floor(scheduledTime.getTime() / 1000),
+        nanoseconds: (scheduledTime.getTime() % 1000) * 1e6,
+      },
+      phoneIndex: phoneIndex || 0,
+      v2: true,
+      status: "scheduled",
+      type: templateName,
+      template_id: templateId,
+      batchQuantity: 1,
+      repeatInterval: 0,
+      repeatUnit: "days",
+      contact_id: contactID
+    };
+
+    const response = await fetch(`${API_BASE_URL}/api/schedule-message/${idSubstring}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(scheduledMessage)
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`Failed to schedule text message: ${response.status} ${errorText}`);
     }
+
+    const result = await response.json();
+    console.log("Text message scheduled successfully, ID:", result.id);
+    return result.id;
+  } catch (error) {
+    console.error("Error scheduling text message:", error.message);
+    throw error;
+  }
+}
+
+async function removeScheduledMessages(chatId, idSubstring, template, contactId) {
+  try {
+    console.log(`Removing template messages for contact ${contactId}`);
+    
+    // Use the API to remove scheduled messages for this template and contact
+    const response = await fetch(`${API_BASE_URL}/api/schedule-message/${idSubstring}/template/${template.template_id}/contact/${contactId}`, {
+      method: 'DELETE',
+      headers: {
+        'Content-Type': 'application/json'
+      }
+    });
+
+    if (response.ok) {
+      console.log(`Successfully removed scheduled messages for template ${template.template_id} and contact ${contactId}`);
+    } else {
+      console.log(`No scheduled messages found or error removing messages for template ${template.template_id} and contact ${contactId}`);
+    }
+  } catch (error) {
+    console.error("Error removing template messages:", error);
+    throw error;
   }
 }
 

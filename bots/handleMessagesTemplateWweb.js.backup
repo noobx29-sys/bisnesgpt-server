@@ -3025,7 +3025,7 @@ async function callFollowUpAPI(
   idSubstring
 ) {
   try {
-    const response = await fetch("https://juta.ngrok.app/api/tag/followup", {
+    const response = await fetch("https://juta-dev.ngrok.dev/api/tag/followup", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",

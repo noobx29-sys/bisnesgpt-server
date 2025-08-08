@@ -126,7 +126,7 @@ async function registerUser(phoneNumber) {
         });
 
         // Create channel (if needed)
-        const response = await axios.post(`https://juta.ngrok.app/api/channel/create/${companyId}`);
+        const response = await axios.post(`https://juta-dev.ngrok.dev/api/channel/create/${companyId}`);
         console.log(response.data);
 
         return { success: true, userId: userRecord.uid, companyId: companyId };
@@ -1363,7 +1363,7 @@ for (const template of followUpTemplates) {
 
                     // Call the API to remove scheduled messages
                     try {
-                        const response = await fetch('https://juta.ngrok.app/api/tag/followup', {
+                        const response = await fetch('https://juta-dev.ngrok.dev/api/tag/followup', {
                             method: 'POST',
                             headers: {
                                 'Content-Type': 'application/json',
@@ -1392,7 +1392,7 @@ for (const template of followUpTemplates) {
             }
 
             // Start follow-up sequence
-            const response = await fetch('https://juta.ngrok.app/api/tag/followup', {
+            const response = await fetch('https://juta-dev.ngrok.dev/api/tag/followup', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',

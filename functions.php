@@ -29,7 +29,7 @@ function calculate_lalamove_price() {
     $vehicle_type = strtolower($_POST['vehicle_type'] ?? 'van');
     
     // Get storage pricing from API
-    $pricing_response = wp_remote_get('https://juta.ngrok.app/api/storage-pricing');
+    $pricing_response = wp_remote_get('https://juta-dev.ngrok.dev/api/storage-pricing');
     $pricing_data = [];
     $price_per_sqft = 0;
     
@@ -87,7 +87,7 @@ function calculate_lalamove_price() {
                 'vehicle_type' => $vehicle_type,
                 'manpower' => $need_manpower ? 'true' : 'false'
             ),
-            'https://juta.ngrok.app/api/lalamove/quote'
+            'https://juta-dev.ngrok.dev/api/lalamove/quote'
         );
 
         error_log('Calling Lalamove API: ' . $api_url);
