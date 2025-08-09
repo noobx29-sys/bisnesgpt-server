@@ -1039,7 +1039,7 @@ async function processMessage(client, msg, botName, phoneIndex, combinedMessage)
                             
                                                 // Call the API to remove scheduled messages
                                                 try {
-                                                    const response = await fetch('https://juta-dev.ngrok.dev/api/tag/followup', {
+                                                    const response = await fetch('https://juta.ngrok.app/api/tag/followup', {
                                                         method: 'POST',
                                                         headers: {
                                                             'Content-Type': 'application/json',
@@ -1068,7 +1068,7 @@ async function processMessage(client, msg, botName, phoneIndex, combinedMessage)
                                         }
                             
                                         // Start follow-up sequence
-                                        const response = await fetch('https://juta-dev.ngrok.dev/api/tag/followup', {
+                                        const response = await fetch('https://juta.ngrok.app/api/tag/followup', {
                                             method: 'POST',
                                             headers: {
                                                 'Content-Type': 'application/json',

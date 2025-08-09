@@ -61,8 +61,8 @@ const admin = require("./firebase.js");
 const AutomatedMessaging = require("./blast/automatedMessaging");
 const sqlDb = require("./db");
 const {
-  handleNewMessagesTemplateWweb,
-} = require("./bots/handleMessagesTemplateWweb.js");
+  handleNewMessagesPersonalAssistant,
+} = require("./bots/handleMessagesPersonalAssistant.js");
 const { handleTagFollowUp } = require("./blast/tag.js");
 
 // Import logging system
@@ -184,6 +184,17 @@ async function safeRelease(sqlClient) {
   }
 }
 
+// Safe database rollback
+async function safeRollback(client) {
+  if (client && typeof client.query === 'function') {
+    try {
+      await client.query("ROLLBACK");
+    } catch (error) {
+      console.error("Error rolling back database transaction:", error.message);
+    }
+  }
+}
+
 // Enhanced connection acquisition with timeout and retry
 async function getDatabaseConnection(timeoutMs = 5000) {
   const startTime = Date.now();
@@ -207,8 +218,28 @@ async function getDatabaseConnection(timeoutMs = 5000) {
       attempts++;
       console.error(`Database connection attempt ${attempts} failed:`, error.message);
       
+      // Handle network-related errors more gracefully
+      if (error.code === 'EADDRNOTAVAIL' || 
+          error.code === 'ENOTFOUND' || 
+          error.code === 'ECONNREFUSED' ||
+          error.code === 'ETIMEDOUT' ||
+          error.message.includes('read EADDRNOTAVAIL') ||
+          error.message.includes('TLSWrap')) {
+        console.error("Network connectivity error detected in database connection");
+        
+        if (attempts >= maxAttempts) {
+          console.error("Max attempts reached for database connection - continuing without connection");
+          return null; // Return null instead of throwing
+        }
+        
+        // Wait longer for network issues
+        await new Promise(resolve => setTimeout(resolve, 2000 * attempts));
+        continue;
+      }
+      
       if (attempts >= maxAttempts) {
-        throw new Error(`Failed to get database connection after ${maxAttempts} attempts: ${error.message}`);
+        console.error("Max attempts reached for database connection - continuing without connection");
+        return null; // Return null instead of throwing
       }
       
       // Wait before retrying
@@ -608,25 +639,100 @@ const messageQueue = new Queue("scheduled-messages", { connection });
 
 const app = express();
 const server = createServer(app);
-const wss = new WebSocket.Server({ server });
+
+// CORS Configuration - Define whitelist before WebSocket server
+const whitelist = [
+  'https://juta.ngrok.app',
+  'https://juta-crm-v3.vercel.app', 
+  'http://localhost:5173',
+  'http://localhost:3000',
+  'http://localhost:8443',
+  'https://app.xyzaibot.com',
+  'http://localhost:8080',
+  'https://d178-2001-e68-5409-64f-f850-607e-e056-2a9e.ngrok-free.app',
+  'https://web.jutateknologi.com',
+  'https://app.omniyal.com'
+];
+
+const wss = new WebSocket.Server({
+  server,
+  // Add CORS headers for WebSocket connections
+  verifyClient: (info, callback) => {
+    const origin = info.origin || info.req.headers.origin;
+    console.log('WebSocket connection attempt from origin:', origin);
+    console.log('WebSocket connection URL:', info.req.url);
+    
+    // Allow connections with no origin
+    if (!origin) {
+      console.log('Allowing WebSocket connection with no origin');
+      return callback(true);
+    }
+    
+    // Check if origin is in whitelist
+    if (whitelist.includes(origin)) {
+      console.log('WebSocket origin found in whitelist:', origin);
+      return callback(true);
+    }
+    
+    // Check for localhost variations
+    if (origin.startsWith('http://localhost:') || origin.startsWith('https://localhost:')) {
+      console.log('Allowing WebSocket localhost origin:', origin);
+      return callback(true);
+    }
+    
+    // Check for ngrok variations
+    if (origin.includes('ngrok') || origin.includes('ngrok-free.app')) {
+      console.log('Allowing WebSocket ngrok origin:', origin);
+      return callback(true);
+    }
+    
+    console.log('WebSocket connection blocked from origin:', origin);
+    callback(false);
+  }
+});
 const db = admin.firestore();
 global.wss = wss;
 // CORS Configuration
-const whitelist = ['https://juta-crm-v3.vercel.app','http://localhost:5173', 'https://juta-dev.ngrok.dev', 'https://juta-dev.ngrok.dev', 'https://d178-2001-e68-5409-64f-f850-607e-e056-2a9e.ngrok-free.app','https://web.jutateknologi.com','https://app.omniyal.com'];
 const corsOptions = {
   origin: function (origin, callback) {
-    if (whitelist.indexOf(origin) !== -1 || !origin) {
-      callback(null, true);
-    } else {
-      callback(new Error('Not allowed by CORS'));
+    console.log('CORS request from origin:', origin);
+    
+    // Allow requests with no origin (like mobile apps or curl requests)
+    if (!origin) {
+      console.log('Allowing request with no origin');
+      return callback(null, true);
     }
+    
+    // Check if origin is in whitelist
+    if (whitelist.includes(origin)) {
+      console.log('Origin found in whitelist:', origin);
+      return callback(null, true);
+    }
+    
+    // Check for localhost variations
+    if (origin.startsWith('http://localhost:') || origin.startsWith('https://localhost:')) {
+      console.log('Allowing localhost origin:', origin);
+      return callback(null, true);
+    }
+    
+    // Check for ngrok variations
+    if (origin.includes('ngrok') || origin.includes('ngrok-free.app')) {
+      console.log('Allowing ngrok origin:', origin);
+      return callback(null, true);
+    }
+    
+    console.log('CORS blocked origin:', origin);
+    callback(new Error('Not allowed by CORS'));
   },
-  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
   allowedHeaders: [
     "Content-Type",
     "Authorization",
     "ngrok-skip-browser-warning",
-    "x-requested-with"
+    "x-requested-with",
+    "Accept",
+    "Origin",
+    "X-Requested-With"
   ],
   credentials: true,
   preflightContinue: false,
@@ -635,6 +741,34 @@ const corsOptions = {
 
 // Middleware
 app.use(cors(corsOptions));
+
+// Add additional CORS headers for all responses
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+  
+  // Check if origin is allowed
+  if (origin && (whitelist.includes(origin) || 
+      origin.startsWith('http://localhost:') || 
+      origin.startsWith('https://localhost:') ||
+      origin.includes('ngrok'))) {
+    res.header('Access-Control-Allow-Origin', origin);
+  } else {
+    res.header('Access-Control-Allow-Origin', '*');
+  }
+  
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS, PATCH');
+  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, ngrok-skip-browser-warning, x-requested-with, Accept, Origin, X-Requested-With, Access-Control-Allow-Origin');
+  res.header('Access-Control-Allow-Credentials', 'true');
+  
+  // Handle preflight requests
+  if (req.method === 'OPTIONS') {
+    res.status(204).end();
+    return;
+  }
+  
+  next();
+});
+
 app.use(express.json({ limit: "50mb" }));
 app.use(bodyParser.json({ limit: '50mb' }));
 app.use(bodyParser.urlencoded({ extended: true, limit: '50mb' }));
@@ -1000,7 +1134,7 @@ async function saveMediaLocally(base64Data, mimeType, filename) {
   const buffer = Buffer.from(base64Data, "base64");
   const uniqueFilename = `${uuidv4()}_${filename}`;
   const filePath = path.join(MEDIA_DIR, uniqueFilename);
-  const baseUrl = 'https://juta-dev.ngrok.dev';
+  const baseUrl = 'https://juta.ngrok.app';
 
   await writeFileAsync(filePath, buffer);
 
@@ -1012,7 +1146,7 @@ app.post('/api/upload-media', upload.single('file'), (req, res) => {
   if (!req.file) {
     return res.status(400).json({ error: 'No file uploaded' });
   }
-  const baseUrl = 'https://juta-dev.ngrok.dev';
+  const baseUrl = 'https://juta.ngrok.app';
   const fileUrl = `${baseUrl}/media/${req.file.filename}`;
   res.json({ url: fileUrl });
 });
@@ -2149,7 +2283,7 @@ app.post("/api/channel/create/:companyID", async (req, res) => {
             true,
             plan, // Store the selected plan
             companyName || `Company_${companyID}`, // Use provided company name or default
-            "https://juta-dev.ngrok.dev", // Set the API URL
+            "https://juta.ngrok.app", // Set the API URL
           ]
         );
         
@@ -2161,7 +2295,7 @@ app.post("/api/channel/create/:companyID", async (req, res) => {
         company = companyResult.rows[0];
         companyCreated = true;
         
-        console.log(`Company ${companyID} created successfully with plan: ${plan} and apiUrl: https://juta-dev.ngrok.dev/`);
+        console.log(`Company ${companyID} created successfully with plan: ${plan} and apiUrl: https://juta.ngrok.app/`);
       } catch (createError) {
         console.error("Error creating company:", createError);
         return res.status(500).json({
@@ -2200,7 +2334,7 @@ app.post("/api/channel/create/:companyID", async (req, res) => {
 
         // Always update apiUrl for existing companies too
         updateFields.push(`api_url = $${paramIndex++}`);
-        updateValues.push("https://juta-dev.ngrok.dev/");
+        updateValues.push("https://juta.ngrok.app/");
 
         if (updateFields.length > 0) {
           updateFields.push(`updated_at = CURRENT_TIMESTAMP`);
@@ -2243,7 +2377,7 @@ app.post("/api/channel/create/:companyID", async (req, res) => {
       assistantId: assistantId,
       companyCreated: companyCreated,
       plan: plan,
-      apiUrl: "https://juta-dev.ngrok.dev/",
+      apiUrl: "https://juta.ngrok.app/",
     });
 
     // Now initialize the bot in the background
@@ -3145,7 +3279,12 @@ app.put("/api/schedule-message/:companyId/:messageId", async (req, res) => {
   console.log("Updated message body:", updatedMessage);
 
   try {
-    const client = await pool.connect();
+    const client = await getDatabaseConnection();
+
+    if (!client) {
+      console.error("Failed to get database connection - aborting update");
+      return res.status(500).json({ error: "Failed to update scheduled message" });
+    }
 
     try {
       await client.query("BEGIN");
@@ -3255,7 +3394,12 @@ app.delete("/api/schedule-message/:companyId/:messageId", async (req, res) => {
   const { companyId, messageId } = req.params;
 
   try {
-    const client = await pool.connect();
+    const client = await getDatabaseConnection();
+
+    if (!client) {
+      console.error("Failed to get database connection - aborting delete");
+      return res.status(500).json({ error: "Failed to delete scheduled message" });
+    }
 
     try {
       await client.query("BEGIN");
@@ -3345,7 +3489,12 @@ app.delete("/api/schedule-message/:companyId/template/:templateId/contact/:conta
   const { companyId, templateId, contactId } = req.params;
 
   try {
-    const client = await pool.connect();
+    const client = await getDatabaseConnection();
+
+    if (!client) {
+      console.error("Failed to get database connection - aborting delete");
+      return res.status(500).json({ error: "Failed to delete scheduled messages" });
+    }
 
     try {
       await client.query("BEGIN");
@@ -3422,7 +3571,12 @@ app.post(
     const { companyId, messageId } = req.params;
 
     try {
-      const client = await pool.connect();
+      const client = await getDatabaseConnection();
+
+      if (!client) {
+        console.error("Failed to get database connection - aborting stop");
+        return res.status(500).json({ error: "Failed to stop message" });
+      }
 
       try {
         await client.query("BEGIN");
@@ -4309,60 +4463,6 @@ function mapFirestoreMessageToNeon(msg, companyId, contactId) {
     quoted_message: msg.quoted_message ? JSON.stringify(msg.quoted_message) : null,
     thread_id: msg.threadid || msg.thread_id || null,
     customer_phone: msg.customer_phone || null,
-    created_at: new Date(),
-    updated_at: new Date(),
-  };
-}
-
-// ... existing code ...
-
-// ... existing code ...
-// ... existing code ...
-
-// ... existing code ...
-
-function mapFirestorePrivateNoteToNeon(note, companyId, contactId) {
-  // Fix timestamp handling for private notes
-  let noteTimestamp;
-  
-  if (note.timestamp || note.createdAt) {
-    const timestamp = note.timestamp || note.createdAt;
-    
-    if (typeof timestamp === 'string') {
-      // Try to parse as ISO string first
-      const parsedDate = new Date(timestamp);
-      if (!isNaN(parsedDate.getTime())) {
-        noteTimestamp = parsedDate;
-      } else {
-        // If it's an invalid string, use current time
-        noteTimestamp = new Date();
-      }
-    } else if (typeof timestamp === 'number') {
-      // Check if it's seconds or milliseconds
-      const timestampMs = timestamp < 1000000000000 ? timestamp * 1000 : timestamp;
-      noteTimestamp = new Date(timestampMs);
-    } else {
-      // Fallback to current time
-      noteTimestamp = new Date();
-    }
-    
-    // Validate the timestamp
-    if (isNaN(noteTimestamp.getTime()) || noteTimestamp > new Date()) {
-      noteTimestamp = new Date();
-    }
-  } else {
-    noteTimestamp = new Date();
-  }
-  
-  return {
-    id: note.id || uuidv4(),
-    company_id: companyId,
-    contact_id: contactId,
-    text: note.text?.body || note.text || "",
-    from: note.from || note.from_name || null,
-    from_email: note.fromEmail || null,
-    timestamp: noteTimestamp,
-    type: "privateNote",
     created_at: new Date(),
     updated_at: new Date(),
   };
@@ -5304,80 +5404,7 @@ const safeJsonParse = (data, defaultValue = null, context = '') => {
 // ======================
 
 // Function to clean up old jobs with JSON parsing errors
-async function cleanupOldJobs() {
-  console.log("Starting cleanup of old problematic jobs...");
-  
-  try {
-    // Get all bot queues
-    for (const [botId, queue] of botQueues.entries()) {
-      console.log(`Cleaning up jobs for bot ${botId}...`);
-      
-      try {
-        // Get all jobs in different states
-        const waitingJobs = await queue.getJobs(['waiting']);
-        const delayedJobs = await queue.getJobs(['delayed']);
-        const activeJobs = await queue.getJobs(['active']);
-        const failedJobs = await queue.getJobs(['failed']);
-        
-        console.log(`Bot ${botId} - Found jobs:`, {
-          waiting: waitingJobs.length,
-          delayed: delayedJobs.length,
-          active: activeJobs.length,
-          failed: failedJobs.length
-        });
-        
-        // Remove all jobs that might have JSON parsing issues
-        const allJobs = [...waitingJobs, ...delayedJobs, ...activeJobs, ...failedJobs];
-        
-        for (const job of allJobs) {
-          try {
-            // Check if job data contains problematic JSON
-            const jobData = job.data;
-            
-            // Look for common problematic fields
-            const problematicFields = ['chat_ids', 'messages', 'contact_ids', 'active_hours'];
-            let hasProblematicData = false;
-            
-            for (const field of problematicFields) {
-              if (jobData[field] && typeof jobData[field] === 'string') {
-                try {
-                  JSON.parse(jobData[field]);
-                } catch (e) {
-                  console.log(`Bot ${botId} - Job ${job.id} has problematic ${field}:`, jobData[field]);
-                  hasProblematicData = true;
-                  break;
-                }
-              }
-            }
-            
-            if (hasProblematicData) {
-              console.log(`Bot ${botId} - Removing problematic job ${job.id}`);
-              await job.remove();
-            }
-          } catch (error) {
-            console.error(`Bot ${botId} - Error processing job ${job.id}:`, error.message);
-            // Remove job if we can't process it
-            try {
-              await job.remove();
-            } catch (removeError) {
-              console.error(`Bot ${botId} - Error removing job ${job.id}:`, removeError.message);
-            }
-          }
-        }
-        
-        console.log(`Bot ${botId} - Cleanup completed`);
-        
-      } catch (error) {
-        console.error(`Bot ${botId} - Error during cleanup:`, error.message);
-      }
-    }
-    
-    console.log("Cleanup of old problematic jobs completed");
-    
-          } catch (error) {
-    console.error("Error during cleanup:", error.message);
-  }
-}
+
 
 // Function to clean up specific bot's jobs
 async function cleanupBotJobs(botId) {
@@ -5421,15 +5448,7 @@ async function cleanupBotJobs(botId) {
 }
 
 // Add cleanup endpoints
-app.post('/api/cleanup-jobs', async (req, res) => {
-  try {
-    await cleanupOldJobs();
-    res.json({ success: true, message: 'Job cleanup completed' });
-  } catch (error) {
-    console.error('Error during job cleanup:', error);
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
+
 
 app.post('/api/cleanup-jobs/:botId', async (req, res) => {
   try {
@@ -5442,11 +5461,7 @@ app.post('/api/cleanup-jobs/:botId', async (req, res) => {
   }
 });
 
-// Auto-cleanup on server startup
-setTimeout(async () => {
-  console.log("Running automatic job cleanup on startup...");
-  await cleanupOldJobs();
-}, 10000); // Wait 10 seconds after startup
+
 // Enhanced sendScheduledMessage function with better JSON parsing
 async function sendScheduledMessage(message) {
   const companyId = message.company_id;
@@ -5983,7 +5998,7 @@ async function sendScheduledMessage(message) {
             const endpoint = mediaUrl ? "image" : documentUrl ? "document" : "text";
 
             // FIXED: Properly construct the URL without double slashes
-            const baseUrl = (process.env.URL || 'http://localhost:3000').replace(/\/$/, ''); // Remove trailing slash
+            const baseUrl = (process.env.URL || 'http://localhost:8443').replace(/\/$/, ''); // Remove trailing slash
             const url = `${baseUrl}/api/v2/messages/${endpoint}/${companyId}/${chatId}`;
 
             console.log(`[Company ${companyId}] URL construction:`, {
@@ -5993,7 +6008,7 @@ async function sendScheduledMessage(message) {
               chatId: chatId,
               fullUrl: url,
               envUrl: process.env.URL,
-              originalBaseUrl: process.env.URL || 'http://localhost:3000',
+              originalBaseUrl: process.env.URL || 'http://localhost:8443',
             });
 
             console.log(`[Company ${companyId}] Request details:`, {
@@ -6306,7 +6321,7 @@ function setupMessageHandler(client, botName, phoneIndex) {
       console.log(`🔔 [MESSAGE_HANDLER] Timestamp: ${msg.timestamp}`);
       console.log(`🔔 [MESSAGE_HANDLER] ID: ${msg.id._serialized}`);
       
-      await handleNewMessagesTemplateWweb(client, msg, botName, phoneIndex);
+      await handleNewMessagesPersonalAssistant(client, msg, botName, phoneIndex);
       
       // Add broadcast call here
       const extractedNumber = msg.from.replace("@c.us", "").replace("@g.us", "");
@@ -6622,7 +6637,7 @@ app.post('/api/upload-media', upload.single('file'), (req, res) => {
   if (!req.file) {
     return res.status(400).json({ error: 'No file uploaded' });
   }
-  const baseUrl = 'https://juta-dev.ngrok.dev';
+  const baseUrl = 'https://juta.ngrok.app';
   const fileUrl = `${baseUrl}/media/${req.file.filename}`;
   res.json({ url: fileUrl });
 });
@@ -6642,7 +6657,7 @@ app.post('/api/upload-file', upload.single('file'), (req, res) => {
       return res.status(400).json({ error: 'fileName is required' });
     }
 
-    const baseUrl = 'https://juta-dev.ngrok.dev';
+    const baseUrl = 'https://juta.ngrok.app';
     const fileUrl = `${baseUrl}/media/${req.file.filename}`;
     
     // Log the upload for debugging
@@ -6949,7 +6964,12 @@ app.post('/api/followup-templates/:templateId/messages', async (req, res) => {
     return res.status(400).json({ success: false, message: 'Sequence number must be at least 1' });
   }
 
-  const sqlClient = await pool.connect();
+  const sqlClient = await getDatabaseConnection();
+
+  if (!sqlClient) {
+    console.error("Failed to get database connection - aborting message insert");
+    return res.status(500).json({ success: false, message: 'Failed to add message' });
+  }
 
   try {
     await sqlClient.query("BEGIN");
@@ -7097,7 +7117,12 @@ app.post('/api/followup-templates/:templateId/messages', async (req, res) => {
 async function getMessagesForTemplate(templateId) {
   console.log("Starting getMessagesForTemplate for templateId:", templateId);
   const messages = [];
-  const sqlClient = await pool.connect();
+  const sqlClient = await getDatabaseConnection();
+
+  if (!sqlClient) {
+    console.error("Failed to get database connection - aborting getMessagesForTemplate");
+    return [];
+  }
 
   try {
     await sqlClient.query("BEGIN");
@@ -7228,7 +7253,12 @@ app.put('/api/followup-templates/:templateId', async (req, res) => {
     return res.status(400).json({ success: false, message: 'Template name is required' });
   }
 
-  const sqlClient = await pool.connect();
+  const sqlClient = await getDatabaseConnection();
+
+  if (!sqlClient) {
+    console.error("Failed to get database connection - aborting template update");
+    return res.status(500).json({ success: false, message: 'Failed to update template' });
+  }
 
   try {
     await sqlClient.query("BEGIN");
@@ -7306,7 +7336,7 @@ app.put('/api/followup-templates/:templateId', async (req, res) => {
       error: error.message
     });
   } finally {
-    sqlClient.release();
+    await safeRelease(sqlClient);
     console.log("Database client released");
   }
 });
@@ -7324,7 +7354,12 @@ app.delete('/api/followup-templates/:templateId', async (req, res) => {
     return res.status(400).json({ success: false, message: 'Missing templateId' });
   }
 
-  const sqlClient = await pool.connect();
+  const sqlClient = await getDatabaseConnection();
+
+  if (!sqlClient) {
+    console.error("Failed to get database connection - aborting template delete");
+    return res.status(500).json({ success: false, message: 'Failed to delete template' });
+  }
 
   try {
     await sqlClient.query("BEGIN");
@@ -7379,7 +7414,7 @@ app.delete('/api/followup-templates/:templateId', async (req, res) => {
       error: error.message
     });
   } finally {
-    sqlClient.release();
+    await safeRelease(sqlClient);
     console.log("Database client released");
   }
 });
@@ -7419,7 +7454,12 @@ app.put('/api/followup-templates/:templateId/messages/:messageId', async (req, r
     return res.status(400).json({ success: false, message: 'Message content is required' });
   }
 
-  const sqlClient = await pool.connect();
+  const sqlClient = await getDatabaseConnection();
+
+  if (!sqlClient) {
+    console.error("Failed to get database connection - aborting message update");
+    return res.status(500).json({ success: false, message: 'Failed to update message' });
+  }
 
   try {
     await sqlClient.query("BEGIN");
@@ -7520,7 +7560,7 @@ app.put('/api/followup-templates/:templateId/messages/:messageId', async (req, r
       error: error.message
     });
   } finally {
-    sqlClient.release();
+    await safeRelease(sqlClient);
     console.log("Database client released");
   }
 });
@@ -7539,7 +7579,12 @@ app.delete('/api/followup-templates/:templateId/messages/:messageId', async (req
     return res.status(400).json({ success: false, message: 'Missing templateId or messageId' });
   }
 
-  const sqlClient = await pool.connect();
+  const sqlClient = await getDatabaseConnection();
+
+  if (!sqlClient) {
+    console.error("Failed to get database connection - aborting message delete");
+    return res.status(500).json({ success: false, message: 'Failed to delete message' });
+  }
 
   try {
     await sqlClient.query("BEGIN");
@@ -7584,7 +7629,7 @@ app.delete('/api/followup-templates/:templateId/messages/:messageId', async (req
       error: error.message
     });
   } finally {
-    sqlClient.release();
+    await safeRelease(sqlClient);
     console.log("Database client released");
   }
 });
@@ -7592,7 +7637,12 @@ app.delete('/api/followup-templates/:templateId/messages/:messageId', async (req
 async function getAIAssignResponses(companyId) {
   console.log("Starting getAIAssignResponses for companyId:", companyId);
   const responses = [];
-  const sqlClient = await pool.connect();
+  const sqlClient = await getDatabaseConnection();
+
+  if (!sqlClient) {
+    console.error("Failed to get database connection - aborting getAIAssignResponses");
+    return [];
+  }
 
   try {
     await sqlClient.query("BEGIN");
@@ -7653,7 +7703,12 @@ async function getAIAssignResponses(companyId) {
 
 async function getAITagResponses(companyId) {
   const responses = [];
-  const sqlClient = await pool.connect();
+  const sqlClient = await getDatabaseConnection();
+
+  if (!sqlClient) {
+    console.error("Failed to get database connection - aborting getAITagResponses");
+    return [];
+  }
 
   try {
     await sqlClient.query("BEGIN");
@@ -7698,7 +7753,12 @@ async function getAITagResponses(companyId) {
 
 async function getAIImageResponses(companyId) {
   const responses = [];
-  const sqlClient = await pool.connect();
+  const sqlClient = await getDatabaseConnection();
+
+  if (!sqlClient) {
+    console.error("Failed to get database connection - aborting getAIImageResponses");
+    return [];
+  }
 
   try {
     await sqlClient.query("BEGIN");
@@ -7740,7 +7800,12 @@ async function getAIImageResponses(companyId) {
 
 async function getAIVideoResponses(companyId) {
   const responses = [];
-  const sqlClient = await pool.connect();
+  const sqlClient = await getDatabaseConnection();
+
+  if (!sqlClient) {
+    console.error("Failed to get database connection - aborting getAIVideoResponses");
+    return [];
+  }
 
   try {
     await sqlClient.query("BEGIN");
@@ -7784,7 +7849,12 @@ async function getAIVideoResponses(companyId) {
 
 async function getAIVoiceResponses(companyId) {
   const responses = [];
-  const sqlClient = await pool.connect();
+  const sqlClient = await getDatabaseConnection();
+
+  if (!sqlClient) {
+    console.error("Failed to get database connection - aborting getAIVoiceResponses");
+    return [];
+  }
 
   try {
     await sqlClient.query("BEGIN");
@@ -7827,7 +7897,12 @@ async function getAIVoiceResponses(companyId) {
 
 async function getAIDocumentResponses(companyId) {
   const responses = [];
-  const sqlClient = await pool.connect();
+  const sqlClient = await getDatabaseConnection();
+
+  if (!sqlClient) {
+    console.error("Failed to get database connection - aborting getAIDocumentResponses");
+    return [];
+  }
 
   try {
     await sqlClient.query("BEGIN");
@@ -8366,7 +8441,12 @@ async function addTagToPostgres(contactID, tag, companyID, remove = false) {
   const fullContactID = companyID + "-" + (contactID.startsWith("+") ? contactID.slice(1) : contactID);
   console.log(`Full contact ID: ${fullContactID}`);
 
-  const sqlClient = await pool.connect();
+  const sqlClient = await getDatabaseConnection();
+
+  if (!sqlClient) {
+    console.error("Failed to get database connection - aborting addTagToPostgres");
+    return;
+  }
 
   try {
     await sqlClient.query("BEGIN");
@@ -8488,12 +8568,12 @@ async function addTagToPostgres(contactID, tag, companyID, remove = false) {
     await sqlClient.query("COMMIT");
     console.log("Database transaction committed successfully");
   } catch (error) {
-    await sqlClient.query("ROLLBACK");
+    await safeRollback(sqlClient);
     console.error("Error managing tags in PostgreSQL:", error);
     console.error("Full error stack:", error.stack);
     throw error;
   } finally {
-    sqlClient.release();
+    await safeRelease(sqlClient);
     console.log("Database client released");
     console.log(`=== Completed addTagToPostgres ===`);
   }
@@ -8501,7 +8581,12 @@ async function addTagToPostgres(contactID, tag, companyID, remove = false) {
 
 async function isEmployeeTag(tag, companyID) {
   console.log(`Checking if tag "${tag}" is an employee for company ${companyID}`);
-  const sqlClient = await pool.connect();
+  const sqlClient = await getDatabaseConnection();
+  
+  if (!sqlClient) {
+    console.error("Failed to get database connection - aborting isEmployeeTag");
+    return false;
+  }
   
   try {
     const query = `
@@ -8516,7 +8601,7 @@ async function isEmployeeTag(tag, companyID) {
     console.error("Error checking if tag is employee:", error);
     return false;
   } finally {
-    sqlClient.release();
+    await safeRelease(sqlClient);
   }
 }
 
@@ -8686,7 +8771,11 @@ Thank you.`;
   
   // Create assignment record in assignments table
   try {
-    const sqlClient = await pool.connect();
+    const sqlClient = await getDatabaseConnection();
+    if (!sqlClient) {
+      console.error("Failed to get database connection - aborting assignToEmployee");
+      return;
+    }
     try {
       await sqlClient.query("BEGIN");
 
@@ -8884,7 +8973,12 @@ app.get('/api/scheduled-messages', async (req, res) => {
     return res.status(400).json({ success: false, message: 'Missing companyId parameter' });
   }
 
-  const sqlClient = await pool.connect();
+  const sqlClient = await getDatabaseConnection();
+
+  if (!sqlClient) {
+    console.error("Failed to get database connection - aborting scheduled messages fetch");
+    return res.status(500).json({ success: false, message: 'Failed to fetch scheduled messages' });
+  }
 
   try {
     await sqlClient.query("BEGIN");
@@ -8992,7 +9086,12 @@ app.get('/api/scheduled-messages/contact', async (req, res) => {
     return res.status(400).json({ success: false, message: 'Missing companyId or contactId parameter' });
   }
 
-  const sqlClient = await pool.connect();
+  const sqlClient = await getDatabaseConnection();
+
+  if (!sqlClient) {
+    console.error("Failed to get database connection - aborting scheduled messages fetch for contact");
+    return res.status(500).json({ success: false, message: 'Failed to fetch scheduled messages for contact' });
+  }
 
   try {
     await sqlClient.query("BEGIN");
@@ -10488,8 +10587,8 @@ async function main(reinitialize = false) {
  
   // WHEN WANT TO INITIALIZE ALL BOTS
   const companiesPromise = sqlDb.query(
-    "SELECT * FROM companies WHERE api_url = $1",
-    ["https://juta-dev.ngrok.dev"]
+    "SELECT * FROM companies WHERE company_id = $1",
+    ["0385"]
   );
   
   // const companiesPromise = sqlDb.query(
@@ -10649,7 +10748,7 @@ async function initializeDailyReports() {
       const companyResult = await sqlDb.query(companyQuery, [companyId]);
       const apiUrl = companyResult.rows[0]?.api_url;
 
-      if (apiUrl !== 'https://juta-dev.ngrok.dev') {
+      if (apiUrl !== 'https://juta.ngrok.app') {
         continue;
       }
 
@@ -10731,7 +10830,7 @@ async function checkAndScheduleDailyReport() {
         const companyId = company.company_id;
         const apiUrl = company.api_url;
 
-        if (apiUrl !== 'https://juta-dev.ngrok.dev') {
+        if (apiUrl !== 'https://juta.ngrok.app') {
           continue;
         }
 
@@ -13215,7 +13314,7 @@ app.get("/api/bots", async (req, res) => {
       AND c.api_url = $1
     `;
 
-    const apiUrl = 'https://juta-dev.ngrok.dev';
+    const apiUrl = 'https://juta.ngrok.app';
     const companiesResult = await client.query(botsQuery, [apiUrl]);
 
     const botsPromises = companiesResult.rows.map(async (company) => {
@@ -13522,7 +13621,7 @@ app.get('/api/ai-responses', async (req, res) => {
     });
   }
 
-  const sqlClient = await pool.connect();
+  const sqlClient = await getDatabaseConnection();
 
   try {
     let tableName;
@@ -13588,7 +13687,12 @@ app.post('/api/ai-responses', async (req, res) => {
     return res.status(400).json({ success: false, message: 'Missing data for the response' });
   }
 
-  const sqlClient = await pool.connect();
+  const sqlClient = await getDatabaseConnection();
+
+  if (!sqlClient) {
+    console.error("Failed to get database connection - aborting AI response creation");
+    return res.status(500).json({ success: false, message: 'Failed to create AI response' });
+  }
 
   try {
     await sqlClient.query("BEGIN");
@@ -13780,7 +13884,12 @@ app.put('/api/ai-responses/:id', async (req, res) => {
     return res.status(400).json({ success: false, message: 'Missing update data' });
   }
 
-  const sqlClient = await pool.connect();
+  const sqlClient = await getDatabaseConnection();
+
+  if (!sqlClient) {
+    console.error("Failed to get database connection - aborting AI response update");
+    return res.status(500).json({ success: false, message: 'Failed to update AI response' });
+  }
 
   try {
     await sqlClient.query("BEGIN");
@@ -13997,7 +14106,12 @@ app.delete('/api/ai-responses/:id', async (req, res) => {
     });
   }
 
-  const sqlClient = await pool.connect();
+  const sqlClient = await getDatabaseConnection();
+
+  if (!sqlClient) {
+    console.error("Failed to get database connection - aborting AI response deletion");
+    return res.status(500).json({ success: false, message: 'Failed to delete AI response' });
+  }
 
   try {
     await sqlClient.query("BEGIN");
@@ -14263,7 +14377,12 @@ async function findAndUpdateMessageAuthor(messageContent, contactId, companyId, 
   console.log("Finding and updating message author based on content");
   
   try {
-    const client = await pool.connect();
+    const client = await getDatabaseConnection();
+    if (!client) {
+      console.error("Failed to get database connection - aborting findAndUpdateMessageAuthor");
+      return null;
+    }
+
     try {
       await client.query("BEGIN");
 
@@ -14349,7 +14468,12 @@ app.post("/api/messages/react/:companyId/:messageId", async (req, res) => {
     await message.react(reaction);
 
     // Update reaction in PostgreSQL
-    const dbClient = await pool.connect();
+    const dbClient = await getDatabaseConnection();
+    if (!dbClient) {
+      console.error("Failed to get database connection - aborting reaction update");
+      return res.status(500).json({ error: "Reaction sent but failed to update database" });
+    }
+
     try {
       await dbClient.query("BEGIN");
 
@@ -14401,7 +14525,7 @@ app.post("/api/messages/react/:companyId/:messageId", async (req, res) => {
         details: error.message,
       });
     } finally {
-      dbClient.release();
+      await safeRelease(dbClient);
     }
   } catch (error) {
     console.error("Error reacting to message:", error);
@@ -14441,7 +14565,12 @@ app.put("/api/v2/messages/:companyId/:chatId/:messageId", async (req, res) => {
 
     if (editedMessage) {
       // Update the message in PostgreSQL
-      const client = await pool.connect();
+      const client = await getDatabaseConnection();
+      if (!client) {
+        console.error("Failed to get database connection - aborting message edit");
+        return res.status(500).send("Internal Server Error");
+      }
+
       try {
         await client.query("BEGIN");
 
@@ -14523,7 +14652,12 @@ app.delete(
       await message.delete(true);
 
       // Delete the message from PostgreSQL
-      const dbClient = await pool.connect();
+      const dbClient = await getDatabaseConnection();
+      if (!dbClient) {
+        console.error("Failed to get database connection - aborting message deletion");
+        return res.status(500).send("Internal Server Error");
+      }
+
       try {
         await dbClient.query("BEGIN");
 
@@ -14552,7 +14686,7 @@ app.delete(
         console.error("Error deleting message from PostgreSQL:", error);
         res.status(500).send("Internal Server Error");
       } finally {
-        dbClient.release();
+        await safeRelease(dbClient);
       }
     } catch (error) {
       console.error("Error deleting message:", error);
@@ -14937,7 +15071,12 @@ app.post("/api/contacts/:companyId/:contactId/assign-employee", async (req, res)
       phoneNumber = contactId;
     }
 
-    const client = await pool.connect();
+    const client = await getDatabaseConnection();
+    if (!client) {
+      console.error("Failed to get database connection - aborting employee assignment");
+      return res.status(500).json({ error: "Failed to assign employee" });
+    }
+
     try {
       await client.query("BEGIN");
 
@@ -15077,7 +15216,12 @@ app.post("/api/contacts/:companyId/:contactId/unassign-employee", async (req, re
       phoneNumber = contactId;
     }
 
-    const client = await pool.connect();
+    const client = await getDatabaseConnection();
+    if (!client) {
+      console.error("Failed to get database connection - aborting employee unassignment");
+      return res.status(500).json({ error: "Failed to unassign employee" });
+    }
+
     try {
       await client.query("BEGIN");
 
@@ -15205,7 +15349,12 @@ app.delete("/api/contacts/:companyId/:contactId/assignments", async (req, res) =
       phoneNumber = contactId;
     }
 
-    const client = await pool.connect();
+    const client = await getDatabaseConnection();
+    if (!client) {
+      console.error("Failed to get database connection - aborting bulk unassignment");
+      return res.status(500).json({ error: "Failed to unassign employees" });
+    }
+
     try {
       await client.query("BEGIN");
 
@@ -15349,7 +15498,12 @@ app.get("/api/contacts/:companyId/:contactId/assignments", async (req, res) => {
       phoneNumber = contactId;
     }
 
-    const client = await pool.connect();
+    const client = await getDatabaseConnection();
+    if (!client) {
+      console.error("Failed to get database connection - aborting assignments fetch");
+      return res.status(500).json({ error: "Failed to get contact assignments" });
+    }
+
     try {
       // 1. Get contact details
       const getContactQuery = `
@@ -16257,6 +16411,36 @@ async function initializeWithTimeout(botName, phoneIndex, clientName, clients) {
           error
         );
 
+        // Handle network-related errors more gracefully
+        if (error.code === 'EADDRNOTAVAIL' || 
+            error.code === 'ENOTFOUND' || 
+            error.code === 'ECONNREFUSED' ||
+            error.code === 'ETIMEDOUT' ||
+            error.message.includes('read EADDRNOTAVAIL') ||
+            error.message.includes('TLSWrap')) {
+          console.error(
+            `${botName} Phone ${phoneIndex + 1} - Network connectivity error detected, will retry...`
+          );
+          
+          try {
+            await updatePhoneStatus(botName, phoneIndex, "error", {
+              error: `Network error: ${error.message}`,
+            });
+            
+            // Wait before attempting reconnection
+            await new Promise((resolve) => setTimeout(resolve, 5000));
+            
+            // Attempt reinitialization
+            await initializeBot(botName, 1, phoneIndex);
+          } catch (handlingError) {
+            console.error(
+              `${botName} Phone ${phoneIndex + 1} - Error handling network error:`,
+              handlingError
+            );
+          }
+          return;
+        }
+
         try {
           await updatePhoneStatus(botName, phoneIndex, "error", {
             error: error.message,
@@ -16784,7 +16968,20 @@ main().catch((error) => {
 process.on("uncaughtException", (error) => {
   console.error("\n=== Uncaught Exception ===");
   console.error("Error:", error);
-  // Don't shutdown - just log the error
+  
+  // Handle specific network-related errors
+  if (error.code === 'EADDRNOTAVAIL' || 
+      error.code === 'ENOTFOUND' || 
+      error.code === 'ECONNREFUSED' ||
+      error.code === 'ETIMEDOUT' ||
+      error.message.includes('read EADDRNOTAVAIL') ||
+      error.message.includes('TLSWrap')) {
+    console.error("Network connectivity error detected - continuing operation...");
+    console.error("This is likely a temporary network issue or WhatsApp connection problem.");
+    return; // Don't crash for network issues
+  }
+  
+  // For other critical errors, log but continue operation
   console.log("Continuing operation despite uncaught exception...");
 });
 
@@ -16793,13 +16990,23 @@ process.on("unhandledRejection", (reason, promise) => {
   console.error("\n=== Unhandled Rejection ===");
   console.error("Reason:", reason);
   
-  // Only shutdown if it's a critical error, not database timeouts
-  if (reason.message && reason.message.includes('fetch failed')) {
-    console.error("Database connection error detected - continuing operation");
-    return; // Don't shutdown for database issues
+  // Handle network-related rejections
+  if (reason && (
+    reason.code === 'EADDRNOTAVAIL' || 
+    reason.code === 'ENOTFOUND' || 
+    reason.code === 'ECONNREFUSED' ||
+    reason.code === 'ETIMEDOUT' ||
+    (reason.message && (
+      reason.message.includes('fetch failed') ||
+      reason.message.includes('read EADDRNOTAVAIL') ||
+      reason.message.includes('TLSWrap')
+    ))
+  )) {
+    console.error("Network connectivity error detected - continuing operation");
+    return; // Don't shutdown for network issues
   }
   
-  // For other errors, just log and continue instead of shutting down
+  // For other errors, just log and continue
   console.log("Continuing operation despite unhandled rejection...");
 });
 
@@ -17725,7 +17932,7 @@ app.get("/api/user-context", async (req, res) => {
     
     // Process phone names
     const phoneCount = companyData.phone_count || 0;
-    const apiUrl = companyData.api_url || "https://juta-dev.ngrok.dev";
+    const apiUrl = companyData.api_url || "https://juta.ngrok.app";
     const stopBot = companyData.stopbot || false;
     const stopBots = companyData.stopbots || {};
     
@@ -19515,5 +19722,1054 @@ app.post("/api/expenses", async (req, res) => {
   } catch (error) {
     console.error("Error creating expense:", error);
     res.status(500).json({ error: "Failed to create expense" });
+  }
+});
+
+// ======================
+// GOOGLE CALENDAR INTEGRATION
+// ======================
+
+// Initialize Google Calendar API with service account auth
+let googleCalendarAuth = null;
+
+// Initialize Google Calendar Authentication
+async function initializeGoogleCalendarAuth() {
+  try {
+    // Check if service_account.json exists (same pattern as existing code)
+    const fs = require('fs');
+    if (!fs.existsSync('./service_account.json')) {
+      console.warn('Google Calendar credentials not configured - service_account.json not found');
+      return null;
+    }
+
+    const auth = new google.auth.GoogleAuth({
+      keyFile: './service_account.json',
+      scopes: [
+        'https://www.googleapis.com/auth/calendar.readonly',
+        'https://www.googleapis.com/auth/calendar'
+      ]
+    });
+
+    googleCalendarAuth = await auth.getClient();
+    console.log('Google Calendar authentication initialized successfully');
+    return googleCalendarAuth;
+  } catch (error) {
+    console.error('Failed to initialize Google Calendar auth:', error);
+    return null;
+  }
+}
+
+// Initialize Google Calendar auth on startup
+initializeGoogleCalendarAuth();
+
+// Cache for calendar events (5 minute cache)
+const calendarCache = new Map();
+const CACHE_DURATION = 5 * 60 * 1000; // 5 minutes in milliseconds
+
+// Helper function to get cache key
+function getCacheKey(email, timeMin, timeMax, calendarId) {
+  return `${email}_${calendarId}_${timeMin}_${timeMax}`;
+}
+
+// Helper function to validate and get user
+async function validateUserForCalendar(email) {
+  try {
+    const user = await sqlDb.getRow("SELECT company_id FROM users WHERE email = $1", [email]);
+    return user;
+  } catch (error) {
+    console.error('Error validating user:', error);
+    return null;
+  }
+}
+
+// GET /api/google-calendar/events - Fetch events from Google Calendar
+app.get("/api/google-calendar/events", async (req, res) => {
+  try {
+    const { email, timeMin, timeMax, calendarId = 'primary' } = req.query;
+
+    // Validate required parameters
+    if (!email || !timeMin || !timeMax) {
+      return res.status(400).json({
+        success: false,
+        events: [],
+        error: 'email, timeMin, and timeMax are required parameters'
+      });
+    }
+
+    // Validate user access
+    const user = await validateUserForCalendar(email);
+    if (!user) {
+      return res.status(401).json({
+        success: false,
+        events: [],
+        error: 'Unauthorized: User not found'
+      });
+    }
+
+    // Check if Google Calendar auth is available
+    if (!googleCalendarAuth) {
+      console.warn('Google Calendar not configured, attempting to initialize...');
+      const auth = await initializeGoogleCalendarAuth();
+      if (!auth) {
+        return res.status(503).json({
+          success: false,
+          events: [],
+          error: 'Google Calendar integration not configured'
+        });
+      }
+    }
+
+    // Check cache first
+    const cacheKey = getCacheKey(email, timeMin, timeMax, calendarId);
+    const cachedData = calendarCache.get(cacheKey);
+    
+    if (cachedData && (Date.now() - cachedData.timestamp) < CACHE_DURATION) {
+      console.log('Returning cached calendar events for:', email);
+      return res.json({
+        success: true,
+        events: cachedData.events,
+        cached: true
+      });
+    }
+
+    // Initialize Google Calendar API
+    const calendar = google.calendar({
+      version: 'v3',
+      auth: googleCalendarAuth
+    });
+
+    console.log(`Fetching Google Calendar events for ${email} from ${timeMin} to ${timeMax}`);
+
+    // Fetch events from Google Calendar
+    const response = await calendar.events.list({
+      calendarId: calendarId,
+      timeMin: timeMin,
+      timeMax: timeMax,
+      singleEvents: true,
+      orderBy: 'startTime',
+      timeZone: 'Asia/Kuala_Lumpur',
+      maxResults: 250 // Reasonable limit to prevent huge responses
+    });
+
+    // Transform events to match expected format
+    const events = response.data.items?.map(event => {
+      // Handle all-day events vs timed events
+      const isAllDay = !event.start?.dateTime && event.start?.date;
+      
+      let startDateTime, endDateTime;
+      
+      if (isAllDay) {
+        // For all-day events, convert date to dateTime at start of day in Malaysia timezone
+        const startDate = new Date(event.start.date + 'T00:00:00+08:00');
+        const endDate = new Date(event.end.date + 'T00:00:00+08:00');
+        
+        startDateTime = startDate.toISOString();
+        endDateTime = endDate.toISOString();
+      } else {
+        // For timed events, use the existing dateTime
+        startDateTime = event.start?.dateTime || null;
+        endDateTime = event.end?.dateTime || null;
+      }
+      
+      return {
+        summary: event.summary || 'Busy',
+        start: {
+          dateTime: startDateTime,
+          date: event.start?.date || null
+        },
+        end: {
+          dateTime: endDateTime,
+          date: event.end?.date || null
+        },
+        id: event.id,
+        status: event.status,
+        transparency: event.transparency, // 'transparent' means the event doesn't block time
+        isAllDay: isAllDay // Add flag to indicate if this is an all-day event
+      };
+    }) || [];
+
+    // Filter out cancelled events and transparent events (they don't block time)
+    const filteredEvents = events.filter(event => 
+      event.status !== 'cancelled' && 
+      event.transparency !== 'transparent'
+    );
+
+    // Cache the results
+    calendarCache.set(cacheKey, {
+      events: filteredEvents,
+      timestamp: Date.now()
+    });
+
+    // Clean up old cache entries (optional - prevents memory leaks)
+    if (calendarCache.size > 1000) {
+      const now = Date.now();
+      for (const [key, value] of calendarCache.entries()) {
+        if (now - value.timestamp > CACHE_DURATION) {
+          calendarCache.delete(key);
+        }
+      }
+    }
+
+    console.log(`Found ${filteredEvents.length} calendar events for ${email}`);
+
+    res.json({
+      success: true,
+      events: filteredEvents
+    });
+
+  } catch (error) {
+    console.error('Google Calendar API error:', error);
+    
+    // Determine error type and provide appropriate response
+    let errorMessage = 'Failed to fetch calendar events';
+    let statusCode = 500;
+
+    if (error.code === 404) {
+      errorMessage = 'Calendar not found or access denied';
+      statusCode = 404;
+    } else if (error.code === 403) {
+      errorMessage = 'Insufficient permissions to access calendar';
+      statusCode = 403;
+    } else if (error.code === 429) {
+      errorMessage = 'Rate limit exceeded, please try again later';
+      statusCode = 429;
+    } else if (error.message?.includes('invalid_grant')) {
+      errorMessage = 'Google Calendar authentication failed';
+      statusCode = 401;
+    }
+
+    res.status(statusCode).json({
+      success: false,
+      events: [],
+      error: errorMessage
+    });
+  }
+});
+
+// POST /api/google-calendar/create-event - Create a new event in Google Calendar
+app.post("/api/google-calendar/create-event", async (req, res) => {
+  try {
+    const { event, calendarId = 'primary', userEmail } = req.body;
+    
+    // Use the provided calendarId or default to the specific calendar
+    const actualCalendarId = 'thealistmalaysia@gmail.com';
+
+    // Validate required parameters
+    if (!event || !event.summary || !event.start || !event.end) {
+      return res.status(400).json({
+        success: false,
+        error: 'event with summary, start, and end times are required'
+      });
+    }
+
+    // Validate user access if userEmail is provided
+    if (userEmail) {
+      const user = await validateUserForCalendar(userEmail);
+      if (!user) {
+        return res.status(401).json({
+          success: false,
+          error: 'Unauthorized: User not found'
+        });
+      }
+    }
+
+    // Check if Google Calendar auth is available
+    if (!googleCalendarAuth) {
+      console.warn('Google Calendar not configured, attempting to initialize...');
+      const auth = await initializeGoogleCalendarAuth();
+      if (!auth) {
+        return res.status(503).json({
+          success: false,
+          error: 'Google Calendar integration not configured'
+        });
+      }
+    }
+
+    // Initialize Google Calendar API with write permissions and conference data creation
+    const auth = new google.auth.GoogleAuth({
+      keyFile: './service_account.json',
+      scopes: [
+        'https://www.googleapis.com/auth/calendar',
+        'https://www.googleapis.com/auth/calendar.events'
+      ]
+    });
+    
+    const calendar = google.calendar({
+      version: 'v3',
+      auth: auth
+    });
+
+    console.log(`Creating Google Calendar event: ${event.summary} on ${actualCalendarId}`);
+    console.log('Service account email:', 'crm-643@onboarding-a5fcb.iam.gserviceaccount.com');
+    console.log('Event details:', JSON.stringify(event, null, 2));
+
+    // Check calendar conference settings first
+    try {
+      const calendarInfo = await calendar.calendars.get({
+        calendarId: actualCalendarId
+      });
+      console.log('Calendar conference properties:', calendarInfo.data.conferenceProperties);
+      
+      const allowedTypes = calendarInfo.data.conferenceProperties?.allowedConferenceSolutionTypes || [];
+      console.log('Allowed conference solution types:', allowedTypes);
+      
+      if (!allowedTypes.includes('hangoutsMeet')) {
+        console.warn('WARNING: hangoutsMeet is not in allowed conference solution types for this calendar');
+        console.log('Available types:', allowedTypes);
+      }
+    } catch (calError) {
+      console.warn('Could not check calendar conference properties:', calError.message);
+    }
+
+    // Process event data - title comes pre-formatted from frontend
+    const eventForCalendar = { ...event };
+    
+    console.log(`Event title: "${event.summary}"`);
+    
+    // Service accounts cannot invite attendees without Domain-Wide Delegation
+    // So we'll add attendee info to the description instead
+    if (event.attendees && event.attendees.length > 0) {
+      const attendeeInfo = event.attendees
+        .map(attendee => `${attendee.displayName || ''} (${attendee.email})`)
+        .join(', ');
+      
+      eventForCalendar.description = `${event.description || ''}\n\nGuest: ${attendeeInfo}`.trim();
+      console.log('Adding attendee info to description:', attendeeInfo);
+      
+      // Remove attendees from the event to avoid permission errors
+      delete eventForCalendar.attendees;
+    }
+
+    // Try to create event with Google Meet, fallback gracefully if it fails
+    let response;
+    let meetLinkCreated = false;
+    let manualMeetLink = null;
+
+    // First, try creating event with Google Meet
+    if (eventForCalendar.conferenceData) {
+      try {
+        // Ensure correct conference data format for Google Meet
+        eventForCalendar.conferenceData = {
+          createRequest: {
+            requestId: `booking-${Date.now()}`,
+            conferenceSolutionKey: { 
+              type: 'hangoutsMeet' 
+            }
+          }
+        };
+
+        console.log('Attempting to create event with Google Meet...');
+        console.log('Conference data:', JSON.stringify(eventForCalendar.conferenceData, null, 2));
+        
+        const insertParamsWithMeet = {
+          calendarId: actualCalendarId,
+          resource: eventForCalendar,
+          conferenceDataVersion: 1,
+          sendUpdates: 'all'
+        };
+
+        response = await calendar.events.insert(insertParamsWithMeet);
+        meetLinkCreated = true;
+        console.log('Successfully created event with Google Meet');
+        
+      } catch (meetError) {
+        console.log('Google Meet creation failed:', meetError);
+        console.log('Error details:', meetError.message);
+        console.log('Error code:', meetError.code);
+        
+        // Try alternative conference solution approach
+        try {
+          console.log('Trying alternative Google Meet creation method...');
+          
+          // Reset conference data with different approach
+          eventForCalendar.conferenceData = {
+            createRequest: {
+              requestId: `booking-alt-${Date.now()}`,
+              conferenceSolutionKey: { 
+                type: 'hangoutsMeet' 
+              }
+            }
+          };
+          
+          const insertParamsAlt = {
+            calendarId: actualCalendarId,
+            resource: eventForCalendar,
+            conferenceDataVersion: 1
+          };
+
+          response = await calendar.events.insert(insertParamsAlt);
+          meetLinkCreated = true;
+          console.log('Successfully created event with Google Meet (alternative method)');
+          
+        } catch (altError) {
+          console.log('Alternative Google Meet creation also failed, falling back to event without Meet:', altError.message);
+          
+          // Remove conference data and try again
+          delete eventForCalendar.conferenceData;
+          
+          const insertParamsWithoutMeet = {
+            calendarId: actualCalendarId,
+            resource: eventForCalendar
+          };
+
+          // Add manual Google Meet link to description as fallback
+          manualMeetLink = `https://meet.google.com/new`;
+          eventForCalendar.description = `${eventForCalendar.description || ''}\n\n🎥 Google Meet: ${manualMeetLink}\n(Click to create a new meeting room)`.trim();
+          
+          response = await calendar.events.insert(insertParamsWithoutMeet);
+          console.log('Successfully created event without Google Meet');
+          console.log('Added manual Google Meet link to description:', manualMeetLink);
+        }
+      }
+    } else {
+      // No conference data requested, create simple event
+      const insertParams = {
+        calendarId: actualCalendarId,
+        resource: eventForCalendar
+      };
+
+      response = await calendar.events.insert(insertParams);
+    }
+
+    const createdEvent = response.data;
+
+    console.log(`Successfully created Google Calendar event with ID: ${createdEvent.id}`);
+    console.log(`Event created in calendar: ${actualCalendarId}`);
+    console.log(`Event HTML Link: ${createdEvent.htmlLink}`);
+    console.log(`Google Meet link created: ${meetLinkCreated}`);
+    if (createdEvent.hangoutLink) {
+      console.log(`Google Meet link: ${createdEvent.hangoutLink}`);
+    }
+
+    res.json({
+      success: true,
+      meetLinkCreated: meetLinkCreated,
+      manualMeetLink: manualMeetLink,
+      event: {
+        id: createdEvent.id,
+        htmlLink: createdEvent.htmlLink,
+        hangoutLink: createdEvent.hangoutLink || manualMeetLink,
+        status: createdEvent.status,
+        created: createdEvent.created,
+        summary: createdEvent.summary,
+        start: createdEvent.start,
+        end: createdEvent.end,
+        attendees: createdEvent.attendees,
+        conferenceData: createdEvent.conferenceData
+      }
+    });
+
+  } catch (error) {
+    console.error('Google Calendar create event error:', error);
+    
+    // Determine error type and provide appropriate response
+    let errorMessage = 'Failed to create calendar event';
+    let statusCode = 500;
+
+    if (error.code === 404) {
+      errorMessage = 'Calendar not found or access denied';
+      statusCode = 404;
+    } else if (error.code === 403) {
+      errorMessage = 'Insufficient permissions to create events in calendar';
+      statusCode = 403;
+    } else if (error.code === 429) {
+      errorMessage = 'Rate limit exceeded, please try again later';
+      statusCode = 429;
+    } else if (error.message?.includes('invalid_grant')) {
+      errorMessage = 'Google Calendar authentication failed';
+      statusCode = 401;
+    } else if (error.message?.includes('Invalid conference type')) {
+      errorMessage = 'Failed to create Google Meet conference';
+      statusCode = 400;
+    }
+
+    res.status(statusCode).json({
+      success: false,
+      error: errorMessage
+    });
+  }
+});
+
+// ======================
+// BOOKING SLOTS API
+// ======================
+
+// GET /api/booking-slots - Get all booking slots for a company
+app.get("/api/booking-slots", async (req, res) => {
+  try {
+    const { email } = req.query;
+    
+    if (!email) {
+      return res.status(400).json({ error: "Email is required" });
+    }
+
+    const user = await sqlDb.getRow("SELECT company_id FROM users WHERE email = $1", [email]);
+    if (!user) {
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    const query = `
+      SELECT * FROM booking_slots 
+      WHERE company_id = $1 
+      ORDER BY created_at DESC
+    `;
+    
+    const result = await sqlDb.query(query, [user.company_id]);
+    
+    res.json({
+      success: true,
+      bookingSlots: result.rows
+    });
+  } catch (error) {
+    console.error("Error fetching booking slots:", error);
+    res.status(500).json({ 
+      success: false,
+      error: "Failed to fetch booking slots" 
+    });
+  }
+});
+
+// GET /api/booking-slots/:slug - Get specific booking slot by slug
+app.get("/api/booking-slots/:slug", async (req, res) => {
+  try {
+    const { slug } = req.params;
+    
+    const query = `
+      SELECT * FROM booking_slots 
+      WHERE slug = $1 AND is_active = true
+    `;
+    
+    const result = await sqlDb.getRow(query, [slug]);
+    
+    if (!result) {
+      return res.status(404).json({
+        success: false,
+        error: "Booking slot not found"
+      });
+    }
+    
+    res.json({
+      success: true,
+      bookingSlot: result
+    });
+  } catch (error) {
+    console.error("Error fetching booking slot:", error);
+    res.status(500).json({ 
+      success: false,
+      error: "Failed to fetch booking slot" 
+    });
+  }
+});
+
+// POST /api/booking-slots - Create new booking slot
+app.post("/api/booking-slots", async (req, res) => {
+  try {
+    const {
+      title, slug, description, location, duration, staffName,
+      is_active, created_by, company_id
+    } = req.body;
+    
+    // Validation
+    if (!title || !slug || !staffName || !created_by || !company_id) {
+      return res.status(422).json({
+        success: false,
+        error: 'title, slug, staffName, created_by, and company_id are required'
+      });
+    }
+    
+    // Check if slug already exists and handle gracefully
+    let finalSlug = slug;
+    let existingSlot = await sqlDb.getRow(
+      "SELECT * FROM booking_slots WHERE slug = $1", 
+      [finalSlug]
+    );
+    
+    if (existingSlot) {
+      // If it's the exact same booking slot (same title, staff, company), return the existing one
+      if (existingSlot.title === title && 
+          existingSlot.staff_name === staffName && 
+          existingSlot.company_id === company_id) {
+        return res.status(200).json({
+          success: true,
+          bookingSlot: existingSlot,
+          message: 'Booking slot already exists'
+        });
+      }
+      
+      // Otherwise, generate a unique slug with timestamp
+      const timestamp = Date.now();
+      finalSlug = `${slug}-${timestamp}`;
+      
+      // Double-check the new slug doesn't exist
+      const newSlugCheck = await sqlDb.getRow(
+        "SELECT id FROM booking_slots WHERE slug = $1", 
+        [finalSlug]
+      );
+      
+      if (newSlugCheck) {
+        return res.status(409).json({
+          success: false,
+          error: 'Unable to generate unique slug. Please try again.'
+        });
+      }
+    }
+    
+    const bookingSlotId = require('uuid').v4();
+    
+    const query = `
+      INSERT INTO booking_slots (
+        id, title, slug, description, location, duration_minutes, 
+        staff_name, is_active, created_by, company_id, created_at, updated_at
+      )
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW(), NOW())
+      RETURNING *
+    `;
+    
+    const result = await sqlDb.getRow(query, [
+      bookingSlotId, title, finalSlug, description, location, duration || 30,
+      staffName, is_active !== false, created_by, company_id
+    ]);
+    
+    res.status(201).json({
+      success: true,
+      bookingSlot: result
+    });
+  } catch (error) {
+    console.error("Error creating booking slot:", error);
+    
+    // Handle specific database errors
+    if (error.code === '23505') { // Unique constraint violation
+      return res.status(409).json({
+        success: false,
+        error: 'A booking slot with this slug already exists'
+      });
+    }
+    
+    res.status(500).json({
+      success: false,
+      error: "Failed to create booking slot"
+    });
+  }
+});
+
+// PUT /api/booking-slots/:id - Update booking slot
+app.put("/api/booking-slots/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const {
+      title, slug, description, location, duration, staffName, is_active
+    } = req.body;
+    
+    // Check if booking slot exists
+    const existingSlot = await sqlDb.getRow(
+      "SELECT id FROM booking_slots WHERE id = $1", 
+      [id]
+    );
+    
+    if (!existingSlot) {
+      return res.status(404).json({
+        success: false,
+        error: 'Booking slot not found'
+      });
+    }
+    
+    // Build update query dynamically
+    const updateFields = [];
+    const values = [];
+    let paramCount = 1;
+    
+    if (title !== undefined) {
+      updateFields.push(`title = $${paramCount++}`);
+      values.push(title);
+    }
+    if (slug !== undefined) {
+      updateFields.push(`slug = $${paramCount++}`);
+      values.push(slug);
+    }
+    if (description !== undefined) {
+      updateFields.push(`description = $${paramCount++}`);
+      values.push(description);
+    }
+    if (location !== undefined) {
+      updateFields.push(`location = $${paramCount++}`);
+      values.push(location);
+    }
+    if (duration !== undefined) {
+      updateFields.push(`duration_minutes = $${paramCount++}`);
+      values.push(duration);
+    }
+    if (staffName !== undefined) {
+      updateFields.push(`staff_name = $${paramCount++}`);
+      values.push(staffName);
+    }
+    if (is_active !== undefined) {
+      updateFields.push(`is_active = $${paramCount++}`);
+      values.push(is_active);
+    }
+    
+    if (updateFields.length === 0) {
+      return res.status(422).json({
+        success: false,
+        error: 'No fields to update'
+      });
+    }
+    
+    updateFields.push(`updated_at = NOW()`);
+    values.push(id);
+    
+    const query = `
+      UPDATE booking_slots 
+      SET ${updateFields.join(', ')}
+      WHERE id = $${paramCount}
+      RETURNING *
+    `;
+    
+    const result = await sqlDb.getRow(query, values);
+    
+    res.json({
+      success: true,
+      bookingSlot: result
+    });
+  } catch (error) {
+    console.error("Error updating booking slot:", error);
+    res.status(500).json({
+      success: false,
+      error: "Failed to update booking slot"
+    });
+  }
+});
+
+// DELETE /api/booking-slots/:id - Delete booking slot
+app.delete("/api/booking-slots/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { email } = req.body;
+    
+    if (!email) {
+      return res.status(400).json({ error: "Email is required" });
+    }
+
+    const user = await sqlDb.getRow("SELECT company_id FROM users WHERE email = $1", [email]);
+    if (!user) {
+      return res.status(404).json({ error: "User not found" });
+    }
+    
+    // Check if booking slot exists and belongs to user's company
+    const existingSlot = await sqlDb.getRow(
+      "SELECT id FROM booking_slots WHERE id = $1 AND company_id = $2", 
+      [id, user.company_id]
+    );
+    
+    if (!existingSlot) {
+      return res.status(404).json({
+        success: false,
+        error: 'Booking slot not found'
+      });
+    }
+    
+    await sqlDb.query("DELETE FROM booking_slots WHERE id = $1", [id]);
+    
+    res.json({
+      success: true,
+      message: "Booking slot deleted successfully"
+    });
+  } catch (error) {
+    console.error("Error deleting booking slot:", error);
+    res.status(500).json({
+      success: false,
+      error: "Failed to delete booking slot"
+    });
+  }
+});
+
+// POST /api/booking-slots/book - Create a booking (alternative endpoint for frontend)
+app.post("/api/booking-slots/book", async (req, res) => {
+  try {
+    // Log the full request body for debugging
+    console.log('Booking request received:', JSON.stringify(req.body, null, 2));
+    
+    const {
+      bookingSlotId, firstName, lastName, email, phone, 
+      selectedDate, selectedTime, message, staffName,
+      title, duration, startDateTime, endDateTime,
+      // Frontend also sends these fields
+      slotId, slotSlug, phoneNumber, name, bookedAt
+    } = req.body;
+    
+    // Map frontend field names to backend expected names
+    const actualFirstName = firstName || name;
+    const actualPhone = phone || phoneNumber;
+    
+    // Validation - flexible to support different frontend formats
+    if (!actualFirstName || !email || !actualPhone) {
+      return res.status(422).json({
+        success: false,
+        error: 'name/firstName, email, and phone/phoneNumber are required'
+      });
+    }
+    
+    // Check if we have any date/time information
+    if (!selectedDate && !startDateTime) {
+      return res.status(422).json({
+        success: false,
+        error: 'Either selectedDate or startDateTime is required'
+      });
+    }
+    
+    // Handle different date/time formats from frontend
+    let appointmentDateTime, endTime;
+    
+    if (startDateTime) {
+      // Direct datetime format
+      appointmentDateTime = new Date(startDateTime);
+      endTime = endDateTime ? new Date(endDateTime) : new Date(appointmentDateTime.getTime() + ((duration || 30) * 60000));
+          } else if (selectedDate && selectedTime) {
+        // Separate date and time - handle both 12-hour and 24-hour formats
+        let timeString = selectedTime;
+        
+        // Convert 12-hour format to 24-hour format
+        if (selectedTime.includes('am') || selectedTime.includes('pm')) {
+          const time = selectedTime.toLowerCase().replace(/\s/g, '');
+          const [timePart, meridiem] = [time.slice(0, -2), time.slice(-2)];
+          let [hours, minutes] = timePart.split(':');
+          
+          hours = parseInt(hours);
+          minutes = minutes || '00';
+          
+          if (meridiem === 'pm' && hours !== 12) {
+            hours += 12;
+          } else if (meridiem === 'am' && hours === 12) {
+            hours = 0;
+          }
+          
+          timeString = `${hours.toString().padStart(2, '0')}:${minutes}`;
+        }
+        
+        appointmentDateTime = new Date(`${selectedDate}T${timeString}`);
+        endTime = new Date(appointmentDateTime.getTime() + ((duration || 30) * 60000));
+      }
+    
+    if (!appointmentDateTime || isNaN(appointmentDateTime.getTime())) {
+      console.error('Invalid date/time:', { selectedDate, selectedTime, startDateTime, endDateTime });
+      return res.status(422).json({
+        success: false,
+        error: 'Invalid date/time format. Please check date and time values.'
+      });
+    }
+    
+    // Get company_id - try from bookingSlotId first, fallback to default
+    let company_id = null;
+    
+    if (bookingSlotId) {
+      const bookingSlot = await sqlDb.getRow(
+        "SELECT company_id FROM booking_slots WHERE id = $1", 
+        [bookingSlotId]
+      );
+      company_id = bookingSlot?.company_id;
+    }
+    
+    // Fallback: get company_id from a user email if available in metadata
+    if (!company_id) {
+      // For calendar bookings, we might need to get company_id differently
+      // This is a fallback - you may need to adjust based on your data structure
+      const defaultUser = await sqlDb.getRow("SELECT company_id FROM users LIMIT 1");
+      company_id = defaultUser?.company_id;
+    }
+    
+    if (!company_id) {
+      return res.status(422).json({
+        success: false,
+        error: 'Unable to determine company_id for booking'
+      });
+    }
+    
+    // Create appointment
+    const appointmentId = require('uuid').v4();
+    const contactName = `${actualFirstName} ${lastName || ''}`.trim();
+    
+    const appointmentData = {
+      appointment_id: appointmentId,
+      company_id: company_id,
+      contact_id: null, // Calendar bookings don't require existing contacts
+      title: title || `Appointment - ${contactName}`,
+      description: message || `Calendar booking for ${contactName}`,
+      scheduled_time: appointmentDateTime.toISOString(),
+      duration_minutes: duration || Math.round((endTime.getTime() - appointmentDateTime.getTime()) / (1000 * 60)),
+      status: 'scheduled',
+      metadata: JSON.stringify({
+        bookingSlotId: bookingSlotId || slotId || null,
+        bookingSlotSlug: slotSlug || null,
+        calendarBooking: true,
+        customerEmail: email,
+        customerPhone: actualPhone,
+        staffName: staffName || 'Staff',
+        source: 'calendar',
+        bookedAt: bookedAt || new Date().toISOString()
+      }),
+      staff_assigned: JSON.stringify([staffName || 'Staff']),
+      appointment_type: 'booking'
+    };
+    
+    const result = await sqlDb.query(`
+      INSERT INTO appointments (
+        appointment_id, company_id, contact_id, title, description, 
+        scheduled_time, duration_minutes, status, metadata, staff_assigned, appointment_type
+      )
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+      RETURNING *
+    `, [
+      appointmentData.appointment_id,
+      appointmentData.company_id,
+      appointmentData.contact_id,
+      appointmentData.title,
+      appointmentData.description,
+      appointmentData.scheduled_time,
+      appointmentData.duration_minutes,
+      appointmentData.status,
+      appointmentData.metadata,
+      appointmentData.staff_assigned,
+      appointmentData.appointment_type
+    ]);
+    
+    res.status(201).json({
+      success: true,
+      appointment: result.rows[0],
+      message: "Booking created successfully"
+    });
+  } catch (error) {
+    console.error("Error creating booking:", error);
+    res.status(500).json({
+      success: false,
+      error: "Failed to create booking"
+    });
+  }
+});
+
+// GET /api/booking-slots/public/:slug - Get public booking slot data
+app.get("/api/booking-slots/public/:slug", async (req, res) => {
+  try {
+    const { slug } = req.params;
+    
+    const query = `
+      SELECT 
+        id, title, slug, description, location, duration_minutes, 
+        staff_name, is_active, company_id, created_at
+      FROM booking_slots 
+      WHERE slug = $1 AND is_active = true
+    `;
+    
+    const result = await sqlDb.getRow(query, [slug]);
+    
+    if (!result) {
+      return res.status(404).json({
+        success: false,
+        error: "Booking slot not found or inactive"
+      });
+    }
+    
+    res.json({
+      success: true,
+      bookingSlot: result
+    });
+  } catch (error) {
+    console.error("Error fetching public booking slot:", error);
+    res.status(500).json({ 
+      success: false,
+      error: "Failed to fetch booking slot" 
+    });
+  }
+});
+
+// POST /api/booking-slots/public/book - Create a booking from public page
+app.post("/api/booking-slots/public/book", async (req, res) => {
+  try {
+    const {
+      bookingSlotId, firstName, lastName, email, phone, 
+      selectedDate, selectedTime, message, staffName
+    } = req.body;
+    
+    // Validation
+    if (!bookingSlotId || !firstName || !email || !phone || !selectedDate || !selectedTime) {
+      return res.status(422).json({
+        success: false,
+        error: 'bookingSlotId, firstName, email, phone, selectedDate, and selectedTime are required'
+      });
+    }
+    
+    // Get booking slot details
+    const bookingSlot = await sqlDb.getRow(
+      "SELECT * FROM booking_slots WHERE id = $1 AND is_active = true", 
+      [bookingSlotId]
+    );
+    
+    if (!bookingSlot) {
+      return res.status(404).json({
+        success: false,
+        error: 'Booking slot not found or inactive'
+      });
+    }
+    
+    // Create appointment
+    const appointmentId = require('uuid').v4();
+    const contactName = `${firstName} ${lastName}`.trim();
+    
+    // Parse date and time
+    const appointmentDateTime = new Date(`${selectedDate}T${selectedTime}`);
+    const endDateTime = new Date(appointmentDateTime.getTime() + (bookingSlot.duration_minutes * 60000));
+    
+    const appointmentData = {
+      appointment_id: appointmentId,
+      company_id: bookingSlot.company_id,
+      contact_id: null, // Public bookings don't require existing contacts
+      title: `${bookingSlot.title} - ${contactName}`,
+      description: message || `Booking via public link for ${bookingSlot.title}`,
+      scheduled_time: appointmentDateTime.toISOString(),
+      duration_minutes: bookingSlot.duration_minutes,
+      status: 'scheduled',
+      metadata: JSON.stringify({
+        bookingSlotId: bookingSlotId,
+        bookingSlotSlug: bookingSlot.slug,
+        publicBooking: true,
+        customerEmail: email,
+        customerPhone: phone,
+        staffName: staffName || bookingSlot.staff_name,
+        location: bookingSlot.location
+      }),
+      staff_assigned: JSON.stringify([staffName || bookingSlot.staff_name]),
+      appointment_type: 'booking'
+    };
+    
+    const result = await sqlDb.query(`
+      INSERT INTO appointments (
+        appointment_id, company_id, contact_id, title, description, 
+        scheduled_time, duration_minutes, status, metadata, staff_assigned, appointment_type
+      )
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+      RETURNING *
+    `, [
+      appointmentData.appointment_id,
+      appointmentData.company_id,
+      appointmentData.contact_id,
+      appointmentData.title,
+      appointmentData.description,
+      appointmentData.scheduled_time,
+      appointmentData.duration_minutes,
+      appointmentData.status,
+      appointmentData.metadata,
+      appointmentData.staff_assigned,
+      appointmentData.appointment_type
+    ]);
+    
+    res.status(201).json({
+      success: true,
+      appointment: result.rows[0],
+      message: "Booking created successfully"
+    });
+  } catch (error) {
+    console.error("Error creating public booking:", error);
+    res.status(500).json({
+      success: false,
+      error: "Failed to create booking"
+    });
   }
 });

@@ -141,7 +141,7 @@ async function registerUser(phoneNumber, email, username, companyName, password)
         });
 
         // Create channel (if needed)
-        const response = await axios.post(`https://juta-dev.ngrok.dev/api/channel/create/${companyId}`);
+        const response = await axios.post(`https://juta.ngrok.app/api/channel/create/${companyId}`);
         console.log(response.data);
 
         return { success: true, userId: userRecord.uid, companyId: companyId };
