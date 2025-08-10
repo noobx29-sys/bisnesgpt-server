@@ -724,7 +724,7 @@ const corsOptions = {
     console.log('CORS blocked origin:', origin);
     callback(new Error('Not allowed by CORS'));
   },
-  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
+  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
   allowedHeaders: [
     "Content-Type",
     "Authorization",
@@ -777,6 +777,8 @@ app.use(express.static("public"));
 
 // Handle preflight requests
 app.options('*', cors());
+const splitTestRouter = require('./routes/splitTest');
+app.use('/api/split-test', splitTestRouter);
 
 // Configure Multer storage
 const storage = multer.diskStorage({
@@ -1004,23 +1006,119 @@ app.get('/api/logs/tail/:filename', async (req, res) => {
 // END LOG MANAGEMENT API ENDPOINTS
 // ============================================
 
-// // Custom Bots
-// const customHandlers = {};
-// app.post("/zakat", async (req, res) => {
-//   try {
-//     const botData = botMap.get("0124");
-//     if (!botData) throw new Error("WhatsApp client not found for zakat");
-//     await handleZakatBlast(req, res, botData[0].client);
-//   } catch (error) {
-//     console.error("Error processing zakat form:", error);
-//     res.status(500).json({ success: false, error: error.message });
-//   }
-// });
+// ============================================
+// AUTO-REPLY MANAGEMENT ENDPOINTS
+// ============================================
 
-// ======================
-// 7. SERVER INITIALIZATION
-// ======================
+// ... existing code at line 874 ...
 
+// ============================================
+// AUTO-REPLY MANAGEMENT ENDPOINTS - UPDATED
+// ============================================
+// Make botMap globally accessible for auto-reply script
+global.botMap = botMap;
+global.pool = pool;
+global.safeRelease = safeRelease;
+const autoReplyChecker = require('./auto-reply-script.js');
+
+// ============================================
+// AUTO-REPLY MANAGEMENT ENDPOINTS
+// ============================================
+
+
+// Get auto-reply status and statistics
+app.get('/api/auto-reply/status/:companyId', async (req, res) => {
+  try {
+    const { companyId } = req.params;
+    
+    const stats = autoReplyChecker.getStats(companyId);
+    res.json({
+      success: true,
+      data: stats
+    });
+  } catch (error) {
+    console.error('Error getting auto-reply status:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to get auto-reply status'
+    });
+  }
+});
+
+// Manually trigger auto-reply check
+app.post('/api/auto-reply/trigger/:companyId', async (req, res) => {
+  try {
+    const { companyId } = req.params;
+    const { hoursThreshold = 12 } = req.body;
+    
+    console.log(`Manual auto-reply trigger requested for company ${companyId}`);
+    
+    // Run the check
+    const result = await autoReplyChecker.checkUnrepliedMessages(companyId, hoursThreshold);
+    
+    res.json({
+      success: result.success,
+      message: result.message,
+      count: result.count || 0,
+      total: result.total || 0
+    });
+  } catch (error) {
+    console.error('Error triggering auto-reply:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message || 'Failed to trigger auto-reply check'
+    });
+  }
+});
+
+// Test auto-reply on specific phone number
+app.post('/api/auto-reply/test/:companyId', async (req, res) => {
+  try {
+    const { companyId } = req.params;
+    const { phoneNumber, hoursThreshold = 24 } = req.body;
+    
+    if (!phoneNumber) {
+      return res.status(400).json({
+        success: false,
+        error: 'Phone number is required for testing'
+      });
+    }
+    
+    console.log(`Auto-reply test requested for company ${companyId}, phone: ${phoneNumber}`);
+    
+    // Run the test
+    const result = await autoReplyChecker.testAutoReply(companyId, phoneNumber, hoursThreshold);
+    
+    res.json(result);
+  } catch (error) {
+    console.error('Error testing auto-reply:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message || 'Failed to test auto-reply'
+    });
+  }
+});
+
+// Get unreplied messages (for debugging)
+app.get('/api/auto-reply/unreplied/:companyId', async (req, res) => {
+  try {
+    const { companyId } = req.params;
+    const { hoursThreshold = 24 } = req.query;
+    
+    const result = await autoReplyChecker.getUnrepliedMessages(companyId, parseInt(hoursThreshold));
+    res.json(result);
+  } catch (error) {
+    console.error('Error getting unreplied messages:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message || 'Failed to get unreplied messages'
+    });
+  }
+});
+
+// ============================================
+// END AUTO-REPLY MANAGEMENT ENDPOINTS
+// ============================================
 const port = process.env.PORT;
 server.listen(port, () => console.log(`Server is running on port ${port}`));
 
@@ -1494,7 +1592,7 @@ app.post('/api/prompt-engineer-neon/', async (req, res) => {
 // ... existing code ...
 app.get("/api/lalamove/quote", async (req, res) => {
   res.header("Access-Control-Allow-Origin", "https://storeguru.com.my");
-  res.header("Access-Control-Allow-Methods", "GET, POST");
+  res.header("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS");
   res.header(
     "Access-Control-Allow-Headers",
     "Content-Type, Authorization, Accept"
@@ -2228,6 +2326,288 @@ async function createNeonAuthUser(email, name) {
   );
   return response.data;
 }
+
+// ============================================
+// ASSISTANT FILES MANAGEMENT ENDPOINTS
+// ============================================
+
+// Configure storage for file uploads with company-specific paths
+const assistantFileStorage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    const { companyId } = req.body;
+    const uploadPath = path.join(MEDIA_DIR, 'files', companyId || 'default');
+    
+    // Ensure directory exists
+    if (!fs.existsSync(uploadPath)) {
+      fs.mkdirSync(uploadPath, { recursive: true });
+    }
+    cb(null, uploadPath);
+  },
+  filename: (req, file, cb) => {
+    const timestamp = Date.now();
+    const ext = path.extname(file.originalname);
+    const baseName = path.basename(file.originalname, ext);
+    const uniqueName = `${timestamp}_${baseName}${ext}`;
+    cb(null, uniqueName);
+  }
+});
+
+const assistantFileUpload = multer({
+  storage: assistantFileStorage,
+  limits: {
+    fileSize: 200 * 1024 * 1024, // 200MB file size limit
+  },
+});
+
+// Enhanced file upload endpoint for assistant files
+app.post('/api/upload-file', assistantFileUpload.single('file'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: 'No file uploaded' });
+    }
+
+    const { fileName, companyId } = req.body;
+    
+    if (!fileName || !companyId) {
+      return res.status(400).json({ error: 'fileName and companyId are required' });
+    }
+
+    const baseUrl = process.env.BASE_URL || 'https://juta-dev.ngrok.dev';
+    const fileUrl = `${baseUrl}/media/files/${companyId}/${req.file.filename}`;
+    
+    console.log(`Assistant file uploaded: ${req.file.originalname} -> ${req.file.filename} for company ${companyId}`);
+    
+    res.json({ 
+      success: true,
+      url: fileUrl,
+      filename: req.file.filename,
+      originalName: req.file.originalname,
+      size: req.file.size
+    });
+  } catch (error) {
+    console.error('Error uploading assistant file:', error);
+    res.status(500).json({ 
+      success: false,
+      error: 'Failed to upload file' 
+    });
+  }
+});
+
+// Create assistant_files table if it doesn't exist
+async function createAssistantFilesTable() {
+  try {
+    const client = await pool.connect();
+    try {
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS assistant_files (
+          id SERIAL PRIMARY KEY,
+          name VARCHAR(255) NOT NULL,
+          url TEXT NOT NULL,
+          vector_store_id VARCHAR(255),
+          openai_file_id VARCHAR(255),
+          company_id VARCHAR(50) NOT NULL,
+          created_by VARCHAR(255),
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+      `);
+      
+      // Create index for faster lookups
+      await client.query(`
+        CREATE INDEX IF NOT EXISTS idx_assistant_files_company_id 
+        ON assistant_files(company_id)
+      `);
+      
+      console.log('Assistant files table created/verified successfully');
+    } finally {
+      await safeRelease(client);
+    }
+  } catch (error) {
+    console.error('Error creating assistant_files table:', error);
+  }
+}
+
+// Initialize the table on startup
+createAssistantFilesTable();
+
+// POST /api/assistant-files - Save file metadata after upload
+app.post('/api/assistant-files', async (req, res) => {
+  try {
+    const {
+      name,
+      url,
+      vectorStoreId,
+      openAIFileId,
+      companyId,
+      createdBy
+    } = req.body;
+
+    if (!name || !url || !companyId) {
+      return res.status(400).json({ 
+        success: false,
+        error: 'name, url, and companyId are required' 
+      });
+    }
+
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      const insertQuery = `
+        INSERT INTO assistant_files (
+          name, url, vector_store_id, openai_file_id, company_id, created_by
+        ) VALUES ($1, $2, $3, $4, $5, $6)
+        RETURNING id
+      `;
+
+      const result = await client.query(insertQuery, [
+        name,
+        url,
+        vectorStoreId || null,
+        openAIFileId || null,
+        companyId,
+        createdBy || null
+      ]);
+
+      await client.query('COMMIT');
+
+      res.json({
+        success: true,
+        id: result.rows[0].id,
+        message: 'File metadata saved successfully'
+      });
+
+    } catch (error) {
+      await safeRollback(client);
+      throw error;
+    } finally {
+      await safeRelease(client);
+    }
+
+  } catch (error) {
+    console.error('Error saving assistant file metadata:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to save file metadata'
+    });
+  }
+});
+
+// GET /api/assistant-files - Fetch all files for a company
+app.get('/api/assistant-files', async (req, res) => {
+  try {
+    const { companyId } = req.query;
+
+    if (!companyId) {
+      return res.status(400).json({
+        success: false,
+        error: 'companyId is required'
+      });
+    }
+
+    const client = await pool.connect();
+    try {
+      const query = `
+        SELECT id, name, url, vector_store_id as "vectorStoreId", 
+               openai_file_id as "openAIFileId", created_by as "createdBy",
+               created_at as "createdAt", updated_at as "updatedAt"
+        FROM assistant_files 
+        WHERE company_id = $1 
+        ORDER BY created_at DESC
+      `;
+
+      const result = await client.query(query, [companyId]);
+
+      res.json({
+        success: true,
+        files: result.rows
+      });
+
+    } finally {
+      await safeRelease(client);
+    }
+
+  } catch (error) {
+    console.error('Error fetching assistant files:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch files'
+    });
+  }
+});
+
+// DELETE /api/assistant-files/:fileId - Delete file metadata and physical file
+app.delete('/api/assistant-files/:fileId', async (req, res) => {
+  try {
+    const { fileId } = req.params;
+
+    if (!fileId) {
+      return res.status(400).json({
+        success: false,
+        error: 'fileId is required'
+      });
+    }
+
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      // Get file info before deletion
+      const selectQuery = 'SELECT url, company_id FROM assistant_files WHERE id = $1';
+      const fileResult = await client.query(selectQuery, [fileId]);
+
+      if (fileResult.rows.length === 0) {
+        await client.query('ROLLBACK');
+        return res.status(404).json({
+          success: false,
+          error: 'File not found'
+        });
+      }
+
+      const fileInfo = fileResult.rows[0];
+      
+      // Delete from database
+      const deleteQuery = 'DELETE FROM assistant_files WHERE id = $1';
+      await client.query(deleteQuery, [fileId]);
+
+      await client.query('COMMIT');
+
+      // Attempt to delete physical file
+      try {
+        const urlParts = fileInfo.url.split('/');
+        const filename = urlParts[urlParts.length - 1];
+        const filePath = path.join(MEDIA_DIR, 'files', fileInfo.company_id, filename);
+        
+        if (fs.existsSync(filePath)) {
+          fs.unlinkSync(filePath);
+          console.log(`Physical file deleted: ${filePath}`);
+        }
+      } catch (fsError) {
+        console.error('Error deleting physical file:', fsError);
+        // Don't fail the API call if file deletion fails
+      }
+
+      res.json({
+        success: true,
+        message: 'File deleted successfully'
+      });
+
+    } catch (error) {
+      await safeRollback(client);
+      throw error;
+    } finally {
+      await safeRelease(client);
+    }
+
+  } catch (error) {
+    console.error('Error deleting assistant file:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to delete file'
+    });
+  }
+});
+
 
 app.post("/api/channel/create/:companyID", async (req, res) => {
   const { companyID } = req.params;
@@ -13486,7 +13866,7 @@ const origin = req.headers.origin;
 if (allowedOrigins.includes(origin)) {
   res.header("Access-Control-Allow-Origin", origin);
 }
-  res.header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
+  res.header("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS");
   res.header("Access-Control-Allow-Headers", "Content-Type, Authorization");
   res.header("Access-Control-Allow-Credentials", "true");
   
@@ -17742,7 +18122,6 @@ const contacts = await sqlDb.getRows(
     });
   }
 });
-// ... existing code ...
 
 // Function to filter contacts based on user role
 function filterContactsByUserRole(contacts, userRole, userName) {

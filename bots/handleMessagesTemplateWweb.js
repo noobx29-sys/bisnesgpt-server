@@ -27,6 +27,8 @@ const ConvertAPI = require('convertapi');
 const convertapi = new ConvertAPI('q6yVdAo4GolFlTyMLcM8pyqtuAbRN60y');
 const { neon, neonConfig } = require("@neondatabase/serverless");
 const { Pool } = require("pg");
+const { assignCustomerToVariation } = require('../utils/splitTestUtils');
+// When a customer starts a chat
 
 // Configure Neon for WebSocket pooling
 neonConfig.webSocketConstructor = require("ws");
@@ -3336,7 +3338,34 @@ async function processImmediateActions(client, msg, botName, phoneIndex) {
       extractedNumber,
       idSubstring
     );
-    
+    let originalInstructions = null;
+    let assistantId = companyConfig.assistantId;
+    // Check for split test variation
+    const assignedVariation = await assignCustomerToVariation(contactData.id, idSubstring);
+  
+    if (assignedVariation) {
+      // Use assignedVariation.instructions for AI prompt
+      console.log('Using variation instructions:', assignedVariation.instructions);
+      
+      try {
+        // Get current assistant details to store original instructions
+        const currentAssistant = await openai.beta.assistants.retrieve(assistantId);
+        originalInstructions = currentAssistant.instructions;
+        
+        // Update assistant with variation instructions
+        await openai.beta.assistants.update(assistantId, {
+          instructions: assignedVariation.instructions
+        });
+        
+        console.log('Assistant instructions updated with variation');
+      } catch (error) {
+        console.error('Error updating assistant instructions:', error);
+        // Continue with original assistant if update fails
+      }
+    } else {
+      // Use default AI instructions
+      console.log('No active variations, using default instructions');
+    }
     if (contactData) {
       console.log(`�� [IMMEDIATE_ACTIONS] Found existing contact:`, {
         contact_id: contactData.contact_id,
@@ -10543,7 +10572,6 @@ async function updateMessageUsage(idSubstring) {
     console.error("Error updating message usage:", error);
   }
 }
-
 async function handleOpenAIAssistant(
   message,
   threadID,
@@ -10555,715 +10583,751 @@ async function handleOpenAIAssistant(
   phoneIndex
 ) {
   console.log(companyConfig.assistantId);
-  let assistantId = companyConfig.assistantId;
+
   const contactData = await getContactDataFromDatabaseByPhone(
     phoneNumber,
     idSubstring
   );
+  let assistantId = companyConfig.assistantId;
 
-  await addMessage(threadID, message);
-  await updateMessageUsage(idSubstring);
-  analyzeAndSetLeadTemperature(phoneNumber, threadID, idSubstring).catch(
-    (error) =>
-      console.error("Error in background lead temperature analysis:", error)
-  );
-  if (
-    idSubstring === "001" ||
-    idSubstring === "0145" ||
-    idSubstring === "0124"
-  ) {
-    analyzeAndSetUserProfile(phoneNumber, threadID, idSubstring).catch(
+
+  try {
+    await addMessage(threadID, message);
+    await updateMessageUsage(idSubstring);
+    analyzeAndSetLeadTemperature(phoneNumber, threadID, idSubstring).catch(
       (error) =>
-        console.error("Error in background user profile analysis:", error)
+        console.error("Error in background lead temperature analysis:", error)
     );
+    if (
+      idSubstring === "001" ||
+      idSubstring === "0145" ||
+      idSubstring === "0124"
+    ) {
+      analyzeAndSetUserProfile(phoneNumber, threadID, idSubstring).catch(
+        (error) =>
+          console.error("Error in background user profile analysis:", error)
+      );
+    }
+
+    const tools = [
+      {
+        type: "function",
+        function: {
+          name: "checkSpreadsheetDCAuto",
+          description:
+            "Check for vehicle availability in the stock list spreadsheet",
+          parameters: {
+            type: "object",
+            properties: {
+              model: {
+                type: "string",
+                description: "Model of the vehicle (e.g., BMW X1, HONDA CITY)",
+              },
+              modelYear: {
+                type: "string",
+                description: "The year of the vehicle (optional)",
+              },
+            },
+            required: ["model"],
+          },
+        },
+      },
+      {
+        type: "function",
+        function: {
+          name: "sendImage",
+          description: "Send an image to a WhatsApp contact",
+          parameters: {
+            type: "object",
+            properties: {
+              phoneNumber: {
+                type: "string",
+                description: "The phone number of the recipient",
+              },
+              imageUrl: {
+                type: "string",
+                description: "The URL of the image to send",
+              },
+              caption: {
+                type: "string",
+                description: "The caption for the image",
+              },
+            },
+          },
+        },
+      },
+      {
+        type: "function",
+        function: {
+          name: "testDailyReminders",
+          description: "Test the daily reminders by sending them immediately",
+          parameters: {
+            type: "object",
+            properties: {},
+            required: [],
+          },
+        },
+      },
+      {
+        type: "function",
+        function: {
+          name: "deleteTask",
+          description: "Delete a task from the company's task list",
+          parameters: {
+            type: "object",
+            properties: {
+              taskIndex: {
+                type: "number",
+                description: "Index of the task to delete",
+              },
+            },
+            required: ["taskIndex"],
+          },
+        },
+      },
+      {
+        type: "function",
+        function: {
+          name: "editTask",
+          description: "Edit an existing task in the company's task list",
+          parameters: {
+            type: "object",
+            properties: {
+              taskIndex: {
+                type: "number",
+                description: "Index of the task to edit",
+              },
+              newTaskString: {
+                type: "string",
+                description: "New task description (optional)",
+              },
+              newAssignee: {
+                type: "string",
+                description: "New person assigned to the task (optional)",
+              },
+              newDueDate: {
+                type: "string",
+                description:
+                  "New due date for the task (YYYY-MM-DD format, optional)",
+              },
+            },
+            required: ["taskIndex"],
+          },
+        },
+      },
+      {
+        type: "function",
+        function: {
+          name: "listAssignedTasks",
+          description: "List tasks assigned to a specific person",
+          parameters: {
+            type: "object",
+            properties: {
+              assignee: {
+                type: "string",
+                description: "Name of the person assigned to the tasks",
+              },
+            },
+            required: ["assignee"],
+          },
+        },
+      },
+      {
+        type: "function",
+        function: {
+          name: "searchContacts",
+          description: "Search for contacts based on name, phone number, or tags",
+          parameters: {
+            type: "object",
+            properties: {
+              idSubstring: {
+                type: "string",
+                description: "ID substring for the company",
+              },
+              searchTerm: {
+                type: "string",
+                description:
+                  "Term to search for in contact names, phone numbers, or tags",
+              },
+            },
+            required: ["idSubstring", "searchTerm"],
+          },
+        },
+      },
+      {
+        type: "function",
+        function: {
+          name: "tagContact",
+          description:
+            "Tag or assign a contact. Assigning a contact is done by tagging them with the assignee's name.",
+          parameters: {
+            type: "object",
+            properties: {
+              idSubstring: {
+                type: "string",
+                description: "ID substring for the company",
+              },
+              phoneNumber: {
+                type: "string",
+                description: "Phone number of the contact to tag or assign",
+              },
+              tag: {
+                type: "string",
+                description:
+                  "Tag to add to the contact. For assignments, use the assignee's name as the tag.",
+              },
+            },
+            required: ["idSubstring", "phoneNumber", "tag"],
+          },
+        },
+      },
+      {
+        type: "function",
+        function: {
+          name: "getContactsAddedToday",
+          description: "Get the number and details of contacts added today",
+          parameters: {
+            type: "object",
+            properties: {
+              idSubstring: {
+                type: "string",
+                description: "ID substring for the company",
+              },
+            },
+            required: ["idSubstring"],
+          },
+        },
+      },
+      {
+        type: "function",
+        function: {
+          name: "listAssignedContacts",
+          description:
+            "List contacts that are assigned to a specific person (assignment is represented by a tag with the assignee's name)",
+          parameters: {
+            type: "object",
+            properties: {
+              assigneeName: {
+                type: "string",
+                description:
+                  "The name of the person to whom contacts are assigned",
+              },
+              limit: {
+                type: "number",
+                description: "Maximum number of contacts to return (default 10)",
+              },
+            },
+            required: ["assigneeName"],
+          },
+        },
+      },
+      {
+        type: "function",
+        function: {
+          name: "listContactsWithTag",
+          description: "List contacts that have a specific tag",
+          parameters: {
+            type: "object",
+            properties: {
+              tag: {
+                type: "string",
+                description: "The tag to search for",
+              },
+              limit: {
+                type: "number",
+                description: "Maximum number of contacts to return (default 10)",
+              },
+            },
+            required: ["tag"],
+          },
+        },
+      },
+      {
+        type: "function",
+        function: {
+          name: "searchWeb",
+          description: "Search the web for information",
+          parameters: {
+            type: "object",
+            properties: {
+              query: {
+                type: "string",
+                description: "The search query",
+              },
+            },
+            required: ["query"],
+          },
+        },
+      },
+      {
+        type: "function",
+        function: {
+          name: "fetchMultipleContactsData",
+          description:
+            "Fetch data for multiple contacts given their phone numbers",
+          parameters: {
+            type: "object",
+            properties: {
+              phoneNumbers: {
+                type: "array",
+                items: { type: "string" },
+                description: "Array of phone numbers to fetch data for",
+              },
+            },
+            required: ["phoneNumbers"],
+          },
+        },
+      },
+      {
+        type: "function",
+        function: {
+          name: "listContacts",
+          description: "List contacts with pagination",
+          parameters: {
+            type: "object",
+            properties: {
+              idSubstring: {
+                type: "string",
+                description: "ID substring for the company",
+              },
+              limit: {
+                type: "number",
+                description: "Number of contacts to return (default 10)",
+              },
+              offset: {
+                type: "number",
+                description: "Number of contacts to skip (default 0)",
+              },
+            },
+            required: ["idSubstring"],
+          },
+        },
+      },
+      {
+        type: "function",
+        function: {
+          name: "checkAvailableTimeSlots",
+          description:
+            "Always call getTodayDate first to get the current date as a reference the year is 2024.Check for available time slots in Google Calendar for the next specified number of days return back the name of date and time. Always call getCurrentDateTime first to get the current date and time as a reference before checking for available time slots. Returns all available time slots, but only provides three at a time, each with a duration of1 hour, and only suggests slots that are 2 days after the current time.",
+          parameters: {
+            type: "object",
+            properties: {
+              idSubstring: {
+                type: "string",
+                description: "ID substring for the company",
+              },
+              specificDate: {
+                type: "string",
+                description:
+                  "Optional. Specific date to check in YYYY-MM-DD format",
+              },
+            },
+            required: ["idSubstring"],
+          },
+        },
+      },
+      {
+        type: "function",
+        function: {
+          name: "createCalendarEvent",
+          description:
+            "Schedule a meeting in Calendar. Always getTodayDate first to get the current date as a reference.The contact name should be included in the title of the event.",
+          parameters: {
+            type: "object",
+            properties: {
+              summary: {
+                type: "string",
+                description: "Title of the event include the contact name",
+              },
+              description: {
+                type: "string",
+                description: "Description of the event",
+              },
+              startDateTime: {
+                type: "string",
+                description:
+                  "Start date and time in ISO 8601 format in Asia/Kuala Lumpur Timezone",
+              },
+              endDateTime: {
+                type: "string",
+                description:
+                  "End date and time in ISO 8601 format in Asia/Kuala Lumpur Timezone",
+              },
+              contactName: { type: "string", description: "Name of the contact" },
+              phoneNumber: {
+                type: "string",
+                description: "Phone number of the contact",
+              },
+            },
+            required: ["summary", "startDateTime", "endDateTime", "contactName"],
+          },
+        },
+      },
+      {
+        type: "function",
+        function: {
+          name: "getTodayDate",
+          description:
+            "Always call this first when handling time-related queries, such as when a user asks for today, next week, tomorrow, yesterday, etc. Retrieves today's date in YYYY-MM-DD HH:mm:ss format.",
+          parameters: {
+            type: "object",
+            properties: {},
+          },
+        },
+      },
+      {
+        type: "function",
+        function: {
+          name: "fetchContactData",
+          description: "Fetch contact data for a given phone number",
+          parameters: {
+            type: "object",
+            properties: {
+              phoneNumber: {
+                type: "string",
+                description: "Phone number of the contact",
+              },
+              idSubstring: {
+                type: "string",
+                description: "ID substring for the company",
+              },
+            },
+            required: ["phoneNumber", "idSubstring"],
+          },
+        },
+      },
+      {
+        type: "function",
+        function: {
+          name: "getTotalContacts",
+          description: "Get the total number of contacts for a company",
+          parameters: {
+            type: "object",
+            properties: {
+              idSubstring: {
+                type: "string",
+                description: "ID substring for the company",
+              },
+            },
+            required: ["idSubstring"],
+          },
+        },
+      },
+      {
+        type: "function",
+        function: {
+          name: "addTask",
+          description: "Add a new task for the company",
+          parameters: {
+            type: "object",
+            properties: {
+              taskString: { type: "string", description: "Task description" },
+              assignee: {
+                type: "string",
+                description: "Person assigned to the task",
+              },
+              dueDate: {
+                type: "string",
+                description: "Due date for the task (YYYY-MM-DD format)",
+              },
+            },
+            required: ["taskString", "assignee", "dueDate"],
+          },
+        },
+      },
+      {
+        type: "function",
+        function: {
+          name: "listTasks",
+          description: "List all tasks for the company",
+          parameters: {
+            type: "object",
+            properties: {},
+          },
+        },
+      },
+      {
+        type: "function",
+        function: {
+          name: "updateTaskStatus",
+          description: "Update the status of a task",
+          parameters: {
+            type: "object",
+            properties: {
+              taskIndex: {
+                type: "number",
+                description: "Index of the task to update",
+              },
+              newStatus: {
+                type: "string",
+                description: "New status for the task",
+              },
+            },
+            required: ["taskIndex", "newStatus"],
+          },
+        },
+      },
+      {
+        type: "function",
+        function: {
+          name: "addPointsForBottlesBought",
+          description: "Add points to a contact for bottles bought",
+          parameters: {
+            type: "object",
+            properties: {
+              bottlesBought: {
+                type: "number",
+                description: "Number of bottles bought",
+              },
+            },
+            required: ["bottlesBought"],
+          },
+        },
+      },
+      {
+        type: "function",
+        function: {
+          name: "sendRescheduleRequest",
+          description:
+            "Send a date request with booking details to merchant for approval",
+          parameters: {
+            type: "object",
+            properties: {
+              requestedDate: {
+                type: "string",
+                description:
+                  "The date requested by the customer (YYYY-MM-DD format)",
+              },
+              requestedTime: {
+                type: "string",
+                description: "The time requested by the customer (HH:MM format)",
+              },
+            },
+            required: ["requestedDate", "requestedTime"],
+          },
+        },
+      },
+      {
+        type: "function",
+        function: {
+          name: "sendInquiryToGroupNewTown",
+          description:
+            "Send customer inquiry details to a designated group when customer is not ready to order but needs more information",
+          parameters: {
+            type: "object",
+            properties: {
+              customerName: {
+                type: "string",
+                description: "Name of the customer making the inquiry",
+              },
+              customerPhone: {
+                type: "string",
+                description: "Phone number of the customer",
+              },
+            },
+            required: [],
+          },
+        },
+      },
+      {
+        type: "function",
+        function: {
+          name: "assignContactAndGenerateReportNewTown",
+          description:
+            "Assign a contact to an employee and generate a report to send to a designated group. This must be called after order is made.",
+          parameters: {
+            type: "object",
+            properties: {}, // No parameters needed as we'll use the existing variables
+            required: [],
+          },
+        },
+      },
+      {
+        type: "function",
+        function: {
+          name: "sendFeedbackToGroupNewTown",
+          description:
+            "Send customer feedback to a designated group when customer provide feedback or when you detect a customer is unhappy",
+          parameters: {
+            type: "object",
+            properties: {
+              feedback: {
+                type: "string",
+                description: "The feedback message from the customer",
+              },
+              customerName: {
+                type: "string",
+                description: "Name of the customer providing feedback",
+              },
+              customerPhone: {
+                type: "string",
+                description: "Phone number of the customer",
+              },
+            },
+            required: ["feedback"],
+          },
+        },
+      },
+      {
+        type: "function",
+        function: {
+          name: "updateCustomFields",
+          description: "Updates multiple custom fields of a contact.",
+          parameters: {
+            type: "object",
+            properties: {
+              customFields: {
+                type: "array",
+                description:
+                  "An array of objects, each containing a key-value pair for a custom field.",
+                items: {
+                  type: "object",
+                  properties: {
+                    key: {
+                      type: "string",
+                      description: "The key for the custom field",
+                    },
+                    value: {
+                      type: "string",
+                      description: "The value for the custom field",
+                    },
+                  },
+                  required: ["key", "value"],
+                },
+              },
+            },
+            required: ["customFields"],
+          },
+        },
+      },
+      {
+        type: "function",
+        function: {
+          name: "getCustomFields",
+          description: "Retrieves the custom fields of a contact.",
+          parameters: {
+            type: "object",
+            properties: {},
+          },
+        },
+      },
+      ...(idSubstring === "0128"
+        ? [
+            {
+              type: "function",
+              function: {
+                name: "sendFeedbackToGroup",
+                description:
+                  "Send customer feedback to a designated group when customer provide feedback or when you detect a customer is unhappy",
+                parameters: {
+                  type: "object",
+                  properties: {
+                    feedback: {
+                      type: "string",
+                      description: "The feedback message from the customer",
+                    },
+                  },
+                  required: ["feedback"],
+                },
+              },
+            },
+          ]
+        : []),
+  
+      // Add inquiry tool conditionally for 0128
+      ...(idSubstring === "0128"
+        ? [
+            {
+              type: "function",
+              function: {
+                name: "sendInquiryToGroup",
+                description:
+                  "Send customer inquiry details to a designated group when customer is not ready to order but needs more information",
+                parameters: {
+                  type: "object",
+                  properties: {
+                    customerName: {
+                      type: "string",
+                      description: "Name of the customer making the inquiry",
+                    },
+                    customerPhone: {
+                      type: "string",
+                      description: "Phone number of the customer",
+                    },
+                  },
+                  required: [],
+                },
+              },
+            },
+          ]
+        : []),
+  
+      // Add assign contact tool conditionally for 0128
+      ...(idSubstring === "0128"
+        ? [
+            {
+              type: "function",
+              function: {
+                name: "assignContactAndGenerateReport",
+                description:
+                  "Assign a contact to an employee and generate a report to send to a designated group. This must be called after order is made.",
+                parameters: {
+                  type: "object",
+                  properties: {}, // No parameters needed as we'll use the existing variables
+                  required: [],
+                },
+              },
+            },
+          ]
+        : []),
+    ];
+
+    const answer = await runAssistant(
+      assistantId,
+      threadID,
+      tools,
+      idSubstring,
+      client,
+      phoneNumber,
+      name,
+      contactData.companyName,
+      contactData,
+      phoneIndex
+    );
+    
+    return answer;
+    
+  } finally {
+    // Restore original instructions if they were modified
+    let originalInstructions = null;
+  
+    // Check for split test variation
+    const assignedVariation = await assignCustomerToVariation(contactData.id, idSubstring);
+  
+    if (assignedVariation) {
+      // Use assignedVariation.instructions for AI prompt
+      console.log('Using variation instructions:', assignedVariation.instructions);
+      
+      try {
+        // Get current assistant details to store original instructions
+        const currentAssistant = await openai.beta.assistants.retrieve(assistantId);
+        originalInstructions = currentAssistant.instructions;
+        
+        // Update assistant with variation instructions
+        await openai.beta.assistants.update(assistantId, {
+          instructions: originalInstructions
+        });
+        
+        console.log('Assistant instructions updated with variation');
+      } catch (error) {
+        console.error('Error updating assistant instructions:', error);
+        // Continue with original assistant if update fails
+      }
+    } else {
+      // Use default AI instructions
+      console.log('No active variations, using default instructions');
+    }
   }
-
-  const tools = [
-    {
-      type: "function",
-      function: {
-        name: "checkSpreadsheetDCAuto",
-        description:
-          "Check for vehicle availability in the stock list spreadsheet",
-        parameters: {
-          type: "object",
-          properties: {
-            model: {
-              type: "string",
-              description: "Model of the vehicle (e.g., BMW X1, HONDA CITY)",
-            },
-            modelYear: {
-              type: "string",
-              description: "The year of the vehicle (optional)",
-            },
-          },
-          required: ["model"],
-        },
-      },
-    },
-    {
-      type: "function",
-      function: {
-        name: "sendImage",
-        description: "Send an image to a WhatsApp contact",
-        parameters: {
-          type: "object",
-          properties: {
-            phoneNumber: {
-              type: "string",
-              description: "The phone number of the recipient",
-            },
-            imageUrl: {
-              type: "string",
-              description: "The URL of the image to send",
-            },
-            caption: {
-              type: "string",
-              description: "The caption for the image",
-            },
-          },
-        },
-      },
-    },
-    {
-      type: "function",
-      function: {
-        name: "testDailyReminders",
-        description: "Test the daily reminders by sending them immediately",
-        parameters: {
-          type: "object",
-          properties: {},
-          required: [],
-        },
-      },
-    },
-    {
-      type: "function",
-      function: {
-        name: "deleteTask",
-        description: "Delete a task from the company's task list",
-        parameters: {
-          type: "object",
-          properties: {
-            taskIndex: {
-              type: "number",
-              description: "Index of the task to delete",
-            },
-          },
-          required: ["taskIndex"],
-        },
-      },
-    },
-    {
-      type: "function",
-      function: {
-        name: "editTask",
-        description: "Edit an existing task in the company's task list",
-        parameters: {
-          type: "object",
-          properties: {
-            taskIndex: {
-              type: "number",
-              description: "Index of the task to edit",
-            },
-            newTaskString: {
-              type: "string",
-              description: "New task description (optional)",
-            },
-            newAssignee: {
-              type: "string",
-              description: "New person assigned to the task (optional)",
-            },
-            newDueDate: {
-              type: "string",
-              description:
-                "New due date for the task (YYYY-MM-DD format, optional)",
-            },
-          },
-          required: ["taskIndex"],
-        },
-      },
-    },
-    {
-      type: "function",
-      function: {
-        name: "listAssignedTasks",
-        description: "List tasks assigned to a specific person",
-        parameters: {
-          type: "object",
-          properties: {
-            assignee: {
-              type: "string",
-              description: "Name of the person assigned to the tasks",
-            },
-          },
-          required: ["assignee"],
-        },
-      },
-    },
-    {
-      type: "function",
-      function: {
-        name: "searchContacts",
-        description: "Search for contacts based on name, phone number, or tags",
-        parameters: {
-          type: "object",
-          properties: {
-            idSubstring: {
-              type: "string",
-              description: "ID substring for the company",
-            },
-            searchTerm: {
-              type: "string",
-              description:
-                "Term to search for in contact names, phone numbers, or tags",
-            },
-          },
-          required: ["idSubstring", "searchTerm"],
-        },
-      },
-    },
-    {
-      type: "function",
-      function: {
-        name: "tagContact",
-        description:
-          "Tag or assign a contact. Assigning a contact is done by tagging them with the assignee's name.",
-        parameters: {
-          type: "object",
-          properties: {
-            idSubstring: {
-              type: "string",
-              description: "ID substring for the company",
-            },
-            phoneNumber: {
-              type: "string",
-              description: "Phone number of the contact to tag or assign",
-            },
-            tag: {
-              type: "string",
-              description:
-                "Tag to add to the contact. For assignments, use the assignee's name as the tag.",
-            },
-          },
-          required: ["idSubstring", "phoneNumber", "tag"],
-        },
-      },
-    },
-    {
-      type: "function",
-      function: {
-        name: "getContactsAddedToday",
-        description: "Get the number and details of contacts added today",
-        parameters: {
-          type: "object",
-          properties: {
-            idSubstring: {
-              type: "string",
-              description: "ID substring for the company",
-            },
-          },
-          required: ["idSubstring"],
-        },
-      },
-    },
-    {
-      type: "function",
-      function: {
-        name: "listAssignedContacts",
-        description:
-          "List contacts that are assigned to a specific person (assignment is represented by a tag with the assignee's name)",
-        parameters: {
-          type: "object",
-          properties: {
-            assigneeName: {
-              type: "string",
-              description:
-                "The name of the person to whom contacts are assigned",
-            },
-            limit: {
-              type: "number",
-              description: "Maximum number of contacts to return (default 10)",
-            },
-          },
-          required: ["assigneeName"],
-        },
-      },
-    },
-    {
-      type: "function",
-      function: {
-        name: "listContactsWithTag",
-        description: "List contacts that have a specific tag",
-        parameters: {
-          type: "object",
-          properties: {
-            tag: {
-              type: "string",
-              description: "The tag to search for",
-            },
-            limit: {
-              type: "number",
-              description: "Maximum number of contacts to return (default 10)",
-            },
-          },
-          required: ["tag"],
-        },
-      },
-    },
-    {
-      type: "function",
-      function: {
-        name: "searchWeb",
-        description: "Search the web for information",
-        parameters: {
-          type: "object",
-          properties: {
-            query: {
-              type: "string",
-              description: "The search query",
-            },
-          },
-          required: ["query"],
-        },
-      },
-    },
-    {
-      type: "function",
-      function: {
-        name: "fetchMultipleContactsData",
-        description:
-          "Fetch data for multiple contacts given their phone numbers",
-        parameters: {
-          type: "object",
-          properties: {
-            phoneNumbers: {
-              type: "array",
-              items: { type: "string" },
-              description: "Array of phone numbers to fetch data for",
-            },
-          },
-          required: ["phoneNumbers"],
-        },
-      },
-    },
-    {
-      type: "function",
-      function: {
-        name: "listContacts",
-        description: "List contacts with pagination",
-        parameters: {
-          type: "object",
-          properties: {
-            idSubstring: {
-              type: "string",
-              description: "ID substring for the company",
-            },
-            limit: {
-              type: "number",
-              description: "Number of contacts to return (default 10)",
-            },
-            offset: {
-              type: "number",
-              description: "Number of contacts to skip (default 0)",
-            },
-          },
-          required: ["idSubstring"],
-        },
-      },
-    },
-    {
-      type: "function",
-      function: {
-        name: "checkAvailableTimeSlots",
-        description:
-          "Always call getTodayDate first to get the current date as a reference the year is 2024.Check for available time slots in Google Calendar for the next specified number of days return back the name of date and time. Always call getCurrentDateTime first to get the current date and time as a reference before checking for available time slots. Returns all available time slots, but only provides three at a time, each with a duration of1 hour, and only suggests slots that are 2 days after the current time.",
-        parameters: {
-          type: "object",
-          properties: {
-            idSubstring: {
-              type: "string",
-              description: "ID substring for the company",
-            },
-            specificDate: {
-              type: "string",
-              description:
-                "Optional. Specific date to check in YYYY-MM-DD format",
-            },
-          },
-          required: ["idSubstring"],
-        },
-      },
-    },
-    {
-      type: "function",
-      function: {
-        name: "createCalendarEvent",
-        description:
-          "Schedule a meeting in Calendar. Always getTodayDate first to get the current date as a reference.The contact name should be included in the title of the event.",
-        parameters: {
-          type: "object",
-          properties: {
-            summary: {
-              type: "string",
-              description: "Title of the event include the contact name",
-            },
-            description: {
-              type: "string",
-              description: "Description of the event",
-            },
-            startDateTime: {
-              type: "string",
-              description:
-                "Start date and time in ISO 8601 format in Asia/Kuala Lumpur Timezone",
-            },
-            endDateTime: {
-              type: "string",
-              description:
-                "End date and time in ISO 8601 format in Asia/Kuala Lumpur Timezone",
-            },
-            contactName: { type: "string", description: "Name of the contact" },
-            phoneNumber: {
-              type: "string",
-              description: "Phone number of the contact",
-            },
-          },
-          required: ["summary", "startDateTime", "endDateTime", "contactName"],
-        },
-      },
-    },
-    {
-      type: "function",
-      function: {
-        name: "getTodayDate",
-        description:
-          "Always call this first when handling time-related queries, such as when a user asks for today, next week, tomorrow, yesterday, etc. Retrieves today's date in YYYY-MM-DD HH:mm:ss format.",
-        parameters: {
-          type: "object",
-          properties: {},
-        },
-      },
-    },
-    {
-      type: "function",
-      function: {
-        name: "fetchContactData",
-        description: "Fetch contact data for a given phone number",
-        parameters: {
-          type: "object",
-          properties: {
-            phoneNumber: {
-              type: "string",
-              description: "Phone number of the contact",
-            },
-            idSubstring: {
-              type: "string",
-              description: "ID substring for the company",
-            },
-          },
-          required: ["phoneNumber", "idSubstring"],
-        },
-      },
-    },
-    {
-      type: "function",
-      function: {
-        name: "getTotalContacts",
-        description: "Get the total number of contacts for a company",
-        parameters: {
-          type: "object",
-          properties: {
-            idSubstring: {
-              type: "string",
-              description: "ID substring for the company",
-            },
-          },
-          required: ["idSubstring"],
-        },
-      },
-    },
-    {
-      type: "function",
-      function: {
-        name: "addTask",
-        description: "Add a new task for the company",
-        parameters: {
-          type: "object",
-          properties: {
-            taskString: { type: "string", description: "Task description" },
-            assignee: {
-              type: "string",
-              description: "Person assigned to the task",
-            },
-            dueDate: {
-              type: "string",
-              description: "Due date for the task (YYYY-MM-DD format)",
-            },
-          },
-          required: ["taskString", "assignee", "dueDate"],
-        },
-      },
-    },
-    {
-      type: "function",
-      function: {
-        name: "listTasks",
-        description: "List all tasks for the company",
-        parameters: {
-          type: "object",
-          properties: {},
-        },
-      },
-    },
-    {
-      type: "function",
-      function: {
-        name: "updateTaskStatus",
-        description: "Update the status of a task",
-        parameters: {
-          type: "object",
-          properties: {
-            taskIndex: {
-              type: "number",
-              description: "Index of the task to update",
-            },
-            newStatus: {
-              type: "string",
-              description: "New status for the task",
-            },
-          },
-          required: ["taskIndex", "newStatus"],
-        },
-      },
-    },
-    {
-      type: "function",
-      function: {
-        name: "addPointsForBottlesBought",
-        description: "Add points to a contact for bottles bought",
-        parameters: {
-          type: "object",
-          properties: {
-            bottlesBought: {
-              type: "number",
-              description: "Number of bottles bought",
-            },
-          },
-          required: ["bottlesBought"],
-        },
-      },
-    },
-    {
-      type: "function",
-      function: {
-        name: "sendRescheduleRequest",
-        description:
-          "Send a date request with booking details to merchant for approval",
-        parameters: {
-          type: "object",
-          properties: {
-            requestedDate: {
-              type: "string",
-              description:
-                "The date requested by the customer (YYYY-MM-DD format)",
-            },
-            requestedTime: {
-              type: "string",
-              description: "The time requested by the customer (HH:MM format)",
-            },
-          },
-          required: ["requestedDate", "requestedTime"],
-        },
-      },
-    },
-    {
-      type: "function",
-      function: {
-        name: "sendInquiryToGroupNewTown",
-        description:
-          "Send customer inquiry details to a designated group when customer is not ready to order but needs more information",
-        parameters: {
-          type: "object",
-          properties: {
-            customerName: {
-              type: "string",
-              description: "Name of the customer making the inquiry",
-            },
-            customerPhone: {
-              type: "string",
-              description: "Phone number of the customer",
-            },
-          },
-          required: [],
-        },
-      },
-    },
-    {
-      type: "function",
-      function: {
-        name: "assignContactAndGenerateReportNewTown",
-        description:
-          "Assign a contact to an employee and generate a report to send to a designated group. This must be called after order is made.",
-        parameters: {
-          type: "object",
-          properties: {}, // No parameters needed as we'll use the existing variables
-          required: [],
-        },
-      },
-    },
-    {
-      type: "function",
-      function: {
-        name: "sendFeedbackToGroupNewTown",
-        description:
-          "Send customer feedback to a designated group when customer provide feedback or when you detect a customer is unhappy",
-        parameters: {
-          type: "object",
-          properties: {
-            feedback: {
-              type: "string",
-              description: "The feedback message from the customer",
-            },
-            customerName: {
-              type: "string",
-              description: "Name of the customer providing feedback",
-            },
-            customerPhone: {
-              type: "string",
-              description: "Phone number of the customer",
-            },
-          },
-          required: ["feedback"],
-        },
-      },
-    },
-    {
-      type: "function",
-      function: {
-        name: "updateCustomFields",
-        description: "Updates multiple custom fields of a contact.",
-        parameters: {
-          type: "object",
-          properties: {
-            customFields: {
-              type: "array",
-              description:
-                "An array of objects, each containing a key-value pair for a custom field.",
-              items: {
-                type: "object",
-                properties: {
-                  key: {
-                    type: "string",
-                    description: "The key for the custom field",
-                  },
-                  value: {
-                    type: "string",
-                    description: "The value for the custom field",
-                  },
-                },
-                required: ["key", "value"],
-              },
-            },
-          },
-          required: ["customFields"],
-        },
-      },
-    },
-    {
-      type: "function",
-      function: {
-        name: "getCustomFields",
-        description: "Retrieves the custom fields of a contact.",
-        parameters: {
-          type: "object",
-          properties: {},
-        },
-      },
-    },
-    ...(idSubstring === "0128"
-      ? [
-          {
-            type: "function",
-            function: {
-              name: "sendFeedbackToGroup",
-              description:
-                "Send customer feedback to a designated group when customer provide feedback or when you detect a customer is unhappy",
-              parameters: {
-                type: "object",
-                properties: {
-                  feedback: {
-                    type: "string",
-                    description: "The feedback message from the customer",
-                  },
-                },
-                required: ["feedback"],
-              },
-            },
-          },
-        ]
-      : []),
-
-    // Add inquiry tool conditionally for 0128
-    ...(idSubstring === "0128"
-      ? [
-          {
-            type: "function",
-            function: {
-              name: "sendInquiryToGroup",
-              description:
-                "Send customer inquiry details to a designated group when customer is not ready to order but needs more information",
-              parameters: {
-                type: "object",
-                properties: {
-                  customerName: {
-                    type: "string",
-                    description: "Name of the customer making the inquiry",
-                  },
-                  customerPhone: {
-                    type: "string",
-                    description: "Phone number of the customer",
-                  },
-                },
-                required: [],
-              },
-            },
-          },
-        ]
-      : []),
-
-    // Add assign contact tool conditionally for 0128
-    ...(idSubstring === "0128"
-      ? [
-          {
-            type: "function",
-            function: {
-              name: "assignContactAndGenerateReport",
-              description:
-                "Assign a contact to an employee and generate a report to send to a designated group. This must be called after order is made.",
-              parameters: {
-                type: "object",
-                properties: {}, // No parameters needed as we'll use the existing variables
-                required: [],
-              },
-            },
-          },
-        ]
-      : []),
-  ];
-
-  const answer = await runAssistant(
-    assistantId,
-    threadID,
-    tools,
-    idSubstring,
-    client,
-    phoneNumber,
-    name,
-    contactData.companyName,
-    contactData,
-    phoneIndex
-  );
-  return answer;
 }
 
 async function searchWeb(query) {

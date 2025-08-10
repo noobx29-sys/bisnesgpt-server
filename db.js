@@ -197,6 +197,96 @@ async function getSetting(companyId, settingType, settingKey) {
   );
 }
 
+// Split test operations
+async function saveVariation(variation) {
+  const { id, company_id, name, instructions, is_active } = variation;
+  const result = await insertRow(
+    `INSERT INTO split_test_variations (id, company_id, name, instructions, is_active)
+     VALUES ($1, $2, $3, $4, $5)
+     ON CONFLICT (id) DO UPDATE
+     SET name = EXCLUDED.name,
+         instructions = EXCLUDED.instructions,
+         is_active = EXCLUDED.is_active,
+         updated_at = CURRENT_TIMESTAMP
+     RETURNING *`,
+    [id, company_id, name, instructions, is_active || false]
+  );
+  return result;
+}
+
+async function getVariationsByCompany(companyId) {
+  return await getRows(
+    `SELECT 
+       id,
+       name,
+       instructions,
+       is_active as "isActive",
+       customers,
+       closed_customers as "closedCustomers",
+       created_at as "createdAt",
+       updated_at as "updatedAt"
+     FROM split_test_variations 
+     WHERE company_id = $1 
+     ORDER BY created_at DESC`,
+    [companyId]
+  );
+}
+
+async function getActiveVariations(companyId) {
+  return await getRows(
+    'SELECT id, instructions FROM split_test_variations WHERE company_id = $1 AND is_active = true',
+    [companyId]
+  );
+}
+
+async function updateVariationCounts(variationId, incrementCustomers = false, incrementClosed = false) {
+  let setClause = 'updated_at = CURRENT_TIMESTAMP';
+  if (incrementCustomers) {
+    setClause += ', customers = customers + 1';
+  }
+  if (incrementClosed) {
+    setClause += ', closed_customers = closed_customers + 1';
+  }
+  
+  const result = await updateRow(
+    `UPDATE split_test_variations SET ${setClause} WHERE id = $1 RETURNING *`,
+    [variationId]
+  );
+  return result;
+}
+
+async function saveCustomerAssignment(assignment) {
+  const { id, customer_id, variation_id, company_id } = assignment;
+  const result = await insertRow(
+    `INSERT INTO customer_variation_assignments (id, customer_id, variation_id, company_id)
+     VALUES ($1, $2, $3, $4)
+     RETURNING *`,
+    [id, customer_id, variation_id, company_id]
+  );
+  return result;
+}
+
+async function getCustomerAssignment(customerId, companyId) {
+  return await getRow(
+    `SELECT cva.*, stv.instructions 
+     FROM customer_variation_assignments cva
+     JOIN split_test_variations stv ON cva.variation_id = stv.id
+     WHERE cva.customer_id = $1 AND cva.company_id = $2 AND cva.is_closed = false`,
+    [customerId, companyId]
+  );
+}
+
+async function closeCustomerAssignment(customerId, companyId) {
+  const result = await updateRow(
+    `UPDATE customer_variation_assignments 
+     SET is_closed = true, closed_at = CURRENT_TIMESTAMP 
+     WHERE customer_id = $1 AND company_id = $2 AND is_closed = false
+     RETURNING *`,
+    [customerId, companyId]
+  );
+  return result;
+}
+
 module.exports = {
   sql,
   pool,
@@ -218,5 +308,13 @@ module.exports = {
   updatePhoneStatus,
   getPhoneStatus,
   saveSetting,
-  getSetting
+  getSetting,
+  // Split test functions
+  saveVariation,
+  getVariationsByCompany,
+  getActiveVariations,
+  updateVariationCounts,
+  saveCustomerAssignment,
+  getCustomerAssignment,
+  closeCustomerAssignment
 }; 
