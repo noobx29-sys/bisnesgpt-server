@@ -7,6 +7,7 @@ const util = require('util');
 const moment = require('moment-timezone');
 const fs = require('fs');
 const cron = require('node-cron');
+require("dotenv").config();
 
 const { v4: uuidv4 } = require('uuid');
 
@@ -184,6 +185,11 @@ class MTDCReport {
       const [submissionDate, fullName, company, phone, email, programName, programDateTime, rsvpStatus] = rowData;
       
       const programDate = moment(programDateTime, 'DD/MM/YYYY HH:mm');
+
+      if (!phone || !/^\+?(\d{10,15})$/.test(phone.replace(/\D/g, ''))) {
+        console.log(`Skipping reminder: invalid phone number for ${fullName}`);
+        return;
+      }
       
       if (!programDate.isValid()) {
         console.error(`Invalid program date format for ${fullName}: ${programDateTime}`);
@@ -240,7 +246,11 @@ class MTDCReport {
           messageContent = `Hi ${reminder.fullName}, this is a reminder that you have registered for ${reminder.programName} which will be held on ${reminder.programDateTime}. We look forward to seeing you there!`;
           break;
         case 4:
-          messageContent = `Hello ${reminder.fullName}, just to confirm that you are attending the ${reminder.programName} coming up in 4 days on ${reminder.programDateTime}. Will you be attending the event?`;
+          if (reminder.programDateTime === '18/08/2025 17:20:00') {
+        messageContent = `Hello ${reminder.fullName}, just to confirm that you are attending the ${reminder.programName} coming up in 4 days on 14/08/2025 09:00:00. Will you be attending the event?`;
+          } else {
+        messageContent = `Hello ${reminder.fullName}, just to confirm that you are attending the ${reminder.programName} coming up in 4 days on ${reminder.programDateTime}. Will you be attending the event?`;
+          }
           break;
         case 1:
           messageContent = `Hello ${reminder.fullName}, tomorrow is the big day! ${reminder.programName} will be held on ${reminder.programDateTime}. We can't wait to see you there!`;
@@ -252,49 +262,49 @@ class MTDCReport {
       console.log('Scheduling reminder for:', moment(reminderDate).format());
       console.log('Scheduled time in seconds:', scheduledTimeSeconds);
       
+      // Debug the phone formatting
+      console.log('Original phone:', reminder.phone);
+      console.log('Phone type:', typeof reminder.phone);
+      
       const chatId = this.formatPhone(reminder.phone);
+      console.log('Formatted chatId:', chatId);
+      console.log('ChatId type:', typeof chatId);
+      
+      if (!chatId) {
+        console.log('❌ Cannot create scheduled message: Invalid phone number');
+        return;
+      }
+      
+      const contactID = this.botName + '-' + String(chatId).split('@')[0];
+      
+      console.log('ContactID:', contactID);
       
       const scheduledMessage = {
-        batchQuantity: 1,
         chatIds: [chatId],
         companyId: this.botName,
-        createdAt: new Date(),
-        documentUrl: "",
-        fileName: "",
-        mediaUrl: "",
         message: messageContent,
-        messages: [
-          {
-            chatId: chatId,
-            message: messageContent
-          }
-        ],
-        mimeType: "",
-        repeatInterval: 0,
-        repeatUnit: "days",
         scheduledTime: {
           seconds: scheduledTimeSeconds,
-          nanoseconds: 0
+          nanoseconds: (reminderDate.getTime() % 1000) * 1e6,
         },
-        status: "scheduled",
-        v2: true,
-        whapiToken: null,
         phoneIndex: 0,
-        activateSleep: false,
-        activeHours: null,
-        infiniteLoop: false,
-        minDelay: null,
-        maxDelay: null,
-        messageDelays: null,
-        sleepAfterMessages: null,
-        sleepDuration: null,
-        from_me: true
+        v2: true,
+        status: "scheduled",
+        type: `mtdc-reminder-${reminder.reminderDays}day`,
+        batchQuantity: 1,
+        repeatInterval: 0,
+        repeatUnit: "days",
+        contact_id: contactID
       };
 
       try {
         console.log('Sending schedule request:', JSON.stringify(scheduledMessage));
-        const response = await axios.post(`http://localhost:8443/api/schedule-message/${this.botName}`, scheduledMessage);
-        console.log('Reminder scheduled successfully:', response.data);        
+        const response = await axios.post(`http://localhost:${process.env.PORT}/api/schedule-message/${this.botName}`, scheduledMessage, {
+          headers: {
+            'Content-Type': 'application/json',
+          }
+        });
+        console.log('Reminder scheduled successfully:', response.data);          
       } catch (error) {
         console.error('Error scheduling reminder:', error.response ? error.response.data : error.message);
         if (error.response && error.response.data) {
@@ -303,12 +313,31 @@ class MTDCReport {
       }
       
     } catch (error) {
-      console.error('Error scheduling reminder message:', error);
+      if (error && error.stack) {
+        error.stack.split('\n').forEach(line => console.error(line));
+      } else {
+        console.error('Error scheduling reminder message:', error);
+      }
     }
   }
 
-  async formatPhone(phone) {
+  formatPhone(phone) {
+    console.log('formatPhone input:', phone, 'type:', typeof phone);
+    
+    // Handle null, undefined, empty string, or "Unspecified" cases
+    if (!phone || phone === undefined || phone === null || phone === '' || phone === 'Unspecified') {
+      console.log('Phone is null, undefined, empty, or unspecified!');
+      return null;
+    }
+    
     let formattedPhone = phone.replace(/\D/g, '');
+    console.log('After removing non-digits:', formattedPhone);
+    
+    // If no digits found, return null
+    if (!formattedPhone || formattedPhone.length < 8) {
+      console.log('Phone has insufficient digits!');
+      return null;
+    }
     
     if (formattedPhone.startsWith('60')) {
       formattedPhone = `${formattedPhone}@c.us`;
@@ -318,6 +347,7 @@ class MTDCReport {
       formattedPhone = `60${formattedPhone}@c.us`;
     }
     
+    console.log('Final formatted phone:', formattedPhone);
     return formattedPhone;
   }
 

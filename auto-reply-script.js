@@ -83,42 +83,60 @@ class AutoReplyChecker {
 
             // Get the actual unreplied messages
             let query = `
-                WITH latest_messages AS (
-                    SELECT DISTINCT ON (customer_phone) 
+                WITH customer_messages AS (
+                    SELECT 
                         customer_phone,
-                        direction,
                         created_at,
                         content,
-                        from_me
+                        direction,
+                        from_me,
+                        -- Normalize phone number by removing + prefix for comparison
+                        CASE 
+                            WHEN customer_phone LIKE '+%' THEN SUBSTRING(customer_phone FROM 2)
+                            ELSE customer_phone
+                        END as normalized_phone
                     FROM messages 
                     WHERE company_id = $1 
                         AND created_at > NOW() - INTERVAL '${hoursThreshold} hours'
+                        AND direction = 'inbound' 
+                        AND from_me = false
                         ${specificPhoneNumber ? 'AND customer_phone = $2' : ''}
-                    ORDER BY customer_phone, created_at DESC
                 ),
                 unreplied AS (
                     SELECT 
-                        lm.*,
+                        cm.*,
                         (
                             SELECT MAX(created_at) 
                             FROM messages m2 
-                            WHERE m2.customer_phone = lm.customer_phone 
+                            WHERE (
+                                m2.customer_phone = cm.customer_phone 
+                                OR m2.customer_phone = '+' || cm.customer_phone
+                                OR (m2.customer_phone LIKE '+%' AND SUBSTRING(m2.customer_phone FROM 2) = cm.customer_phone)
+                            )
                                 AND m2.company_id = $1 
                                 AND m2.from_me = true 
-                                AND m2.created_at > lm.created_at
+                                AND m2.created_at > cm.created_at
                         ) as last_reply_time
-                    FROM latest_messages lm
-                    WHERE lm.direction = 'inbound' 
-                        AND lm.from_me = false
-                        AND NOT EXISTS (
-                            SELECT 1 FROM messages m2 
-                            WHERE m2.customer_phone = lm.customer_phone 
-                                AND m2.company_id = $1 
-                                AND m2.from_me = true 
-                                AND m2.created_at > lm.created_at
+                    FROM customer_messages cm
+                    WHERE NOT EXISTS (
+                        SELECT 1 FROM messages m3 
+                        WHERE (
+                            m3.customer_phone = cm.customer_phone 
+                            OR m3.customer_phone = '+' || cm.customer_phone
+                            OR (m3.customer_phone LIKE '+%' AND SUBSTRING(m3.customer_phone FROM 2) = cm.customer_phone)
                         )
+                            AND m3.company_id = $1 
+                            AND m3.created_at > cm.created_at
+                    )
                 )
-                SELECT * FROM unreplied 
+                SELECT 
+                    customer_phone,
+                    created_at,
+                    content,
+                    direction,
+                    from_me,
+                    last_reply_time
+                FROM unreplied 
                 ORDER BY created_at DESC
                 LIMIT 50
             `;
@@ -326,7 +344,7 @@ class AutoReplyChecker {
                 // Add message to thread (like addMessage function)
                 await openaiClient.beta.threads.messages.create(threadID, {
                     role: "user",
-                    content: `${message}\n\n[SYSTEM NOTE: This message was received some time ago and is being responded to automatically. Please acknowledge the delay and provide a helpful response.]`
+                    content: `${message}\n\n[SYSTEM NOTE: This message was received some time ago and is being responded to automatically. Please acknowledge the delay as we imrpove the system in the future and provide a helpful response.]`
                 });
                 
                 // Basic tools - simplified version of what's in handleOpenAIAssistant
@@ -511,41 +529,63 @@ class AutoReplyChecker {
             client = await pool.connect();
 
             const query = `
-                WITH latest_messages AS (
-                    SELECT DISTINCT ON (customer_phone) 
+                WITH customer_messages AS (
+                    SELECT 
                         customer_phone,
-                        direction,
                         created_at,
                         content,
-                        from_me
+                        direction,
+                        from_me,
+                        -- Normalize phone number by removing + prefix for comparison
+                        CASE 
+                            WHEN customer_phone LIKE '+%' THEN SUBSTRING(customer_phone FROM 2)
+                            ELSE customer_phone
+                        END as normalized_phone
                     FROM messages 
                     WHERE company_id = $1 
                         AND created_at > NOW() - INTERVAL '${hoursThreshold} hours'
-                    ORDER BY customer_phone, created_at DESC
+                        AND direction = 'inbound' 
+                        AND from_me = false
                 ),
                 unreplied AS (
                     SELECT 
-                        lm.customer_phone,
-                        lm.content,
-                        lm.created_at as message_time,
+                        cm.customer_phone,
+                        cm.content,
+                        cm.created_at as message_time,
                         (
                             SELECT MAX(created_at) 
                             FROM messages m2 
-                            WHERE m2.customer_phone = lm.customer_phone 
+                            WHERE (
+                                m2.customer_phone = cm.customer_phone 
+                                OR m2.customer_phone = '+' || cm.customer_phone
+                                OR (m2.customer_phone LIKE '+%' AND SUBSTRING(m2.customer_phone FROM 2) = cm.customer_phone)
+                            )
                                 AND m2.company_id = $1 
                                 AND m2.from_me = true 
-                                AND m2.created_at > lm.created_at
+                                AND m2.created_at > cm.created_at
                         ) as last_reply_time
-                    FROM latest_messages lm
-                    WHERE lm.direction = 'inbound' 
-                        AND lm.from_me = false
-                        AND NOT EXISTS (
-                            SELECT 1 FROM messages m2 
-                            WHERE m2.customer_phone = lm.customer_phone 
-                                AND m2.company_id = $1 
-                                AND m2.from_me = true 
-                                AND m2.created_at > lm.created_at
+                    FROM customer_messages cm
+                    WHERE NOT EXISTS (
+                        SELECT 1 FROM messages m2 
+                        WHERE (
+                            m2.customer_phone = cm.customer_phone 
+                            OR m2.customer_phone = '+' || cm.customer_phone
+                            OR (m2.customer_phone LIKE '+%' AND SUBSTRING(m2.customer_phone FROM 2) = cm.customer_phone)
                         )
+                            AND m2.company_id = $1 
+                            AND m2.from_me = true 
+                            AND m2.created_at > cm.created_at
+                    )
+                    AND NOT EXISTS (
+                        SELECT 1 FROM messages m3 
+                        WHERE (
+                            m3.customer_phone = cm.customer_phone 
+                            OR m3.customer_phone = '+' || cm.customer_phone
+                            OR (m3.customer_phone LIKE '+%' AND SUBSTRING(m3.customer_phone FROM 2) = cm.customer_phone)
+                        )
+                            AND m3.company_id = $1 
+                            AND m3.created_at > cm.created_at
+                    )
                 )
                 SELECT 
                     customer_phone,

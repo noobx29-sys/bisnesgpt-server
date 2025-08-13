@@ -15,13 +15,60 @@ const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   max: 500,
   min: 5,
-  idleTimeoutMillis: 60000,
-  connectionTimeoutMillis: 10000,
-  acquireTimeoutMillis: 30000,
-  createTimeoutMillis: 10000,
+  idleTimeoutMillis: 30000, // 30 seconds
+  connectionTimeoutMillis: 5000, // 5 seconds - reduced from 10000
+  acquireTimeoutMillis: 10000, // 10 seconds - reduced from 30000
+  createTimeoutMillis: 5000, // 5 seconds - reduced from 10000
   destroyTimeoutMillis: 5000,
   reapIntervalMillis: 1000,
   createRetryIntervalMillis: 100,
+  allowExitOnIdle: false,
+  connectionRetryInterval: 500,
+  maxConnectionRetries: 5, // Reduced from 10
+  // Add statement timeout to prevent long-running queries
+  statement_timeout: 15000, // 15 seconds - reduced from 30000
+  // Add query timeout
+  query_timeout: 15000, // 15 seconds - reduced from 30000
+  // Add idle in transaction timeout
+  idle_in_transaction_session_timeout: 15000, // 15 seconds - reduced from 30000
+});
+
+// Add pool error handling to prevent crashes
+pool.on('error', (err) => {
+  console.error("=== DATABASE POOL ERROR ===");
+  console.error("Error:", err);
+  console.error("Time:", new Date().toISOString());
+  
+  // Handle specific connection errors
+  if (err.message && err.message.includes("Connection terminated unexpectedly")) {
+    console.error("Database connection terminated - attempting to reconnect...");
+    // Log to file for debugging
+    if (typeof logger !== 'undefined' && logger.logToFile) {
+      logger.logToFile('db_connection_errors', `Connection terminated: ${err.message}`);
+    }
+  }
+  
+  // Don't exit the process, just log the error
+  console.log("Continuing operation despite database pool error...");
+});
+
+pool.on('connect', (client) => {
+  console.log('New database connection established');
+
+  // Set connection-specific error handlers
+  client.on('error', (err) => {
+    console.error("=== DATABASE CLIENT ERROR ===");
+    console.error("Error:", err);
+    console.error("Time:", new Date().toISOString());
+    
+    if (err.message && err.message.includes("Connection terminated unexpectedly")) {
+      console.error("Client connection terminated - will be replaced by pool");
+      // Log to file for debugging
+      if (typeof logger !== 'undefined' && logger.logToFile) {
+        logger.logToFile('db_connection_errors', `Client connection terminated: ${err.message}`);
+      }
+    }
+  });
 });
 
 // Helper function to execute SQL queries

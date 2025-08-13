@@ -12,7 +12,7 @@ const pool = new Pool({
   connectionTimeoutMillis: 2000
 });
 
-const API_BASE_URL = process.env.URL || 'http://localhost:8443';
+const API_BASE_URL = process.env.URL || `http://localhost:${process.env.PORT}`;
 
 async function handleTagFollowUp(req, res) {
   const idSubstring = req.body.idSubstring;
@@ -438,23 +438,86 @@ async function scheduleTextMessage(message, scheduledTime, chatId, idSubstring, 
 
 async function removeScheduledMessages(chatId, idSubstring, template, contactId) {
   try {
-    console.log(`Removing template messages for contact ${contactId}`);
+    console.log(`=== Starting removeScheduledMessages ===`);
+    console.log(`Chat ID: ${chatId}`);
+    console.log(`Company ID: ${idSubstring}`);
+    console.log(`Template object:`, JSON.stringify(template, null, 2));
+    console.log(`Template ID: ${template.template_id}`);
+    console.log(`Contact ID: ${contactId}`);
     
-    // Use the API to remove scheduled messages for this template and contact
-    const response = await fetch(`${API_BASE_URL}/api/schedule-message/${idSubstring}/template/${template.template_id}/contact/${contactId}`, {
-      method: 'DELETE',
-      headers: {
-        'Content-Type': 'application/json'
+    // First, check how many scheduled messages exist for this contact and template
+    const checkQuery = `
+      SELECT id, message_content, scheduled_time, status, template_id
+      FROM scheduled_messages 
+      WHERE company_id = $1 AND contact_id = $2 AND template_id = $3
+    `;
+    
+    console.log(`Checking for scheduled messages with template_id: ${template.template_id}`);
+    const checkResult = await pool.query(checkQuery, [idSubstring, contactId, template.template_id]);
+    const existingCount = checkResult.rows.length;
+    
+    if (existingCount > 0) {
+      console.log(`Found ${existingCount} existing scheduled messages for template ${template.template_id} and contact ${contactId}`);
+      
+      // Log details of messages to be deleted
+      const messagesToDelete = checkResult.rows;
+      messagesToDelete.forEach((msg, index) => {
+        console.log(`Message ${index + 1}: ID=${msg.id}, Template_ID=${msg.template_id}, Content="${msg.message_content?.substring(0, 50)}...", Scheduled=${msg.scheduled_time}, Status=${msg.status}`);
+      });
+      
+      // Delete scheduled messages directly from database
+      console.log(`Deleting scheduled messages from database...`);
+      const deleteResult = await pool.query(
+        `DELETE FROM scheduled_messages WHERE company_id = $1 AND contact_id = $2 AND template_id = $3 RETURNING id`,
+        [idSubstring, contactId, template.template_id]
+      );
+      
+      console.log(`Successfully deleted ${deleteResult.rowCount} scheduled message(s) from database`);
+      
+      // Log the deleted message IDs
+      if (deleteResult.rows.length > 0) {
+        const deletedIds = deleteResult.rows.map(row => row.id);
+        console.log(`Deleted message IDs: ${deletedIds.join(', ')}`);
       }
-    });
-
-    if (response.ok) {
-      console.log(`Successfully removed scheduled messages for template ${template.template_id} and contact ${contactId}`);
+      
     } else {
-      console.log(`No scheduled messages found or error removing messages for template ${template.template_id} and contact ${contactId}`);
+      console.log(`No scheduled messages found for template ${template.template_id} and contact ${contactId}`);
+      
+      // Let's also check what template_ids exist for this contact to help debug
+      const debugQuery = `
+        SELECT DISTINCT template_id, COUNT(*) as count
+        FROM scheduled_messages 
+        WHERE company_id = $1 AND contact_id = $2
+        GROUP BY template_id
+      `;
+      const debugResult = await pool.query(debugQuery, [idSubstring, contactId]);
+      console.log(`Available template_ids for this contact:`, debugResult.rows);
     }
+    
+    // Also try the API endpoint as a backup (but don't fail if it doesn't work)
+    console.log(`Attempting API endpoint as backup...`);
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/schedule-message/${idSubstring}/template/${template.template_id}/contact/${contactId}`, {
+        method: 'DELETE',
+        headers: {
+          'Content-Type': 'application/json'
+        }
+      });
+
+      if (response.ok) {
+        console.log(`API endpoint also successfully removed scheduled messages for template ${template.template_id} and contact ${contactId}`);
+      } else {
+        console.log(`API endpoint returned status ${response.status} - this is expected if messages were already deleted from database`);
+      }
+    } catch (apiError) {
+      console.log(`API endpoint call failed (this is okay): ${apiError.message}`);
+    }
+    
+    console.log(`=== Completed removeScheduledMessages successfully ===`);
+    
   } catch (error) {
-    console.error("Error removing template messages:", error);
+    console.error(`Error in removeScheduledMessages:`, error);
+    console.error(`Full error stack:`, error.stack);
     throw error;
   }
 }

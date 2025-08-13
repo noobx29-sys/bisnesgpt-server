@@ -13,6 +13,7 @@ const { pipeline } = require("stream/promises");
 const { createServer } = require("http");
 const FormData = require('form-data');
 const { Readable } = require('stream');
+const mime = require('mime-types');
 
 // Third-party Libraries
 // Framework & Middleware
@@ -74,6 +75,7 @@ const enrolleesRouter = require('./routes/enrollees');
 const participantsRouter = require('./routes/participants');
 const attendanceEventsRouter = require('./routes/attendanceEvents');
 const feedbackResponsesRouter = require('./routes/feedbackResponse');
+const mtdcSpreadsheet = require('./spreadsheet/mtdcSpreadsheet.js');
 
 // Initialize logger
 const logger = new ServerLogger();
@@ -180,17 +182,6 @@ async function safeRelease(sqlClient) {
       console.log("Database connection released successfully");
     } catch (releaseError) {
       console.error("Error releasing connection:", releaseError);
-    }
-  }
-}
-
-// Safe database rollback
-async function safeRollback(client) {
-  if (client && typeof client.query === 'function') {
-    try {
-      await client.query("ROLLBACK");
-    } catch (error) {
-      console.error("Error rolling back database transaction:", error.message);
     }
   }
 }
@@ -590,20 +581,40 @@ const worker = new Worker(
 
 // Add pool error handling to prevent crashes
 pool.on('error', (err) => {
-  console.error('Unexpected error on idle client', err);
+  console.error("=== DATABASE POOL ERROR ===");
+  console.error("Error:", err);
+  console.error("Time:", new Date().toISOString());
+  
+  // Handle specific connection errors
+  if (err.message && err.message.includes("Connection terminated unexpectedly")) {
+    console.error("Database connection terminated - attempting to reconnect...");
+    // Log to file for debugging
+    if (typeof logger !== 'undefined' && logger.logToFile) {
+      logger.logToFile('db_connection_errors', `Connection terminated: ${err.message}`);
+    }
+  }
+  
   // Don't exit the process, just log the error
+  console.log("Continuing operation despite database pool error...");
 });
 
 pool.on('connect', (client) => {
   console.log('New database connection established');
-});
 
-pool.on('acquire', (client) => {
-  console.log('Database connection acquired from pool');
-});
-
-pool.on('release', (client) => {
-  console.log('Database connection released back to pool');
+  // Set connection-specific error handlers
+  client.on('error', (err) => {
+    console.error("=== DATABASE CLIENT ERROR ===");
+    console.error("Error:", err);
+    console.error("Time:", new Date().toISOString());
+    
+    if (err.message && err.message.includes("Connection terminated unexpectedly")) {
+      console.error("Client connection terminated - will be replaced by pool");
+      // Log to file for debugging
+      if (typeof logger !== 'undefined' && logger.logToFile) {
+        logger.logToFile('db_connection_errors', `Client connection terminated: ${err.message}`);
+      }
+    }
+  });
 });
 
 // Redis connection
@@ -659,30 +670,24 @@ const wss = new WebSocket.Server({
   // Add CORS headers for WebSocket connections
   verifyClient: (info, callback) => {
     const origin = info.origin || info.req.headers.origin;
-    console.log('WebSocket connection attempt from origin:', origin);
-    console.log('WebSocket connection URL:', info.req.url);
     
     // Allow connections with no origin
     if (!origin) {
-      console.log('Allowing WebSocket connection with no origin');
       return callback(true);
     }
     
     // Check if origin is in whitelist
     if (whitelist.includes(origin)) {
-      console.log('WebSocket origin found in whitelist:', origin);
       return callback(true);
     }
     
     // Check for localhost variations
     if (origin.startsWith('http://localhost:') || origin.startsWith('https://localhost:')) {
-      console.log('Allowing WebSocket localhost origin:', origin);
       return callback(true);
     }
     
     // Check for ngrok variations
     if (origin.includes('ngrok') || origin.includes('ngrok-free.app')) {
-      console.log('Allowing WebSocket ngrok origin:', origin);
       return callback(true);
     }
     
@@ -694,30 +699,24 @@ const db = admin.firestore();
 global.wss = wss;
 // CORS Configuration
 const corsOptions = {
-  origin: function (origin, callback) {
-    console.log('CORS request from origin:', origin);
-    
+  origin: function (origin, callback) {    
     // Allow requests with no origin (like mobile apps or curl requests)
     if (!origin) {
-      console.log('Allowing request with no origin');
       return callback(null, true);
     }
     
     // Check if origin is in whitelist
     if (whitelist.includes(origin)) {
-      console.log('Origin found in whitelist:', origin);
       return callback(null, true);
     }
     
     // Check for localhost variations
     if (origin.startsWith('http://localhost:') || origin.startsWith('https://localhost:')) {
-      console.log('Allowing localhost origin:', origin);
       return callback(null, true);
     }
     
     // Check for ngrok variations
     if (origin.includes('ngrok') || origin.includes('ngrok-free.app')) {
-      console.log('Allowing ngrok origin:', origin);
       return callback(null, true);
     }
     
@@ -1049,7 +1048,7 @@ app.get('/api/auto-reply/status/:companyId', async (req, res) => {
 app.post('/api/auto-reply/trigger/:companyId', async (req, res) => {
   try {
     const { companyId } = req.params;
-    const { hoursThreshold = 12 } = req.body;
+    const { hoursThreshold = 48 } = req.body;
     
     console.log(`Manual auto-reply trigger requested for company ${companyId}`);
     
@@ -1232,7 +1231,7 @@ async function saveMediaLocally(base64Data, mimeType, filename) {
   const buffer = Buffer.from(base64Data, "base64");
   const uniqueFilename = `${uuidv4()}_${filename}`;
   const filePath = path.join(MEDIA_DIR, uniqueFilename);
-  const baseUrl = 'https://juta.ngrok.app';
+  const baseUrl = process.env.URL;
 
   await writeFileAsync(filePath, buffer);
 
@@ -1244,7 +1243,7 @@ app.post('/api/upload-media', upload.single('file'), (req, res) => {
   if (!req.file) {
     return res.status(400).json({ error: 'No file uploaded' });
   }
-  const baseUrl = 'https://juta.ngrok.app';
+  const baseUrl = process.env.URL;
   const fileUrl = `${baseUrl}/media/${req.file.filename}`;
   res.json({ url: fileUrl });
 });
@@ -1488,14 +1487,15 @@ wss.on("connection", (ws, req) => {
 });
 // ... existing code ...
 
-app.post('/api/prompt-engineer-neon/', async (req, res) => {
+// Brainstorming AI - helps user think through prompt improvements without applying changes
+app.post('/api/prompt-brainstorm/', async (req, res) => {
   try {
     const userInput = req.query.message;
     const email = req.query.email;
     const { currentPrompt } = req.body;
 
     // Log only relevant data
-    console.log('Prompt Engineer Neon Request:', {
+    console.log('Prompt Brainstorm Request:', {
       userInput,
       email,
       currentPrompt
@@ -1512,39 +1512,128 @@ app.post('/api/prompt-engineer-neon/', async (req, res) => {
       await saveThreadIDPostgres(email, threadID);
     }
 
-    const promptInstructions = `As a prompt engineering expert, help me with the following prompt request. 
-  
-      When modifying an existing prompt:
-      - Return the COMPLETE prompt with all sections
-      - Only modify the specific elements requested by the user
-      - Keep all other sections exactly as they are, word for word
-      - Do not omit or summarize any sections
-      - Do not add [AI's primary function] style placeholders to unchanged sections
-      - Preserve all formatting, line breaks and structure
-      
-      Your response must be structured in two clearly separated parts using these exact markers:
-      [ANALYSIS_START]
-      Briefly explain what specific changes you made and why
-      [ANALYSIS_END]
-      
-      [PROMPT_START]
-      ${currentPrompt ? 'The complete prompt with ONLY the requested changes:' :
-        'Create a new prompt using this structure:'}
-      ${currentPrompt || `#ROLE: [AI's primary function and identity]
-      #CONTEXT: [Business context and background]
-      #CAPABILITIES: [Specific tasks and functions]
-      #CONSTRAINTS: [Boundaries and limitations]
-      #COMMUNICATION STYLE: [Tone and interaction approach]
-      #WORKFLOW: [Process for handling requests]`}
-      [PROMPT_END]
-      
-      ${currentPrompt ?
-        `Current Prompt:\n${currentPrompt}\n\nRequested Changes:\n${userInput}` :
-        `Create a new prompt with these requirements:\n${userInput}`}`;
+    const promptInstructions = `You are a prompt engineering expert. The user wants to modify their AI assistant's instructions. 
 
-    // Call OpenAI with o1-mini model
+Your task: Provide the EXACT text that should be added to their current prompt. Be direct and specific.
+
+Response format:
+[CHANGES_START]
+EXACT text to add to the prompt. Copy-paste ready content.
+[CHANGES_END]
+
+[EXPLANATION_START]
+Brief explanation of what this addition does.
+[EXPLANATION_END]
+
+Rules:
+- NO general suggestions or questions
+- NO "consider this" or "think about that" language
+- Provide ONLY the specific text to insert
+- If adding a new section, include the complete section with proper formatting
+- If modifying existing text, show exactly what to add/change
+- Be concise and direct
+
+${currentPrompt ? 
+  `Current Prompt:\n${currentPrompt}\n\nUser Request: ${userInput}\n\nProvide the EXACT text to add to this prompt.` :
+  `User Request: ${userInput}\n\nProvide the EXACT text for a new prompt.`}`;
+
+    // Call OpenAI
     const completion = await openai.chat.completions.create({
-      model: "gpt-4.1-mini",
+      model: "gpt-4o-mini",
+      messages: [
+        {
+          role: "user",
+          content: promptInstructions
+        }
+      ],
+    });
+
+    const answer = completion.choices[0].message.content;
+
+    // Save the interaction to the thread
+    await addMessageAssistant(threadID, `Brainstorm Request: ${userInput}\nCurrent Prompt: ${currentPrompt || 'None'}\nResponse: ${answer}`);
+
+    // Send response
+    res.json({
+      success: true,
+      data: {
+        suggestions: answer,
+        currentPrompt: currentPrompt || null
+      }
+    });
+
+  } catch (error) {
+    console.error('Prompt brainstorm error:', {
+      name: error.name,
+      message: error.message,
+      code: error.code
+    });
+    res.status(500).json({
+      success: false,
+      error: error.code,
+      details: error.message
+    });
+  }
+});
+
+// Apply Changes AI - takes the brainstorming suggestions and applies them to create the modified prompt
+app.post('/api/prompt-apply-changes/', async (req, res) => {
+  try {
+    const email = req.query.email;
+    const { currentPrompt, changesToApply, brainstormContext } = req.body;
+
+    // Log only relevant data
+    console.log('Prompt Apply Changes Request:', {
+      email,
+      currentPrompt,
+      changesToApply,
+      brainstormContext
+    });
+
+    let threadID;
+    const contactData = await getContactDataFromDatabaseByEmail(email);
+
+    if (contactData?.thread_id) {
+      threadID = contactData.thread_id;
+    } else {
+      const thread = await createThread();
+      threadID = thread.id;
+      await saveThreadIDPostgres(email, threadID);
+    }
+
+    const promptInstructions = `As a prompt engineering expert, apply the specified changes to the current prompt. Your task is to implement the requested modifications precisely while maintaining the integrity of the original prompt.
+
+Instructions:
+- Return the COMPLETE prompt with all sections
+- Apply ONLY the specific changes requested
+- Keep all other sections exactly as they are, word for word
+- Do not omit or summarize any sections
+- Do not add [AI's primary function] style placeholders to unchanged sections
+- Preserve all formatting, line breaks and structure
+
+Your response must be structured in two clearly separated parts using these exact markers:
+[ANALYSIS_START]
+Briefly explain what specific changes you applied and why
+[ANALYSIS_END]
+
+[PROMPT_START]
+${currentPrompt ? 'The complete prompt with the applied changes:' :
+  'Create a new prompt using this structure:'}
+${currentPrompt || `#ROLE: [AI's primary function and identity]
+#CONTEXT: [Business context and background]
+#CAPABILITIES: [Specific tasks and functions]
+#CONSTRAINTS: [Boundaries and limitations]
+#COMMUNICATION STYLE: [Tone and interaction approach]
+#WORKFLOW: [Process for handling requests]`}
+[PROMPT_END]
+
+${currentPrompt ?
+  `Current Prompt:\n${currentPrompt}\n\nChanges to Apply:\n${changesToApply}${brainstormContext ? `\n\nBrainstorming Context:\n${brainstormContext}` : ''}` :
+  `Create a new prompt with these requirements:\n${changesToApply}${brainstormContext ? `\n\nBrainstorming Context:\n${brainstormContext}` : ''}`}`;
+
+    // Call OpenAI
+    const completion = await openai.chat.completions.create({
+      model: "gpt-4o-mini",
       messages: [
         {
           role: "user",
@@ -1563,7 +1652,7 @@ app.post('/api/prompt-engineer-neon/', async (req, res) => {
     const updatedPrompt = promptMatch ? promptMatch[1].trim() : '';
 
     // Save the interaction to the thread
-    await addMessageAssistant(threadID, `User Request: ${userInput}\nCurrent Prompt: ${currentPrompt || 'None'}\nResponse: ${answer}`);
+    await addMessageAssistant(threadID, `Apply Changes Request: ${changesToApply}\nCurrent Prompt: ${currentPrompt || 'None'}\nBrainstorm Context: ${brainstormContext || 'None'}\nResponse: ${answer}`);
 
     // Send structured response
     res.json({
@@ -1576,7 +1665,7 @@ app.post('/api/prompt-engineer-neon/', async (req, res) => {
     });
 
   } catch (error) {
-    console.error('Prompt engineering Neon error:', {
+    console.error('Prompt apply changes error:', {
       name: error.name,
       message: error.message,
       code: error.code
@@ -1585,6 +1674,503 @@ app.post('/api/prompt-engineer-neon/', async (req, res) => {
       success: false,
       error: error.code,
       details: error.message
+    });
+  }
+});
+
+// ============================================
+// AI-POWERED FOLLOW-UP MESSAGE GENERATOR
+// ============================================
+
+// Generate follow-up messages based on AI workflow stages
+app.post('/api/generate-followup-messages/', async (req, res) => {
+  try {
+    const email = req.query.email;
+    const { currentPrompt, companyId } = req.body;
+
+    if (!currentPrompt) {
+      return res.status(400).json({
+        success: false,
+        error: 'currentPrompt is required'
+      });
+    }
+
+    let threadID;
+    const contactData = await getContactDataFromDatabaseByEmail(email);
+
+    if (contactData?.thread_id) {
+      threadID = contactData.thread_id;
+    } else {
+      const thread = await createThread();
+      threadID = thread.id;
+      await saveThreadIDPostgres(email, threadID);
+    }
+
+    const promptInstructions = `As an AI workflow analysis expert, analyze the provided AI prompt to understand the business context, workflow stages, and specific questions/tasks at each stage. Then generate intelligent follow-up message templates with contextually relevant trigger tags and keywords.
+
+Your task:
+1. **FIRST**: Deeply analyze the AI prompt to understand:
+   - Business context and purpose
+   - Specific workflow stages and their objectives
+   - What questions or information is needed at each stage
+   - Customer interaction patterns
+
+2. **THEN**: For each identified stage, generate:
+   - 5 follow-up messages based on the stage's specific questions/requirements
+   - Contextually relevant trigger tags that would indicate this stage
+   - **Trigger keywords that the AI uses in this stage** (keywords/phrases from the AI's workflow)
+   - Messages that directly address the stage's purpose
+
+Required output format:
+Your response must be structured using these exact markers:
+
+[ANALYSIS_START]
+Explain what you understand about the business context and workflow stages from the prompt
+[ANALYSIS_END]
+
+[WORKFLOW_STAGES_START]
+List the identified workflow stages with their specific purposes/questions
+[WORKFLOW_STAGES_END]
+
+[STAGE_TEMPLATES_START]
+For each stage, provide this exact format:
+
+Stage 1: [Stage Name]
+Purpose: [What this stage accomplishes]
+Trigger Tags: [comma-separated tags relevant to this stage]
+Trigger Keywords: [comma-separated keywords that the AI uses in this stage]
+Messages:
+- Day 1 - 30 minutes after: [Message based on stage's specific question/requirement]
+- Day 1 - 2 hours after: [Message based on stage's specific question/requirement]
+- Day 3: [Message based on stage's specific question/requirement]
+- Day 4: [Message based on stage's specific question/requirement]
+- Day 10: [Message based on stage's specific question/requirement]
+
+Stage 2: [Stage Name]
+Purpose: [What this stage accomplishes]
+Trigger Tags: [comma-separated tags relevant to this stage]
+Trigger Keywords: [comma-separated keywords that the AI uses in this stage]
+Messages:
+- Day 1 - 30 minutes after: [Message based on stage's specific question/requirement]
+- Day 1 - 2 hours after: [Message based on stage's specific question/requirement]
+- Day 3: [Message based on stage's specific question/requirement]
+- Day 4: [Message based on stage's specific question/requirement]
+- Day 10: [Message based on stage's specific question/requirement]
+
+[Continue for all identified stages with the same format]
+[STAGE_TEMPLATES_END]
+
+AI Prompt to analyze:
+${currentPrompt}
+
+**IMPORTANT**: 
+- Read and understand the prompt FIRST before generating anything
+- Each stage should have its own unique trigger tags and keywords
+- **Trigger keywords should be the actual keywords/phrases the AI uses in that stage**
+- Follow-up messages must directly relate to what the stage is asking for
+- Make trigger tags/keywords specific to the business context and stage purpose
+- Ensure messages encourage customers to provide the specific information needed for that stage`;
+
+    // Call OpenAI
+    const completion = await openai.chat.completions.create({
+      model: "gpt-4o-mini",
+      messages: [
+        {
+          role: "user",
+          content: promptInstructions
+        }
+      ],
+    });
+
+    const answer = completion.choices[0].message.content;
+
+    // Parse the response to extract different sections
+    const analysisMatch = answer.match(/\[ANALYSIS_START\]([\s\S]*?)\[ANALYSIS_END\]/);
+    const workflowStagesMatch = answer.match(/\[WORKFLOW_STAGES_START\]([\s\S]*?)\[WORKFLOW_STAGES_END\]/);
+    const stageTemplatesMatch = answer.match(/\[STAGE_TEMPLATES_START\]([\s\S]*?)\[STAGE_TEMPLATES_END\]/);
+
+    const analysis = analysisMatch ? analysisMatch[1].trim() : '';
+    const workflowStages = workflowStagesMatch ? workflowStagesMatch[1].trim() : '';
+    const stageTemplates = stageTemplatesMatch ? stageTemplatesMatch[1].trim() : '';
+
+    // Save the interaction to the thread
+    await addMessageAssistant(threadID, `Follow-up Message Generation Request\nCurrent Prompt: ${currentPrompt}\nResponse: ${answer}`);
+
+    // Send structured response
+    res.json({
+      success: true,
+      data: {
+        analysis: analysis,
+        workflowStages: workflowStages,
+        stageTemplates: stageTemplates,
+        originalPrompt: currentPrompt
+      }
+    });
+
+  } catch (error) {
+    console.error('Follow-up message generation error:', {
+      name: error.name,
+      message: error.message,
+      code: error.code
+    });
+    res.status(500).json({
+      success: false,
+      error: error.code,
+      details: error.message
+    });
+  }
+});
+
+// Apply generated follow-up messages to create templates
+app.post('/api/apply-followup-messages/', async (req, res) => {
+  try {
+    const email = req.query.email;
+    const { 
+      companyId, 
+      templateName, 
+      workflowStages, 
+      stageTemplates, 
+      triggerTags = [], 
+      triggerKeywords = [] 
+    } = req.body;
+
+    if (!companyId || !templateName || !workflowStages || !stageTemplates) {
+      return res.status(400).json({
+        success: false,
+        error: 'companyId, templateName, workflowStages, and stageTemplates are required'
+      });
+    }
+
+    let threadID;
+    const contactData = await getContactDataFromDatabaseByEmail(email);
+
+    if (contactData?.thread_id) {
+      threadID = contactData.thread_id;
+    } else {
+      const thread = await createThread();
+      threadID = thread.id;
+      await saveThreadIDPostgres(email, threadID);
+    }
+
+    const promptInstructions = `As a follow-up template creation expert, convert the provided workflow stages and stage templates into a structured format that can be used by a follow-up system. Each stage should have its own template with its specific trigger tags and keywords.
+
+Your task:
+1. Parse the workflow stages and stage templates
+2. Extract trigger tags and **AI workflow keywords** for each stage
+3. Convert into a structured template format with stage-specific configurations
+4. Ensure proper timing and sequencing for each stage
+
+Required output format:
+Your response must be structured using these exact markers:
+
+[TEMPLATE_STRUCTURE_START]
+Provide the template structure in this format:
+{
+  "name": "Template Name",
+  "stages": [
+    {
+      "stageName": "Stage Name",
+      "purpose": "What this stage accomplishes",
+      "triggerTags": ["tag1", "tag2"],
+      "triggerKeywords": ["ai_workflow_keyword1", "ai_workflow_keyword2"],
+      "messages": [
+        {
+          "timing": "Day 1 - 30 minutes after",
+          "message": "Actual message content",
+          "delayHours": 0.5
+        },
+        {
+          "timing": "Day 1 - 2 hours after", 
+          "message": "Actual message content",
+          "delayHours": 2
+        },
+        {
+          "timing": "Day 3",
+          "message": "Actual message content", 
+          "delayHours": 72
+        },
+        {
+          "timing": "Day 4",
+          "message": "Actual message content",
+          "delayHours": 96
+        },
+        {
+          "timing": "Day 10",
+          "message": "Actual message content",
+          "delayHours": 240
+        }
+      ]
+    }
+  ]
+}
+[TEMPLATE_STRUCTURE_END]
+
+[IMPLEMENTATION_NOTES_START]
+Provide notes on how to implement these stage-specific templates in the follow-up system
+[IMPLEMENTATION_NOTES_END]
+
+Workflow Stages:
+${workflowStages}
+
+Stage Templates:
+${stageTemplates}
+
+Convert this into a structured template format with stage-specific trigger tags and **AI workflow keywords**.`;
+
+    // Call OpenAI
+    const completion = await openai.chat.completions.create({
+      model: "gpt-4o-mini",
+      messages: [
+        {
+          role: "user",
+          content: promptInstructions
+        }
+      ],
+    });
+
+    const answer = completion.choices[0].message.content;
+
+    // Parse the response to extract different sections
+    const templateStructureMatch = answer.match(/\[TEMPLATE_STRUCTURE_START\]([\s\S]*?)\[TEMPLATE_STRUCTURE_END\]/);
+    const implementationNotesMatch = answer.match(/\[IMPLEMENTATION_NOTES_START\]([\s\S]*?)\[IMPLEMENTATION_NOTES_END\]/);
+
+    const templateStructure = templateStructureMatch ? templateStructureMatch[1].trim() : '';
+    const implementationNotes = implementationNotesMatch ? implementationNotesMatch[1].trim() : '';
+
+    // Try to parse the JSON structure
+    let parsedTemplate = null;
+    try {
+      // Extract JSON from the response
+      const jsonMatch = templateStructure.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        parsedTemplate = JSON.parse(jsonMatch[0]);
+      }
+    } catch (parseError) {
+      console.error('Error parsing template structure:', parseError);
+    }
+
+    // Save the interaction to the thread
+    await addMessageAssistant(threadID, `Apply Follow-up Messages Request\nTemplate Name: ${templateName}\nWorkflow Stages: ${workflowStages}\nStage Templates: ${stageTemplates}\nResponse: ${answer}`);
+
+    // Send structured response
+    res.json({
+      success: true,
+      data: {
+        templateStructure: templateStructure,
+        parsedTemplate: parsedTemplate,
+        implementationNotes: implementationNotes,
+        templateName: templateName,
+        companyId: companyId
+      }
+    });
+
+  } catch (error) {
+    console.error('Apply follow-up messages error:', {
+      name: error.name,
+      message: error.message,
+      code: error.code
+    });
+    res.status(500).json({
+      success: false,
+      error: error.code,
+      details: error.message
+    });
+  }
+});
+
+// Create separate follow-up templates for each stage
+app.post('/api/create-ai-followup-template/', async (req, res) => {
+  try {
+    const { 
+      companyId, 
+      templateName, 
+      templateStructure, 
+      triggerTags = [], 
+      triggerKeywords = [] 
+    } = req.body;
+
+    if (!companyId || !templateName || !templateStructure) {
+      return res.status(400).json({
+        success: false,
+        error: 'companyId, templateName, and templateStructure are required'
+      });
+    }
+
+    const sqlClient = await pool.connect();
+
+    try {
+      await sqlClient.query("BEGIN");
+      console.log("Database transaction started for AI follow-up templates");
+
+      // Parse the template structure
+      let parsedStructure;
+      try {
+        parsedStructure = JSON.parse(templateStructure);
+      } catch (parseError) {
+        console.error('Error parsing template structure:', parseError);
+        throw new Error('Invalid template structure format');
+      }
+
+      if (!parsedStructure.stages || !Array.isArray(parsedStructure.stages)) {
+        throw new Error('Invalid template structure: stages array not found');
+      }
+
+      const createdTemplates = [];
+      console.log(`Creating ${parsedStructure.stages.length} separate stage templates`);
+
+      // Create a separate template for each stage
+      for (let stageIndex = 0; stageIndex < parsedStructure.stages.length; stageIndex++) {
+        const stage = parsedStructure.stages[stageIndex];
+        
+        if (!stage.stageName || !stage.messages || !Array.isArray(stage.messages)) {
+          console.warn(`Skipping invalid stage ${stageIndex + 1}:`, stage);
+          continue;
+        }
+
+        console.log(`Creating template for stage ${stageIndex + 1}: ${stage.stageName}`);
+
+        // Generate unique template_id for this stage
+        const stageTemplateId = require('crypto').randomUUID();
+        
+        // Create stage-specific template name
+        const stageTemplateName = `${templateName} - ${stage.stageName}`;
+
+        // Insert the stage template
+        const insertTemplateQuery = `
+          INSERT INTO public.followup_templates (
+            id,
+            template_id,
+            company_id,
+            name,
+            created_at,
+            updated_at,
+            trigger_keywords,
+            trigger_tags,
+            keyword_source,
+            status,
+            content,
+            delay_hours
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+          RETURNING *
+        `;
+
+        // Use stage-specific trigger tags and keywords if available
+        const stageTriggerTags = stage.triggerTags || Array.isArray(trigger_tags) ? trigger_tags : [];
+        const stageTriggerKeywords = stage.triggerKeywords || Array.isArray(trigger_keywords) ? trigger_keywords : [];
+
+        const templateParams = [
+          require('crypto').randomUUID(), // id (UUID)
+          stageTemplateId, // template_id for this stage
+          companyId,
+          stageTemplateName.trim(),
+          new Date(),
+          new Date(),
+          stageTriggerKeywords,
+          stageTriggerTags,
+          'ai_generated', // keyword_source
+          'active',
+          JSON.stringify({
+            stageName: stage.stageName,
+            stageIndex: stageIndex + 1,
+            purpose: stage.purpose || '',
+            originalTemplate: templateName,
+            messages: stage.messages,
+            triggerTags: stageTriggerTags,
+            triggerKeywords: stageTriggerKeywords
+          }), // Store stage-specific content
+          24 // default delay_hours
+        ];
+
+        console.log(`Executing template insert for stage ${stage.stageName}:`, templateParams);
+        const templateResult = await sqlClient.query(insertTemplateQuery, templateParams);
+        console.log(`Stage template created successfully:`, templateResult.rows[0]);
+
+        // Create follow-up messages for this stage
+        if (stage.messages && stage.messages.length > 0) {
+          console.log(`Creating ${stage.messages.length} messages for stage ${stage.stageName}`);
+          
+          for (let messageIndex = 0; messageIndex < stage.messages.length; messageIndex++) {
+            const message = stage.messages[messageIndex];
+            
+            if (!message.message) {
+              console.warn(`Skipping message ${messageIndex + 1} for stage ${stage.stageName}: no message content`);
+              continue;
+            }
+
+            const insertMessageQuery = `
+              INSERT INTO public.followup_messages (
+                id,
+                template_id,
+                message,
+                day_number,
+                sequence,
+                status,
+                created_at,
+                delay_after,
+                add_tags,
+                remove_tags
+              ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+            `;
+
+            const messageParams = [
+              require('crypto').randomUUID(), // id
+              stageTemplateId, // template_id for this specific stage
+              message.message,
+              message.timing || `Day ${messageIndex + 1}`,
+              messageIndex + 1, // sequence within this stage
+              'active',
+              new Date(),
+              message.delayHours ? JSON.stringify({ hours: message.delayHours }) : null,
+              [], // add_tags
+              [], // remove_tags
+            ];
+
+            console.log(`Inserting message ${messageIndex + 1} for stage ${stage.stageName}:`, messageParams);
+            await sqlClient.query(insertMessageQuery, messageParams);
+            console.log(`Message ${messageIndex + 1} for stage ${stage.stageName} inserted successfully`);
+          }
+        }
+
+        // Add to created templates list
+        createdTemplates.push({
+          stageName: stage.stageName,
+          stageIndex: stageIndex + 1,
+          templateId: stageTemplateId,
+          templateName: stageTemplateName,
+          messageCount: stage.messages ? stage.messages.length : 0,
+          purpose: stage.purpose || '',
+          triggerTags: stageTriggerTags,
+          triggerKeywords: stageTriggerKeywords
+        });
+      }
+
+      await sqlClient.query("COMMIT");
+      console.log(`Successfully created ${createdTemplates.length} stage templates`);
+
+      res.json({
+        success: true,
+        data: {
+          message: `Successfully created ${createdTemplates.length} stage templates`,
+          createdTemplates: createdTemplates,
+          totalStages: parsedStructure.stages.length,
+          originalTemplateName: templateName
+        }
+      });
+
+    } catch (error) {
+      await safeRollback(sqlClient);
+      console.error('Database error during template creation:', error);
+      throw error;
+    } finally {
+      await safeRelease(sqlClient);
+    }
+
+  } catch (error) {
+    console.error('Error creating AI follow-up templates:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message || 'Failed to create AI follow-up templates',
+      details: error.stack
     });
   }
 });
@@ -2262,48 +2848,147 @@ app.put("/api/update-user", async (req, res) => {
 });
 
 // Delete user endpoint
+// Delete user endpoint
+// Delete user endpoint
+// Delete user endpoint
 app.delete("/api/delete-user", async (req, res) => {
+  console.log("Delete user request received:", { body: req.body, headers: req.headers });
+  
   try {
     const { email, companyId } = req.body;
 
+    // Validate required fields
     if (!email) {
+      console.log("Delete user error: Email is required");
       return res.status(400).json({ error: "Email is required" });
     }
 
     if (!companyId) {
+      console.log("Delete user error: Company ID is required");
       return res.status(400).json({ error: "Company ID is required" });
     }
 
+    console.log(`Attempting to delete user: ${email} from company: ${companyId}`);
+
+    // Check database connection
+    if (!pool) {
+      console.error("Delete user error: Database pool not initialized");
+      return res.status(500).json({ error: "Database connection not available" });
+    }
+
     // Start transaction
-    const client = await pool.connect();
+    let client;
     try {
+      client = await pool.connect();
+      console.log("Database connection acquired for delete user transaction");
+      
       await client.query('BEGIN');
+      console.log("Transaction started for delete user");
 
-      // Delete from employees table
-      await client.query(
-        'DELETE FROM employees WHERE email = $1 AND company_id = $2',
+      // Check if user exists before deletion
+      const userCheckResult = await client.query(
+        'SELECT id, employee_id FROM employees WHERE email = $1 AND company_id = $2',
         [email, companyId]
       );
 
-      // Deactivate user in users table (soft delete)
-      await client.query(
-        'UPDATE users SET active = false, last_updated = CURRENT_TIMESTAMP WHERE email = $1 AND company_id = $2',
+      if (userCheckResult.rows.length === 0) {
+        console.log(`Delete user warning: User ${email} not found in employees table`);
+        await client.query('ROLLBACK');
+        return res.status(404).json({ error: "User not found" });
+      }
+
+      const employeeId = userCheckResult.rows[0].id;
+      const employeeIdForConstraints = userCheckResult.rows[0].employee_id || email;
+
+      console.log(`Found employee with ID: ${employeeId}, employee_id: ${employeeIdForConstraints}`);
+
+      // Delete related records in the correct order to avoid foreign key violations
+      
+      // 1. Delete from assignments table first (if it exists)
+      try {
+        const deleteAssignmentsResult = await client.query(
+          'DELETE FROM assignments WHERE employee_id = $1',
+          [email] // Use email instead of employeeIdForConstraints
+        );
+        console.log(`Assignments deleted: ${deleteAssignmentsResult.rows.length} rows affected`);
+      } catch (assignmentsError) {
+        console.log(`No assignments table or no assignments to delete: ${assignmentsError.message}`);
+      }
+
+      // 2. Delete from other potential related tables (add more as needed)
+      // You can add more DELETE statements here for other tables that reference employees
+      
+      // 3. Now delete from employees table
+      const deleteEmployeeResult = await client.query(
+        'DELETE FROM employees WHERE email = $1 AND company_id = $2 RETURNING id',
         [email, companyId]
       );
+      console.log(`Employee deleted: ${deleteEmployeeResult.rows.length} rows affected`);
+
+      // 4. Deactivate user in users table (soft delete)
+      const updateUserResult = await client.query(
+        'UPDATE users SET active = false, last_updated = CURRENT_TIMESTAMP WHERE email = $1 AND company_id = $2 RETURNING id',
+        [email, companyId]
+      );
+      console.log(`User deactivated: ${updateUserResult.rows.length} rows affected`);
 
       await client.query('COMMIT');
-      res.json({ success: true, message: "User deleted successfully" });
+      console.log("Delete user transaction committed successfully");
+      
+      res.json({ 
+        success: true, 
+        message: "User deleted successfully",
+        deletedEmployeeId: deleteEmployeeResult.rows[0]?.id,
+        deactivatedUserId: updateUserResult.rows[0]?.id
+      });
 
-    } catch (error) {
-      await client.query('ROLLBACK');
-      throw error;
+    } catch (dbError) {
+      console.error("Database error during delete user:", dbError);
+      
+      if (client) {
+        try {
+          await client.query('ROLLBACK');
+          console.log("Delete user transaction rolled back due to error");
+        } catch (rollbackError) {
+          console.error("Error during rollback:", rollbackError);
+        }
+      }
+      
+      // Provide more specific error messages
+      if (dbError.code === '23503') {
+        return res.status(400).json({ 
+          error: "Cannot delete user due to foreign key constraints. Please remove related data first.",
+          details: dbError.detail,
+          constraint: dbError.constraint
+        });
+      } else if (dbError.code === '42P01') {
+        return res.status(500).json({ 
+          error: "Database table not found. Please check database schema." 
+        });
+      } else if (dbError.code === '08006') {
+        return res.status(500).json({ 
+          error: "Database connection lost. Please try again." 
+        });
+      } else {
+        return res.status(500).json({ 
+          error: "Database operation failed", 
+          details: dbError.message,
+          code: dbError.code
+        });
+      }
     } finally {
-      await safeRelease(client);
+      if (client) {
+        client.release();
+        console.log("Database connection released");
+      }
     }
 
   } catch (error) {
-    console.error("Error deleting user:", error);
-    res.status(500).json({ success: false, error: "Failed to delete user" });
+    console.error("Unexpected error in delete user endpoint:", error);
+    res.status(500).json({ 
+      error: "Internal server error", 
+      message: error.message 
+    });
   }
 });
 
@@ -2663,7 +3348,7 @@ app.post("/api/channel/create/:companyID", async (req, res) => {
             true,
             plan, // Store the selected plan
             companyName || `Company_${companyID}`, // Use provided company name or default
-            "https://juta.ngrok.app", // Set the API URL
+            process.env.URL, // Set the API URL
           ]
         );
         
@@ -2675,7 +3360,7 @@ app.post("/api/channel/create/:companyID", async (req, res) => {
         company = companyResult.rows[0];
         companyCreated = true;
         
-        console.log(`Company ${companyID} created successfully with plan: ${plan} and apiUrl: https://juta.ngrok.app/`);
+        console.log(`Company ${companyID} created successfully with plan: ${plan} and apiUrl: ${process.env.URL}`);
       } catch (createError) {
         console.error("Error creating company:", createError);
         return res.status(500).json({
@@ -2714,7 +3399,7 @@ app.post("/api/channel/create/:companyID", async (req, res) => {
 
         // Always update apiUrl for existing companies too
         updateFields.push(`api_url = $${paramIndex++}`);
-        updateValues.push("https://juta.ngrok.app/");
+        updateValues.push(process.env.URL);
 
         if (updateFields.length > 0) {
           updateFields.push(`updated_at = CURRENT_TIMESTAMP`);
@@ -2757,7 +3442,7 @@ app.post("/api/channel/create/:companyID", async (req, res) => {
       assistantId: assistantId,
       companyCreated: companyCreated,
       plan: plan,
-      apiUrl: "https://juta.ngrok.app/",
+      apiUrl: process.env.URL,
     });
 
     // Now initialize the bot in the background
@@ -6688,6 +7373,7 @@ async function scheduleAllMessages() {
 
 // Add this import at the top of server.js
 const { broadcastNewMessageToCompany } = require('./utils/broadcast');
+const { handleNewMessagesTemplateWweb } = require("./bots/handleMessagesFiraz.js");
 
 function setupMessageHandler(client, botName, phoneIndex) {
   client.on("message", async (msg) => {
@@ -6701,7 +7387,7 @@ function setupMessageHandler(client, botName, phoneIndex) {
       console.log(`🔔 [MESSAGE_HANDLER] Timestamp: ${msg.timestamp}`);
       console.log(`🔔 [MESSAGE_HANDLER] ID: ${msg.id._serialized}`);
       
-      await handleNewMessagesPersonalAssistant(client, msg, botName, phoneIndex);
+      await handleNewMessagesTemplateWweb(client, msg, botName, phoneIndex);
       
       // Add broadcast call here
       const extractedNumber = msg.from.replace("@c.us", "").replace("@g.us", "");
@@ -6951,7 +7637,15 @@ async function processAIResponses({
     voice: true,
   },
 }) {
-  const followUpTemplates = await getFollowUpTemplates(idSubstring);
+  console.log(`[processAIResponses] Starting for company ${idSubstring}`);
+  
+  let followUpTemplates = [];
+  try {
+    followUpTemplates = await getFollowUpTemplates(idSubstring);
+  } catch (error) {
+    console.error(`[processAIResponses] Error getting follow-up templates for company ${idSubstring}:`, error);
+    followUpTemplates = [];
+  }
 
   const chatid = formatPhoneNumber(extractedNumber) + "@c.us";
 
@@ -7011,13 +7705,12 @@ async function processAIResponses({
     });
   }
 }
-// ... existing code around line 1010 ...
 
 app.post('/api/upload-media', upload.single('file'), (req, res) => {
   if (!req.file) {
     return res.status(400).json({ error: 'No file uploaded' });
   }
-  const baseUrl = 'https://juta.ngrok.app';
+  const baseUrl = process.env.URL;
   const fileUrl = `${baseUrl}/media/${req.file.filename}`;
   res.json({ url: fileUrl });
 });
@@ -7037,7 +7730,7 @@ app.post('/api/upload-file', upload.single('file'), (req, res) => {
       return res.status(400).json({ error: 'fileName is required' });
     }
 
-    const baseUrl = 'https://juta.ngrok.app';
+    const baseUrl = process.env.URL;
     const fileUrl = `${baseUrl}/media/${req.file.filename}`;
     
     // Log the upload for debugging
@@ -7293,7 +7986,7 @@ async function getFollowUpTemplates(companyId) {
   } catch (error) {
     await safeRollback(sqlClient);
     console.error("Error in getFollowUpTemplates:", error);
-    throw error;
+    return [];
   } finally {
     await safeRelease(sqlClient);
   }
@@ -9285,20 +9978,45 @@ async function handleFollowUpTemplateCleanup(
   idSubstring,
   followUpTemplates
 ) {
+  console.log(`=== Starting handleFollowUpTemplateCleanup ===`);
+  console.log(`Tag to remove: ${tag}`);
+  console.log(`Company ID: ${idSubstring}`);
+  console.log(`Number of templates to check: ${followUpTemplates ? followUpTemplates.length : 'undefined'}`);
+  
+  if (!followUpTemplates || !Array.isArray(followUpTemplates)) {
+    console.log(`No follow-up templates provided or not an array`);
+    return;
+  }
+  
   for (const template of followUpTemplates) {
-    if (template.trigger_tags && template.trigger_tags.includes(tag)) {
+    console.log(`\n--- Checking template: ${template.name || 'unnamed'} ---`);
+    console.log(`Template ID: ${template.id || template.templateId}`);
+    console.log(`Template object:`, JSON.stringify(template, null, 2));
+    
+    // Check both possible field names for trigger tags
+    const triggerTags = template.trigger_tags || template.triggerTags;
+    console.log(`Trigger tags found: ${triggerTags}`);
+    console.log(`Is trigger_tags array? ${Array.isArray(triggerTags)}`);
+    console.log(`Tag to match: ${tag}`);
+    console.log(`Includes check: ${triggerTags && triggerTags.includes(tag)}`);
+    
+    if (triggerTags && Array.isArray(triggerTags) && triggerTags.includes(tag)) {
+      console.log(`✓ Template "${template.name}" matches tag "${tag}" - calling removeTemplate API`);
+      console.log(`Using templateId: ${template.templateId} (not UUID: ${template.id})`);
       await callFollowUpAPI(
         "removeTemplate",
         extractedNumber,
         null,
         null,
-        template.id,
+        template.templateId, // FIXED: Use templateId instead of id
         idSubstring
       );
+    } else {
+      console.log(`✗ Template "${template.name}" does not match tag "${tag}"`);
     }
   }
+  console.log(`=== Completed handleFollowUpTemplateCleanup ===`);
 }
-
 async function handleFollowUpTemplateActivation(
   tag,
   extractedNumber,
@@ -10967,8 +11685,8 @@ async function main(reinitialize = false) {
  
   // WHEN WANT TO INITIALIZE ALL BOTS
   const companiesPromise = sqlDb.query(
-    "SELECT * FROM companies WHERE company_id = $1",
-    ["0385"]
+    "SELECT * FROM companies WHERE api_url = $1",
+    ["https://juta-dev.ngrok.dev"]
   );
   
   // const companiesPromise = sqlDb.query(
@@ -11047,12 +11765,30 @@ async function main(reinitialize = false) {
 
     console.log(`Starting initialization of ${botConfigs.length} bots...`);
 
+    // Function to initialize mtdcSpreadsheet when bot 0380 is ready
+    const initializeMtdcSpreadsheet = async () => {
+      try {
+        console.log("Bot 0380 successfully initialized, starting mtdcSpreadsheet automation...");
+        const automationInstances = {
+          mtdcSpreadsheet: new mtdcSpreadsheet(botMap),
+        };
+        await automationInstances.mtdcSpreadsheet.initialize();
+        console.log("mtdcSpreadsheet automation initialized successfully");
+      } catch (error) {
+        console.error("Error initializing mtdcSpreadsheet automation:", error);
+      }
+    };
+
     try {
       // Create an array of promises for all bot initializations
       const initializationPromises = botConfigs.map(config => 
         initializeBot(config.botName, config.phoneCount)
           .then(() => {
             console.log(`Successfully initialized bot ${config.botName}`);
+            
+            if (config.botName === '0380') {
+              initializeMtdcSpreadsheet();
+            }
           })
           .catch(error => {
             console.error(`Error in initialization of bot ${config.botName}:`, error.message);
@@ -11074,22 +11810,6 @@ async function main(reinitialize = false) {
   // Replace the parallel initialization with sequential starts
   await initializeBotsWithDelay(botConfigs);
   await setupNeonWebhooks(app, botMap);
-  const automationInstances = {
-    //skcSpreadsheet: new SKCSpreadsheet(botMap),
-    //bhqSpreadsheet: new bhqSpreadsheet(botMap),
-    //constantcoSpreadsheet: new constantcoSpreadsheet(botMap),
-  };
-
-  // 7. Initialize automation systems in parallel
-  /*const automationPromises = [
-    scheduleAllMessages(),
-    //automationInstances.bhqSpreadsheet.initialize(),
-    //automationInstances.skcSpreadsheet.initialize(),
-    //automationInstances.constantcoSpreadsheet.initialize(),
-    checkAndScheduleDailyReport(),
-    initializeDailyReports(),
-  ];*/
- // await Promise.all(automationPromises);
 
   console.log("Initialization complete");
   if (process.send) process.send("ready");
@@ -11128,7 +11848,7 @@ async function initializeDailyReports() {
       const companyResult = await sqlDb.query(companyQuery, [companyId]);
       const apiUrl = companyResult.rows[0]?.api_url;
 
-      if (apiUrl !== 'https://juta.ngrok.app') {
+      if (apiUrl !== process.env.URL) {
         continue;
       }
 
@@ -11210,7 +11930,7 @@ async function checkAndScheduleDailyReport() {
         const companyId = company.company_id;
         const apiUrl = company.api_url;
 
-        if (apiUrl !== 'https://juta.ngrok.app') {
+        if (apiUrl !== process.env.URL) {
           continue;
         }
 
@@ -13694,7 +14414,7 @@ app.get("/api/bots", async (req, res) => {
       AND c.api_url = $1
     `;
 
-    const apiUrl = 'https://juta.ngrok.app';
+    const apiUrl = process.env.URL;
     const companiesResult = await client.query(botsQuery, [apiUrl]);
 
     const botsPromises = companiesResult.rows.map(async (company) => {
@@ -15980,7 +16700,7 @@ app.post("/api/v2/messages/video/:companyId/:chatId", async (req, res) => {
 
   try {
     let client;
-    // 1. Get the client for this company from botMap
+    // 1. Get the client forl this company from botMap
     const botData = botMap.get(companyId);
     if (!botData) {
       return res.status(404).send("WhatsApp client not found for this company");
@@ -17346,8 +18066,35 @@ main().catch((error) => {
 
 // 2. Modify the uncaughtException handler (around line 15802)
 process.on("uncaughtException", (error) => {
-  console.error("\n=== Uncaught Exception ===");
-  console.error("Error:", error);
+  console.error("\n========================================");
+  console.error("UNCAUGHT EXCEPTION -", new Date().toISOString());
+  console.error("========================================");
+  console.error("Error:", error.message);
+  console.error("Stack:", error.stack);
+  console.error("Process PID:", process.pid);
+  console.error("Memory Usage:", process.memoryUsage());
+  console.error("========================================");
+
+  // Log to file for debugging
+  if (typeof logger !== 'undefined' && logger.logToFile) {
+    logger.logToFile('uncaught_exceptions', `${error.message}\n${error.stack}`);
+  }
+
+  // Handle specific database connection errors
+  if (
+    error.message && (
+      error.message.includes("Connection terminated unexpectedly") ||
+      error.message.includes("connection terminated") ||
+      error.message.includes("Client has encountered a connection error") ||
+      error.message.includes("Connection to server closed") ||
+      error.message.includes("server closed the connection unexpectedly")
+    )
+  ) {
+    console.error("DATABASE CONNECTION ERROR DETECTED");
+    console.error("This is likely a database connectivity issue - continuing operation...");
+    console.error("The connection pool will handle reconnection automatically.");
+    return; // Don't crash for database connection issues
+  }
   
   // Handle specific network-related errors
   if (error.code === 'EADDRNOTAVAIL' || 
@@ -17367,8 +18114,34 @@ process.on("uncaughtException", (error) => {
 
 // 3. Modify the unhandledRejection handler (around line 15808)
 process.on("unhandledRejection", (reason, promise) => {
-  console.error("\n=== Unhandled Rejection ===");
+  console.error("\n========================================");
+  console.error("UNHANDLED REJECTION -", new Date().toISOString());
+  console.error("========================================");
   console.error("Reason:", reason);
+  console.error("Promise:", promise);
+  console.error("========================================");
+
+  // Log to file for debugging
+  if (typeof logger !== 'undefined' && logger.logToFile) {
+    logger.logToFile('unhandled_rejections', `${reason}\nPromise: ${promise}`);
+  }
+
+  // Handle database connection rejections
+  if (
+    reason &&
+    reason.message && (
+      reason.message.includes("Connection terminated unexpectedly") ||
+      reason.message.includes("connection terminated") ||
+      reason.message.includes("Client has encountered a connection error") ||
+      reason.message.includes("Connection to server closed") ||
+      reason.message.includes("server closed the connection unexpectedly")
+    )
+  ) {
+    console.error("DATABASE CONNECTION REJECTION DETECTED");
+    console.error("This is likely a database connectivity issue - continuing operation...");
+    console.error("The connection pool will handle reconnection automatically.");
+    return; // Don't crash for database connection issues
+  }
   
   // Handle network-related rejections
   if (reason && (
@@ -18311,7 +19084,7 @@ app.get("/api/user-context", async (req, res) => {
     
     // Process phone names
     const phoneCount = companyData.phone_count || 0;
-    const apiUrl = companyData.api_url || "https://juta.ngrok.app";
+    const apiUrl = companyData.api_url || process.env.URL;
     const stopBot = companyData.stopbot || false;
     const stopBots = companyData.stopbots || {};
     
@@ -18558,7 +19331,7 @@ app.get("/api/user-page-context", async (req, res) => {
       companyData: {
         phoneCount: phoneNames.length || 1,
         ghl_accessToken: companyData.ghl_accesstoken,
-        apiUrl: companyData.api_url || "https://juta.ngrok.app",
+        apiUrl: companyData.api_url || process.env.URL,
         v2: companyData.v2,
         whapiToken: companyData.whapi_token,
         stopBot: companyData.stopbot || false,
@@ -20645,7 +21418,7 @@ app.post("/api/booking-slots", async (req, res) => {
   try {
     const {
       title, slug, description, location, duration, staffName,
-      is_active, created_by, company_id
+      staff_phone, is_active, created_by, company_id
     } = req.body;
     
     // Validation
@@ -20695,18 +21468,20 @@ app.post("/api/booking-slots", async (req, res) => {
     
     const bookingSlotId = require('uuid').v4();
     
-    const query = `
+      // ... existing code ...
+    
+      const query = `
       INSERT INTO booking_slots (
         id, title, slug, description, location, duration_minutes, 
-        staff_name, is_active, created_by, company_id, created_at, updated_at
+        staff_name, staff_phone, is_active, created_by, company_id, created_at, updated_at
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW(), NOW())
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW(), NOW())
       RETURNING *
     `;
     
     const result = await sqlDb.getRow(query, [
       bookingSlotId, title, finalSlug, description, location, duration || 30,
-      staffName, is_active !== false, created_by, company_id
+      staffName, staff_phone, is_active !== false, created_by, company_id
     ]);
     
     res.status(201).json({
