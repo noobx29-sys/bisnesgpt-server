@@ -16,6 +16,40 @@ const pool = new Pool({
   createRetryIntervalMillis: 100,
 });
 
+// GET /api/attendance-events/records - Fetch all attendance records for a company
+router.get('/records', async (req, res) => {
+  try {
+    const { company_id } = req.query;
+    
+    if (!company_id) {
+      return res.status(422).json({
+        success: false,
+        error: 'company_id is required'
+      });
+    }
+    
+    const query = `
+      SELECT id, event_id, event_slug, phone_number, confirmed_at, company_id
+      FROM attendance_records 
+      WHERE company_id = $1 
+      ORDER BY confirmed_at DESC
+    `;
+    
+    const result = await pool.query(query, [company_id]);
+    
+    res.json({
+      success: true,
+      attendance_records: result.rows
+    });
+  } catch (error) {
+    console.error('Error fetching attendance records:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch attendance records'
+    });
+  }
+});
+
 // POST /api/attendance-events/confirm - Confirm attendance
 router.post('/confirm', async (req, res) => {
   try {

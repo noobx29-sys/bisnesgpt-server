@@ -20,7 +20,7 @@ const pool = new Pool({
 // GET /api/events - List all events for a company
 router.get('/', async (req, res) => {
   try {
-    const { company_id } = req.query;
+    const { company_id, page = 1, limit = 100 } = req.query;
     
     if (!company_id) {
       return res.status(422).json({
@@ -29,17 +29,53 @@ router.get('/', async (req, res) => {
       });
     }
     
-    const query = `
-      SELECT * FROM events 
-      WHERE company_id = $1 
-      ORDER BY created_at DESC
+    // Validate pagination parameters
+    const pageNum = parseInt(page);
+    const limitNum = parseInt(limit);
+    
+    if (pageNum < 1 || limitNum < 1 || limitNum > 1000) {
+      return res.status(422).json({
+        success: false,
+        error: 'Invalid pagination parameters. page must be >= 1, limit must be between 1 and 1000'
+      });
+    }
+    
+    const offset = (pageNum - 1) * limitNum;
+    
+    // Get total count for pagination info
+    const countQuery = `
+      SELECT COUNT(*) as total
+      FROM events 
+      WHERE company_id = $1
     `;
     
-    const result = await pool.query(query, [company_id]);
+    const countResult = await pool.query(countQuery, [company_id]);
+    const total = parseInt(countResult.rows[0].total);
+    
+    // Get paginated results
+    const query = `
+      SELECT 
+        id, name, slug, description, start_date, end_date,
+        start_time, end_time, location, company_id, created_at
+      FROM events 
+      WHERE company_id = $1 
+      ORDER BY created_at DESC
+      LIMIT $2 OFFSET $3
+    `;
+    
+    const result = await pool.query(query, [company_id, limitNum, offset]);
     
     res.json({
       success: true,
-      events: result.rows
+      events: result.rows,
+      pagination: {
+        page: pageNum,
+        limit: limitNum,
+        total,
+        total_pages: Math.ceil(total / limitNum),
+        has_next: pageNum < Math.ceil(total / limitNum),
+        has_prev: pageNum > 1
+      }
     });
   } catch (error) {
     console.error('Error fetching events:', error);

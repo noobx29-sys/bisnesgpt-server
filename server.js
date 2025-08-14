@@ -7,6 +7,7 @@ const path = require("path");
 const os = require("os");
 const url = require("url");
 const fs = require("fs");
+const fsPromises = require("fs").promises;
 const { exec } = require("child_process");
 const { promisify } = require("util");
 const { pipeline } = require("stream/promises");
@@ -55,6 +56,7 @@ const CryptoJS = require("crypto-js");
 const { v4: uuidv4 } = require("uuid");
 const csv = require("csv-parser");
 const ffmpeg = require("ffmpeg-static");
+const { PDFDocument, rgb, StandardFonts } = require('pdf-lib');
 
 // Custom Modules
 const FirebaseWWebJS = require("./firebaseWweb.js");
@@ -74,8 +76,10 @@ const eventsRouter = require('./routes/events');
 const enrolleesRouter = require('./routes/enrollees');
 const participantsRouter = require('./routes/participants');
 const attendanceEventsRouter = require('./routes/attendanceEvents');
+const attendanceRecordsRouter = require('./routes/attendanceRecords');
 const feedbackResponsesRouter = require('./routes/feedbackResponse');
 const mtdcSpreadsheet = require('./spreadsheet/mtdcSpreadsheet.js');
+const certificatesRouter = require('./routes/certificates');
 
 // Initialize logger
 const logger = new ServerLogger();
@@ -852,6 +856,623 @@ app.get("/queue", (req, res) =>
 app.post("/api/tag/followup", handleTagFollowUp);
 
 // ============================================
+// CERTIFICATE GENERATION & WHATSAPP SENDING
+// ============================================
+
+// Integrated endpoint for certificate generation and WhatsApp sending
+app.post("/api/certificates/generate-and-send", async (req, res) => {
+  const requestId = uuidv4().substring(0, 8);
+  console.log(`[Certificates][${requestId}] ===== NEW REQUEST STARTED =====`);
+  console.log(`[Certificates][${requestId}] Request body:`, JSON.stringify(req.body, null, 2));
+  
+  try {
+    const { phoneNumber, formId, formTitle, companyId } = req.body;
+    
+    // Validate required fields
+    if (!phoneNumber || !formId || !formTitle || !companyId) {
+      console.log(`[Certificates][${requestId}] ❌ Validation failed - missing required fields`);
+      console.log(`[Certificates][${requestId}] phoneNumber: ${phoneNumber ? '✓' : '❌'}`);
+      console.log(`[Certificates][${requestId}] formId: ${formId ? '✓' : '❌'}`);
+      console.log(`[Certificates][${requestId}] formTitle: ${formTitle ? '✓' : '❌'}`);
+      console.log(`[Certificates][${requestId}] companyId: ${companyId ? '✓' : '❌'}`);
+      
+      return res.status(400).json({
+        success: false,
+        error: 'Missing required fields',
+        details: 'phoneNumber, formId, formTitle, and companyId are required'
+      });
+    }
+    
+    console.log(`[Certificates][${requestId}] ✅ All required fields present`);
+    console.log(`[Certificates][${requestId}] Processing request for phone: ${phoneNumber}, form: ${formId}, company: ${companyId}`);
+    
+    // Get WhatsApp client for the company
+    console.log(`[Certificates][${requestId}] 🔍 Checking WhatsApp client for company: ${companyId}`);
+    const botData = botMap.get(companyId);
+    console.log(`[Certificates][${requestId}] Bot data found:`, botData ? '✓' : '❌');
+    
+    let whatsappClient = null;
+    let hasWhatsAppClient = false;
+    
+    if (botData && botData[0]?.client) {
+      whatsappClient = botData[0].client;
+      hasWhatsAppClient = true;
+      console.log(`[Certificates][${requestId}] ✅ WhatsApp client found for company ${companyId}`);
+      console.log(`[Certificates][${requestId}] Client info:`, {
+        hasInfo: Boolean(whatsappClient.info),
+        isReady: Boolean(whatsappClient.info)
+      });
+    } else {
+      console.log(`[Certificates][${requestId}] ⚠️ No WhatsApp client found for company ${companyId}`);
+      console.log(`[Certificates][${requestId}] Bot data structure:`, {
+        exists: Boolean(botData),
+        isArray: Array.isArray(botData),
+        length: botData ? botData.length : 0,
+        hasClient: botData && botData[0] ? Boolean(botData[0].client) : false
+      });
+      console.log(`[Certificates][${requestId}] Will save certificate to folder only`);
+    }
+    
+    // Fetch participant data from CSV
+    console.log(`[Certificates][${requestId}] 📊 Fetching participant data from CSV...`);
+    const participants = await fetchParticipantData();
+    console.log(`[Certificates][${requestId}] ✅ Fetched ${participants.length} participants from CSV`);
+    
+    // Find participant by phone number
+    console.log(`[Certificates][${requestId}] 🔍 Searching for participant with phone: ${phoneNumber}`);
+    const participant = findParticipantByPhone(participants, phoneNumber);
+    if (!participant) {
+      console.log(`[Certificates][${requestId}] ❌ Participant not found in CSV data`);
+      console.log(`[Certificates][${requestId}] Available phone fields in first participant:`, participants.length > 0 ? Object.keys(participants[0]).filter(key => key.toLowerCase().includes('phone') || key.toLowerCase().includes('mobile') || key.toLowerCase().includes('contact')) : 'No participants');
+      console.log(`[Certificates][${requestId}] Sample participants (first 3):`, participants.slice(0, 3).map(p => ({
+        name: p['Full Name'] || p['Nama'] || p['Full Namea'] || 'Unknown',
+        phone: p['Phone'] || p['Mobile Number'] || p['Mobile'] || p['Phone Number'] || p['Contact'] || 'No phone'
+      })));
+      
+      return res.status(404).json({
+        success: false,
+        error: 'Participant not found in CSV data',
+        details: `No participant found with phone number ${phoneNumber}`
+      });
+    }
+    
+    // Extract participant information
+    const participantName = participant['Full Name'] || participant['Nama'] || participant['Full Namea'] || 'Participant';
+    const programDate = participant['Program Date & Time'] || '14 August 2025';
+    
+    console.log(`[Certificates][${requestId}] ✅ Participant found: ${participantName}`);
+    console.log(`[Certificates][${requestId}] 📅 Program date: ${programDate}`);
+    console.log(`[Certificates][${requestId}] 📋 Participant data:`, {
+      name: participantName,
+      date: programDate,
+      allFields: Object.keys(participant),
+      phoneFields: Object.entries(participant).filter(([key, value]) => 
+        key.toLowerCase().includes('phone') || key.toLowerCase().includes('mobile') || key.toLowerCase().includes('contact')
+      )
+    });
+    
+    // Generate certificate PDF
+    console.log(`[Certificates][${requestId}] 🎨 Generating certificate PDF for ${participantName}...`);
+    const startTime = Date.now();
+    const pdfBuffer = await generateCertificate(participantName, programDate);
+    const generationTime = Date.now() - startTime;
+    console.log(`[Certificates][${requestId}] ✅ Generated certificate PDF in ${generationTime}ms`);
+    console.log(`[Certificates][${requestId}] 📏 PDF buffer size: ${pdfBuffer.length} bytes`);
+    
+    // Create certificates directory if it doesn't exist
+    console.log(`[Certificates][${requestId}] 📁 Creating certificates directory...`);
+    const certificatesDir = path.join(__dirname, 'generated_certificates');
+    if (!fs.existsSync(certificatesDir)) {
+      await fsPromises.mkdir(certificatesDir, { recursive: true });
+      console.log(`[Certificates][${requestId}] ✅ Created certificates directory: ${certificatesDir}`);
+    } else {
+      console.log(`[Certificates][${requestId}] ✅ Certificates directory already exists: ${certificatesDir}`);
+    }
+    
+    // Save certificate to generated_certificates folder
+    const certificateId = uuidv4();
+    const filename = `${participantName.replace(/\s+/g, '_')}_FUTUREX.AI_2025_Certificate.pdf`;
+    const certificatePath = path.join(certificatesDir, filename);
+    
+    console.log(`[Certificates][${requestId}] 💾 Saving certificate to: ${certificatePath}`);
+    await fsPromises.writeFile(certificatePath, pdfBuffer);
+    console.log(`[Certificates][${requestId}] ✅ Certificate saved successfully`);
+    
+    // Verify file was created
+    const fileStats = await fsPromises.stat(certificatePath);
+    console.log(`[Certificates][${requestId}] 📊 File verification:`, {
+      exists: true,
+      size: fileStats.size,
+      created: fileStats.birthtime,
+      modified: fileStats.mtime
+    });
+    
+    let responseMessage = 'Certificate generated successfully';
+    let whatsappStatus = 'Not sent (no WhatsApp client)';
+    
+    // If WhatsApp client is available, send the message and certificate
+    if (hasWhatsAppClient && whatsappClient) {
+      console.log(`[Certificates][${requestId}] 📱 WhatsApp client available, proceeding with sending...`);
+      
+      try {
+        // Format phone number for WhatsApp
+        console.log(`[Certificates][${requestId}] 🔢 Formatting phone number: ${phoneNumber}`);
+        const formattedPhone = formatPhoneForWhatsApp(phoneNumber);
+        console.log(`[Certificates][${requestId}] ✅ Formatted phone: ${formattedPhone}`);
+        
+        // Prepare WhatsApp message content
+        const thankYouText = `Dear ${participantName}
+
+Thank You for Attending FUTUREX.AI 2025
+
+On behalf of the organizing team, we would like to extend our heartfelt thanks for your participation in FUTUREX.AI 2025 held on 14 August 2025.
+
+Your presence and engagement in the Digitalpreneur Create an Online Course with AI session greatly contributed to the success of the event.
+
+We hope the experience was insightful and inspiring as we continue to explore how artificial intelligence and robotics can shape the future.
+
+We hope you can join our next event as well.
+
+Please find your digital certificate of participation attached.
+
+Warm regards,
+Co9P AI Chatbot`;
+
+        console.log(`[Certificates][${requestId}] 📤 Sending WhatsApp message to ${formattedPhone}`);
+        console.log(`[Certificates][${requestId}] 📝 Message content:`, thankYouText);
+        
+        // Send WhatsApp message
+        const messageStartTime = Date.now();
+        await whatsappClient.sendMessage(formattedPhone, thankYouText);
+        const messageTime = Date.now() - messageStartTime;
+        console.log(`[Certificates][${requestId}] ✅ WhatsApp message sent in ${messageTime}ms to ${participantName}`);
+        
+        // Send certificate as document
+        console.log(`[Certificates][${requestId}] 📎 Preparing to send certificate document...`);
+        const media = MessageMedia.fromFilePath(certificatePath);
+        console.log(`[Certificates][${requestId}] 📎 Media prepared:`, {
+          filename: filename,
+          path: certificatePath,
+          mediaType: media.mimetype
+        });
+        
+        const documentStartTime = Date.now();
+        await whatsappClient.sendMessage(formattedPhone, media, { 
+          caption: 'Certificate of Participation',
+          filename: filename
+        });
+        const documentTime = Date.now() - documentStartTime;
+        console.log(`[Certificates][${requestId}] ✅ Certificate document sent in ${documentTime}ms to ${participantName}`);
+        
+        responseMessage = 'Certificate generation and WhatsApp sending completed successfully';
+        whatsappStatus = 'Sent successfully';
+        console.log(`[Certificates][${requestId}] 🎉 WhatsApp sending completed successfully`);
+        
+      } catch (whatsappError) {
+        console.error(`[Certificates][${requestId}] ❌ WhatsApp sending failed:`, whatsappError);
+        console.error(`[Certificates][${requestId}] Error details:`, {
+          message: whatsappError.message,
+          stack: whatsappError.stack,
+          name: whatsappError.name
+        });
+        whatsappStatus = `Failed: ${whatsappError.message}`;
+      }
+    } else {
+      console.log(`[Certificates][${requestId}] ⏭️ Skipping WhatsApp sending - no client available`);
+    }
+    
+    // Return success response
+    console.log(`[Certificates][${requestId}] 📤 Sending success response to client`);
+    console.log(`[Certificates][${requestId}] Response data:`, {
+      success: true,
+      message: responseMessage,
+      participantName,
+      filename,
+      certificatePath,
+      whatsappStatus,
+      companyId,
+      hasWhatsAppClient
+    });
+    
+    res.json({
+      success: true,
+      message: responseMessage,
+      participantName,
+      filename,
+      certificatePath,
+      whatsappStatus,
+      companyId,
+      hasWhatsAppClient
+    });
+    
+    console.log(`[Certificates][${requestId}] ===== REQUEST COMPLETED SUCCESSFULLY =====`);
+    
+  } catch (error) {
+    console.error(`[Certificates][${requestId}] ❌ CRITICAL ERROR:`, error);
+    console.error(`[Certificates][${requestId}] Error details:`, {
+      message: error.message,
+      stack: error.stack,
+      name: error.name,
+      code: error.code
+    });
+    
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error',
+      details: error.message
+    });
+    
+    console.log(`[Certificates][${requestId}] ===== REQUEST FAILED =====`);
+  }
+});
+
+// Helper functions for certificate generation
+async function fetchParticipantData() {
+  try {
+    console.log('[Certificates] 📊 Fetching CSV data from Google Sheets...');
+    const response = await axios.get('https://docs.google.com/spreadsheets/d/e/2PACX-1vQ9Wlb5GVpeT1FUavQdufnLukU1oyRWh1AaKKSJlGoFAAgjqxIh4JeHcNkK58JHT4BBP_qrkQacDtYc/pub?output=csv');
+    console.log('[Certificates] ✅ CSV data fetched successfully');
+    console.log('[Certificates] 📏 Response size:', response.data.length, 'characters');
+    
+    const csvData = response.data;
+    
+    // Parse CSV data (simple parsing for now)
+    console.log('[Certificates] 🔍 Parsing CSV data...');
+    const lines = csvData.split('\n');
+    console.log('[Certificates] 📊 Total lines in CSV:', lines.length);
+    
+    const headers = lines[0].split(',').map(h => h.trim().replace(/"/g, ''));
+    console.log('[Certificates] 📋 CSV headers:', headers);
+    
+    const participants = [];
+    
+    for (let i = 1; i < lines.length; i++) {
+      if (lines[i].trim()) {
+        const values = lines[i].split(',').map(v => v.trim().replace(/"/g, ''));
+        const participant = {};
+        headers.forEach((header, index) => {
+          participant[header] = values[index] || '';
+        });
+        participants.push(participant);
+      }
+    }
+    
+    console.log('[Certificates] ✅ CSV parsing completed');
+    console.log('[Certificates] 👥 Total participants parsed:', participants.length);
+    
+    return participants;
+  } catch (error) {
+    console.error('[Certificates] ❌ Error fetching participant data:', error);
+    console.error('[Certificates] Error details:', {
+      message: error.message,
+      code: error.code,
+      response: error.response ? {
+        status: error.response.status,
+        statusText: error.response.statusText
+      } : 'No response'
+    });
+    throw new Error('Failed to fetch participant data from CSV');
+  }
+}
+
+function findParticipantByPhone(participants, phoneNumber) {
+  console.log('[Certificates] 🔍 Searching for participant with phone:', phoneNumber);
+  
+  // Clean phone number for comparison
+  const cleanPhone = phoneNumber.replace(/\D/g, '');
+  console.log('[Certificates] 🧹 Cleaned phone number:', cleanPhone);
+  
+  for (let i = 0; i < participants.length; i++) {
+    const participant = participants[i];
+    // Check various possible phone number fields
+    const possiblePhoneFields = ['Phone', 'Mobile Number', 'Mobile', 'Phone Number', 'Contact'];
+    
+    for (const field of possiblePhoneFields) {
+      if (participant[field]) {
+        const participantPhone = participant[field].replace(/\D/g, '');
+        console.log(`[Certificates] 🔍 Checking participant ${i + 1}, field '${field}': ${participant[field]} -> ${participantPhone}`);
+        
+        if (participantPhone === cleanPhone || participantPhone.endsWith(cleanPhone.slice(-9))) {
+          console.log('[Certificates] ✅ Participant found!');
+          console.log('[Certificates] 📋 Participant data:', {
+            index: i,
+            name: participant['Full Name'] || participant['Nama'] || participant['Full Namea'] || 'Unknown',
+            phone: participant[field],
+            matchedField: field
+          });
+          return participant;
+        }
+      }
+    }
+  }
+  
+  console.log('[Certificates] ❌ No participant found with phone number:', phoneNumber);
+  return null;
+}
+
+function formatPhoneForWhatsApp(phoneNumber) {
+  console.log('[Certificates] 🔢 Formatting phone number for WhatsApp:', phoneNumber);
+  
+  // Remove all non-digits
+  const cleanPhone = phoneNumber.replace(/\D/g, '');
+  console.log('[Certificates] 🧹 Cleaned phone number:', cleanPhone);
+  
+  // Ensure it starts with 6 (Malaysia country code)
+  let formattedPhone = cleanPhone;
+  if (!formattedPhone.startsWith('6')) {
+    formattedPhone = '6' + formattedPhone;
+    console.log('[Certificates] 🌍 Added Malaysia country code:', formattedPhone);
+  } else {
+    console.log('[Certificates] ✅ Phone number already has Malaysia country code');
+  }
+  
+  // Format as WhatsApp chat ID
+  const whatsappFormat = `${formattedPhone}@c.us`;
+  console.log('[Certificates] 📱 WhatsApp format:', whatsappFormat);
+  
+  return whatsappFormat;
+}
+
+async function generateCertificate(participantName, programDate = '14 August 2025') {
+  console.log('[Certificates] 🎨 Starting certificate generation...');
+  console.log('[Certificates] 📝 Participant name:', participantName);
+  console.log('[Certificates] 📅 Program date:', programDate);
+  
+  try {
+    // Try to load the certificate template
+    const templatePath = path.join(__dirname, 'public', 'certificates', 'cert.pdf');
+    console.log('[Certificates] 🔍 Looking for template at:', templatePath);
+    
+    let pdfDoc;
+    
+    if (fs.existsSync(templatePath)) {
+      // Load existing template
+      console.log('[Certificates] ✅ Template found, loading existing PDF...');
+      const existingPdfBytes = await fs.promises.readFile(templatePath);
+      console.log('[Certificates] 📏 Template file size:', existingPdfBytes.length, 'bytes');
+      pdfDoc = await PDFDocument.load(existingPdfBytes);
+      console.log('[Certificates] ✅ Existing certificate template loaded successfully');
+    } else {
+      // Create a new certificate from scratch
+      console.log('[Certificates] ⚠️ No template found, creating certificate from scratch...');
+      pdfDoc = await PDFDocument.create();
+      const page = pdfDoc.addPage([595.28, 841.89]); // A4 size
+      console.log('[Certificates] ✅ New certificate page created (A4 size)');
+      
+      // Add basic certificate design
+      const helvetica = await pdfDoc.embedFont(StandardFonts.Helvetica);
+      const helveticaBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+      
+      // Title
+      page.drawText('Certificate of Participation', {
+        x: 150,
+        y: 750,
+        size: 24,
+        font: helveticaBold,
+        color: rgb(0, 0, 0),
+      });
+      
+      // Subtitle
+      page.drawText('FUTUREX.AI 2025', {
+        x: 200,
+        y: 720,
+        size: 18,
+        font: helveticaBold,
+        color: rgb(0, 0, 0),
+      });
+      
+      // Description
+      page.drawText('This is to certify that', {
+        x: 200,
+        y: 650,
+        size: 14,
+        font: helvetica,
+        color: rgb(0, 0, 0),
+      });
+      
+      // Participant name (centered)
+      const nameWidth = helveticaBold.widthOfTextAtSize(participantName, 18);
+      const nameX = (595.28 - nameWidth) / 2;
+      page.drawText(participantName, {
+        x: nameX,
+        y: 600,
+        size: 18,
+        font: helveticaBold,
+        color: rgb(0, 0, 0),
+      });
+      
+      // Event details
+      page.drawText('has successfully participated in the', {
+        x: 150,
+        y: 550,
+        size: 14,
+        font: helvetica,
+        color: rgb(0, 0, 0),
+      });
+      
+      page.drawText('Digitalpreneur Create an Online Course with AI session', {
+        x: 120,
+        y: 530,
+        size: 14,
+        font: helvetica,
+        color: rgb(0, 0, 0),
+      });
+      
+      // Date
+      page.drawText(`held on ${programDate}`, {
+        x: 200,
+        y: 500,
+        size: 14,
+        font: helvetica,
+        color: rgb(0, 0, 0),
+      });
+      
+      // Venue
+      page.drawText('Co9P Event Hall, Idea Tower 1, UPM-MTDC Technology Centre', {
+        x: 100,
+        y: 450,
+        size: 12,
+        font: helvetica,
+        color: rgb(0, 0, 0),
+      });
+      
+      // Location
+      page.drawText('Serdang Selangor', {
+        x: 250,
+        y: 430,
+        size: 12,
+        font: helvetica,
+        color: rgb(0, 0, 0),
+      });
+      
+      // Signature
+      page.drawText('Co9P AI Chatbot Team', {
+        x: 200,
+        y: 350,
+        size: 12,
+        font: helvetica,
+        color: rgb(0, 0, 0),
+      });
+      
+      return await pdfDoc.save();
+    }
+    
+    const [page] = pdfDoc.getPages();
+
+    // Embed built-in fonts
+    const helvetica = await pdfDoc.embedFont(StandardFonts.Helvetica);
+    const helveticaBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+
+    // === Draw Participant Name (bold, centered) ===
+    const pageSize = page.getSize();
+    const nameFont = helveticaBold;
+    const nameFontSize = 18;
+    const nameWidth = nameFont.widthOfTextAtSize(participantName, nameFontSize);
+    const contentX = 315; // left edge of content area
+    const contentWidth = 500; // width of content area
+    const nameX = contentX + (contentWidth - nameWidth) / 2;
+    page.drawText(participantName, {
+      x: nameX,
+      y: 275,
+      size: nameFontSize,
+      font: nameFont,
+      color: rgb(0, 0, 0),
+    });
+
+    // === Draw Event Details ===
+    let subtitleY = 225;
+    
+    // Helper to split text into lines that fit within a given width
+    function splitTextToLines(text, font, fontSize, maxWidth) {
+      const words = text.split(' ');
+      const lines = [];
+      let currentLine = '';
+      for (const word of words) {
+        const testLine = currentLine ? currentLine + ' ' + word : word;
+        const testWidth = font.widthOfTextAtSize(testLine, fontSize);
+        if (testWidth > maxWidth && currentLine) {
+          lines.push(currentLine);
+          currentLine = word;
+        } else {
+          currentLine = testLine;
+        }
+      }
+      if (currentLine) lines.push(currentLine);
+      return lines;
+    }
+
+    const subtitleFont = helveticaBold;
+    const subtitleFontSize = 14;
+    const subtitleMaxWidth = 500; // Increased width for your layout
+
+    const subtitleLineHeight = 18; // Adjust for spacing between lines
+    let subtitleLines = splitTextToLines('Digitalpreneur Create an Online Course with AI', subtitleFont, subtitleFontSize, subtitleMaxWidth);
+    if (subtitleLines.length > 3) {
+      // Truncate to 3 lines and add ellipsis to the last line
+      const firstTwo = subtitleLines.slice(0, 2);
+      let lastLine = subtitleLines[2];
+      // If there are more lines, append ellipsis to the last visible line
+      for (let i = 3; i < subtitleLines.length; i++) {
+        lastLine += ' ' + subtitleLines[i];
+      }
+      // Truncate lastLine to fit and add ellipsis
+      while (subtitleFont.widthOfTextAtSize(lastLine + '...', subtitleFontSize) > subtitleMaxWidth && lastLine.length > 0) {
+        lastLine = lastLine.slice(0, -1);
+      }
+      lastLine = lastLine.trim() + '...';
+      subtitleLines = [...firstTwo, lastLine];
+    }
+    
+    // Center each subtitle line within the content area (like participant name)
+    const subtitleContentX = 315; // left edge of content area (same as participant name)
+    const subtitleContentWidth = 500; // width of content area (same as participant name)
+    for (const line of subtitleLines) {
+      const lineWidth = subtitleFont.widthOfTextAtSize(line, subtitleFontSize);
+      const lineX = subtitleContentX + (subtitleContentWidth - lineWidth) / 2;
+      page.drawText(line, {
+        x: lineX,
+        y: subtitleY,
+        size: subtitleFontSize,
+        font: subtitleFont,
+        color: rgb(0, 0, 0),
+      });
+      subtitleY -= subtitleLineHeight;
+    }
+    
+    // Add extra space if subtitle is 2 or more lines
+    if (subtitleLines.length < 2) {
+      subtitleY -= 8; // You can adjust this value for more/less space
+    }
+
+    // Date (medium font)
+    page.drawText('14 August 2025', {
+      x: 520,
+      y: subtitleY,
+      size: 14,
+      font: helveticaBold,
+      color: rgb(0, 0, 0),
+    });
+
+    // Venue (small font)
+    page.drawText('Co9P Event Hall, Idea Tower 1, UPM-MTDC Technology Centre', {
+      x: 395,
+      y: 172,
+      size: 12,
+      font: helvetica,
+      color: rgb(0, 0, 0),
+    });
+
+    // Location (small font)
+    page.drawText('Serdang Selangor', {
+      x: 520,
+      y: 162,
+      size: 12,
+      font: helvetica,
+      color: rgb(0, 0, 0),
+    });
+
+    // Save PDF and return as buffer
+    console.log('[Certificates] 💾 Saving PDF document...');
+    const pdfBytes = await pdfDoc.save();
+    console.log('[Certificates] ✅ PDF document saved successfully');
+    console.log('[Certificates] 📏 Final PDF size:', pdfBytes.length, 'bytes');
+    
+    const buffer = Buffer.from(pdfBytes);
+    console.log('[Certificates] ✅ Certificate generation completed successfully');
+    return buffer;
+    
+  } catch (error) {
+    console.error('[Certificates] ❌ Error generating certificate:', error);
+    console.error('[Certificates] Error details:', {
+      message: error.message,
+      stack: error.stack,
+      name: error.name
+    });
+    throw new Error('Failed to generate certificate PDF');
+  }
+}
+
+// ============================================
 // LOG MANAGEMENT API ENDPOINTS
 // ============================================
 
@@ -871,7 +1492,9 @@ app.use('/api/events', eventsRouter);
 app.use('/api/enrollees', enrolleesRouter);
 app.use('/api/participants', participantsRouter);
 app.use('/api/attendance-events', attendanceEventsRouter);
+app.use('/api/attendance-records', attendanceRecordsRouter);
 app.use('/api/feedback-responses', feedbackResponsesRouter);
+app.use('/api/certificates', certificatesRouter);
 // Read specific log file
 app.get('/api/logs/read/:filename', async (req, res) => {
   try {
