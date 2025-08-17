@@ -18,6 +18,9 @@ node_modules/
 .wwebjs_cache
 public/
 public
+generated_certificates/
+generated_certificates
+
 # Ignore specific configuration files
 config/secret-config.json
 last_processed_row.json

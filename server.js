@@ -10308,16 +10308,32 @@ async function incrementMonthlyAssignment(companyID, employeeName, sqlClient) {
     const currentMonth = getCurrentMonthKey();
     console.log(`Current month key: ${currentMonth}`);
     
-    const upsertQuery = `
-      INSERT INTO public.employee_monthly_assignments (company_id, employee_name, month, assignment_count)
-      VALUES ($1, $2, $3, 1)
-      ON CONFLICT (company_id, employee_name, month)
-      DO UPDATE SET assignment_count = employee_monthly_assignments.assignment_count + 1
-      RETURNING assignment_count
+    // First get the employee ID from the employees table
+    const employeeQuery = `
+      SELECT id FROM public.employees 
+      WHERE company_id = $1 AND name = $2
     `;
     
-    const result = await sqlClient.query(upsertQuery, [companyID, employeeName, currentMonth]);
-    const newCount = result.rows[0].assignment_count;
+    const employeeResult = await sqlClient.query(employeeQuery, [companyID, employeeName]);
+    
+    if (employeeResult.rows.length === 0) {
+      console.log(`No employee found with name ${employeeName} in company ${companyID}`);
+      return 0;
+    }
+    
+    const employeeId = employeeResult.rows[0].id;
+    console.log(`Found employee ID: ${employeeId} for name: ${employeeName}`);
+    
+    const upsertQuery = `
+      INSERT INTO public.employee_monthly_assignments (company_id, employee_id, month_key, assignments_count)
+      VALUES ($1, $2, $3, 1)
+      ON CONFLICT (employee_id, month_key)
+      DO UPDATE SET assignments_count = employee_monthly_assignments.assignments_count + 1
+      RETURNING assignments_count
+    `;
+    
+    const result = await sqlClient.query(upsertQuery, [companyID, employeeId, currentMonth]);
+    const newCount = result.rows[0].assignments_count;
     console.log(`Monthly assignment count for ${employeeName} is now: ${newCount}`);
     
     return newCount;
@@ -10334,17 +10350,33 @@ async function decrementMonthlyAssignment(companyID, employeeName, sqlClient) {
     const currentMonth = getCurrentMonthKey();
     console.log(`Current month key: ${currentMonth}`);
     
-    const updateQuery = `
-      UPDATE public.employee_monthly_assignments 
-      SET assignment_count = GREATEST(assignment_count - 1, 0)
-      WHERE company_id = $1 AND employee_name = $2 AND month = $3
-      RETURNING assignment_count
+    // First get the employee ID from the employees table
+    const employeeQuery = `
+      SELECT id FROM public.employees 
+      WHERE company_id = $1 AND name = $2
     `;
     
-    const result = await sqlClient.query(updateQuery, [companyID, employeeName, currentMonth]);
+    const employeeResult = await sqlClient.query(employeeQuery, [companyID, employeeName]);
+    
+    if (employeeResult.rows.length === 0) {
+      console.log(`No employee found with name ${employeeName} in company ${companyID}`);
+      return 0;
+    }
+    
+    const employeeId = employeeResult.rows[0].id;
+    console.log(`Found employee ID: ${employeeId} for name: ${employeeName}`);
+    
+    const updateQuery = `
+      UPDATE public.employee_monthly_assignments 
+      SET assignments_count = GREATEST(assignments_count - 1, 0)
+      WHERE employee_id = $1 AND month_key = $2
+      RETURNING assignments_count
+    `;
+    
+    const result = await sqlClient.query(updateQuery, [employeeId, currentMonth]);
     
     if (result.rows.length > 0) {
-      const newCount = result.rows[0].assignment_count;
+      const newCount = result.rows[0].assignments_count;
       console.log(`Monthly assignment count for ${employeeName} is now: ${newCount}`);
       return newCount;
     } else {

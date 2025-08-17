@@ -1097,6 +1097,22 @@ async function createAppointment(companyId, appointmentData) {
       status = "scheduled",
     } = appointmentData;
 
+    // Validate scheduled_time
+    if (!scheduled_time) {
+      throw new Error("scheduled_time is required");
+    }
+
+    const parsedDate = new Date(scheduled_time);
+    if (isNaN(parsedDate.getTime())) {
+      throw new Error(`Invalid scheduled_time format: ${scheduled_time}`);
+    }
+
+    // Validate duration_minutes
+    const parsedDuration = parseInt(duration_minutes);
+    if (isNaN(parsedDuration) || parsedDuration <= 0) {
+      throw new Error(`Invalid duration_minutes: ${duration_minutes}`);
+    }
+
     await client.query("BEGIN");
 
     const result = await client.query(
@@ -1110,8 +1126,8 @@ async function createAppointment(companyId, appointmentData) {
         contact_id,
         title,
         description,
-        new Date(scheduled_time),
-        duration_minutes,
+        parsedDate,
+        parsedDuration,
         status,
         JSON.stringify({ userEmail, ...(appointmentData.metadata || {}) }),
       ]
@@ -1136,7 +1152,6 @@ async function createCalendarEvent(
   startDateTime,
   endDateTime,
   phoneNumber,
-  contactName,
   companyName,
   idSubstring,
   contact,
@@ -1149,9 +1164,28 @@ async function createCalendarEvent(
       startDateTime,
       endDateTime,
       phoneNumber,
-      contactName,
       companyName,
     });
+
+    // Validate input parameters
+    if (!startDateTime || !endDateTime) {
+      return { error: "startDateTime and endDateTime are required" };
+    }
+
+    const startDate = new Date(startDateTime);
+    const endDate = new Date(endDateTime);
+
+    if (isNaN(startDate.getTime())) {
+      return { error: `Invalid startDateTime format: ${startDateTime}` };
+    }
+
+    if (isNaN(endDate.getTime())) {
+      return { error: `Invalid endDateTime format: ${endDateTime}` };
+    }
+
+    if (startDate >= endDate) {
+      return { error: "startDateTime must be before endDateTime" };
+    }
 
     const sqlClient = await pool.connect();
 
@@ -1168,6 +1202,9 @@ async function createCalendarEvent(
         ? calendarConfigQuery.rows[0].setting_value
         : {};
 
+    // Set default values to prevent NaN calculations
+    const slotDuration = calendarConfig.slotDuration || 60;
+
     let calendarId = calendarConfig.calendarId;
     let firebaseId = calendarConfig.firebaseId;
     let userEmail = "admin@juta.com";
@@ -1182,15 +1219,11 @@ async function createCalendarEvent(
     // Calculate duration based on appointment type
     let appointmentDuration;
     if (isService) {
-      appointmentDuration =
-        Math.ceil(40 / calendarConfig.slotDuration) *
-        calendarConfig.slotDuration;
+      appointmentDuration = Math.ceil(40 / slotDuration) * slotDuration;
     } else if (summary.toLowerCase().includes("troubleshoot")) {
-      appointmentDuration =
-        Math.ceil(60 / calendarConfig.slotDuration) *
-        calendarConfig.slotDuration;
+      appointmentDuration = Math.ceil(60 / slotDuration) * slotDuration;
     } else {
-      appointmentDuration = calendarConfig.slotDuration;
+      appointmentDuration = slotDuration;
     }
 
     // Extract unit count from description
@@ -1219,11 +1252,10 @@ async function createCalendarEvent(
 
     await addTagToPostgres(phoneNumber, "Booked Appointment", idSubstring);
 
-    // When creating the end time
-    const start = new Date(startDateTime);
+    // When creating the end time - use the validated dates
     const roundedStart = new Date(
-      Math.ceil(start.getTime() / (calendarConfig.slotDuration * 60 * 1000)) *
-        (calendarConfig.slotDuration * 60 * 1000)
+      Math.ceil(startDate.getTime() / (slotDuration * 60 * 1000)) *
+        (slotDuration * 60 * 1000)
     );
     const end = new Date(
       roundedStart.getTime() + appointmentDuration * 60 * 1000
@@ -1302,30 +1334,42 @@ async function createCalendarEvent(
       }
     }
 
-    // Appointment data to crete appointment in Database
+    const contactID =
+      idSubstring +
+      "-" +
+      (phoneNumber.startsWith("+") ? phoneNumber.slice(1) : phoneNumber);
+
+    // Appointment data to create appointment in Database
     const appointmentData = {
-      title: contactName + " " + phoneNumber,
-      startTime: roundedStart.toISOString(),
-      endTime: end.toISOString(),
-      appointmentStatus: "new",
-      staff: assignedStaff,
-      color: calendarConfig.defaultColor || "#1F3A8A",
-      packageId: "",
-      address: address || "",
-      dateAdded: new Date().toISOString(),
-      contacts: [
-        {
-          id: phoneNumber,
-          name: contactName,
-          session: null,
-        },
-      ],
-      details: description || "",
-      meetlink: "",
-      type: isService ? "Service" : "Installation",
-      units: units,
-      companyId: idSubstring,
-      userEmail: userEmail,
+      contact_id: contactID,
+      title: contact.name + " " + phoneNumber,
+      description: description || "",
+      scheduled_time: roundedStart.toISOString(),
+      duration_minutes: appointmentDuration,
+      status: "new",
+      metadata: {
+        startTime: roundedStart.toISOString(),
+        endTime: end.toISOString(),
+        appointmentStatus: "new",
+        staff: assignedStaff,
+        color: calendarConfig.defaultColor || "#1F3A8A",
+        packageId: "",
+        address: address || "",
+        dateAdded: new Date().toISOString(),
+        contacts: [
+          {
+            id: phoneNumber,
+            name: contact.name,
+            session: null,
+          },
+        ],
+        details: description || "",
+        meetlink: "",
+        type: isService ? "Service" : "Installation",
+        units: units,
+        companyId: idSubstring,
+        userEmail: userEmail,
+      },
     };
 
     // Create appointment in Database
@@ -1341,8 +1385,8 @@ async function createCalendarEvent(
       const calendar = google.calendar({ version: "v3", auth });
 
       const event = {
-        summary: summary + " - " + contactName,
-        description: `${description}\n\nContact: ${contactName} (${phoneNumber})${
+        summary: summary + " - " + contact.name,
+        description: `${description}\n\nContact: ${contact.name} (${phoneNumber})${
           assignedStaff.length > 0
             ? "\nAssigned Staff: " + assignedStaff.join(", ")
             : ""
@@ -1390,7 +1434,7 @@ async function createCalendarEvent(
           `⏰ Time: ${moment(startDateTime).format("HH:mm")}\n` +
           `👥 Assigned Staff: ${assignedStaff.join(", ")}\n` +
           `📱 Contact: ${phoneNumber}\n` +
-          `👤 Name: ${contactName}\n` +
+          `👤 Name: ${contact.name}\n` +
           `🔧 Units: ${units} ${isService ? "(Service)" : ""}\n` +
           `📍 Address: ${address.toUpperCase()}`;
 
@@ -1408,7 +1452,7 @@ async function createCalendarEvent(
           `*New Appointment Booked Please Confirm with Customer*\n\n` +
           `📅 Date: ${moment(startDateTime).format("DD/MM/YYYY")}\n` +
           `📱 Contact: ${phoneNumber}\n` +
-          `👤 Name: ${contactName}\n`;
+          `👤 Name: ${contact.name}\n`;
 
         await client.sendMessage(adminChatId, adminMessage);
         console.log("Sent appointment confirmation to admin");
@@ -1425,7 +1469,7 @@ async function createCalendarEvent(
           month: "long",
           day: "numeric",
         }),
-        time: `${start.toLocaleTimeString("en-US", {
+        time: `${roundedStart.toLocaleTimeString("en-US", {
           hour: "2-digit",
           minute: "2-digit",
         })} - ${end.toLocaleTimeString("en-US", {
@@ -1435,10 +1479,10 @@ async function createCalendarEvent(
         description:
           description +
           "\n" +
-          `\n\nContact: ${contactName || "Unknown"} (${
+          `\n\nContact: ${contact.name || "Unknown"} (${
             phoneNumber || "No phone number found"
           })`,
-        contact: `${contactName || "Unknown"} (${
+        contact: `${contact.name || "Unknown"} (${
           phoneNumber || "No phone number found"
         })`,
         staff: assignedStaff.join(", "),
@@ -1449,6 +1493,824 @@ async function createCalendarEvent(
   } catch (error) {
     console.error("Error in createCalendarEvent:", error);
     return { error: `Failed to create appointment: ${error.message}` };
+  }
+}
+
+async function rescheduleCalendarEvent(
+  newStartDateTime,
+  newEndDateTime,
+  phoneNumber,
+  contactName,
+  companyName,
+  idSubstring,
+  contact,
+  client,
+  reason = "",
+  appointmentDate = null
+) {
+  try {
+    console.log("Rescheduling calendar event with params:", {
+      newStartDateTime,
+      newEndDateTime,
+      phoneNumber,
+      contactName,
+      companyName,
+      reason,
+      appointmentDate,
+    });
+
+    const sqlClient = await pool.connect();
+
+    // Get calendar configuration
+    const calendarConfigQuery = await sqlClient.query(
+      `SELECT setting_value FROM public.settings 
+       WHERE company_id = $1 
+       AND setting_type = 'config' 
+       AND setting_key = 'calendar'`,
+      [idSubstring]
+    );
+    const contactID =
+      idSubstring +
+      "-" +
+      (phoneNumber.startsWith("+") ? phoneNumber.slice(1) : phoneNumber);
+
+    const calendarConfig =
+      calendarConfigQuery.rows.length > 0
+        ? calendarConfigQuery.rows[0].setting_value
+        : {};
+
+    let calendarId = calendarConfig.calendarId;
+    let firebaseId = calendarConfig.firebaseId;
+    let userEmail = "admin@juta.com";
+
+    // Get user email
+    const userQuery = await sqlClient.query(
+      `SELECT email FROM public.users 
+       WHERE company_id = $1 
+       LIMIT 1`,
+      [idSubstring]
+    );
+
+    if (userQuery.rows.length > 0) {
+      userEmail = userQuery.rows[0].email;
+    }
+
+    // First, check if the appointment exists
+    let existingAppointment;
+    // If no appointmentId provided, find by phone number and optional date
+    let phoneQuery;
+    let queryParams = [contactID, idSubstring];
+
+    if (appointmentDate) {
+      // If appointment date is provided, find appointments on that specific date
+      const startOfDay = moment(appointmentDate).startOf("day").toISOString();
+      const endOfDay = moment(appointmentDate).endOf("day").toISOString();
+
+      phoneQuery = await sqlClient.query(
+        `SELECT * FROM public.appointments 
+          WHERE contact_id = $1 AND company_id = $2 
+          AND status IN ('scheduled', 'confirmed')
+          AND scheduled_time >= $3 AND scheduled_time <= $4
+          ORDER BY scheduled_time ASC`,
+        [contactID, idSubstring, startOfDay, endOfDay]
+      );
+
+      if (phoneQuery.rows.length === 0) {
+        return {
+          error: `No appointment found for this contact on ${moment(
+            appointmentDate
+          ).format("DD/MM/YYYY")}`,
+        };
+      } else if (phoneQuery.rows.length > 1) {
+        // Multiple appointments on the same date - return list for user to choose
+        const appointmentsList = phoneQuery.rows.map((apt, index) => ({
+          index: index + 1,
+          appointmentId: apt.appointment_id,
+          time: moment(apt.scheduled_time).format("HH:mm"),
+          title: apt.title,
+          description: apt.description,
+        }));
+
+        return {
+          error: "Multiple appointments found on this date",
+          multipleAppointments: appointmentsList,
+          message: `Found ${appointmentsList.length} appointments on ${moment(
+            appointmentDate
+          ).format(
+            "DD/MM/YYYY"
+          )}. Please specify which appointment to reschedule by providing the appointment ID or time.`,
+        };
+      }
+
+      existingAppointment = phoneQuery.rows[0];
+    } else {
+      // No date provided, get the most recent/upcoming appointment
+      phoneQuery = await sqlClient.query(
+        `SELECT * FROM public.appointments 
+          WHERE contact_id = $1 AND company_id = $2 
+          AND status IN ('scheduled', 'confirmed')
+          ORDER BY scheduled_time DESC
+          LIMIT 1`,
+        queryParams
+      );
+
+      if (phoneQuery.rows.length === 0) {
+        return { error: "No existing appointment found for this contact" };
+      }
+
+      existingAppointment = phoneQuery.rows[0];
+    }
+
+    let appointmentId = existingAppointment.appointment_id;
+    console.log("Found existing appointment:", existingAppointment);
+
+    // Check if it's a service appointment
+    const description = existingAppointment.description || "";
+    const title = existingAppointment.title || "";
+    const isService =
+      description.toLowerCase().includes("servis") ||
+      description.toLowerCase().includes("service") ||
+      title.toLowerCase().includes("servis") ||
+      title.toLowerCase().includes("service");
+
+    // Calculate duration based on appointment type
+    let appointmentDuration;
+    if (isService) {
+      appointmentDuration =
+        Math.ceil(40 / calendarConfig.slotDuration) *
+        calendarConfig.slotDuration;
+    } else if (title.toLowerCase().includes("troubleshoot")) {
+      appointmentDuration =
+        Math.ceil(60 / calendarConfig.slotDuration) *
+        calendarConfig.slotDuration;
+    } else {
+      appointmentDuration = calendarConfig.slotDuration || 60;
+    }
+
+    // Round the new start time to the nearest slot
+    const newStart = new Date(newStartDateTime);
+    const roundedNewStart = new Date(
+      Math.ceil(
+        newStart.getTime() / (calendarConfig.slotDuration * 60 * 1000)
+      ) *
+        (calendarConfig.slotDuration * 60 * 1000)
+    );
+
+    // Calculate new end time
+    const newEnd = new Date(
+      roundedNewStart.getTime() + appointmentDuration * 60 * 1000
+    );
+
+    // Check for scheduling conflicts (excluding the current appointment)
+    const conflictQuery = await sqlClient.query(
+      `SELECT * FROM public.appointments 
+       WHERE company_id = $1 
+       AND appointment_id != $2
+       AND status IN ('scheduled', 'confirmed')
+       AND (
+         (scheduled_time <= $3 AND scheduled_time + (duration_minutes * interval '1 minute') > $4) OR
+         (scheduled_time < $5 AND scheduled_time + (duration_minutes * interval '1 minute') >= $4)
+       )`,
+      [
+        idSubstring,
+        appointmentId,
+        newEnd.toISOString(),
+        roundedNewStart.toISOString(),
+        newEnd.toISOString(),
+      ]
+    );
+
+    let conflictingAppointments = [];
+
+    // Add database conflicts
+    if (conflictQuery.rows.length > 0) {
+      conflictingAppointments = conflictQuery.rows.map((appointment) => ({
+        source: "database",
+        id: appointment.appointment_id,
+        title: appointment.title,
+        startTime: appointment.scheduled_time,
+        endTime: new Date(
+          appointment.scheduled_time.getTime() +
+            appointment.duration_minutes * 60 * 1000
+        ),
+        contact: appointment.contact_id,
+      }));
+    }
+
+    // Check Google Calendar conflicts if calendarId exists
+    let calendarConflicts = [];
+    if (calendarId) {
+      try {
+        const auth = new google.auth.GoogleAuth({
+          keyFile: "./service_account.json",
+          scopes: ["https://www.googleapis.com/auth/calendar"],
+        });
+
+        const calendar = google.calendar({ version: "v3", auth });
+
+        // Get events during the new time slot
+        const calendarEvents = await calendar.events.list({
+          calendarId: calendarConfig.calendarId,
+          timeMin: roundedNewStart.toISOString(),
+          timeMax: newEnd.toISOString(),
+          singleEvents: true,
+          orderBy: "startTime",
+        });
+
+        if (calendarEvents.data.items && calendarEvents.data.items.length > 0) {
+          // Filter out the current appointment being rescheduled
+          const currentAppointmentTitle = `${phoneNumber}`;
+
+          calendarConflicts = calendarEvents.data.items
+            .filter(
+              (event) =>
+                !event.summary ||
+                !event.summary.includes(currentAppointmentTitle)
+            )
+            .map((event) => ({
+              source: "google_calendar",
+              id: event.id,
+              title: event.summary || "Untitled Event",
+              startTime: new Date(event.start.dateTime || event.start.date),
+              endTime: new Date(event.end.dateTime || event.end.date),
+              contact: event.description || "Unknown",
+            }));
+        }
+      } catch (calendarError) {
+        console.error(
+          "Error checking Google Calendar conflicts:",
+          calendarError
+        );
+      }
+    }
+
+    // Combine all conflicts
+    const allConflicts = [...conflictingAppointments, ...calendarConflicts];
+
+    if (allConflicts.length > 0) {
+      return {
+        error: "Scheduling conflict detected",
+        conflictingAppointments: allConflicts,
+        message: `The requested time slot conflicts with ${allConflicts.length} existing appointment(s) (${conflictingAppointments.length} from database, ${calendarConflicts.length} from Google Calendar). Please choose a different time.`,
+      };
+    }
+
+    // Check staff availability if firebaseId exists
+    let assignedStaff = [];
+    if (firebaseId) {
+      const employeesQuery = await sqlClient.query(
+        `SELECT email FROM public.employees 
+         WHERE company_id = $1 
+         AND email != 'wannazrol888@gmail.com'
+         AND active = true`,
+        ["0153"]
+      );
+
+      const employees = employeesQuery.rows.map((row) => row.email);
+
+      const appointmentStart = moment(newStartDateTime);
+      const appointmentEnd = moment(newEndDateTime);
+
+      // Check for existing appointments during the new time slot
+      const busyStaffQuery = await sqlClient.query(
+        `SELECT metadata FROM public.appointments 
+         WHERE company_id = $1 
+         AND appointment_id != $2
+         AND status IN ('scheduled', 'confirmed')
+         AND scheduled_time <= $3
+         AND scheduled_time + (duration_minutes * interval '1 minute') >= $4`,
+        [
+          idSubstring,
+          appointmentId,
+          newEnd.toISOString(),
+          roundedNewStart.toISOString(),
+        ]
+      );
+
+      const busyStaff = new Set();
+      busyStaffQuery.rows.forEach((row) => {
+        const metadata = row.metadata || {};
+        if (metadata.staff && Array.isArray(metadata.staff)) {
+          metadata.staff.forEach((staffEmail) => {
+            busyStaff.add(staffEmail);
+          });
+        }
+      });
+
+      // Get available staff
+      const availableStaff = employees.filter((staff) => !busyStaff.has(staff));
+      console.log("Available staff for reschedule:", availableStaff);
+
+      // If we have at least 2 available staff members, pair them
+      if (availableStaff.length >= 2) {
+        assignedStaff = [availableStaff[0], availableStaff[1]];
+        console.log("Assigned staff pair for reschedule:", assignedStaff);
+      } else if (availableStaff.length === 1) {
+        assignedStaff = [availableStaff[0]];
+        console.log("Assigned single staff for reschedule:", assignedStaff);
+      } else {
+        return { error: "Not enough staff available for this time slot" };
+      }
+    }
+
+    // Update the appointment in the database
+    await sqlClient.query("BEGIN");
+
+    console.log("Updating appointment:", appointmentId);
+    const updateResult = await sqlClient.query(
+      `UPDATE public.appointments 
+       SET scheduled_time = $1, 
+           duration_minutes = $2,
+           metadata = $3
+       WHERE appointment_id = $4 AND company_id = $5
+       RETURNING *`,
+      [
+        roundedNewStart.toISOString(),
+        appointmentDuration,
+        JSON.stringify({
+          userEmail,
+          staff: assignedStaff,
+          rescheduleReason: reason,
+          originalTime: existingAppointment.scheduled_time,
+          ...(existingAppointment.metadata || {}),
+        }),
+        appointmentId,
+        idSubstring,
+      ]
+    );
+
+    if (updateResult.rows.length === 0) {
+      await safeRollback(sqlClient);
+      return { error: "Failed to update appointment" };
+    }
+
+    await sqlClient.query("COMMIT");
+
+    // Update Google Calendar if calendarId exists
+    let calendarEventUpdated = false;
+    if (calendarId) {
+      try {
+        const auth = new google.auth.GoogleAuth({
+          keyFile: "./service_account.json",
+          scopes: ["https://www.googleapis.com/auth/calendar"],
+        });
+
+        const calendar = google.calendar({ version: "v3", auth });
+
+        // Search for existing calendar event
+        const existingEvents = await calendar.events.list({
+          calendarId: calendarConfig.calendarId,
+          q: `${phoneNumber}`,
+          timeMin: new Date(
+            existingAppointment.scheduled_time.getTime() - 24 * 60 * 60 * 1000
+          ).toISOString(),
+          timeMax: new Date(
+            existingAppointment.scheduled_time.getTime() + 24 * 60 * 60 * 1000
+          ).toISOString(),
+        });
+
+        if (existingEvents.data.items && existingEvents.data.items.length > 0) {
+          const eventToUpdate = existingEvents.data.items[0];
+
+          const updatedEvent = {
+            ...eventToUpdate,
+            start: {
+              dateTime: roundedNewStart.toISOString(),
+              timeZone: calendarConfig.timezone || "Asia/Kuala_Lumpur",
+            },
+            end: {
+              dateTime: newEnd.toISOString(),
+              timeZone: calendarConfig.timezone || "Asia/Kuala_Lumpur",
+            },
+            description: `${description}${
+              reason ? `\n\nReschedule Reason: ${reason}` : ""
+            }\n\nContact: ${contactName} (${phoneNumber})${
+              assignedStaff.length > 0
+                ? "\nAssigned Staff: " + assignedStaff.join(", ")
+                : ""
+            }`,
+          };
+
+          await calendar.events.update({
+            calendarId: calendarConfig.calendarId,
+            eventId: eventToUpdate.id,
+            resource: updatedEvent,
+          });
+
+          calendarEventUpdated = true;
+          console.log("Google Calendar event updated successfully");
+        }
+      } catch (calendarError) {
+        console.error("Error updating Google Calendar event:", calendarError);
+        // Don't fail the entire operation if calendar update fails
+      }
+    }
+
+    // Add reschedule tag to contact
+    await addTagToPostgres(phoneNumber, "Rescheduled Appointment", idSubstring);
+
+    await safeRelease(sqlClient);
+
+    return {
+      success: true,
+      message: "Appointment rescheduled successfully",
+      appointmentDetails: {
+        appointmentId: appointmentId,
+        previousDateTime: moment(existingAppointment.scheduled_time).format(
+          "DD/MM/YYYY HH:mm"
+        ),
+        newDate: roundedNewStart.toLocaleDateString("en-US", {
+          month: "long",
+          day: "numeric",
+        }),
+        newTime: `${roundedNewStart.toLocaleTimeString("en-US", {
+          hour: "2-digit",
+          minute: "2-digit",
+        })} - ${newEnd.toLocaleTimeString("en-US", {
+          hour: "2-digit",
+          minute: "2-digit",
+        })}`,
+        description:
+          description + (reason ? `\n\nReschedule Reason: ${reason}` : ""),
+        contact: `${contactName || "Unknown"} (${
+          phoneNumber || "No phone number found"
+        })`,
+        staff: assignedStaff.join(", "),
+        type: isService ? "Service" : "Installation",
+        calendarUpdated: calendarEventUpdated,
+        reason: reason || "No reason provided",
+      },
+    };
+  } catch (error) {
+    console.error("Error in rescheduleCalendarEvent:", error);
+    return { error: `Failed to reschedule appointment: ${error.message}` };
+  }
+}
+
+async function cancelCalendarEvent(
+  phoneNumber,
+  contactName,
+  companyName,
+  idSubstring,
+  contact,
+  client,
+  reason = "",
+  appointmentDateandTime = null
+) {
+  try {
+    console.log("Canceling calendar event with params:", {
+      phoneNumber,
+      contactName,
+      companyName,
+      reason,
+      appointmentDateandTime,
+    });
+
+    const sqlClient = await pool.connect();
+
+    // Get calendar configuration
+    const calendarConfigQuery = await sqlClient.query(
+      `SELECT setting_value FROM public.settings 
+       WHERE company_id = $1 
+       AND setting_type = 'config' 
+       AND setting_key = 'calendar'`,
+      [idSubstring]
+    );
+    const contactID =
+      idSubstring +
+      "-" +
+      (phoneNumber.startsWith("+") ? phoneNumber.slice(1) : phoneNumber);
+
+    const calendarConfig =
+      calendarConfigQuery.rows.length > 0
+        ? calendarConfigQuery.rows[0].setting_value
+        : {};
+
+    let calendarId = calendarConfig.calendarId;
+    let userEmail = "admin@juta.com";
+
+    // Get user email
+    const userQuery = await sqlClient.query(
+      `SELECT email FROM public.users 
+       WHERE company_id = $1 
+       LIMIT 1`,
+      [idSubstring]
+    );
+
+    if (userQuery.rows.length > 0) {
+      userEmail = userQuery.rows[0].email;
+    }
+
+    // First, find the appointment to cancel
+    let existingAppointment;
+
+    let phoneQuery;
+    let queryParams = [contactID, idSubstring];
+
+    if (appointmentDateandTime) {
+      // Parse the appointment date and time
+      const appointmentMoment = moment(appointmentDateandTime).tz("Asia/Kuala_Lumpur");
+      
+      if (!appointmentMoment.isValid()) {
+        return {
+          error: "Invalid date and time format. Please provide date and time in a valid format."
+        };
+      }
+
+      // Create a time window around the specified time (±30 minutes)
+      const startWindow = appointmentMoment.clone().subtract(30, 'minutes').toISOString();
+      const endWindow = appointmentMoment.clone().add(30, 'minutes').toISOString();
+
+      phoneQuery = await sqlClient.query(
+        `SELECT * FROM public.appointments 
+          WHERE contact_id = $1 AND company_id = $2 
+          AND status IN ('scheduled', 'confirmed')
+          AND scheduled_time >= $3 AND scheduled_time <= $4
+          ORDER BY ABS(EXTRACT(EPOCH FROM (scheduled_time - $5::timestamp)))`,
+        [contactID, idSubstring, startWindow, endWindow, appointmentMoment.toISOString()]
+      );
+
+      if (phoneQuery.rows.length === 0) {
+        return {
+          error: `No appointment found for this contact around ${appointmentMoment.format("DD/MM/YYYY HH:mm")}`,
+        };
+      } else if (phoneQuery.rows.length > 1) {
+        // Multiple appointments found - return list for user to choose
+        const appointmentsList = phoneQuery.rows.map((apt, index) => ({
+          index: index + 1,
+          appointmentId: apt.appointment_id,
+          time: moment(apt.scheduled_time).format("HH:mm"),
+          date: moment(apt.scheduled_time).format("DD/MM/YYYY"),
+          title: apt.title,
+          description: apt.description,
+        }));
+
+        return {
+          error: "Multiple appointments found around this time",
+          multipleAppointments: appointmentsList,
+          message: `Found ${appointmentsList.length} appointments around ${appointmentMoment.format(
+            "DD/MM/YYYY HH:mm"
+          )}. Please specify which appointment to cancel by providing more specific details.`,
+        };
+      }
+
+      existingAppointment = phoneQuery.rows[0];
+    } else {
+      // No date/time provided, get the most recent/upcoming appointment
+      phoneQuery = await sqlClient.query(
+        `SELECT * FROM public.appointments 
+          WHERE contact_id = $1 AND company_id = $2 
+          AND status IN ('scheduled', 'confirmed')
+          ORDER BY scheduled_time DESC
+          LIMIT 1`,
+        queryParams
+      );
+
+      if (phoneQuery.rows.length === 0) {
+        return { error: "No existing appointment found for this contact" };
+      }
+
+      existingAppointment = phoneQuery.rows[0];
+    }
+
+    let appointmentId = existingAppointment.appointment_id;
+
+    console.log("Found existing appointment to cancel:", existingAppointment);
+
+    // Update the appointment status to cancelled in the database
+    await sqlClient.query("BEGIN");
+
+    console.log("Canceling appointment:", appointmentId);
+    const updateResult = await sqlClient.query(
+      `UPDATE public.appointments 
+       SET status = 'cancelled', 
+           metadata = $1
+       WHERE appointment_id = $2 AND company_id = $3
+       RETURNING *`,
+      [
+        JSON.stringify({
+          userEmail,
+          cancelReason: reason,
+          canceledAt: new Date().toISOString(),
+          originalStatus: existingAppointment.status,
+          ...(existingAppointment.metadata || {}),
+        }),
+        appointmentId,
+        idSubstring,
+      ]
+    );
+
+    if (updateResult.rows.length === 0) {
+      await safeRollback(sqlClient);
+      return { error: "Failed to cancel appointment" };
+    }
+
+    await sqlClient.query("COMMIT");
+
+    // Delete from Google Calendar if calendarId exists
+    let calendarEventDeleted = false;
+    if (calendarId) {
+      try {
+        const auth = new google.auth.GoogleAuth({
+          keyFile: "./service_account.json",
+          scopes: ["https://www.googleapis.com/auth/calendar"],
+        });
+
+        const calendar = google.calendar({ version: "v3", auth });
+
+        // Search for existing calendar event
+        const existingEvents = await calendar.events.list({
+          calendarId: calendarConfig.calendarId,
+          q: `${phoneNumber}`,
+          timeMin: new Date(
+            existingAppointment.scheduled_time.getTime() - 24 * 60 * 60 * 1000
+          ).toISOString(),
+          timeMax: new Date(
+            existingAppointment.scheduled_time.getTime() + 24 * 60 * 60 * 1000
+          ).toISOString(),
+        });
+
+        if (existingEvents.data.items && existingEvents.data.items.length > 0) {
+          const eventToDelete = existingEvents.data.items[0];
+
+          await calendar.events.delete({
+            calendarId: calendarConfig.calendarId,
+            eventId: eventToDelete.id,
+          });
+
+          calendarEventDeleted = true;
+          console.log("Google Calendar event deleted successfully");
+        }
+      } catch (calendarError) {
+        console.error("Error deleting Google Calendar event:", calendarError);
+        // Don't fail the entire operation if calendar deletion fails
+      }
+    }
+
+    // Add cancellation tag to contact
+    await addTagToPostgres(phoneNumber, "Cancelled Appointment", idSubstring);
+
+    await safeRelease(sqlClient);
+
+    return {
+      success: true,
+      message: "Appointment cancelled successfully",
+      appointmentDetails: {
+        appointmentId: appointmentId,
+        originalDateTime: moment(existingAppointment.scheduled_time).format(
+          "DD/MM/YYYY HH:mm"
+        ),
+        title: existingAppointment.title || "Appointment",
+        description: existingAppointment.description || "",
+        contact: `${contactName || "Unknown"} (${
+          phoneNumber || "No phone number found"
+        })`,
+        type: existingAppointment.description?.toLowerCase().includes("servis") ||
+               existingAppointment.description?.toLowerCase().includes("service") ||
+               existingAppointment.title?.toLowerCase().includes("servis") ||
+               existingAppointment.title?.toLowerCase().includes("service") 
+               ? "Service" : "Installation",
+        calendarDeleted: calendarEventDeleted,
+        reason: reason || "No reason provided",
+      },
+    };
+  } catch (error) {
+    console.error("Error in cancelCalendarEvent:", error);
+    return { error: `Failed to cancel appointment: ${error.message}` };
+  }
+}
+
+async function searchUpcomingAppointments(
+  phoneNumber,
+  idSubstring,
+  limit = 10
+) {
+  try {
+    console.log("Searching for upcoming appointments for contact:", phoneNumber);
+
+    const sqlClient = await pool.connect();
+
+    try {
+      // Format contact ID
+      const contactID =
+        idSubstring +
+        "-" +
+        (phoneNumber.startsWith("+") ? phoneNumber.slice(1) : phoneNumber);
+
+      // Get current date and time in KL timezone for comparison
+      const now = moment().tz("Asia/Kuala_Lumpur").toISOString();
+
+      console.log("Searching for appointments after:", now);
+      console.log("Contact ID:", contactID);
+
+      // Query to find upcoming appointments (future appointments only)
+      const appointmentsQuery = await sqlClient.query(
+        `SELECT 
+           appointment_id,
+           title,
+           description,
+           scheduled_time,
+           duration_minutes,
+           status,
+           metadata,
+           staff_assigned,
+           created_at
+         FROM public.appointments 
+         WHERE contact_id = $1 
+           AND company_id = $2 
+           AND status IN ('scheduled', 'confirmed')
+           AND scheduled_time > $3
+         ORDER BY scheduled_time ASC
+         LIMIT $4`,
+        [contactID, idSubstring, now, limit]
+      );
+
+      console.log(`Found ${appointmentsQuery.rows.length} upcoming appointments`);
+
+      if (appointmentsQuery.rows.length === 0) {
+        return JSON.stringify({
+          success: true,
+          message: "No upcoming appointments found",
+          appointments: [],
+          totalCount: 0,
+        });
+      }
+
+      // Format appointments for response
+      const appointments = appointmentsQuery.rows.map((apt) => {
+        const startTime = moment(apt.scheduled_time).tz("Asia/Kuala_Lumpur");
+        const endTime = startTime.clone().add(apt.duration_minutes, "minutes");
+        
+        // Determine appointment type
+        const description = apt.description || "";
+        const title = apt.title || "";
+        const isService =
+          description.toLowerCase().includes("servis") ||
+          description.toLowerCase().includes("service") ||
+          title.toLowerCase().includes("servis") ||
+          title.toLowerCase().includes("service");
+
+        // Get staff information from metadata or staff_assigned
+        let assignedStaff = [];
+        if (apt.staff_assigned && Array.isArray(apt.staff_assigned)) {
+          assignedStaff = apt.staff_assigned;
+        } else if (apt.metadata && apt.metadata.staff && Array.isArray(apt.metadata.staff)) {
+          assignedStaff = apt.metadata.staff;
+        }
+
+        return {
+          appointmentId: apt.appointment_id,
+          title: apt.title || "Appointment",
+          description: apt.description || "",
+          date: startTime.format("DD/MM/YYYY"),
+          time: `${startTime.format("HH:mm")} - ${endTime.format("HH:mm")}`,
+          startDateTime: startTime.format("YYYY-MM-DD HH:mm:ss"),
+          endDateTime: endTime.format("YYYY-MM-DD HH:mm:ss"),
+          duration: apt.duration_minutes,
+          status: apt.status,
+          type: isService ? "Service" : "Installation",
+          assignedStaff: assignedStaff,
+          dayOfWeek: startTime.format("dddd"),
+          createdAt: moment(apt.created_at).format("DD/MM/YYYY HH:mm"),
+          // Calculate time until appointment
+          timeUntilAppointment: startTime.fromNow(),
+          isToday: startTime.isSame(moment().tz("Asia/Kuala_Lumpur"), "day"),
+          isTomorrow: startTime.isSame(moment().tz("Asia/Kuala_Lumpur").add(1, "day"), "day"),
+        };
+      });
+
+      // Separate today's and future appointments
+      const todayAppointments = appointments.filter(apt => apt.isToday);
+      const tomorrowAppointments = appointments.filter(apt => apt.isTomorrow);
+      const futureAppointments = appointments.filter(apt => !apt.isToday && !apt.isTomorrow);
+
+      return JSON.stringify({
+        success: true,
+        message: `Found ${appointments.length} upcoming appointment${appointments.length === 1 ? '' : 's'}`,
+        appointments: appointments,
+        summary: {
+          total: appointments.length,
+          today: todayAppointments.length,
+          tomorrow: tomorrowAppointments.length,
+          future: futureAppointments.length,
+        },
+        breakdown: {
+          today: todayAppointments,
+          tomorrow: tomorrowAppointments,
+          future: futureAppointments.slice(0, 5), // Limit future appointments to 5 for summary
+        },
+      });
+
+    } finally {
+      await safeRelease(sqlClient);
+    }
+  } catch (error) {
+    console.error("Error searching upcoming appointments:", error);
+    return JSON.stringify({
+      success: false,
+      error: "Failed to search upcoming appointments",
+      details: error.message,
+    });
   }
 }
 
@@ -9538,7 +10400,6 @@ async function handleToolCalls(
             args.startDateTime,
             args.endDateTime,
             phoneNumber,
-            args.contactName,
             companyName,
             idSubstring,
             contact,
@@ -9573,6 +10434,177 @@ async function handleToolCalls(
           }
         } catch (error) {
           console.error("Error in handleToolCalls for createCalendarEvent:");
+          console.error(error);
+          toolOutputs.push({
+            tool_call_id: toolCall.id,
+            output: JSON.stringify({ error: error.message }),
+          });
+        }
+        break;
+      case "rescheduleCalendarEvent":
+        try {
+          console.log("Parsing arguments for rescheduleCalendarEvent...");
+          const args = JSON.parse(toolCall.function.arguments);
+          console.log("Arguments:", args);
+          console.log(
+            "Phone Number in rescheduleCalendarEvent before function call...  " +
+              phoneNumber
+          );
+          console.log("Calling rescheduleCalendarEvent...");
+          const result = await rescheduleCalendarEvent(
+            args.newStartDateTime,
+            args.newEndDateTime,
+            phoneNumber,
+            contact.name,
+            companyName,
+            idSubstring,
+            contact,
+            client,
+            args.reason,
+            args.appointmentDate
+          );
+
+          if (result.error) {
+            if (result.error === "Scheduling conflict detected") {
+              console.log(
+                "Scheduling conflict detected, preparing conflict information..."
+              );
+              toolOutputs.push({
+                tool_call_id: toolCall.id,
+                output: JSON.stringify({
+                  error: result.error,
+                  conflictingAppointments: result.conflictingAppointments,
+                  message: result.message,
+                }),
+              });
+            } else if (
+              result.error === "Multiple appointments found on this date"
+            ) {
+              console.log(
+                "Multiple appointments found, sending list to user..."
+              );
+              toolOutputs.push({
+                tool_call_id: toolCall.id,
+                output: JSON.stringify({
+                  error: result.error,
+                  multipleAppointments: result.multipleAppointments,
+                  message: result.message,
+                }),
+              });
+            } else {
+              console.error("Error rescheduling event:", result.error);
+              toolOutputs.push({
+                tool_call_id: toolCall.id,
+                output: JSON.stringify({ error: result.error }),
+              });
+            }
+          } else {
+            console.log(
+              "Event rescheduled successfully, preparing tool output..."
+            );
+            toolOutputs.push({
+              tool_call_id: toolCall.id,
+              output: JSON.stringify(result),
+            });
+          }
+        } catch (error) {
+          console.error(
+            "Error in handleToolCalls for rescheduleCalendarEvent:"
+          );
+          console.error(error);
+          toolOutputs.push({
+            tool_call_id: toolCall.id,
+            output: JSON.stringify({ error: error.message }),
+          });
+        }
+        break;
+      case "cancelCalendarEvent":
+        try {
+          console.log("Parsing arguments for cancelCalendarEvent...");
+          const args = JSON.parse(toolCall.function.arguments);
+          console.log("Arguments:", args);
+          console.log(
+            "Phone Number in cancelCalendarEvent before function call...  " +
+              phoneNumber
+          );
+          console.log("Calling cancelCalendarEvent...");
+          const result = await cancelCalendarEvent(
+            phoneNumber,
+            contact.name,
+            companyName,
+            idSubstring,
+            contact,
+            client,
+            args.reason,
+            args.appointmentDateandTime
+          );
+
+          if (result.error) {
+            if (
+              result.error === "Multiple appointments found on this date"
+            ) {
+              console.log(
+                "Multiple appointments found, sending list to user..."
+              );
+              toolOutputs.push({
+                tool_call_id: toolCall.id,
+                output: JSON.stringify({
+                  error: result.error,
+                  multipleAppointments: result.multipleAppointments,
+                  message: result.message,
+                }),
+              });
+            } else {
+              console.error("Error canceling event:", result.error);
+              toolOutputs.push({
+                tool_call_id: toolCall.id,
+                output: JSON.stringify({ error: result.error }),
+              });
+            }
+          } else {
+            console.log(
+              "Event cancelled successfully, preparing tool output..."
+            );
+            toolOutputs.push({
+              tool_call_id: toolCall.id,
+              output: JSON.stringify(result),
+            });
+          }
+        } catch (error) {
+          console.error(
+            "Error in handleToolCalls for cancelCalendarEvent:"
+          );
+          console.error(error);
+          toolOutputs.push({
+            tool_call_id: toolCall.id,
+            output: JSON.stringify({ error: error.message }),
+          });
+        }
+        break;
+      case "searchUpcomingAppointments":
+        try {
+          console.log("Searching for upcoming appointments...");
+          const args = JSON.parse(toolCall.function.arguments);
+          console.log("Arguments:", args);
+          console.log(
+            "Phone Number in searchUpcomingAppointments...  " + phoneNumber
+          );
+          
+          const result = await searchUpcomingAppointments(
+            phoneNumber,
+            idSubstring,
+            args.limit || 10
+          );
+
+          console.log("Search completed, preparing tool output...");
+          toolOutputs.push({
+            tool_call_id: toolCall.id,
+            output: result,
+          });
+        } catch (error) {
+          console.error(
+            "Error in handleToolCalls for searchUpcomingAppointments:"
+          );
           console.error(error);
           toolOutputs.push({
             tool_call_id: toolCall.id,
@@ -9935,6 +10967,55 @@ async function handleToolCalls(
           toolOutputs.push({
             tool_call_id: toolCall.id,
             output: JSON.stringify({ error: error.message }),
+          });
+        }
+        break;
+      case "manageContactTags":
+        try {
+          console.log("Managing contact tags...");
+          const args = JSON.parse(toolCall.function.arguments);
+          console.log("Arguments:", args);
+
+          const isRemove = args.action === "remove";
+          const contactID = phoneNumber.startsWith("+")
+            ? phoneNumber.slice(1)
+            : phoneNumber;
+
+          const result = await addTagToPostgres(
+            contactID,
+            args.tag,
+            idSubstring,
+            isRemove
+          );
+
+          const successMessage = isRemove
+            ? `Tag "${args.tag}" removed successfully from contact ${args.phoneNumber}`
+            : `Tag "${args.tag}" added successfully to contact ${args.phoneNumber}`;
+
+          toolOutputs.push({
+            tool_call_id: toolCall.id,
+            output: JSON.stringify({
+              success: true,
+              message: successMessage,
+              action: args.action,
+              tag: args.tag,
+              phoneNumber: phoneNumber,
+            }),
+          });
+        } catch (error) {
+          console.error(
+            "Error in handleToolCalls for manageContactTags:",
+            error
+          );
+          toolOutputs.push({
+            tool_call_id: toolCall.id,
+            output: JSON.stringify({
+              success: false,
+              error: error.message,
+              action: JSON.parse(toolCall.function.arguments).action,
+              tag: JSON.parse(toolCall.function.arguments).tag,
+              phoneNumber: phoneNumber,
+            }),
           });
         }
         break;
@@ -10922,13 +12003,82 @@ async function handleOpenAIAssistant(
               description:
                 "End date and time in ISO 8601 format in Asia/Kuala Lumpur Timezone",
             },
-            contactName: { type: "string", description: "Name of the contact" },
-            phoneNumber: {
+          },
+          required: ["summary", "startDateTime", "endDateTime"],
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "rescheduleCalendarEvent",
+        description:
+          "Reschedule an existing appointment to a new date and time. This function checks for scheduling conflicts in both the database and Google Calendar, and verifies staff availability before updating the appointment. It can find appointments by date for the contact. If multiple appointments exist on the same date, it will return a list for the user to choose from.",
+        parameters: {
+          type: "object",
+          properties: {
+            appointmentDate: {
               type: "string",
-              description: "Phone number of the contact",
+              description:
+                "Date of the appointment to reschedule in YYYY-MM-DD format.",
+            },
+            newStartDateTime: {
+              type: "string",
+              description:
+                "New start date and time in ISO 8601 format in Asia/Kuala_Lumpur Timezone",
+            },
+            newEndDateTime: {
+              type: "string",
+              description:
+                "New end date and time in ISO 8601 format in Asia/Kuala_Lumpur Timezone",
+            },
+            reason: {
+              type: "string",
+              description: "Reason for rescheduling the appointment (optional)",
             },
           },
-          required: ["summary", "startDateTime", "endDateTime", "contactName"],
+          required: ["appointmentDate", "newStartDateTime", "newEndDateTime"],
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "cancelCalendarEvent",
+        description:
+          "Cancel an existing appointment and remove it from both the database and Google Calendar. This function can find appointments by date for the contact. If multiple appointments exist on the same date, it will return a list for the user to choose from. The appointment status will be updated to 'cancelled' in the database and the corresponding Google Calendar event will be deleted.",
+        parameters: {
+          type: "object",
+          properties: {
+            appointmentDateandTime: {
+              type: "string",
+              description:
+                "Date and time of the appointment to cancel in in ISO 8601 format in Asia/Kuala_Lumpur Timezone",
+            },
+            reason: {
+              type: "string",
+              description: "Reason for canceling the appointment (optional)",
+            },
+          },
+          required: ["appointmentDateandTime"],
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "searchUpcomingAppointments",
+        description:
+          "Search for upcoming appointments for the current contact. This function returns all future appointments (excluding past appointments) with detailed information including date, time, type, and assigned staff. It provides a breakdown of appointments categorized by today, tomorrow, and future dates.",
+        parameters: {
+          type: "object",
+          properties: {
+            limit: {
+              type: "number",
+              description: "Maximum number of appointments to return (default: 10, max: 50)",
+            },
+          },
+          required: [],
         },
       },
     },
@@ -10941,6 +12091,29 @@ async function handleOpenAIAssistant(
         parameters: {
           type: "object",
           properties: {},
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "manageContactTags",
+        description:
+          "Add or remove tags from a contact. This function can handle both adding new tags and removing existing tags from any contact.",
+        parameters: {
+          type: "object",
+          properties: {
+            tag: {
+              type: "string",
+              description: "The tag to add or remove",
+            },
+            action: {
+              type: "string",
+              description: "Action to perform - either 'add' or 'remove'",
+              enum: ["add", "remove"],
+            },
+          },
+          required: ["tag", "action"],
         },
       },
     },
