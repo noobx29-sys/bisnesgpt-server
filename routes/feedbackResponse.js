@@ -28,50 +28,50 @@ router.get('/', async (req, res) => {
       });
     }
     
-    // First get all feedback responses with form data
+    // Get all feedback responses with form data and parse the JSON responses
+    // Use a safer query that doesn't depend on feedback_forms table existing
     const responsesQuery = `
       SELECT 
         fr.id,
         fr.form_id,
         fr.phone_number,
+        fr.responses,
         fr.submitted_at,
         fr.created_at,
-        ff.title as form_title
+        COALESCE(ff.title, 'Unknown Form') as form_title
       FROM feedback_responses fr
       LEFT JOIN feedback_forms ff ON fr.form_id = ff.id
-      WHERE ff.company_id = $1
       ORDER BY fr.created_at DESC
     `;
     
-    const responsesResult = await pool.query(responsesQuery, [company_id]);
+    const responsesResult = await pool.query(responsesQuery);
     
-    // For each response, get the individual field responses
-    const feedbackResponses = [];
-    
-    for (const response of responsesResult.rows) {
-      const fieldsQuery = `
-        SELECT 
-          id,
-          field_id,
-          question,
-          answer
-        FROM feedback_response_fields
-        WHERE response_id = $1
-        ORDER BY created_at ASC
-      `;
+    // Process the responses - parse JSON and format them
+    const feedbackResponses = responsesResult.rows.map(response => {
+      let parsedResponses = [];
       
-      const fieldsResult = await pool.query(fieldsQuery, [response.id]);
+      try {
+        // Parse the JSON responses if they exist
+        if (response.responses && typeof response.responses === 'string') {
+          parsedResponses = JSON.parse(response.responses);
+        } else if (response.responses && Array.isArray(response.responses)) {
+          parsedResponses = response.responses;
+        }
+      } catch (parseError) {
+        console.warn(`Failed to parse responses for response ID ${response.id}:`, parseError);
+        parsedResponses = [];
+      }
       
-      feedbackResponses.push({
+      return {
         id: response.id,
         form_id: response.form_id,
         phone_number: response.phone_number,
         submitted_at: response.submitted_at,
         created_at: response.created_at,
         form_title: response.form_title,
-        responses: fieldsResult.rows
-      });
-    }
+        responses: parsedResponses
+      };
+    });
     
     res.json({
       success: true,
@@ -97,9 +97,10 @@ router.get('/:id', async (req, res) => {
         fr.id,
         fr.form_id,
         fr.phone_number,
+        fr.responses,
         fr.submitted_at,
         fr.created_at,
-        ff.title as form_title
+        COALESCE(ff.title, 'Unknown Form') as form_title
       FROM feedback_responses fr
       LEFT JOIN feedback_forms ff ON fr.form_id = ff.id
       WHERE fr.id = $1
@@ -114,28 +115,33 @@ router.get('/:id', async (req, res) => {
       });
     }
     
-    // Get the field responses
-    const fieldsQuery = `
-      SELECT 
-        id,
-        field_id,
-        question,
-        answer
-      FROM feedback_response_fields
-      WHERE response_id = $1
-      ORDER BY created_at ASC
-    `;
+    const response = responseResult.rows[0];
     
-    const fieldsResult = await pool.query(fieldsQuery, [id]);
+    // Parse the JSON responses
+    let parsedResponses = [];
     
-    const feedbackResponse = {
-      ...responseResult.rows[0],
-      responses: fieldsResult.rows
-    };
+    try {
+      if (response.responses && typeof response.responses === 'string') {
+        parsedResponses = JSON.parse(response.responses);
+      } else if (response.responses && Array.isArray(response.responses)) {
+        parsedResponses = response.responses;
+      }
+    } catch (parseError) {
+      console.warn(`Failed to parse responses for response ID ${response.id}:`, parseError);
+      parsedResponses = [];
+    }
     
     res.json({
       success: true,
-      feedbackResponse
+      feedbackResponse: {
+        id: response.id,
+        form_id: response.form_id,
+        phone_number: response.phone_number,
+        submitted_at: response.submitted_at,
+        created_at: response.created_at,
+        form_title: response.form_title,
+        responses: parsedResponses
+      }
     });
   } catch (error) {
     console.error('Error fetching feedback response:', error);
@@ -151,15 +157,16 @@ router.get('/form/:formId', async (req, res) => {
   try {
     const { formId } = req.params;
     
-    // Get all responses for this form
+    // Get all responses for the specific form
     const responsesQuery = `
       SELECT 
         fr.id,
         fr.form_id,
         fr.phone_number,
+        fr.responses,
         fr.submitted_at,
         fr.created_at,
-        ff.title as form_title
+        COALESCE(ff.title, 'Unknown Form') as form_title
       FROM feedback_responses fr
       LEFT JOIN feedback_forms ff ON fr.form_id = ff.id
       WHERE fr.form_id = $1
@@ -168,33 +175,31 @@ router.get('/form/:formId', async (req, res) => {
     
     const responsesResult = await pool.query(responsesQuery, [formId]);
     
-    // For each response, get the individual field responses
-    const feedbackResponses = [];
-    
-    for (const response of responsesResult.rows) {
-      const fieldsQuery = `
-        SELECT 
-          id,
-          field_id,
-          question,
-          answer
-        FROM feedback_response_fields
-        WHERE response_id = $1
-        ORDER BY created_at ASC
-      `;
+    // Process the responses - parse JSON and format them
+    const feedbackResponses = responsesResult.rows.map(response => {
+      let parsedResponses = [];
       
-      const fieldsResult = await pool.query(fieldsQuery, [response.id]);
+      try {
+        if (response.responses && typeof response.responses === 'string') {
+          parsedResponses = JSON.parse(response.responses);
+        } else if (response.responses && Array.isArray(response.responses)) {
+          parsedResponses = response.responses;
+        }
+      } catch (parseError) {
+        console.warn(`Failed to parse responses for response ID ${response.id}:`, parseError);
+        parsedResponses = [];
+      }
       
-      feedbackResponses.push({
+      return {
         id: response.id,
         form_id: response.form_id,
         phone_number: response.phone_number,
         submitted_at: response.submitted_at,
         created_at: response.created_at,
         form_title: response.form_title,
-        responses: fieldsResult.rows
-      });
-    }
+        responses: parsedResponses
+      };
+    });
     
     res.json({
       success: true,
@@ -205,6 +210,111 @@ router.get('/form/:formId', async (req, res) => {
     res.status(500).json({
       success: false,
       error: 'Failed to fetch form feedback responses'
+    });
+  }
+});
+
+// POST /api/feedback-responses - Create a new feedback response
+router.post('/', async (req, res) => {
+  try {
+    const { form_id, phone_number, responses } = req.body;
+    
+    if (!form_id || !phone_number || !responses) {
+      return res.status(422).json({
+        success: false,
+        error: 'form_id, phone_number, and responses are required'
+      });
+    }
+    
+    // Insert the feedback response
+    const insertQuery = `
+      INSERT INTO feedback_responses (form_id, phone_number, responses, submitted_at, created_at)
+      VALUES ($1, $2, $3, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      RETURNING *
+    `;
+    
+    const result = await pool.query(insertQuery, [form_id, phone_number, JSON.stringify(responses)]);
+    
+    res.status(201).json({
+      success: true,
+      feedbackResponse: result.rows[0]
+    });
+  } catch (error) {
+    console.error('Error creating feedback response:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to create feedback response'
+    });
+  }
+});
+
+// PUT /api/feedback-responses/{id} - Update a feedback response
+router.put('/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { responses } = req.body;
+    
+    if (!responses) {
+      return res.status(422).json({
+        success: false,
+        error: 'responses is required'
+      });
+    }
+    
+    // Update the feedback response
+    const updateQuery = `
+      UPDATE feedback_responses 
+      SET responses = $1, updated_at = CURRENT_TIMESTAMP
+      WHERE id = $2
+      RETURNING *
+    `;
+    
+    const result = await pool.query(updateQuery, [JSON.stringify(responses), id]);
+    
+    if (result.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'Feedback response not found'
+      });
+    }
+    
+    res.json({
+      success: true,
+      feedbackResponse: result.rows[0]
+    });
+  } catch (error) {
+    console.error('Error updating feedback response:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to update feedback response'
+    });
+  }
+});
+
+// DELETE /api/feedback-responses/{id} - Delete a feedback response
+router.delete('/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    const deleteQuery = 'DELETE FROM feedback_responses WHERE id = $1 RETURNING *';
+    const result = await pool.query(deleteQuery, [id]);
+    
+    if (result.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'Feedback response not found'
+      });
+    }
+    
+    res.json({
+      success: true,
+      message: 'Feedback response deleted successfully'
+    });
+  } catch (error) {
+    console.error('Error deleting feedback response:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to delete feedback response'
     });
   }
 });

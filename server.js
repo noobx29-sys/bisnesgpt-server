@@ -1,4 +1,4 @@
-// ======================
+﻿// ======================
 // 1. CORE IMPORTS
 // ======================
 
@@ -12,16 +12,16 @@ const { exec } = require("child_process");
 const { promisify } = require("util");
 const { pipeline } = require("stream/promises");
 const { createServer } = require("http");
-const FormData = require('form-data');
-const { Readable } = require('stream');
-const mime = require('mime-types');
+const FormData = require("form-data");
+const { Readable } = require("stream");
+const mime = require("mime-types");
 
 // Third-party Libraries
 // Framework & Middleware
 const express = require("express");
 const bodyParser = require("body-parser");
 const cors = require("cors");
-const { setupNeonWebhooks } = require('./neon-webhook-integration');
+const { setupNeonWebhooks } = require("./neon-webhook-integration");
 
 // API Clients & Communication
 const axios = require("axios");
@@ -40,7 +40,7 @@ const {
 const Redis = require("ioredis");
 const { neon, neonConfig } = require("@neondatabase/serverless");
 const { Pool } = require("pg");
-const multer = require('multer');
+const multer = require("multer");
 
 // Queue & Scheduling
 const { Queue, Worker, QueueScheduler } = require("bullmq");
@@ -56,7 +56,7 @@ const CryptoJS = require("crypto-js");
 const { v4: uuidv4 } = require("uuid");
 const csv = require("csv-parser");
 const ffmpeg = require("ffmpeg-static");
-const { PDFDocument, rgb, StandardFonts } = require('pdf-lib');
+const { PDFDocument, rgb, StandardFonts } = require("pdf-lib");
 
 // Custom Modules
 const FirebaseWWebJS = require("./firebaseWweb.js");
@@ -69,17 +69,17 @@ const {
 const { handleTagFollowUp } = require("./blast/tag.js");
 
 // Import logging system
-const ServerLogger = require('./logger');
-const LogManager = require('./logManager');
-const feedbackFormsRouter = require('./routes/feedbackForms.js');
-const eventsRouter = require('./routes/events');
-const enrolleesRouter = require('./routes/enrollees');
-const participantsRouter = require('./routes/participants');
-const attendanceEventsRouter = require('./routes/attendanceEvents');
-const attendanceRecordsRouter = require('./routes/attendanceRecords');
-const feedbackResponsesRouter = require('./routes/feedbackResponse');
-const mtdcSpreadsheet = require('./spreadsheet/mtdcSpreadsheet.js');
-const certificatesRouter = require('./routes/certificates');
+const ServerLogger = require("./logger");
+const LogManager = require("./logManager");
+const feedbackFormsRouter = require("./routes/feedbackForms.js");
+const eventsRouter = require("./routes/events");
+const enrolleesRouter = require("./routes/enrollees");
+const participantsRouter = require("./routes/participants");
+const attendanceEventsRouter = require("./routes/attendanceEvents");
+const attendanceRecordsRouter = require("./routes/attendanceRecords");
+const feedbackResponsesRouter = require("./routes/feedbackResponse");
+const mtdcSpreadsheet = require("./spreadsheet/mtdcSpreadsheet.js");
+const certificatesRouter = require("./routes/certificates");
 
 // Initialize logger
 const logger = new ServerLogger();
@@ -94,18 +94,18 @@ const requestCounts = new Map();
 function checkRateLimit(identifier) {
   const now = Date.now();
   const minuteAgo = now - 60000;
-  
+
   if (!requestCounts.has(identifier)) {
     requestCounts.set(identifier, []);
   }
-  
+
   const requests = requestCounts.get(identifier);
-  const recentRequests = requests.filter(time => time > minuteAgo);
-  
+  const recentRequests = requests.filter((time) => time > minuteAgo);
+
   if (recentRequests.length >= MAX_REQUESTS_PER_MINUTE) {
     return false;
   }
-  
+
   recentRequests.push(now);
   requestCounts.set(identifier, recentRequests);
   return true;
@@ -169,7 +169,7 @@ const pool = new Pool({
 
 // Enhanced connection management functions
 async function safeRollback(sqlClient) {
-  if (sqlClient && typeof sqlClient.query === 'function') {
+  if (sqlClient && typeof sqlClient.query === "function") {
     try {
       await sqlClient.query("ROLLBACK");
       console.log("Transaction rolled back successfully");
@@ -180,7 +180,7 @@ async function safeRollback(sqlClient) {
 }
 
 async function safeRelease(sqlClient) {
-  if (sqlClient && typeof sqlClient.release === 'function') {
+  if (sqlClient && typeof sqlClient.release === "function") {
     try {
       await sqlClient.release();
       console.log("Database connection released successfully");
@@ -198,47 +198,66 @@ async function getDatabaseConnection(timeoutMs = 5000) {
 
   while (attempts < maxAttempts) {
     try {
-      console.log(`Attempting to get database connection (attempt ${attempts + 1}/${maxAttempts})`);
-      
+      console.log(
+        `Attempting to get database connection (attempt ${
+          attempts + 1
+        }/${maxAttempts})`
+      );
+
       const client = await Promise.race([
         pool.connect(),
-        new Promise((_, reject) => 
-          setTimeout(() => reject(new Error('Connection timeout')), timeoutMs)
-        )
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error("Connection timeout")), timeoutMs)
+        ),
       ]);
 
-      console.log(`Database connection acquired successfully in ${Date.now() - startTime}ms`);
+      console.log(
+        `Database connection acquired successfully in ${
+          Date.now() - startTime
+        }ms`
+      );
       return client;
     } catch (error) {
       attempts++;
-      console.error(`Database connection attempt ${attempts} failed:`, error.message);
-      
+      console.error(
+        `Database connection attempt ${attempts} failed:`,
+        error.message
+      );
+
       // Handle network-related errors more gracefully
-      if (error.code === 'EADDRNOTAVAIL' || 
-          error.code === 'ENOTFOUND' || 
-          error.code === 'ECONNREFUSED' ||
-          error.code === 'ETIMEDOUT' ||
-          error.message.includes('read EADDRNOTAVAIL') ||
-          error.message.includes('TLSWrap')) {
-        console.error("Network connectivity error detected in database connection");
-        
+      if (
+        error.code === "EADDRNOTAVAIL" ||
+        error.code === "ENOTFOUND" ||
+        error.code === "ECONNREFUSED" ||
+        error.code === "ETIMEDOUT" ||
+        error.message.includes("read EADDRNOTAVAIL") ||
+        error.message.includes("TLSWrap")
+      ) {
+        console.error(
+          "Network connectivity error detected in database connection"
+        );
+
         if (attempts >= maxAttempts) {
-          console.error("Max attempts reached for database connection - continuing without connection");
+          console.error(
+            "Max attempts reached for database connection - continuing without connection"
+          );
           return null; // Return null instead of throwing
         }
-        
+
         // Wait longer for network issues
-        await new Promise(resolve => setTimeout(resolve, 2000 * attempts));
+        await new Promise((resolve) => setTimeout(resolve, 2000 * attempts));
         continue;
       }
-      
+
       if (attempts >= maxAttempts) {
-        console.error("Max attempts reached for database connection - continuing without connection");
+        console.error(
+          "Max attempts reached for database connection - continuing without connection"
+        );
         return null; // Return null instead of throwing
       }
-      
+
       // Wait before retrying
-      await new Promise(resolve => setTimeout(resolve, 1000 * attempts));
+      await new Promise((resolve) => setTimeout(resolve, 1000 * attempts));
     }
   }
 }
@@ -259,131 +278,154 @@ const createQueueAndWorker = (botId) => {
       removeOnFail: false,
       attempts: 3,
       backoff: {
-        type: 'exponential',
+        type: "exponential",
         delay: 5000, // Increased from 2000
       },
     },
   });
 
   // Enhanced worker with better concurrency control and safe JSON parsing
- // ======================
-// FIXED WORKER CODE - HANDLE BOTH JSON STRINGS AND PARSED ARRAYS
-// ======================
+  // ======================
+  // FIXED WORKER CODE - HANDLE BOTH JSON STRINGS AND PARSED ARRAYS
+  // ======================
 
-// Enhanced worker with better concurrency control and safe JSON parsing
-const worker = new Worker(
-  `scheduled-messages-${botId}`,
-  async (job) => {
-    if (job.name === "send-message-batch") {
-      const { companyId, messageId, batchId, isDuplicate } = job.data;
-      console.log(`Bot ${botId} - Processing scheduled message batch:`, {
-        messageId,
-        batchId,
-      });
+  // Enhanced worker with better concurrency control and safe JSON parsing
+  const worker = new Worker(
+    `scheduled-messages-${botId}`,
+    async (job) => {
+      if (job.name === "send-message-batch") {
+        const { companyId, messageId, batchId, isDuplicate } = job.data;
+        console.log(`Bot ${botId} - Processing scheduled message batch:`, {
+          messageId,
+          batchId,
+        });
 
-      if (isDuplicate) {
-        console.log(`Bot ${botId} - Skipping duplicate job ${job.id} for batch ${batchId}`);
-        return { skipped: true, reason: "Duplicate message" };
-      }
+        if (isDuplicate) {
+          console.log(
+            `Bot ${botId} - Skipping duplicate job ${job.id} for batch ${batchId}`
+          );
+          return { skipped: true, reason: "Duplicate message" };
+        }
 
-      let client = null;
-      try {
-        // Get database connection with timeout
-        client = await getDatabaseConnection(5000);
-        
-        await client.query("BEGIN");
+        let client = null;
+        try {
+          // Get database connection with timeout
+          client = await getDatabaseConnection(5000);
 
-        const batchQuery = `
+          await client.query("BEGIN");
+
+          const batchQuery = `
           SELECT * FROM scheduled_messages 
           WHERE id = $1 AND company_id = $2
           FOR UPDATE
         `;
-        const batchResult = await client.query(batchQuery, [batchId, companyId]);
+          const batchResult = await client.query(batchQuery, [
+            batchId,
+            companyId,
+          ]);
 
-        if (batchResult.rowCount === 0) {
-          throw new Error(`Batch ${batchId} not found in database`);
-        }
-
-        const batchData = batchResult.rows[0];
-
-        if (batchData.status === "skipped") {
-          console.log(`Bot ${botId} - Batch ${batchId} was already marked as skipped`);
-          return {
-            skipped: true,
-            reason: batchData.skipped_reason || "Already skipped",
-          };
-        }
-
-        if (batchData.status === "sent") {
-          console.log(`Bot ${botId} - Batch ${batchId} was already sent`);
-          return {
-            skipped: true,
-            reason: "Already sent",
-          };
-        }
-
-        // FIXED: Handle both JSON strings and parsed arrays for chat_ids
-        let chatIdsCount = 0;
-        let chatIds = [];
-        
-        try {
-          if (batchData.chat_ids) {
-            // Check if it's already an array (parsed by database driver)
-            if (Array.isArray(batchData.chat_ids)) {
-              chatIds = batchData.chat_ids;
-              chatIdsCount = chatIds.length;
-              console.log(`Bot ${botId} - chat_ids is already an array with ${chatIdsCount} items`);
-            } else if (typeof batchData.chat_ids === 'string') {
-              // It's a JSON string, parse it
-              chatIds = JSON.parse(batchData.chat_ids);
-              chatIdsCount = Array.isArray(chatIds) ? chatIds.length : 0;
-              console.log(`Bot ${botId} - chat_ids parsed from JSON string with ${chatIdsCount} items`);
-            } else {
-              console.warn(`Bot ${botId} - chat_ids is neither array nor string:`, typeof batchData.chat_ids);
-              chatIdsCount = 0;
-            }
+          if (batchResult.rowCount === 0) {
+            throw new Error(`Batch ${batchId} not found in database`);
           }
-        } catch (parseError) {
-          console.error(`Bot ${botId} - Error parsing chat_ids for batch ${batchId}:`, {
-            error: parseError.message,
-            chat_ids: batchData.chat_ids,
-            chat_ids_type: typeof batchData.chat_ids,
-            batchId: batchId
+
+          const batchData = batchResult.rows[0];
+
+          if (batchData.status === "skipped") {
+            console.log(
+              `Bot ${botId} - Batch ${batchId} was already marked as skipped`
+            );
+            return {
+              skipped: true,
+              reason: batchData.skipped_reason || "Already skipped",
+            };
+          }
+
+          if (batchData.status === "sent") {
+            console.log(`Bot ${botId} - Batch ${batchId} was already sent`);
+            return {
+              skipped: true,
+              reason: "Already sent",
+            };
+          }
+
+          // FIXED: Handle both JSON strings and parsed arrays for chat_ids
+          let chatIdsCount = 0;
+          let chatIds = [];
+
+          try {
+            if (batchData.chat_ids) {
+              // Check if it's already an array (parsed by database driver)
+              if (Array.isArray(batchData.chat_ids)) {
+                chatIds = batchData.chat_ids;
+                chatIdsCount = chatIds.length;
+                console.log(
+                  `Bot ${botId} - chat_ids is already an array with ${chatIdsCount} items`
+                );
+              } else if (typeof batchData.chat_ids === "string") {
+                // It's a JSON string, parse it
+                chatIds = JSON.parse(batchData.chat_ids);
+                chatIdsCount = Array.isArray(chatIds) ? chatIds.length : 0;
+                console.log(
+                  `Bot ${botId} - chat_ids parsed from JSON string with ${chatIdsCount} items`
+                );
+              } else {
+                console.warn(
+                  `Bot ${botId} - chat_ids is neither array nor string:`,
+                  typeof batchData.chat_ids
+                );
+                chatIdsCount = 0;
+              }
+            }
+          } catch (parseError) {
+            console.error(
+              `Bot ${botId} - Error parsing chat_ids for batch ${batchId}:`,
+              {
+                error: parseError.message,
+                chat_ids: batchData.chat_ids,
+                chat_ids_type: typeof batchData.chat_ids,
+                batchId: batchId,
+              }
+            );
+
+            // Mark this batch as failed due to malformed data
+            await client.query(
+              "UPDATE scheduled_messages SET status = $1, skipped_reason = $2 WHERE id = $3",
+              [
+                "failed",
+                `Malformed chat_ids data: ${parseError.message}`,
+                batchId,
+              ]
+            );
+
+            await client.query("COMMIT");
+            return {
+              skipped: true,
+              reason: `Malformed data: ${parseError.message}`,
+            };
+          }
+
+          console.log(`Bot ${botId} - Sending scheduled message batch:`, {
+            batchId,
+            messageId,
+            status: batchData.status,
+            chatIds: chatIdsCount,
+            chatIdsSample: chatIds.slice(0, 3), // Show first 3 chat IDs for debugging
           });
-          
-          // Mark this batch as failed due to malformed data
-          await client.query(
-            "UPDATE scheduled_messages SET status = $1, skipped_reason = $2 WHERE id = $3",
-            ["failed", `Malformed chat_ids data: ${parseError.message}`, batchId]
-          );
-          
-          await client.query("COMMIT");
-          return {
-            skipped: true,
-            reason: `Malformed data: ${parseError.message}`,
-          };
-        }
 
-        console.log(`Bot ${botId} - Sending scheduled message batch:`, {
-          batchId,
-          messageId,
-          status: batchData.status,
-          chatIds: chatIdsCount,
-          chatIdsSample: chatIds.slice(0, 3), // Show first 3 chat IDs for debugging
-        });
+          const result = await sendScheduledMessage(batchData);
 
-        const result = await sendScheduledMessage(batchData);
+          if (result.success) {
+            console.log(
+              `Bot ${botId} - Successfully sent batch ${batchId} for message ${messageId}`
+            );
 
-        if (result.success) {
-          console.log(`Bot ${botId} - Successfully sent batch ${batchId} for message ${messageId}`);
-          
-          await client.query(
-            "UPDATE scheduled_messages SET status = $1, sent_at = NOW() WHERE id = $2",
-            ["sent", batchId]
-          );
-          
-          // Check if all batches are now processed
-          const batchesCheckQuery = `
+            await client.query(
+              "UPDATE scheduled_messages SET status = $1, sent_at = NOW() WHERE id = $2",
+              ["sent", batchId]
+            );
+
+            // Check if all batches are now processed
+            const batchesCheckQuery = `
             SELECT COUNT(*) as pending_count,
                    (SELECT status FROM scheduled_messages WHERE id = $1::uuid) as main_status
             FROM scheduled_messages 
@@ -392,44 +434,53 @@ const worker = new Worker(
             AND status != 'sent'
             AND id::uuid != schedule_id::uuid
           `;
-          const batchesCheck = await client.query(batchesCheckQuery, [messageId, companyId]);
+            const batchesCheck = await client.query(batchesCheckQuery, [
+              messageId,
+              companyId,
+            ]);
 
-          console.log(`Bot ${botId} - Batch status check:`, {
-            pendingCount: batchesCheck.rows[0].pending_count,
-            mainStatus: batchesCheck.rows[0].main_status
-          });
-          
-          if (batchesCheck.rows[0].pending_count === 0) {
-            if (batchesCheck.rows[0].main_status !== 'sent') {
-              await client.query(
-                "UPDATE scheduled_messages SET status = $1, sent_at = NOW() WHERE id = $2",
-                ["sent", messageId]
-              );
-              console.log(`Bot ${botId} - All batches completed for message ${messageId}`);
+            console.log(`Bot ${botId} - Batch status check:`, {
+              pendingCount: batchesCheck.rows[0].pending_count,
+              mainStatus: batchesCheck.rows[0].main_status,
+            });
+
+            if (batchesCheck.rows[0].pending_count === 0) {
+              if (batchesCheck.rows[0].main_status !== "sent") {
+                await client.query(
+                  "UPDATE scheduled_messages SET status = $1, sent_at = NOW() WHERE id = $2",
+                  ["sent", messageId]
+                );
+                console.log(
+                  `Bot ${botId} - All batches completed for message ${messageId}`
+                );
+              }
             }
+          } else {
+            throw new Error(
+              `Failed to send batch: ${result.error || "Unknown error"}`
+            );
           }
-        } else {
-          throw new Error(`Failed to send batch: ${result.error || 'Unknown error'}`);
-        }
 
-        await client.query("COMMIT");
-      } catch (error) {
-        if (client) {
-          await safeRollback(client);
+          await client.query("COMMIT");
+        } catch (error) {
+          if (client) {
+            await safeRollback(client);
+          }
+          console.error(
+            `Bot ${botId} - Error processing scheduled message batch:`,
+            {
+              error: error.message,
+              stack: error.stack,
+              batchId: batchId,
+              messageId: messageId,
+            }
+          );
+          throw error;
+        } finally {
+          if (client) {
+            await safeRelease(client);
+          }
         }
-        console.error(`Bot ${botId} - Error processing scheduled message batch:`, {
-          error: error.message,
-          stack: error.stack,
-          batchId: batchId,
-          messageId: messageId,
-        });
-        throw error;
-      } finally {
-        if (client) {
-          await safeRelease(client);
-        }
-      }
-
       } else if (job.name === "send-single-message") {
         const { companyId, messageId } = job.data;
         console.log(`Bot ${botId} - Processing scheduled single message:`, {
@@ -440,7 +491,7 @@ const worker = new Worker(
         try {
           // Get database connection with timeout
           client = await getDatabaseConnection(5000);
-          
+
           await client.query("BEGIN");
 
           const messageQuery = `
@@ -448,7 +499,10 @@ const worker = new Worker(
             WHERE id = $1 AND company_id = $2
             FOR UPDATE
           `;
-          const messageResult = await client.query(messageQuery, [messageId, companyId]);
+          const messageResult = await client.query(messageQuery, [
+            messageId,
+            companyId,
+          ]);
 
           if (messageResult.rowCount === 0) {
             throw new Error(`Message ${messageId} not found in database`);
@@ -456,8 +510,13 @@ const worker = new Worker(
 
           const messageData = messageResult.rows[0];
 
-          if (messageData.status === "skipped" || messageData.status === "sent") {
-            console.log(`Bot ${botId} - Message ${messageId} was already ${messageData.status}`);
+          if (
+            messageData.status === "skipped" ||
+            messageData.status === "sent"
+          ) {
+            console.log(
+              `Bot ${botId} - Message ${messageId} was already ${messageData.status}`
+            );
             return {
               skipped: true,
               reason: `Already ${messageData.status}`,
@@ -477,7 +536,9 @@ const worker = new Worker(
               ["sent", messageId]
             );
           } else {
-            throw new Error(`Failed to send message: ${result.error || 'Unknown error'}`);
+            throw new Error(
+              `Failed to send message: ${result.error || "Unknown error"}`
+            );
           }
 
           await client.query("COMMIT");
@@ -485,11 +546,14 @@ const worker = new Worker(
           if (client) {
             await safeRollback(client);
           }
-          console.error(`Bot ${botId} - Error processing scheduled single message:`, {
-            error: error.message,
-            stack: error.stack,
-            messageId: messageId,
-          });
+          console.error(
+            `Bot ${botId} - Error processing scheduled single message:`,
+            {
+              error: error.message,
+              stack: error.stack,
+              messageId: messageId,
+            }
+          );
           throw error;
         } finally {
           if (client) {
@@ -521,7 +585,7 @@ const worker = new Worker(
   // Enhanced completed event handler
   worker.on("completed", async (job) => {
     console.log(`Bot ${botId} - Job ${job.id} completed successfully`);
-    
+
     try {
       await job.updateProgress(100);
       await job.updateData({
@@ -543,21 +607,24 @@ const worker = new Worker(
       attempts: job.attemptsMade,
       maxAttempts: job.opts?.attempts || 3,
     });
-    
+
     try {
       await job.updateData({
         ...job.data,
         failedAt: new Date().toISOString(),
         error: {
-          message: err?.message || 'Unknown error',
-          stack: err?.stack || 'No stack trace',
-          name: err?.name || 'Error',
+          message: err?.message || "Unknown error",
+          stack: err?.stack || "No stack trace",
+          name: err?.name || "Error",
         },
         status: "failed",
         finalAttempt: job.attemptsMade >= (job.opts?.attempts || 3),
       });
     } catch (updateError) {
-      console.error(`Bot ${botId} - Error updating failed job data:`, updateError);
+      console.error(
+        `Bot ${botId} - Error updating failed job data:`,
+        updateError
+      );
     }
   });
 
@@ -582,40 +649,53 @@ const worker = new Worker(
   return { queue, worker };
 };
 
-
 // Add pool error handling to prevent crashes
-pool.on('error', (err) => {
+pool.on("error", (err) => {
   console.error("=== DATABASE POOL ERROR ===");
   console.error("Error:", err);
   console.error("Time:", new Date().toISOString());
-  
+
   // Handle specific connection errors
-  if (err.message && err.message.includes("Connection terminated unexpectedly")) {
-    console.error("Database connection terminated - attempting to reconnect...");
+  if (
+    err.message &&
+    err.message.includes("Connection terminated unexpectedly")
+  ) {
+    console.error(
+      "Database connection terminated - attempting to reconnect..."
+    );
     // Log to file for debugging
-    if (typeof logger !== 'undefined' && logger.logToFile) {
-      logger.logToFile('db_connection_errors', `Connection terminated: ${err.message}`);
+    if (typeof logger !== "undefined" && logger.logToFile) {
+      logger.logToFile(
+        "db_connection_errors",
+        `Connection terminated: ${err.message}`
+      );
     }
   }
-  
+
   // Don't exit the process, just log the error
   console.log("Continuing operation despite database pool error...");
 });
 
-pool.on('connect', (client) => {
-  console.log('New database connection established');
+pool.on("connect", (client) => {
+  console.log("New database connection established");
 
   // Set connection-specific error handlers
-  client.on('error', (err) => {
+  client.on("error", (err) => {
     console.error("=== DATABASE CLIENT ERROR ===");
     console.error("Error:", err);
     console.error("Time:", new Date().toISOString());
-    
-    if (err.message && err.message.includes("Connection terminated unexpectedly")) {
+
+    if (
+      err.message &&
+      err.message.includes("Connection terminated unexpectedly")
+    ) {
       console.error("Client connection terminated - will be replaced by pool");
       // Log to file for debugging
-      if (typeof logger !== 'undefined' && logger.logToFile) {
-        logger.logToFile('db_connection_errors', `Client connection terminated: ${err.message}`);
+      if (typeof logger !== "undefined" && logger.logToFile) {
+        logger.logToFile(
+          "db_connection_errors",
+          `Client connection terminated: ${err.message}`
+        );
       }
     }
   });
@@ -657,16 +737,16 @@ const server = createServer(app);
 
 // CORS Configuration - Define whitelist before WebSocket server
 const whitelist = [
-  'https://juta.ngrok.app',
-  'https://juta-crm-v3.vercel.app', 
-  'http://localhost:5173',
-  'http://localhost:3000',
-  'http://localhost:8443',
-  'https://app.xyzaibot.com',
-  'http://localhost:8080',
-  'https://d178-2001-e68-5409-64f-f850-607e-e056-2a9e.ngrok-free.app',
-  'https://web.jutateknologi.com',
-  'https://app.omniyal.com'
+  "https://juta.ngrok.app",
+  "https://juta-crm-v3.vercel.app",
+  "http://localhost:5173",
+  "http://localhost:3000",
+  "http://localhost:8443",
+  "https://app.xyzaibot.com",
+  "http://localhost:8080",
+  "https://d178-2001-e68-5409-64f-f850-607e-e056-2a9e.ngrok-free.app",
+  "https://web.jutateknologi.com",
+  "https://app.omniyal.com",
 ];
 
 const wss = new WebSocket.Server({
@@ -674,58 +754,64 @@ const wss = new WebSocket.Server({
   // Add CORS headers for WebSocket connections
   verifyClient: (info, callback) => {
     const origin = info.origin || info.req.headers.origin;
-    
+
     // Allow connections with no origin
     if (!origin) {
       return callback(true);
     }
-    
+
     // Check if origin is in whitelist
     if (whitelist.includes(origin)) {
       return callback(true);
     }
-    
+
     // Check for localhost variations
-    if (origin.startsWith('http://localhost:') || origin.startsWith('https://localhost:')) {
+    if (
+      origin.startsWith("http://localhost:") ||
+      origin.startsWith("https://localhost:")
+    ) {
       return callback(true);
     }
-    
+
     // Check for ngrok variations
-    if (origin.includes('ngrok') || origin.includes('ngrok-free.app')) {
+    if (origin.includes("ngrok") || origin.includes("ngrok-free.app")) {
       return callback(true);
     }
-    
-    console.log('WebSocket connection blocked from origin:', origin);
+
+    console.log("WebSocket connection blocked from origin:", origin);
     callback(false);
-  }
+  },
 });
 const db = admin.firestore();
 global.wss = wss;
 // CORS Configuration
 const corsOptions = {
-  origin: function (origin, callback) {    
+  origin: function (origin, callback) {
     // Allow requests with no origin (like mobile apps or curl requests)
     if (!origin) {
       return callback(null, true);
     }
-    
+
     // Check if origin is in whitelist
     if (whitelist.includes(origin)) {
       return callback(null, true);
     }
-    
+
     // Check for localhost variations
-    if (origin.startsWith('http://localhost:') || origin.startsWith('https://localhost:')) {
+    if (
+      origin.startsWith("http://localhost:") ||
+      origin.startsWith("https://localhost:")
+    ) {
       return callback(null, true);
     }
-    
+
     // Check for ngrok variations
-    if (origin.includes('ngrok') || origin.includes('ngrok-free.app')) {
+    if (origin.includes("ngrok") || origin.includes("ngrok-free.app")) {
       return callback(null, true);
     }
-    
-    console.log('CORS blocked origin:', origin);
-    callback(new Error('Not allowed by CORS'));
+
+    console.log("CORS blocked origin:", origin);
+    callback(new Error("Not allowed by CORS"));
   },
   methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
   allowedHeaders: [
@@ -735,11 +821,11 @@ const corsOptions = {
     "x-requested-with",
     "Accept",
     "Origin",
-    "X-Requested-With"
+    "X-Requested-With",
   ],
   credentials: true,
   preflightContinue: false,
-  optionsSuccessStatus: 204
+  optionsSuccessStatus: 204,
 };
 
 // Middleware
@@ -748,40 +834,49 @@ app.use(cors(corsOptions));
 // Add additional CORS headers for all responses
 app.use((req, res, next) => {
   const origin = req.headers.origin;
-  
+
   // Check if origin is allowed
-  if (origin && (whitelist.includes(origin) || 
-      origin.startsWith('http://localhost:') || 
-      origin.startsWith('https://localhost:') ||
-      origin.includes('ngrok'))) {
-    res.header('Access-Control-Allow-Origin', origin);
+  if (
+    origin &&
+    (whitelist.includes(origin) ||
+      origin.startsWith("http://localhost:") ||
+      origin.startsWith("https://localhost:") ||
+      origin.includes("ngrok"))
+  ) {
+    res.header("Access-Control-Allow-Origin", origin);
   } else {
-    res.header('Access-Control-Allow-Origin', '*');
+    res.header("Access-Control-Allow-Origin", "*");
   }
-  
-  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS, PATCH');
-  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, ngrok-skip-browser-warning, x-requested-with, Accept, Origin, X-Requested-With, Access-Control-Allow-Origin');
-  res.header('Access-Control-Allow-Credentials', 'true');
-  
+
+  res.header(
+    "Access-Control-Allow-Methods",
+    "GET, POST, PUT, DELETE, OPTIONS, PATCH"
+  );
+  res.header(
+    "Access-Control-Allow-Headers",
+    "Content-Type, Authorization, ngrok-skip-browser-warning, x-requested-with, Accept, Origin, X-Requested-With, Access-Control-Allow-Origin"
+  );
+  res.header("Access-Control-Allow-Credentials", "true");
+
   // Handle preflight requests
-  if (req.method === 'OPTIONS') {
+  if (req.method === "OPTIONS") {
     res.status(204).end();
     return;
   }
-  
+
   next();
 });
 
 app.use(express.json({ limit: "50mb" }));
-app.use(bodyParser.json({ limit: '50mb' }));
-app.use(bodyParser.urlencoded({ extended: true, limit: '50mb' }));
-app.use('/media', express.static(MEDIA_DIR));
+app.use(bodyParser.json({ limit: "50mb" }));
+app.use(bodyParser.urlencoded({ extended: true, limit: "50mb" }));
+app.use("/media", express.static(MEDIA_DIR));
 app.use(express.static("public"));
 
 // Handle preflight requests
-app.options('*', cors());
-const splitTestRouter = require('./routes/splitTest');
-app.use('/api/split-test', splitTestRouter);
+app.options("*", cors());
+const splitTestRouter = require("./routes/splitTest");
+app.use("/api/split-test", splitTestRouter);
 
 // Configure Multer storage
 const storage = multer.diskStorage({
@@ -791,7 +886,7 @@ const storage = multer.diskStorage({
     const baseName = path.basename(file.originalname, ext);
     const uniqueName = `${uuidv4()}_${baseName}${ext}`;
     cb(null, uniqueName);
-  }
+  },
 });
 
 const upload = multer({
@@ -800,7 +895,7 @@ const upload = multer({
     fileSize: 200 * 1024 * 1024, // 200MB file size limit
     fieldSize: 200 * 1024 * 1024, // 200MB field size limit (for non-file fields)
     files: 1, // Limit to 1 file per upload
-    fields: 10 // Limit to 10 non-file fields
+    fields: 10, // Limit to 10 non-file fields
   },
 });
 
@@ -863,151 +958,228 @@ app.post("/api/tag/followup", handleTagFollowUp);
 app.post("/api/certificates/generate-and-send", async (req, res) => {
   const requestId = uuidv4().substring(0, 8);
   console.log(`[Certificates][${requestId}] ===== NEW REQUEST STARTED =====`);
-  console.log(`[Certificates][${requestId}] Request body:`, JSON.stringify(req.body, null, 2));
-  
+  console.log(
+    `[Certificates][${requestId}] Request body:`,
+    JSON.stringify(req.body, null, 2)
+  );
+
   try {
     const { phoneNumber, formId, formTitle, companyId } = req.body;
-    
+
     // Validate required fields
     if (!phoneNumber || !formId || !formTitle || !companyId) {
-      console.log(`[Certificates][${requestId}] ❌ Validation failed - missing required fields`);
-      console.log(`[Certificates][${requestId}] phoneNumber: ${phoneNumber ? '✓' : '❌'}`);
-      console.log(`[Certificates][${requestId}] formId: ${formId ? '✓' : '❌'}`);
-      console.log(`[Certificates][${requestId}] formTitle: ${formTitle ? '✓' : '❌'}`);
-      console.log(`[Certificates][${requestId}] companyId: ${companyId ? '✓' : '❌'}`);
-      
+      console.log(
+        `[Certificates][${requestId}] ❌ Validation failed - missing required fields`
+      );
+      console.log(
+        `[Certificates][${requestId}] phoneNumber: ${phoneNumber ? "✓" : "❌"}`
+      );
+      console.log(
+        `[Certificates][${requestId}] formId: ${formId ? "✓" : "❌"}`
+      );
+      console.log(
+        `[Certificates][${requestId}] formTitle: ${formTitle ? "✓" : "❌"}`
+      );
+      console.log(
+        `[Certificates][${requestId}] companyId: ${companyId ? "✓" : "❌"}`
+      );
+
       return res.status(400).json({
         success: false,
-        error: 'Missing required fields',
-        details: 'phoneNumber, formId, formTitle, and companyId are required'
+        error: "Missing required fields",
+        details: "phoneNumber, formId, formTitle, and companyId are required",
       });
     }
-    
+
     console.log(`[Certificates][${requestId}] ✅ All required fields present`);
-    console.log(`[Certificates][${requestId}] Processing request for phone: ${phoneNumber}, form: ${formId}, company: ${companyId}`);
-    
+    console.log(
+      `[Certificates][${requestId}] Processing request for phone: ${phoneNumber}, form: ${formId}, company: ${companyId}`
+    );
+
     // Get WhatsApp client for the company
-    console.log(`[Certificates][${requestId}] 🔍 Checking WhatsApp client for company: ${companyId}`);
+    console.log(
+      `[Certificates][${requestId}] 🔍 Checking WhatsApp client for company: ${companyId}`
+    );
     const botData = botMap.get(companyId);
-    console.log(`[Certificates][${requestId}] Bot data found:`, botData ? '✓' : '❌');
-    
+    console.log(
+      `[Certificates][${requestId}] Bot data found:`,
+      botData ? "✓" : "❌"
+    );
+
     let whatsappClient = null;
     let hasWhatsAppClient = false;
-    
+
     if (botData && botData[0]?.client) {
       whatsappClient = botData[0].client;
       hasWhatsAppClient = true;
-      console.log(`[Certificates][${requestId}] ✅ WhatsApp client found for company ${companyId}`);
+      console.log(
+        `[Certificates][${requestId}] ✅ WhatsApp client found for company ${companyId}`
+      );
       console.log(`[Certificates][${requestId}] Client info:`, {
         hasInfo: Boolean(whatsappClient.info),
-        isReady: Boolean(whatsappClient.info)
+        isReady: Boolean(whatsappClient.info),
       });
     } else {
-      console.log(`[Certificates][${requestId}] ⚠️ No WhatsApp client found for company ${companyId}`);
+      console.log(
+        `[Certificates][${requestId}] ⚠️ No WhatsApp client found for company ${companyId}`
+      );
       console.log(`[Certificates][${requestId}] Bot data structure:`, {
         exists: Boolean(botData),
         isArray: Array.isArray(botData),
         length: botData ? botData.length : 0,
-        hasClient: botData && botData[0] ? Boolean(botData[0].client) : false
+        hasClient: botData && botData[0] ? Boolean(botData[0].client) : false,
       });
-      console.log(`[Certificates][${requestId}] Will save certificate to folder only`);
+      console.log(
+        `[Certificates][${requestId}] Will save certificate to folder only`
+      );
     }
-    
+
     // Fetch participant data from CSV
-    console.log(`[Certificates][${requestId}] 📊 Fetching participant data from CSV...`);
+    console.log(
+      `[Certificates][${requestId}] 📊 Fetching participant data from CSV...`
+    );
     const participants = await fetchParticipantData();
-    console.log(`[Certificates][${requestId}] ✅ Fetched ${participants.length} participants from CSV`);
-    
+    console.log(
+      `[Certificates][${requestId}] ✅ Fetched ${participants.length} participants from CSV`
+    );
+
     // Find participant by phone number
-    console.log(`[Certificates][${requestId}] 🔍 Searching for participant with phone: ${phoneNumber}`);
+    console.log(
+      `[Certificates][${requestId}] 🔍 Searching for participant with phone: ${phoneNumber}`
+    );
     const participant = findParticipantByPhone(participants, phoneNumber);
-    if (!participant) {
-      console.log(`[Certificates][${requestId}] ❌ Participant not found in CSV data`);
-      console.log(`[Certificates][${requestId}] Available phone fields in first participant:`, participants.length > 0 ? Object.keys(participants[0]).filter(key => key.toLowerCase().includes('phone') || key.toLowerCase().includes('mobile') || key.toLowerCase().includes('contact')) : 'No participants');
-      console.log(`[Certificates][${requestId}] Sample participants (first 3):`, participants.slice(0, 3).map(p => ({
-        name: p['Full Name'] || p['Nama'] || p['Full Namea'] || 'Unknown',
-        phone: p['Phone'] || p['Mobile Number'] || p['Mobile'] || p['Phone Number'] || p['Contact'] || 'No phone'
-      })));
       
-      return res.status(404).json({
-        success: false,
-        error: 'Participant not found in CSV data',
-        details: `No participant found with phone number ${phoneNumber}`
-      });
+    if (!participant || participant._notFound) {
+      console.log(
+        `[Certificates][${requestId}] ❌ Participant not found in any data source`
+      );
+        
+     
     }
+  
+    // Extract participant information - FIXED to use the correct field names
+    const participantName = participant.name || "Unknown Participant";
     
-    // Extract participant information
-    const participantName = participant['Full Name'] || participant['Nama'] || participant['Full Namea'] || 'Participant';
-    const programDate = participant['Program Date & Time'] || '14 August 2025';
-    
-    console.log(`[Certificates][${requestId}] ✅ Participant found: ${participantName}`);
+    // Extract program date from event_name or use event_date
+    let programDate = "Unknown Date";
+    if (participant.event_name) {
+      // Extract date from event name like "21 August 2025 (Thursday) – AI Immersion..."
+      const dateMatch = participant.event_name.match(/(\d{1,2}\s+\w+\s+\d{4})/);
+      if (dateMatch) {
+        programDate = dateMatch[1];
+      } else {
+        programDate = participant.event_name;
+      }
+    } else if (participant.event_date) {
+      // If event_date is available, format it nicely
+      const eventDate = new Date(participant.event_date);
+      if (!isNaN(eventDate.getTime())) {
+        programDate = eventDate.toLocaleDateString('en-GB', {
+          day: 'numeric',
+          month: 'long',
+          year: 'numeric'
+        });
+      }
+    }
+
+    console.log(
+      `[Certificates][${requestId}] ✅ Participant found: ${participantName}`
+    );
     console.log(`[Certificates][${requestId}] 📅 Program date: ${programDate}`);
     console.log(`[Certificates][${requestId}] 📋 Participant data:`, {
       name: participantName,
       date: programDate,
       allFields: Object.keys(participant),
-      phoneFields: Object.entries(participant).filter(([key, value]) => 
-        key.toLowerCase().includes('phone') || key.toLowerCase().includes('mobile') || key.toLowerCase().includes('contact')
-      )
+      phoneFields: Object.entries(participant).filter(
+        ([key, value]) =>
+          key.toLowerCase().includes("phone") ||
+          key.toLowerCase().includes("mobile") ||
+          key.toLowerCase().includes("contact")
+      ),
     });
-    
+
     // Generate certificate PDF
-    console.log(`[Certificates][${requestId}] 🎨 Generating certificate PDF for ${participantName}...`);
+    console.log(
+      `[Certificates][${requestId}] 🎨 Generating certificate PDF for ${participantName}...`
+    );
     const startTime = Date.now();
     const pdfBuffer = await generateCertificate(participantName, programDate);
     const generationTime = Date.now() - startTime;
-    console.log(`[Certificates][${requestId}] ✅ Generated certificate PDF in ${generationTime}ms`);
-    console.log(`[Certificates][${requestId}] 📏 PDF buffer size: ${pdfBuffer.length} bytes`);
-    
+    console.log(
+      `[Certificates][${requestId}] ✅ Generated certificate PDF in ${generationTime}ms`
+    );
+    console.log(
+      `[Certificates][${requestId}] 📏 PDF buffer size: ${pdfBuffer.length} bytes`
+    );
+
     // Create certificates directory if it doesn't exist
-    console.log(`[Certificates][${requestId}] 📁 Creating certificates directory...`);
-    const certificatesDir = path.join(__dirname, 'generated_certificates');
+    console.log(
+      `[Certificates][${requestId}] 📁 Creating certificates directory...`
+    );
+    const certificatesDir = path.join(__dirname, "generated_certificates");
     if (!fs.existsSync(certificatesDir)) {
       await fsPromises.mkdir(certificatesDir, { recursive: true });
-      console.log(`[Certificates][${requestId}] ✅ Created certificates directory: ${certificatesDir}`);
+      console.log(
+        `[Certificates][${requestId}] ✅ Created certificates directory: ${certificatesDir}`
+      );
     } else {
-      console.log(`[Certificates][${requestId}] ✅ Certificates directory already exists: ${certificatesDir}`);
+      console.log(
+        `[Certificates][${requestId}] ✅ Certificates directory already exists: ${certificatesDir}`
+      );
     }
-    
+
     // Save certificate to generated_certificates folder
     const certificateId = uuidv4();
-    const filename = `${participantName.replace(/\s+/g, '_')}_FUTUREX.AI_2025_Certificate.pdf`;
+    const filename = `${participantName.replace(
+      /\s+/g,
+      "_"
+    )}_FUTUREX.AI_2025_Certificate.pdf`;
     const certificatePath = path.join(certificatesDir, filename);
-    
-    console.log(`[Certificates][${requestId}] 💾 Saving certificate to: ${certificatePath}`);
+
+    console.log(
+      `[Certificates][${requestId}] �� Saving certificate to: ${certificatePath}`
+    );
     await fsPromises.writeFile(certificatePath, pdfBuffer);
-    console.log(`[Certificates][${requestId}] ✅ Certificate saved successfully`);
-    
+    console.log(
+      `[Certificates][${requestId}] ✅ Certificate saved successfully`
+    );
+
     // Verify file was created
     const fileStats = await fsPromises.stat(certificatePath);
-    console.log(`[Certificates][${requestId}] 📊 File verification:`, {
+    console.log(`[Certificates][${requestId}] �� File verification:`, {
       exists: true,
       size: fileStats.size,
       created: fileStats.birthtime,
-      modified: fileStats.mtime
+      modified: fileStats.mtime,
     });
-    
-    let responseMessage = 'Certificate generated successfully';
-    let whatsappStatus = 'Not sent (no WhatsApp client)';
-    
+
+    let responseMessage = "Certificate generated successfully";
+    let whatsappStatus = "Not sent (no WhatsApp client)";
+
     // If WhatsApp client is available, send the message and certificate
     if (hasWhatsAppClient && whatsappClient) {
-      console.log(`[Certificates][${requestId}] 📱 WhatsApp client available, proceeding with sending...`);
-      
+      console.log(
+        `[Certificates][${requestId}] 📱 WhatsApp client available, proceeding with sending...`
+      );
+
       try {
         // Format phone number for WhatsApp
-        console.log(`[Certificates][${requestId}] 🔢 Formatting phone number: ${phoneNumber}`);
+        console.log(
+          `[Certificates][${requestId}] 🔢 Formatting phone number: ${phoneNumber}`
+        );
         const formattedPhone = formatPhoneForWhatsApp(phoneNumber);
-        console.log(`[Certificates][${requestId}] ✅ Formatted phone: ${formattedPhone}`);
-        
+        console.log(
+          `[Certificates][${requestId}] ✅ Formatted phone: ${formattedPhone}`
+        );
+
         // Prepare WhatsApp message content
         const thankYouText = `Dear ${participantName}
 
 Thank You for Attending FUTUREX.AI 2025
 
-On behalf of the organizing team, we would like to extend our heartfelt thanks for your participation in FUTUREX.AI 2025 held on 14 August 2025.
+On behalf of the organizing team, we would like to extend our heartfelt thanks for your participation in FUTUREX.AI 2025 held on 21 August 2025.
 
-Your presence and engagement in the Digitalpreneur Create an Online Course with AI session greatly contributed to the success of the event.
+Your presence and engagement in the AI Immersion - Automate It. Analyse It. Storytell It.  greatly contributed to the success of the event.
 
 We hope the experience was insightful and inspiring as we continue to explore how artificial intelligence and robotics can shape the future.
 
@@ -1018,51 +1190,71 @@ Please find your digital certificate of participation attached.
 Warm regards,
 Co9P AI Chatbot`;
 
-        console.log(`[Certificates][${requestId}] 📤 Sending WhatsApp message to ${formattedPhone}`);
-        console.log(`[Certificates][${requestId}] 📝 Message content:`, thankYouText);
-        
+        console.log(
+          `[Certificates][${requestId}] 📤 Sending WhatsApp message to ${formattedPhone}`
+        );
+        console.log(
+          `[Certificates][${requestId}] 📝 Message content:`,
+          thankYouText
+        );
+
         // Send WhatsApp message
         const messageStartTime = Date.now();
         await whatsappClient.sendMessage(formattedPhone, thankYouText);
         const messageTime = Date.now() - messageStartTime;
-        console.log(`[Certificates][${requestId}] ✅ WhatsApp message sent in ${messageTime}ms to ${participantName}`);
-        
+        console.log(
+          `[Certificates][${requestId}] ✅ WhatsApp message sent in ${messageTime}ms to ${participantName}`
+        );
+
         // Send certificate as document
-        console.log(`[Certificates][${requestId}] 📎 Preparing to send certificate document...`);
+        console.log(
+          `[Certificates][${requestId}] 📎 Preparing to send certificate document...`
+        );
         const media = MessageMedia.fromFilePath(certificatePath);
         console.log(`[Certificates][${requestId}] 📎 Media prepared:`, {
           filename: filename,
           path: certificatePath,
-          mediaType: media.mimetype
+          mediaType: media.mimetype,
         });
-        
+
         const documentStartTime = Date.now();
-        await whatsappClient.sendMessage(formattedPhone, media, { 
-          caption: 'Certificate of Participation',
-          filename: filename
+        await whatsappClient.sendMessage(formattedPhone, media, {
+          caption: "Certificate of Participation",
+          filename: filename,
         });
         const documentTime = Date.now() - documentStartTime;
-        console.log(`[Certificates][${requestId}] ✅ Certificate document sent in ${documentTime}ms to ${participantName}`);
-        
-        responseMessage = 'Certificate generation and WhatsApp sending completed successfully';
-        whatsappStatus = 'Sent successfully';
-        console.log(`[Certificates][${requestId}] 🎉 WhatsApp sending completed successfully`);
-        
+        console.log(
+          `[Certificates][${requestId}] ✅ Certificate document sent in ${documentTime}ms to ${participantName}`
+        );
+
+        responseMessage =
+          "Certificate generation and WhatsApp sending completed successfully";
+        whatsappStatus = "Sent successfully";
+        console.log(
+          `[Certificates][${requestId}] 🎉 WhatsApp sending completed successfully`
+        );
       } catch (whatsappError) {
-        console.error(`[Certificates][${requestId}] ❌ WhatsApp sending failed:`, whatsappError);
+        console.error(
+          `[Certificates][${requestId}] ❌ WhatsApp sending failed:`,
+          whatsappError
+        );
         console.error(`[Certificates][${requestId}] Error details:`, {
           message: whatsappError.message,
           stack: whatsappError.stack,
-          name: whatsappError.name
+          name: whatsappError.name,
         });
         whatsappStatus = `Failed: ${whatsappError.message}`;
       }
     } else {
-      console.log(`[Certificates][${requestId}] ⏭️ Skipping WhatsApp sending - no client available`);
+      console.log(
+        `[Certificates][${requestId}] ⏭️ Skipping WhatsApp sending - no client available`
+      );
     }
-    
+
     // Return success response
-    console.log(`[Certificates][${requestId}] 📤 Sending success response to client`);
+    console.log(
+      `[Certificates][${requestId}] 📤 Sending success response to client`
+    );
     console.log(`[Certificates][${requestId}] Response data:`, {
       success: true,
       message: responseMessage,
@@ -1071,9 +1263,9 @@ Co9P AI Chatbot`;
       certificatePath,
       whatsappStatus,
       companyId,
-      hasWhatsAppClient
+      hasWhatsAppClient,
     });
-    
+
     res.json({
       success: true,
       message: responseMessage,
@@ -1082,194 +1274,495 @@ Co9P AI Chatbot`;
       certificatePath,
       whatsappStatus,
       companyId,
-      hasWhatsAppClient
+      hasWhatsAppClient,
     });
-    
-    console.log(`[Certificates][${requestId}] ===== REQUEST COMPLETED SUCCESSFULLY =====`);
-    
+
+    console.log(
+      `[Certificates][${requestId}] ===== REQUEST COMPLETED SUCCESSFULLY =====`
+    );
   } catch (error) {
     console.error(`[Certificates][${requestId}] ❌ CRITICAL ERROR:`, error);
     console.error(`[Certificates][${requestId}] Error details:`, {
       message: error.message,
       stack: error.stack,
       name: error.name,
-      code: error.code
+      code: error.code,
     });
-    
+
     res.status(500).json({
       success: false,
-      error: 'Internal server error',
-      details: error.message
+      error: "Internal server error",
+      details: error.message,
     });
-    
+
     console.log(`[Certificates][${requestId}] ===== REQUEST FAILED =====`);
   }
 });
 
 // Helper functions for certificate generation
+// Helper functions for certificate generation
 async function fetchParticipantData() {
+  const allParticipants = [];
+  
   try {
-    console.log('[Certificates] 📊 Fetching CSV data from Google Sheets...');
-    const response = await axios.get('https://docs.google.com/spreadsheets/d/e/2PACX-1vQ9Wlb5GVpeT1FUavQdufnLukU1oyRWh1AaKKSJlGoFAAgjqxIh4JeHcNkK58JHT4BBP_qrkQacDtYc/pub?output=csv');
-    console.log('[Certificates] ✅ CSV data fetched successfully');
-    console.log('[Certificates] 📏 Response size:', response.data.length, 'characters');
+    console.log("[Certificates] 📊 Fetching participant data from multiple sources...");
     
-    const csvData = response.data;
-    
-    // Parse CSV data (simple parsing for now)
-    console.log('[Certificates] 🔍 Parsing CSV data...');
-    const lines = csvData.split('\n');
-    console.log('[Certificates] 📊 Total lines in CSV:', lines.length);
-    
-    const headers = lines[0].split(',').map(h => h.trim().replace(/"/g, ''));
-    console.log('[Certificates] 📋 CSV headers:', headers);
-    
-    const participants = [];
-    
-    for (let i = 1; i < lines.length; i++) {
-      if (lines[i].trim()) {
-        const values = lines[i].split(',').map(v => v.trim().replace(/"/g, ''));
-        const participant = {};
-        headers.forEach((header, index) => {
-          participant[header] = values[index] || '';
-        });
-        participants.push(participant);
-      }
-    }
-    
-    console.log('[Certificates] ✅ CSV parsing completed');
-    console.log('[Certificates] 👥 Total participants parsed:', participants.length);
-    
-    return participants;
-  } catch (error) {
-    console.error('[Certificates] ❌ Error fetching participant data:', error);
-    console.error('[Certificates] Error details:', {
-      message: error.message,
-      code: error.code,
-      response: error.response ? {
-        status: error.response.status,
-        statusText: error.response.statusText
-      } : 'No response'
-    });
-    throw new Error('Failed to fetch participant data from CSV');
-  }
-}
-
-function findParticipantByPhone(participants, phoneNumber) {
-  console.log('[Certificates] 🔍 Searching for participant with phone:', phoneNumber);
-  
-  // Clean phone number for comparison
-  const cleanPhone = phoneNumber.replace(/\D/g, '');
-  console.log('[Certificates] 🧹 Cleaned phone number:', cleanPhone);
-  
-  for (let i = 0; i < participants.length; i++) {
-    const participant = participants[i];
-    // Check various possible phone number fields
-    const possiblePhoneFields = ['Phone', 'Mobile Number', 'Mobile', 'Phone Number', 'Contact'];
-    
-    for (const field of possiblePhoneFields) {
-      if (participant[field]) {
-        const participantPhone = participant[field].replace(/\D/g, '');
-        console.log(`[Certificates] 🔍 Checking participant ${i + 1}, field '${field}': ${participant[field]} -> ${participantPhone}`);
+    // 1. Fetch from Neon database
+    try {
+      const baseUrl = process.env.BASE_URL || "https://juta-dev.ngrok.dev";
+      const companyId = "0380";
+      
+      const [participantsResponse, enrolleesResponse, eventsResponse] = await Promise.allSettled([
+        axios.get(`${baseUrl}/api/participants?company_id=${companyId}`),
+        axios.get(`${baseUrl}/api/enrollees?company_id=${companyId}&limit=5000`), // Set high limit to get all enrollees
+        axios.get(`${baseUrl}/api/events?company_id=${companyId}`)
+      ]);
+      
+      if (participantsResponse.status === 'fulfilled' && enrolleesResponse.status === 'fulfilled' && eventsResponse.status === 'fulfilled') {
+        console.log("[Certificates] ✅ Successfully fetched from Neon database");
         
-        if (participantPhone === cleanPhone || participantPhone.endsWith(cleanPhone.slice(-9))) {
-          console.log('[Certificates] ✅ Participant found!');
-          console.log('[Certificates] 📋 Participant data:', {
-            index: i,
-            name: participant['Full Name'] || participant['Nama'] || participant['Full Namea'] || 'Unknown',
-            phone: participant[field],
-            matchedField: field
-          });
-          return participant;
+        const participantsData = participantsResponse.value.data;
+        const enrolleesData = enrolleesResponse.value.data;
+        const eventsData = eventsResponse.value.data;
+        
+        console.log("[Certificates] 🔍 Database response structure check:");
+        console.log("- Participants type:", typeof participantsData);
+        console.log("- Enrollees type:", typeof enrolleesData);
+        console.log("- Events type:", typeof eventsData);
+        
+        // Extract arrays from the response data
+        const participantsArray = participantsData.participants || participantsData.rows || participantsData.data || [];
+        const enrolleesArray = enrolleesData.enrollees || enrolleesData.rows || enrolleesData.data || [];
+        const eventsArray = eventsData.events || eventsData.rows || eventsData.data || [];
+        
+        console.log("[Certificates] 📊 Parsed arrays: participants=" + participantsArray.length + ", enrollees=" + enrolleesArray.length + ", events=" + eventsArray.length);
+        
+        // Process participants and join with enrollee and event data
+        const dbParticipants = participantsArray
+          .filter(participant => participant && participant.enrollee_id && participant.event_id)
+          .map(participant => {
+            const enrollee = enrolleesArray.find(e => e.id === participant.enrollee_id);
+            const event = eventsArray.find(ev => ev.id === participant.event_id);
+            
+            if (enrollee && event) {
+              return {
+                name: enrollee.name || "Unknown",
+                phone: enrollee.mobile_number || enrollee.phone || "",
+                email: enrollee.email || "",
+                organisation: enrollee.organisation || "",
+                event_name: event.name || "Unknown Event",
+                event_date: event.start_date || "",
+                source: "database",
+                priority: 2
+              };
+            }
+            return null;
+          })
+          .filter(p => p !== null && p.name && p.name !== "Unknown" && p.phone && isValidPhoneNumber(p.phone));
+        
+        allParticipants.push(...dbParticipants);
+        console.log("[Certificates] 📊 Database: " + dbParticipants.length + " participants");
+        
+        // ADD THIS: Also check enrollees who might not have participant records
+        const orphanedEnrollees = enrolleesArray
+          .filter(enrollee => {
+            // Check if this enrollee has any participant record
+            const hasParticipantRecord = participantsArray.some(p => p.enrollee_id === enrollee.id);
+            return !hasParticipantRecord && enrollee.name && enrollee.mobile_number;
+          })
+          .map(enrollee => {
+            // Find any event that might be relevant (you might want to adjust this logic)
+            const relevantEvent = eventsArray.find(event => 
+              event.name && event.name.includes("AI Immersion")
+            ) || eventsArray[0]; // Fallback to first event
+            
+            return {
+              name: enrollee.name,
+              phone: enrollee.mobile_number || enrollee.phone || "",
+              email: enrollee.email || "",
+              organisation: enrollee.organisation || "",
+              event_name: relevantEvent ? relevantEvent.name : "Unknown Event",
+              event_date: relevantEvent ? relevantEvent.start_date : "",
+              source: "database_orphaned",
+              priority: 2
+            };
+          })
+          .filter(p => p.phone && isValidPhoneNumber(p.phone));
+        
+        allParticipants.push(...orphanedEnrollees);
+        console.log("[Certificates] 📊 Database: " + dbParticipants.length + " participants + " + orphanedEnrollees.length + " orphaned = " + (dbParticipants.length + orphanedEnrollees.length) + " total");
+        
+        // Debug: Check if NOOR HASANAH is in the results
+        if (orphanedEnrollees.length > 0) {
+          const targetParticipant = orphanedEnrollees.find(p => p.phone === "60173282776" || p.phone === "+60173282776");
+          if (targetParticipant) {
+            console.log(`[Certificates] �� Found NOOR HASANAH in database:`, targetParticipant);
+          } else {
+            console.log(`[Certificates] ❌ NOOR HASANAH NOT found in database results`);
+            console.log(`[Certificates] 🔍 Available phone numbers:`, allDbParticipants.map(p => p.phone));
+          }
         }
       }
+    } catch (error) {
+      console.log("[Certificates] ❌ Database fetch error:", error.message);
+    }
+    
+    // 2. Fetch from CSV URL if configured
+    if (process.env.CSV_URL) {
+      try {
+        console.log("[Certificates] 🔍 Fetching CSV from:", process.env.CSV_URL);
+        const csvResponse = await axios.get(process.env.CSV_URL);
+        const csvData = csvResponse.data;
+        
+        console.log("[Certificates] 🔍 CSV response type:", typeof csvData);
+        console.log("[Certificates] 🔍 CSV response length:", csvData ? csvData.length : 'null');
+        console.log("[Certificates] 🔍 CSV first 200 chars:", csvData ? csvData.substring(0, 200) : 'null');
+        
+        if (csvData && typeof csvData === 'string') {
+          // Parse CSV string into array of objects
+          const csvLines = csvData.trim().split('\n');
+          const headers = csvLines[0].split(',').map(h => h.replace(/"/g, '').trim());
+          
+          const csvParticipants = csvLines.slice(1) // Skip header row
+            .filter(line => line.trim()) // Remove empty lines
+            .map(line => {
+              const values = line.split(',').map(v => v.replace(/"/g, '').trim());
+              const row = {};
+              headers.forEach((header, index) => {
+                row[header] = values[index] || '';
+              });
+              
+              return {
+                name: row["Full Name"] || row["Nama"] || row["Name"] || "Unknown",
+                phone: row["Phone"] || row["Mobile Number"] || row["Contact Number"] || "",
+                email: row["Email"] || row["email"] || "",
+                organisation: row["Organisation"] || row["Company"] || row["organisation"] || "",
+                event_name: row["Program Date & Time"] || row["Event"] || "Unknown Event",
+                event_date: row["Date"] || "",
+                source: "csv",
+                priority: 3
+              };
+            });
+          
+          allParticipants.push(...csvParticipants);
+          console.log(`[Certificates] 📊 CSV: ${csvParticipants.length} participants`);
+        }
+      } catch (error) {
+        console.log("[Certificates] ❌ CSV fetch error:", error.message);
+      }
+    }
+    
+    // 3. Fetch from registration form responses
+    try {
+      const registrationFormId = "1f666a83-9825-4d26-af03-edc2c0aeb39e";
+      const registrationUrl = `${process.env.BASE_URL || "https://juta-dev.ngrok.dev"}/api/feedback-responses/form/${registrationFormId}`;
+      
+      const registrationResponse = await axios.get(registrationUrl);
+      
+      if (registrationResponse.data && registrationResponse.data.success && registrationResponse.data.feedbackResponses) {
+        const registrationParticipants = registrationResponse.data.feedbackResponses
+          .filter(response => response && response.phone_number && response.responses)
+          .map(response => {
+            try {
+              const responses = typeof response.responses === 'string' ? JSON.parse(response.responses) : response.responses;
+              
+              let name = "";
+              let eventName = "";
+              let organisation = "";
+              let email = "";
+              
+              if (Array.isArray(responses)) {
+                responses.forEach(item => {
+                  if (item.question && item.answer) {
+                    if (item.question.includes("Full Name") || item.question.includes("Nama")) {
+                      name = item.answer;
+                    } else if (item.question.includes("Programs To Register") || item.question.includes("Event")) {
+                      eventName = item.answer;
+                    } else if (item.question.includes("Organisation") || item.question.includes("Company")) {
+                      organisation = item.answer;
+                    } else if (item.question.includes("Email")) {
+                      email = item.answer;
+                    }
+                  }
+                });
+              }
+              
+              return {
+                name: name || "Unknown",
+                phone: response.phone_number || "",
+                email: email || "",
+                organisation: organisation || "",
+                event_name: eventName || "Unknown Event",
+                event_date: response.submitted_at || "",
+                source: "registration_form",
+                priority: 1
+              };
+            } catch (parseError) {
+              return null;
+            }
+          })
+          .filter(p => p !== null && p.name && p.name !== "Unknown" && p.phone && isValidPhoneNumber(p.phone));
+        
+        allParticipants.push(...registrationParticipants);
+        console.log(`[Certificates] �� Registration form: ${registrationParticipants.length} participants`);
+      }
+    } catch (error) {
+      console.log("[Certificates] ❌ Registration form fetch error:", error.message);
+    }
+    
+    // 4. Deduplicate participants
+    console.log(`[Certificates] 🔄 Deduplicating ${allParticipants.length} total participants...`);
+    
+    const uniqueParticipants = [];
+    const seenPhones = new Set();
+    const seenNames = new Set();
+    
+    // Sort by priority (1 = registration form, 2 = database, 3 = CSV)
+    allParticipants.sort((a, b) => a.priority - b.priority);
+    
+    allParticipants.forEach(participant => {
+      const phone = cleanPhoneNumber(participant.phone);
+      const name = participant.name.toLowerCase().trim();
+      
+      if (!seenPhones.has(phone) && !seenNames.has(name)) {
+        seenPhones.add(phone);
+        seenNames.add(name);
+        uniqueParticipants.push(participant);
+      }
+    });
+    
+    console.log(`[Certificates] 👥 Final unique participants: ${uniqueParticipants.length}`);
+    
+    // Log data sources used
+    const sourceCounts = {};
+    uniqueParticipants.forEach(p => {
+      sourceCounts[p.source] = (sourceCounts[p.source] || 0) + 1;
+    });
+    console.log(`[Certificates] 📊 Data sources:`, sourceCounts);
+    
+    return uniqueParticipants;
+    
+  } catch (error) {
+    console.log("[Certificates] ❌ Error in fetchParticipantData:", error.message);
+    return [];
+  }
+}
+// Helper function to validate phone numbers
+// Helper function to validate phone numbers
+function isValidPhoneNumber(phone) {
+  if (!phone || typeof phone !== 'string') return false;
+  
+  // Remove all non-digit characters
+  const cleanPhone = phone.replace(/\D/g, '');
+  
+  // Check if it's a valid Malaysian phone number (10-12 digits starting with 60)
+  if (cleanPhone.startsWith('60') && cleanPhone.length >= 10 && cleanPhone.length <= 12) {
+    return true;
+  }
+  
+  // Check if it's a valid phone number without country code (9-10 digits)
+  if (cleanPhone.length >= 9 && cleanPhone.length <= 10) {
+    return true;
+  }
+  
+  // Check if it's a valid phone number with +60 prefix (11-13 characters including +)
+  if (phone.startsWith('+60') && phone.length >= 11 && phone.length <= 13) {
+    return true;
+  }
+  
+  return false;
+}
+
+// Helper function to clean phone numbers for comparison
+// ... existing code ...
+
+// Update the cleanPhoneNumber function to handle this case better
+function cleanPhoneNumber(phone) {
+  if (!phone) return "";
+  
+  // Remove all non-digit characters
+  let cleaned = phone.toString().replace(/\D/g, '');
+  
+  // If it's 8-9 digits and doesn't start with 60, add 60 prefix
+  if (cleaned.length >= 8 && cleaned.length <= 9 && !cleaned.startsWith('60')) {
+    cleaned = '60' + cleaned;
+  }
+  
+  // If it's 10-12 digits and starts with 60, keep as is
+  if (cleaned.length >= 10 && cleaned.length <= 12 && cleaned.startsWith('60')) {
+    return cleaned;
+  }
+  
+  // If it's 11-13 characters and starts with +60, remove + and keep
+  if (phone.toString().startsWith('+60') && cleaned.length >= 11 && cleaned.length <= 13) {
+    return cleaned;
+  }
+  
+  return cleaned;
+}
+
+// Update the findParticipantByPhone function to be more flexible
+function findParticipantByPhone(participants, phoneNumber) {
+  if (!participants || !phoneNumber) {
+    console.log("[Certificates] ❌ Invalid parameters for findParticipantByPhone");
+    return null;
+  }
+  
+  const targetPhone = cleanPhoneNumber(phoneNumber);
+  console.log(`[Certificates] 🔍 Searching for participant with phone: ${phoneNumber}`);
+  console.log(`[Certificates] 🧹 Cleaned phone number: ${targetPhone}`);
+  
+  // Try exact match first
+  let participant = participants.find(p => {
+    if (!p.phone) return false;
+    const cleanedPhone = cleanPhoneNumber(p.phone);
+    return cleanedPhone === targetPhone;
+  });
+  
+  if (participant) {
+    console.log(`[Certificates] ✅ Found exact match:`, participant);
+    return participant;
+  }
+  
+  // Try partial match (remove 60 prefix if present)
+  if (targetPhone.startsWith('60') && targetPhone.length > 10) {
+    const withoutPrefix = targetPhone.substring(2);
+    participant = participants.find(p => {
+      if (!p.phone) return false;
+      const cleanedPhone = cleanPhoneNumber(p.phone);
+      return cleanedPhone === withoutPrefix || cleanedPhone === targetPhone;
+    });
+    
+    if (participant) {
+      console.log(`[Certificates] ✅ Found partial match (without 60 prefix):`, participant);
+      return participant;
     }
   }
   
-  console.log('[Certificates] ❌ No participant found with phone number:', phoneNumber);
+  // Try adding 60 prefix if not present
+  if (!targetPhone.startsWith('60') && targetPhone.length >= 8 && targetPhone.length <= 9) {
+    const withPrefix = '60' + targetPhone;
+    participant = participants.find(p => {
+      if (!p.phone) return false;
+      const cleanedPhone = cleanPhoneNumber(p.phone);
+      return cleanedPhone === withPrefix;
+    });
+    
+    if (participant) {
+      console.log(`[Certificates] ✅ Found match with added 60 prefix:`, participant);
+      return participant;
+    }
+  }
+  
+  console.log(`[Certificates] ❌ No participant found for phone: ${phoneNumber}`);
   return null;
 }
 
+// ... existing code ...
 function formatPhoneForWhatsApp(phoneNumber) {
-  console.log('[Certificates] 🔢 Formatting phone number for WhatsApp:', phoneNumber);
-  
+  console.log(
+    "[Certificates] 🔢 Formatting phone number for WhatsApp:",
+    phoneNumber
+  );
+
   // Remove all non-digits
-  const cleanPhone = phoneNumber.replace(/\D/g, '');
-  console.log('[Certificates] 🧹 Cleaned phone number:', cleanPhone);
-  
+  const cleanPhone = phoneNumber.replace(/\D/g, "");
+  console.log("[Certificates] 🧹 Cleaned phone number:", cleanPhone);
+
   // Ensure it starts with 6 (Malaysia country code)
   let formattedPhone = cleanPhone;
-  if (!formattedPhone.startsWith('6')) {
-    formattedPhone = '6' + formattedPhone;
-    console.log('[Certificates] 🌍 Added Malaysia country code:', formattedPhone);
+  if (!formattedPhone.startsWith("6")) {
+    formattedPhone = "6" + formattedPhone;
+    console.log(
+      "[Certificates] 🌍 Added Malaysia country code:",
+      formattedPhone
+    );
   } else {
-    console.log('[Certificates] ✅ Phone number already has Malaysia country code');
+    console.log(
+      "[Certificates] ✅ Phone number already has Malaysia country code"
+    );
   }
-  
+
   // Format as WhatsApp chat ID
   const whatsappFormat = `${formattedPhone}@c.us`;
-  console.log('[Certificates] 📱 WhatsApp format:', whatsappFormat);
-  
+  console.log("[Certificates] 📱 WhatsApp format:", whatsappFormat);
+
   return whatsappFormat;
 }
 
-async function generateCertificate(participantName, programDate = '14 August 2025') {
-  console.log('[Certificates] 🎨 Starting certificate generation...');
-  console.log('[Certificates] 📝 Participant name:', participantName);
-  console.log('[Certificates] 📅 Program date:', programDate);
-  
+async function generateCertificate(
+  participantName,
+  programDate = "21 August 2025"
+) {
+  console.log("[Certificates] 🎨 Starting certificate generation...");
+  console.log("[Certificates] 📝 Participant name:", participantName);
+  console.log("[Certificates] 📅 Program date:", programDate);
+
   try {
     // Try to load the certificate template
-    const templatePath = path.join(__dirname, 'public', 'certificates', 'cert.pdf');
-    console.log('[Certificates] 🔍 Looking for template at:', templatePath);
-    
+    const templatePath = path.join(
+      __dirname,
+      "public",
+      "certificates",
+      "cert.pdf"
+    );
+    console.log("[Certificates] 🔍 Looking for template at:", templatePath);
+
     let pdfDoc;
-    
+
     if (fs.existsSync(templatePath)) {
       // Load existing template
-      console.log('[Certificates] ✅ Template found, loading existing PDF...');
+      console.log("[Certificates] ✅ Template found, loading existing PDF...");
       const existingPdfBytes = await fs.promises.readFile(templatePath);
-      console.log('[Certificates] 📏 Template file size:', existingPdfBytes.length, 'bytes');
+      console.log(
+        "[Certificates] 📏 Template file size:",
+        existingPdfBytes.length,
+        "bytes"
+      );
       pdfDoc = await PDFDocument.load(existingPdfBytes);
-      console.log('[Certificates] ✅ Existing certificate template loaded successfully');
+      console.log(
+        "[Certificates] ✅ Existing certificate template loaded successfully"
+      );
     } else {
       // Create a new certificate from scratch
-      console.log('[Certificates] ⚠️ No template found, creating certificate from scratch...');
+      console.log(
+        "[Certificates] ⚠️ No template found, creating certificate from scratch..."
+      );
       pdfDoc = await PDFDocument.create();
       const page = pdfDoc.addPage([595.28, 841.89]); // A4 size
-      console.log('[Certificates] ✅ New certificate page created (A4 size)');
-      
+      console.log("[Certificates] ✅ New certificate page created (A4 size)");
+
       // Add basic certificate design
       const helvetica = await pdfDoc.embedFont(StandardFonts.Helvetica);
       const helveticaBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
-      
+
       // Title
-      page.drawText('Certificate of Participation', {
+      page.drawText("Certificate of Participation", {
         x: 150,
         y: 750,
         size: 24,
         font: helveticaBold,
         color: rgb(0, 0, 0),
       });
-      
+
       // Subtitle
-      page.drawText('FUTUREX.AI 2025', {
+      page.drawText("FUTUREX.AI 2025", {
         x: 200,
         y: 720,
         size: 18,
         font: helveticaBold,
         color: rgb(0, 0, 0),
       });
-      
+
       // Description
-      page.drawText('This is to certify that', {
+      page.drawText("This is to certify that", {
         x: 200,
         y: 650,
         size: 14,
         font: helvetica,
         color: rgb(0, 0, 0),
       });
-      
+
       // Participant name (centered)
       const nameWidth = helveticaBold.widthOfTextAtSize(participantName, 18);
       const nameX = (595.28 - nameWidth) / 2;
@@ -1280,63 +1773,69 @@ async function generateCertificate(participantName, programDate = '14 August 202
         font: helveticaBold,
         color: rgb(0, 0, 0),
       });
-      
+
       // Event details
-      page.drawText('has successfully participated in the', {
+      page.drawText("has successfully participated in the", {
         x: 150,
         y: 550,
         size: 14,
         font: helvetica,
         color: rgb(0, 0, 0),
       });
-      
-      page.drawText('Digitalpreneur Create an Online Course with AI session', {
-        x: 120,
-        y: 530,
-        size: 14,
-        font: helvetica,
-        color: rgb(0, 0, 0),
-      });
-      
+
+      page.drawText(
+        "AI Immersion - Automate It. Analyse It. Storytell It.",
+        {
+          x: 120,
+          y: 530,
+          size: 14,
+          font: helvetica,
+          color: rgb(0, 0, 0),
+        }
+      );
+
       // Date
-      page.drawText(`held on ${programDate}`, {
+      page.drawText(`held on 21 August 2025`, {
         x: 200,
         y: 500,
         size: 14,
         font: helvetica,
         color: rgb(0, 0, 0),
       });
-      
+
       // Venue
-      page.drawText('Co9P Event Hall, Idea Tower 1, UPM-MTDC Technology Centre', {
-        x: 100,
-        y: 450,
-        size: 12,
-        font: helvetica,
-        color: rgb(0, 0, 0),
-      });
-      
+      page.drawText(
+        "Rashid Theaterette, Ground Floor, Idea Tower 1, UPM-MTDC Technology Centre",
+        {
+          x: 100,
+          y: 350,
+          size: 12,
+          font: helvetica,
+          color: rgb(0, 0, 0),
+        }
+      );
+
       // Location
-      page.drawText('Serdang Selangor', {
+      page.drawText("Serdang Selangor", {
         x: 250,
         y: 430,
         size: 12,
         font: helvetica,
         color: rgb(0, 0, 0),
       });
-      
+
       // Signature
-      page.drawText('Co9P AI Chatbot Team', {
+      page.drawText("Co9P AI Chatbot Team", {
         x: 200,
         y: 350,
         size: 12,
         font: helvetica,
         color: rgb(0, 0, 0),
       });
-      
+
       return await pdfDoc.save();
     }
-    
+
     const [page] = pdfDoc.getPages();
 
     // Embed built-in fonts
@@ -1361,14 +1860,14 @@ async function generateCertificate(participantName, programDate = '14 August 202
 
     // === Draw Event Details ===
     let subtitleY = 225;
-    
+
     // Helper to split text into lines that fit within a given width
     function splitTextToLines(text, font, fontSize, maxWidth) {
-      const words = text.split(' ');
+      const words = text.split(" ");
       const lines = [];
-      let currentLine = '';
+      let currentLine = "";
       for (const word of words) {
-        const testLine = currentLine ? currentLine + ' ' + word : word;
+        const testLine = currentLine ? currentLine + " " + word : word;
         const testWidth = font.widthOfTextAtSize(testLine, fontSize);
         if (testWidth > maxWidth && currentLine) {
           lines.push(currentLine);
@@ -1386,23 +1885,32 @@ async function generateCertificate(participantName, programDate = '14 August 202
     const subtitleMaxWidth = 500; // Increased width for your layout
 
     const subtitleLineHeight = 18; // Adjust for spacing between lines
-    let subtitleLines = splitTextToLines('Digitalpreneur Create an Online Course with AI', subtitleFont, subtitleFontSize, subtitleMaxWidth);
+    let subtitleLines = splitTextToLines(
+      "AI Immersion - Automate It. Analyse It. Storytell It.",
+      subtitleFont,
+      subtitleFontSize,
+      subtitleMaxWidth
+    );
     if (subtitleLines.length > 3) {
       // Truncate to 3 lines and add ellipsis to the last line
       const firstTwo = subtitleLines.slice(0, 2);
       let lastLine = subtitleLines[2];
       // If there are more lines, append ellipsis to the last visible line
       for (let i = 3; i < subtitleLines.length; i++) {
-        lastLine += ' ' + subtitleLines[i];
+        lastLine += " " + subtitleLines[i];
       }
       // Truncate lastLine to fit and add ellipsis
-      while (subtitleFont.widthOfTextAtSize(lastLine + '...', subtitleFontSize) > subtitleMaxWidth && lastLine.length > 0) {
+      while (
+        subtitleFont.widthOfTextAtSize(lastLine + "...", subtitleFontSize) >
+          subtitleMaxWidth &&
+        lastLine.length > 0
+      ) {
         lastLine = lastLine.slice(0, -1);
       }
-      lastLine = lastLine.trim() + '...';
+      lastLine = lastLine.trim() + "...";
       subtitleLines = [...firstTwo, lastLine];
     }
-    
+
     // Center each subtitle line within the content area (like participant name)
     const subtitleContentX = 315; // left edge of content area (same as participant name)
     const subtitleContentWidth = 500; // width of content area (same as participant name)
@@ -1418,14 +1926,14 @@ async function generateCertificate(participantName, programDate = '14 August 202
       });
       subtitleY -= subtitleLineHeight;
     }
-    
+
     // Add extra space if subtitle is 2 or more lines
     if (subtitleLines.length < 2) {
       subtitleY -= 8; // You can adjust this value for more/less space
     }
 
     // Date (medium font)
-    page.drawText('14 August 2025', {
+    page.drawText("21 August 2025", {
       x: 520,
       y: subtitleY,
       size: 14,
@@ -1434,7 +1942,7 @@ async function generateCertificate(participantName, programDate = '14 August 202
     });
 
     // Venue (small font)
-    page.drawText('Co9P Event Hall, Idea Tower 1, UPM-MTDC Technology Centre', {
+    page.drawText("Rashid Theaterette, Ground Floor, Idea Tower 1, UPM-MTDC Technology Centre", {
       x: 395,
       y: 172,
       size: 12,
@@ -1443,7 +1951,7 @@ async function generateCertificate(participantName, programDate = '14 August 202
     });
 
     // Location (small font)
-    page.drawText('Serdang Selangor', {
+    page.drawText("Serdang Selangor", {
       x: 520,
       y: 162,
       size: 12,
@@ -1452,23 +1960,24 @@ async function generateCertificate(participantName, programDate = '14 August 202
     });
 
     // Save PDF and return as buffer
-    console.log('[Certificates] 💾 Saving PDF document...');
+    console.log("[Certificates] 💾 Saving PDF document...");
     const pdfBytes = await pdfDoc.save();
-    console.log('[Certificates] ✅ PDF document saved successfully');
-    console.log('[Certificates] 📏 Final PDF size:', pdfBytes.length, 'bytes');
-    
+    console.log("[Certificates] ✅ PDF document saved successfully");
+    console.log("[Certificates] 📏 Final PDF size:", pdfBytes.length, "bytes");
+
     const buffer = Buffer.from(pdfBytes);
-    console.log('[Certificates] ✅ Certificate generation completed successfully');
+    console.log(
+      "[Certificates] ✅ Certificate generation completed successfully"
+    );
     return buffer;
-    
   } catch (error) {
-    console.error('[Certificates] ❌ Error generating certificate:', error);
-    console.error('[Certificates] Error details:', {
+    console.error("[Certificates] ❌ Error generating certificate:", error);
+    console.error("[Certificates] Error details:", {
       message: error.message,
       stack: error.stack,
-      name: error.name
+      name: error.name,
     });
-    throw new Error('Failed to generate certificate PDF');
+    throw new Error("Failed to generate certificate PDF");
   }
 }
 
@@ -1477,149 +1986,164 @@ async function generateCertificate(participantName, programDate = '14 August 202
 // ============================================
 
 // Get all log files
-app.get('/api/logs/files', async (req, res) => {
+app.get("/api/logs/files", async (req, res) => {
   try {
     const files = logManager.getLogFiles();
     res.json({ success: true, files });
   } catch (error) {
-    console.error('Error fetching log files:', error);
+    console.error("Error fetching log files:", error);
     res.status(500).json({ success: false, error: error.message });
   }
 });
-app.use('/api/feedback-forms', feedbackFormsRouter);
+app.use("/api/feedback-forms", feedbackFormsRouter);
 
-app.use('/api/events', eventsRouter);
-app.use('/api/enrollees', enrolleesRouter);
-app.use('/api/participants', participantsRouter);
-app.use('/api/attendance-events', attendanceEventsRouter);
-app.use('/api/attendance-records', attendanceRecordsRouter);
-app.use('/api/feedback-responses', feedbackResponsesRouter);
-app.use('/api/certificates', certificatesRouter);
+app.use("/api/events", eventsRouter);
+app.use("/api/enrollees", enrolleesRouter);
+app.use("/api/participants", participantsRouter);
+app.use("/api/attendance-events", attendanceEventsRouter);
+app.use("/api/attendance-records", attendanceRecordsRouter);
+app.use("/api/feedback-responses", feedbackResponsesRouter);
+app.use("/api/certificates", certificatesRouter);
 // Read specific log file
-app.get('/api/logs/read/:filename', async (req, res) => {
+app.get("/api/logs/read/:filename", async (req, res) => {
   try {
     const { filename } = req.params;
-    const { lines = 100, filter = '', type = 'all' } = req.query;
-    
+    const { lines = 100, filter = "", type = "all" } = req.query;
+
     const options = {
       lines: parseInt(lines),
       filter,
-      type
+      type,
     };
-    
+
     const logData = logManager.readLogFile(filename, options);
     res.json({ success: true, data: logData });
   } catch (error) {
-    console.error('Error reading log file:', error);
+    console.error("Error reading log file:", error);
     res.status(500).json({ success: false, error: error.message });
   }
 });
 
 // Get crash summary
-app.get('/api/logs/crash-summary', async (req, res) => {
+app.get("/api/logs/crash-summary", async (req, res) => {
   try {
     const summary = logManager.getCrashSummary();
     res.json({ success: true, summary });
   } catch (error) {
-    console.error('Error getting crash summary:', error);
+    console.error("Error getting crash summary:", error);
     res.status(500).json({ success: false, error: error.message });
   }
 });
 
 // Search logs
-app.post('/api/logs/search', async (req, res) => {
+app.post("/api/logs/search", async (req, res) => {
   try {
-    const { searchTerm, fileTypes = ['console', 'error', 'crash'], caseSensitive = false } = req.body;
-    
+    const {
+      searchTerm,
+      fileTypes = ["console", "error", "crash"],
+      caseSensitive = false,
+    } = req.body;
+
     if (!searchTerm) {
-      return res.status(400).json({ success: false, error: 'Search term is required' });
+      return res
+        .status(400)
+        .json({ success: false, error: "Search term is required" });
     }
-    
-    const results = logManager.searchLogs(searchTerm, { fileTypes, caseSensitive });
+
+    const results = logManager.searchLogs(searchTerm, {
+      fileTypes,
+      caseSensitive,
+    });
     res.json({ success: true, results });
   } catch (error) {
-    console.error('Error searching logs:', error);
+    console.error("Error searching logs:", error);
     res.status(500).json({ success: false, error: error.message });
   }
 });
 
 // Get log statistics
-app.get('/api/logs/stats', async (req, res) => {
+app.get("/api/logs/stats", async (req, res) => {
   try {
     const stats = logManager.getLogStats();
     res.json({ success: true, stats });
   } catch (error) {
-    console.error('Error getting log stats:', error);
+    console.error("Error getting log stats:", error);
     res.status(500).json({ success: false, error: error.message });
   }
 });
 
 // Download log file
-app.get('/api/logs/download/:filename', async (req, res) => {
+app.get("/api/logs/download/:filename", async (req, res) => {
   try {
     const { filename } = req.params;
-    const filePath = path.join(__dirname, 'logs', filename);
-    
+    const filePath = path.join(__dirname, "logs", filename);
+
     if (!fs.existsSync(filePath)) {
-      return res.status(404).json({ success: false, error: 'Log file not found' });
+      return res
+        .status(404)
+        .json({ success: false, error: "Log file not found" });
     }
-    
+
     res.download(filePath, filename);
   } catch (error) {
-    console.error('Error downloading log file:', error);
+    console.error("Error downloading log file:", error);
     res.status(500).json({ success: false, error: error.message });
   }
 });
 
 // Manually rotate logs
-app.post('/api/logs/rotate', async (req, res) => {
+app.post("/api/logs/rotate", async (req, res) => {
   try {
     logger.rotateLogs();
-    res.json({ success: true, message: 'Logs rotated successfully' });
+    res.json({ success: true, message: "Logs rotated successfully" });
   } catch (error) {
-    console.error('Error rotating logs:', error);
+    console.error("Error rotating logs:", error);
     res.status(500).json({ success: false, error: error.message });
   }
 });
 
 // Clean old logs
-app.post('/api/logs/clean', async (req, res) => {
+app.post("/api/logs/clean", async (req, res) => {
   try {
     logger.cleanOldLogs();
-    res.json({ success: true, message: 'Old logs cleaned successfully' });
+    res.json({ success: true, message: "Old logs cleaned successfully" });
   } catch (error) {
-    console.error('Error cleaning old logs:', error);
+    console.error("Error cleaning old logs:", error);
     res.status(500).json({ success: false, error: error.message });
   }
 });
 
 // Log a custom event
-app.post('/api/logs/event', async (req, res) => {
+app.post("/api/logs/event", async (req, res) => {
   try {
     const { type, message, data } = req.body;
-    
+
     if (!type || !message) {
-      return res.status(400).json({ success: false, error: 'Type and message are required' });
+      return res
+        .status(400)
+        .json({ success: false, error: "Type and message are required" });
     }
-    
+
     logger.logEvent(type, message, data);
-    res.json({ success: true, message: 'Event logged successfully' });
+    res.json({ success: true, message: "Event logged successfully" });
   } catch (error) {
-    console.error('Error logging event:', error);
+    console.error("Error logging event:", error);
     res.status(500).json({ success: false, error: error.message });
   }
 });
 
 // Get real-time logs (WebSocket endpoint would be better, but this works for polling)
-app.get('/api/logs/tail/:filename', async (req, res) => {
+app.get("/api/logs/tail/:filename", async (req, res) => {
   try {
     const { filename } = req.params;
     const { lines = 50 } = req.query;
-    
-    const logData = logManager.readLogFile(filename, { lines: parseInt(lines) });
+
+    const logData = logManager.readLogFile(filename, {
+      lines: parseInt(lines),
+    });
     res.json({ success: true, data: logData });
   } catch (error) {
-    console.error('Error tailing log file:', error);
+    console.error("Error tailing log file:", error);
     res.status(500).json({ success: false, error: error.message });
   }
 });
@@ -1641,99 +2165,110 @@ app.get('/api/logs/tail/:filename', async (req, res) => {
 global.botMap = botMap;
 global.pool = pool;
 global.safeRelease = safeRelease;
-const autoReplyChecker = require('./auto-reply-script.js');
+const autoReplyChecker = require("./auto-reply-script.js");
 
 // ============================================
 // AUTO-REPLY MANAGEMENT ENDPOINTS
 // ============================================
 
-
 // Get auto-reply status and statistics
-app.get('/api/auto-reply/status/:companyId', async (req, res) => {
+app.get("/api/auto-reply/status/:companyId", async (req, res) => {
   try {
     const { companyId } = req.params;
-    
+
     const stats = autoReplyChecker.getStats(companyId);
     res.json({
       success: true,
-      data: stats
+      data: stats,
     });
   } catch (error) {
-    console.error('Error getting auto-reply status:', error);
+    console.error("Error getting auto-reply status:", error);
     res.status(500).json({
       success: false,
-      error: 'Failed to get auto-reply status'
+      error: "Failed to get auto-reply status",
     });
   }
 });
 
 // Manually trigger auto-reply check
-app.post('/api/auto-reply/trigger/:companyId', async (req, res) => {
+app.post("/api/auto-reply/trigger/:companyId", async (req, res) => {
   try {
     const { companyId } = req.params;
     const { hoursThreshold = 48 } = req.body;
-    
+
     console.log(`Manual auto-reply trigger requested for company ${companyId}`);
-    
+
     // Run the check
-    const result = await autoReplyChecker.checkUnrepliedMessages(companyId, hoursThreshold);
-    
+    const result = await autoReplyChecker.checkUnrepliedMessages(
+      companyId,
+      hoursThreshold
+    );
+
     res.json({
       success: result.success,
       message: result.message,
       count: result.count || 0,
-      total: result.total || 0
+      total: result.total || 0,
     });
   } catch (error) {
-    console.error('Error triggering auto-reply:', error);
+    console.error("Error triggering auto-reply:", error);
     res.status(500).json({
       success: false,
-      error: error.message || 'Failed to trigger auto-reply check'
+      error: error.message || "Failed to trigger auto-reply check",
     });
   }
 });
 
 // Test auto-reply on specific phone number
-app.post('/api/auto-reply/test/:companyId', async (req, res) => {
+app.post("/api/auto-reply/test/:companyId", async (req, res) => {
   try {
     const { companyId } = req.params;
     const { phoneNumber, hoursThreshold = 24 } = req.body;
-    
+
     if (!phoneNumber) {
       return res.status(400).json({
         success: false,
-        error: 'Phone number is required for testing'
+        error: "Phone number is required for testing",
       });
     }
-    
-    console.log(`Auto-reply test requested for company ${companyId}, phone: ${phoneNumber}`);
-    
+
+    console.log(
+      `Auto-reply test requested for company ${companyId}, phone: ${phoneNumber}`
+    );
+
     // Run the test
-    const result = await autoReplyChecker.testAutoReply(companyId, phoneNumber, hoursThreshold);
-    
+    const result = await autoReplyChecker.testAutoReply(
+      companyId,
+      phoneNumber,
+      hoursThreshold
+    );
+
     res.json(result);
   } catch (error) {
-    console.error('Error testing auto-reply:', error);
+    console.error("Error testing auto-reply:", error);
     res.status(500).json({
       success: false,
-      error: error.message || 'Failed to test auto-reply'
+      error: error.message || "Failed to test auto-reply",
     });
   }
 });
 
 // Get unreplied messages (for debugging)
-app.get('/api/auto-reply/unreplied/:companyId', async (req, res) => {
+app.get("/api/auto-reply/unreplied/:companyId", async (req, res) => {
   try {
     const { companyId } = req.params;
     const { hoursThreshold = 24 } = req.query;
-    
-    const result = await autoReplyChecker.getUnrepliedMessages(companyId, parseInt(hoursThreshold));
+
+    const result = await autoReplyChecker.getUnrepliedMessages(
+      companyId,
+      parseInt(hoursThreshold)
+    );
     res.json(result);
   } catch (error) {
-    console.error('Error getting unreplied messages:', error);
+    console.error("Error getting unreplied messages:", error);
     res.status(500).json({
       success: false,
-      error: error.message || 'Failed to get unreplied messages'
+      error: error.message || "Failed to get unreplied messages",
     });
   }
 });
@@ -1744,7 +2279,6 @@ app.get('/api/auto-reply/unreplied/:companyId', async (req, res) => {
 const port = process.env.PORT;
 server.listen(port, () => console.log(`Server is running on port ${port}`));
 
-
 // ======================
 // 8. LOG BROADCASTING SETUP
 // ======================
@@ -1753,11 +2287,13 @@ server.listen(port, () => console.log(`Server is running on port ${port}`));
 function broadcastLog(logData) {
   wss.clients.forEach((client) => {
     if (client.readyState === WebSocket.OPEN && client.isLogsViewer) {
-      client.send(JSON.stringify({
-        type: "log",
-        data: logData,
-        timestamp: new Date().toISOString()
-      }));
+      client.send(
+        JSON.stringify({
+          type: "log",
+          data: logData,
+          timestamp: new Date().toISOString(),
+        })
+      );
     }
   });
 }
@@ -1767,20 +2303,26 @@ const originalConsoleLog = console.log;
 const originalConsoleError = console.error;
 const originalConsoleWarn = console.warn;
 
-console.log = function(...args) {
-  const logMessage = args.map(arg => typeof arg === 'object' ? JSON.stringify(arg) : String(arg)).join(' ');
+console.log = function (...args) {
+  const logMessage = args
+    .map((arg) => (typeof arg === "object" ? JSON.stringify(arg) : String(arg)))
+    .join(" ");
   originalConsoleLog.apply(console, args);
   broadcastLog(logMessage);
 };
 
-console.error = function(...args) {
-  const logMessage = args.map(arg => typeof arg === 'object' ? JSON.stringify(arg) : String(arg)).join(' ');
+console.error = function (...args) {
+  const logMessage = args
+    .map((arg) => (typeof arg === "object" ? JSON.stringify(arg) : String(arg)))
+    .join(" ");
   originalConsoleError.apply(console, args);
   broadcastLog(`ERROR: ${logMessage}`);
 };
 
-console.warn = function(...args) {
-  const logMessage = args.map(arg => typeof arg === 'object' ? JSON.stringify(arg) : String(arg)).join(' ');
+console.warn = function (...args) {
+  const logMessage = args
+    .map((arg) => (typeof arg === "object" ? JSON.stringify(arg) : String(arg)))
+    .join(" ");
   originalConsoleWarn.apply(console, args);
   broadcastLog(`WARN: ${logMessage}`);
 };
@@ -1794,21 +2336,20 @@ const scheduleLogRotation = () => {
   const now = new Date();
   const midnight = new Date();
   midnight.setHours(24, 0, 0, 0); // Next midnight
-  
+
   const msUntilMidnight = midnight.getTime() - now.getTime();
-  
+
   setTimeout(() => {
     logger.rotateLogs();
     logger.cleanOldLogs();
-    
+
     // Schedule next rotation in 24 hours
     setInterval(() => {
       logger.rotateLogs();
       logger.cleanOldLogs();
     }, 24 * 60 * 60 * 1000); // 24 hours
-    
   }, msUntilMidnight);
-  
+
   console.log(`Log rotation scheduled for ${midnight.toISOString()}`);
 };
 
@@ -1820,22 +2361,22 @@ const monitorServerHealth = () => {
   setInterval(() => {
     const memUsage = process.memoryUsage();
     const cpuUsage = process.cpuUsage();
-    
+
     // Log if memory usage is high (over 500MB)
     if (memUsage.heapUsed > 500 * 1024 * 1024) {
-      logger.logEvent('PERFORMANCE', 'High memory usage detected', {
+      logger.logEvent("PERFORMANCE", "High memory usage detected", {
         memoryUsage: memUsage,
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
       });
     }
-    
+
     // Log server health every hour
     if (new Date().getMinutes() === 0) {
-      logger.logEvent('HEALTH_CHECK', 'Server health check', {
+      logger.logEvent("HEALTH_CHECK", "Server health check", {
         memoryUsage: memUsage,
         cpuUsage: cpuUsage,
         uptime: process.uptime(),
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
       });
     }
   }, 60000); // Check every minute
@@ -1862,16 +2403,14 @@ async function saveMediaLocally(base64Data, mimeType, filename) {
   return `${baseUrl}/media/${uniqueFilename}`;
 }
 
-app.post('/api/upload-media', upload.single('file'), (req, res) => {
+app.post("/api/upload-media", upload.single("file"), (req, res) => {
   if (!req.file) {
-    return res.status(400).json({ error: 'No file uploaded' });
+    return res.status(400).json({ error: "No file uploaded" });
   }
   const baseUrl = process.env.URL;
   const fileUrl = `${baseUrl}/media/${req.file.filename}`;
   res.json({ url: fileUrl });
 });
-
-
 
 // Handle WebSocket connections
 wss.on("connection", (ws, req) => {
@@ -1883,8 +2422,11 @@ wss.on("connection", (ws, req) => {
   const companyId = urlParts[3];
 
   // Add these two lines to set the properties
-  ws.pathname = req.url.startsWith("/status") ? "/status" : 
-                req.url.startsWith("/logs") ? "/logs" : "/ws";
+  ws.pathname = req.url.startsWith("/status")
+    ? "/status"
+    : req.url.startsWith("/logs")
+    ? "/logs"
+    : "/ws";
   ws.companyId = companyId;
   ws.subscribedChatId = null;
 
@@ -1910,7 +2452,7 @@ wss.on("connection", (ws, req) => {
                   qrCode: phoneData.qrCode || null,
                   timestamp: new Date().toISOString(),
                 };
-                
+
                 if (ws.readyState === WebSocket.OPEN) {
                   ws.send(JSON.stringify(statusMessage));
                 }
@@ -1919,7 +2461,10 @@ wss.on("connection", (ws, req) => {
           }
         }
       } catch (error) {
-        console.error("Error sending initial status to status page client:", error);
+        console.error(
+          "Error sending initial status to status page client:",
+          error
+        );
       }
     }, 100); // Small delay to ensure connection is fully established
   }
@@ -1932,10 +2477,12 @@ wss.on("connection", (ws, req) => {
       if (data.type === "subscribe" && data.companyId) {
         ws.companyId = data.companyId;
         console.log(`WebSocket subscribed to company: ${data.companyId}`);
-        ws.send(JSON.stringify({ 
-          type: "subscribed", 
-          companyId: data.companyId 
-        }));
+        ws.send(
+          JSON.stringify({
+            type: "subscribed",
+            companyId: data.companyId,
+          })
+        );
         return;
       }
       if (data.type === "subscribe" && data.chatId) {
@@ -2006,7 +2553,7 @@ wss.on("connection", (ws, req) => {
         if (data.type === "restart" && data.password) {
           // Verify password (you should use environment variable for this)
           const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "P@ssw0rd123";
-          
+
           if (data.password === ADMIN_PASSWORD) {
             try {
               // Execute PM2 restart command
@@ -2014,47 +2561,59 @@ wss.on("connection", (ws, req) => {
               exec("pm2 restart all", (error, stdout, stderr) => {
                 if (error) {
                   console.error("Restart error:", error);
-                  ws.send(JSON.stringify({
-                    type: "restart",
-                    success: false,
-                    message: `Restart failed: ${error.message}`
-                  }));
+                  ws.send(
+                    JSON.stringify({
+                      type: "restart",
+                      success: false,
+                      message: `Restart failed: ${error.message}`,
+                    })
+                  );
                 } else {
                   console.log("PM2 restart successful:", stdout);
-                  ws.send(JSON.stringify({
-                    type: "restart",
-                    success: true,
-                    message: "Server restart initiated successfully"
-                  }));
+                  ws.send(
+                    JSON.stringify({
+                      type: "restart",
+                      success: true,
+                      message: "Server restart initiated successfully",
+                    })
+                  );
                 }
               });
             } catch (error) {
-              ws.send(JSON.stringify({
-                type: "restart",
-                success: false,
-                message: `Restart failed: ${error.message}`
-              }));
+              ws.send(
+                JSON.stringify({
+                  type: "restart",
+                  success: false,
+                  message: `Restart failed: ${error.message}`,
+                })
+              );
             }
           } else {
-            ws.send(JSON.stringify({
-              type: "restart",
-              success: false,
-              message: "Invalid password"
-            }));
+            ws.send(
+              JSON.stringify({
+                type: "restart",
+                success: false,
+                message: "Invalid password",
+              })
+            );
           }
         }
 
         if (data.type === "deleteSessions" && data.password && data.sessions) {
           const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "P@ssw0rd123";
-          
+
           if (data.password === ADMIN_PASSWORD) {
             try {
               const fs = require("fs");
               const path = require("path");
               let deletedCount = 0;
-              
+
               for (const session of data.sessions) {
-                const sessionPath = path.join(__dirname, ".wwebjs_auth", session);
+                const sessionPath = path.join(
+                  __dirname,
+                  ".wwebjs_auth",
+                  session
+                );
                 try {
                   if (fs.existsSync(sessionPath)) {
                     fs.rmSync(sessionPath, { recursive: true, force: true });
@@ -2064,25 +2623,31 @@ wss.on("connection", (ws, req) => {
                   console.error(`Error deleting session ${session}:`, err);
                 }
               }
-              
-              ws.send(JSON.stringify({
-                type: "sessionsDeleted",
-                success: true,
-                message: `Successfully deleted ${deletedCount} session(s)`
-              }));
+
+              ws.send(
+                JSON.stringify({
+                  type: "sessionsDeleted",
+                  success: true,
+                  message: `Successfully deleted ${deletedCount} session(s)`,
+                })
+              );
             } catch (error) {
-              ws.send(JSON.stringify({
-                type: "sessionsDeleted",
-                success: false,
-                message: `Delete failed: ${error.message}`
-              }));
+              ws.send(
+                JSON.stringify({
+                  type: "sessionsDeleted",
+                  success: false,
+                  message: `Delete failed: ${error.message}`,
+                })
+              );
             }
           } else {
-            ws.send(JSON.stringify({
-              type: "sessionsDeleted",
-              success: false,
-              message: "Invalid password"
-            }));
+            ws.send(
+              JSON.stringify({
+                type: "sessionsDeleted",
+                success: false,
+                message: "Invalid password",
+              })
+            );
           }
         }
       }
@@ -2108,20 +2673,370 @@ wss.on("connection", (ws, req) => {
     console.log(`WebSocket closed for ${email}`);
   });
 });
-// ... existing code ...
+// AI Assistant Brainstorm API - creates or retrieves thread and saves to database
+app.post("/api/ai-assistant-brainstorm/", async (req, res) => {
+  try {
+    // Read from request body instead of query parameters
+    const userInput = req.body.message;
+    const email = req.body.email;
 
-// Brainstorming AI - helps user think through prompt improvements without applying changes
-app.post('/api/prompt-brainstorm/', async (req, res) => {
+    // Log the request
+    console.log("�� AI Assistant Brainstorm Request:", {
+      userInput: userInput ? userInput.substring(0, 100) + "..." : "No message",
+      email,
+      messageLength: userInput ? userInput.length : 0,
+    });
+
+    // Validate required fields
+    if (!userInput || !email) {
+      return res.status(400).json({
+        success: false,
+        error: "MISSING_FIELDS",
+        details: "Both message and email are required",
+      });
+    }
+
+    let threadID;
+    const contactData = await getContactDataFromDatabaseByEmail(email);
+
+    if (contactData?.thread_id) {
+      threadID = contactData.thread_id;
+      console.log("✅ Using existing thread ID:", threadID);
+    } else {
+      const thread = await createThread();
+      threadID = thread.id;
+      console.log("�� Created new thread ID:", threadID);
+      await saveThreadIDPostgres(email, threadID);
+      console.log("💾 Saved new thread ID to database for email:", email);
+    }
+
+    // Add user message to thread
+    console.log(
+      "📝 Adding user message to thread (length:",
+      userInput.length,
+      ")"
+    );
+    await addMessage(threadID, userInput);
+    console.log("✅ User message added to thread");
+
+    // Create and run the assistant
+    console.log("🤖 Creating and running assistant...");
+    const assistantResponse = await openai.beta.threads.runs.create(threadID, {
+      assistant_id: "asst_dXMEl1oMjaBHGltNqkzDzccp",
+    });
+    console.log("✅ Assistant run created with ID:", assistantResponse.id);
+
+    // Use the same pattern as handleMessagesFiraz.js
+    const answer = await waitForCompletionBrainstorm(
+      threadID,
+      assistantResponse.id,
+      email
+    );
+
+    // Save the interaction to the thread for future reference
+    console.log("�� Saving interaction to thread...");
+    await addMessageAssistant(
+      threadID,
+      `AI Creation Request: ${userInput}\nResponse: ${answer}`
+    );
+    console.log("✅ Interaction saved to thread");
+
+    // Send response
+    console.log("📤 Sending response to client...");
+    res.json({
+      success: true,
+      data: {
+        aiConfiguration: answer,
+        analysis:
+          answer
+            .split("[ANALYSIS_START]")[1]
+            ?.split("[ANALYSIS_END]")[0]
+            ?.trim() || "AI configuration created successfully!",
+        suggestions: [
+          answer
+            .split("[AI_CONFIG_START]")[1]
+            ?.split("[AI_CONFIG_END]")[0]
+            ?.trim() || answer,
+        ],
+        threadID: threadID,
+        webSearchPerformed:
+          answer.includes("web search") || answer.includes("search results"),
+      },
+    });
+    console.log("✅ Response sent successfully");
+  } catch (error) {
+    console.error("💥 AI Assistant brainstorm error:", {
+      name: error.name,
+      message: error.message,
+      code: error.code,
+      stack: error.stack,
+    });
+    res.status(500).json({
+      success: false,
+      error: error.code,
+      details: error.message,
+    });
+  }
+});
+
+// Wait for completion function (same pattern as handleMessagesFiraz.js)
+async function waitForCompletionBrainstorm(threadId, runId, email, depth = 0) {
+  const maxDepth = 5; // Maximum recursion depth
+  const maxAttempts = 30;
+  const pollingInterval = 2000; // 2 seconds
+
+  console.log(
+    `⏳ Waiting for completion (depth: ${depth}, runId: ${runId})...`
+  );
+
+  if (depth >= maxDepth) {
+    console.error(`❌ Max recursion depth reached for runId: ${runId}`);
+    return "I apologize, but I'm having trouble completing this task. Could you please try rephrasing your request?";
+  }
+
+  for (let attempts = 0; attempts < maxAttempts; attempts++) {
+    try {
+      const runObject = await openai.beta.threads.runs.retrieve(
+        threadId,
+        runId
+      );
+      console.log(
+        `🔍 Run status: ${runObject.status} (attempt ${attempts + 1})`
+      );
+
+      if (runObject.status === "completed") {
+        console.log("✅ Run completed successfully");
+        const messagesList = await openai.beta.threads.messages.list(threadId);
+        const latestMessage = messagesList.data[0].content[0].text.value;
+        return latestMessage;
+      } else if (runObject.status === "requires_action") {
+        console.log("🛠️ Run requires action, handling tool calls...");
+        const toolCalls =
+          runObject.required_action.submit_tool_outputs.tool_calls;
+
+        const toolOutputs = await handleToolCallsBrainstorm(toolCalls, email);
+
+        // Submit tool outputs back to the assistant
+        await openai.beta.threads.runs.submitToolOutputs(threadId, runId, {
+          tool_outputs: toolOutputs,
+        });
+        console.log(
+          "✅ Tool outputs submitted, restarting wait for completion..."
+        );
+
+        return await waitForCompletionBrainstorm(
+          threadId,
+          runId,
+          email,
+          depth + 1
+        );
+      } else if (
+        ["failed", "cancelled", "expired"].includes(runObject.status)
+      ) {
+        console.error(`❌ Run ${runId} ended with status: ${runObject.status}`);
+        return `I encountered an error (${runObject.status}). Please try your request again.`;
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, pollingInterval));
+    } catch (error) {
+      console.error(
+        `❌ Error in waitForCompletionBrainstorm (depth: ${depth}, runId: ${runId}): ${error}`
+      );
+      return "I'm sorry, but I encountered an error while processing your request. Please try again.";
+    }
+  }
+
+  console.error(
+    `⏰ Timeout: Assistant did not complete in time (depth: ${depth}, runId: ${runId})`
+  );
+  return "I'm sorry, but it's taking longer than expected to process your request. Please try again or rephrase your question.";
+}
+
+// Handle tool calls function (same pattern as handleMessagesFiraz.js)
+async function handleToolCallsBrainstorm(toolCalls, email) {
+  console.log("🛠️ Handling tool calls...");
+  console.log(`📋 Found ${toolCalls.length} tool calls to process`);
+
+  const toolOutputs = [];
+
+  for (const toolCall of toolCalls) {
+    console.log(`🔧 Processing tool call: ${toolCall.function.name}`);
+    console.log(`📝 Tool call arguments: ${toolCall.function.arguments}`);
+    console.log(`🆔 Tool call ID: ${toolCall.id}`);
+
+    switch (toolCall.function.name) {
+      case "searchWeb":
+        try {
+          console.log("🌐 Processing searchWeb tool call...");
+          const args = JSON.parse(toolCall.function.arguments);
+          const searchResults = await searchWeb(args.query);
+          console.log("✅ Web search completed successfully");
+
+          toolOutputs.push({
+            tool_call_id: toolCall.id,
+            output: searchResults,
+          });
+          console.log("📤 Added search results to tool outputs");
+        } catch (error) {
+          console.error(
+            "❌ Error in handleToolCallsBrainstorm for searchWeb:",
+            error
+          );
+          toolOutputs.push({
+            tool_call_id: toolCall.id,
+            output: JSON.stringify({ error: error.message }),
+          });
+        }
+        break;
+
+      case "search_web":
+        try {
+          console.log("�� Processing search_web tool call...");
+          const args = JSON.parse(toolCall.function.arguments);
+          const searchResults = await searchWeb(args.query);
+          console.log("✅ Web search completed successfully");
+
+          toolOutputs.push({
+            tool_call_id: toolCall.id,
+            output: searchResults,
+          });
+          console.log("📤 Added search results to tool outputs");
+        } catch (error) {
+          console.error(
+            "❌ Error in handleToolCallsBrainstorm for search_web:",
+            error
+          );
+          toolOutputs.push({
+            tool_call_id: toolCall.id,
+            output: JSON.stringify({ error: error.message }),
+          });
+        }
+        break; // Add this missing break statement
+
+      default:
+        console.log(`⚠️ Unknown tool function: ${toolCall.function.name}`);
+        console.log(`�� Tool call details:`, JSON.stringify(toolCall, null, 2));
+        toolOutputs.push({
+          tool_call_id: toolCall.id,
+          output: JSON.stringify({
+            error: `Unknown tool function: ${toolCall.function.name}`,
+          }),
+        });
+    }
+  }
+
+  console.log(`�� Total tool outputs prepared: ${toolOutputs.length}`);
+  return toolOutputs;
+}
+
+// Enhanced searchWeb function with comprehensive logging
+async function searchWeb(query) {
+  console.log(`🔍 [searchWeb] Starting web search for query: "${query}"`);
+
+  try {
+    console.log(`�� [searchWeb] Making request to Serper API...`);
+    console.log(
+      `🔑 [searchWeb] Using API key: ${
+        process.env.SERPER_API_KEY ? "Present" : "Missing"
+      }`
+    );
+
+    const startTime = Date.now();
+    const response = await axios.post(
+      "https://google.serper.dev/search",
+      {
+        q: query,
+      },
+      {
+        headers: {
+          "X-API-KEY": process.env.SERPER_API_KEY,
+          "Content-Type": "application/json",
+        },
+      }
+    );
+    const endTime = Date.now();
+
+    console.log(
+      `✅ [searchWeb] API request successful in ${endTime - startTime}ms`
+    );
+    console.log(`📊 [searchWeb] Response status: ${response.status}`);
+    console.log(
+      `📄 [searchWeb] Response data keys:`,
+      Object.keys(response.data)
+    );
+
+    if (response.data.organic) {
+      console.log(
+        `🔍 [searchWeb] Found ${response.data.organic.length} organic results`
+      );
+
+      // Extract and format the search results
+      const results = response.data.organic.slice(0, 3).map((result, index) => {
+        console.log(`📝 [searchWeb] Processing result ${index + 1}:`, {
+          title: result.title?.substring(0, 50) + "...",
+          snippet: result.snippet?.substring(0, 100) + "...",
+          link: result.link,
+        });
+
+        return {
+          title: result.title,
+          snippet: result.snippet,
+          link: result.link,
+        };
+      });
+
+      const jsonResults = JSON.stringify(results);
+      console.log(`✅ [searchWeb] Search completed successfully`);
+      console.log(
+        `📊 [searchWeb] Final results length: ${jsonResults.length} characters`
+      );
+      console.log(`�� [searchWeb] Number of results: ${results.length}`);
+
+      return jsonResults;
+    } else {
+      console.log(`⚠️ [searchWeb] No organic results found in response`);
+      console.log(
+        `📄 [searchWeb] Full response structure:`,
+        JSON.stringify(response.data, null, 2)
+      );
+      return JSON.stringify({ error: "No search results found" });
+    }
+  } catch (error) {
+    console.error("❌ [searchWeb] Error searching the web:", {
+      name: error.name,
+      message: error.message,
+      code: error.code,
+      response: error.response?.data,
+      status: error.response?.status,
+    });
+
+    if (error.response) {
+      console.error(`🚫 [searchWeb] API Error Response:`, {
+        status: error.response.status,
+        statusText: error.response.statusText,
+        data: error.response.data,
+      });
+    }
+
+    return JSON.stringify({
+      error: "Failed to search the web",
+      details: error.message,
+      code: error.code,
+    });
+  }
+}
+// Prompt Brainstorm API - creates or retrieves thread and saves to database
+app.post("/api/prompt-brainstorm/", async (req, res) => {
   try {
     const userInput = req.query.message;
     const email = req.query.email;
     const { currentPrompt } = req.body;
 
     // Log only relevant data
-    console.log('Prompt Brainstorm Request:', {
+    console.log("Prompt Brainstorm Request:", {
       userInput,
       email,
-      currentPrompt
+      currentPrompt,
     });
 
     let threadID;
@@ -2129,13 +3044,17 @@ app.post('/api/prompt-brainstorm/', async (req, res) => {
 
     if (contactData?.thread_id) {
       threadID = contactData.thread_id;
+      console.log("Using existing thread ID:", threadID);
     } else {
       const thread = await createThread();
       threadID = thread.id;
+      console.log("Created new thread ID:", threadID);
       await saveThreadIDPostgres(email, threadID);
+      console.log("Saved new thread ID to database for email:", email);
     }
 
-    const promptInstructions = `You are a prompt engineering expert. The user wants to modify their AI assistant's instructions. 
+    // Create the full prompt for the assistant
+    const fullPrompt = `You are a prompt engineering expert. The user wants to modify their AI assistant's instructions. 
 
 Your task: Provide the EXACT text that should be added to their current prompt. Be direct and specific.
 
@@ -2156,61 +3075,77 @@ Rules:
 - If modifying existing text, show exactly what to add/change
 - Be concise and direct
 
-${currentPrompt ? 
-  `Current Prompt:\n${currentPrompt}\n\nUser Request: ${userInput}\n\nProvide the EXACT text to add to this prompt.` :
-  `User Request: ${userInput}\n\nProvide the EXACT text for a new prompt.`}`;
+${
+  currentPrompt
+    ? `Current Prompt:\n${currentPrompt}\n\nUser Request: ${userInput}\n\nProvide the EXACT text to add to this prompt.`
+    : `User Request: ${userInput}\n\nProvide the EXACT text for a new prompt.`
+}`;
 
-    // Call OpenAI
-    const completion = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
-      messages: [
-        {
-          role: "user",
-          content: promptInstructions
-        }
-      ],
+    // Add user message to thread
+    await addMessage(threadID, fullPrompt);
+
+    // Create and run the assistant
+    const assistantResponse = await openai.beta.threads.runs.create(threadID, {
+      assistant_id: process.env.ASSISTANT_ID || "asst_QfkZ8GeCw0Rbc2zRW4B86FWD",
     });
 
-    const answer = completion.choices[0].message.content;
+    // Wait for the assistant to complete
+    let runStatus;
+    do {
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+      runStatus = await openai.beta.threads.runs.retrieve(
+        threadID,
+        assistantResponse.id
+      );
+    } while (runStatus.status !== "completed");
 
-    // Save the interaction to the thread
-    await addMessageAssistant(threadID, `Brainstorm Request: ${userInput}\nCurrent Prompt: ${currentPrompt || 'None'}\nResponse: ${answer}`);
+    // Retrieve the assistant's response
+    const messages = await openai.beta.threads.messages.list(threadID);
+    const answer = messages.data[0].content[0].text.value;
+
+    // Save the interaction to the thread for future reference
+    await addMessageAssistant(
+      threadID,
+      `Brainstorm Request: ${userInput}\nCurrent Prompt: ${
+        currentPrompt || "None"
+      }\nResponse: ${answer}`
+    );
 
     // Send response
     res.json({
       success: true,
       data: {
         suggestions: answer,
-        currentPrompt: currentPrompt || null
-      }
+        currentPrompt: currentPrompt || null,
+        threadID: threadID, // Return thread ID for future use
+      },
     });
-
   } catch (error) {
-    console.error('Prompt brainstorm error:', {
+    console.error("Prompt brainstorm error:", {
       name: error.name,
       message: error.message,
-      code: error.code
+      code: error.code,
     });
     res.status(500).json({
       success: false,
       error: error.code,
-      details: error.message
+      details: error.message,
     });
   }
 });
 
 // Apply Changes AI - takes the brainstorming suggestions and applies them to create the modified prompt
-app.post('/api/prompt-apply-changes/', async (req, res) => {
+app.post("/api/prompt-apply-changes/", async (req, res) => {
   try {
     const email = req.query.email;
     const { currentPrompt, changesToApply, brainstormContext } = req.body;
 
     // Log only relevant data
-    console.log('Prompt Apply Changes Request:', {
+    console.log("Prompt Apply Changes Request:", {
       email,
       currentPrompt,
       changesToApply,
-      brainstormContext
+      brainstormContext,
     });
 
     let threadID;
@@ -2218,13 +3153,17 @@ app.post('/api/prompt-apply-changes/', async (req, res) => {
 
     if (contactData?.thread_id) {
       threadID = contactData.thread_id;
+      console.log("Using existing thread ID:", threadID);
     } else {
       const thread = await createThread();
       threadID = thread.id;
+      console.log("Created new thread ID:", threadID);
       await saveThreadIDPostgres(email, threadID);
+      console.log("Saved new thread ID to database for email:", email);
     }
 
-    const promptInstructions = `As a prompt engineering expert, apply the specified changes to the current prompt. Your task is to implement the requested modifications precisely while maintaining the integrity of the original prompt.
+    // Create the full prompt for the assistant
+    const fullPrompt = `As a prompt engineering expert, apply the specified changes to the current prompt. Your task is to implement the requested modifications precisely while maintaining the integrity of the original prompt.
 
 Instructions:
 - Return the COMPLETE prompt with all sections
@@ -2240,42 +3179,78 @@ Briefly explain what specific changes you applied and why
 [ANALYSIS_END]
 
 [PROMPT_START]
-${currentPrompt ? 'The complete prompt with the applied changes:' :
-  'Create a new prompt using this structure:'}
-${currentPrompt || `#ROLE: [AI's primary function and identity]
+${
+  currentPrompt
+    ? "The complete prompt with the applied changes:"
+    : "Create a new prompt using this structure:"
+}
+${
+  currentPrompt ||
+  `#ROLE: [AI's primary function and identity]
 #CONTEXT: [Business context and background]
 #CAPABILITIES: [Specific tasks and functions]
 #CONSTRAINTS: [Boundaries and limitations]
 #COMMUNICATION STYLE: [Tone and interaction approach]
-#WORKFLOW: [Process for handling requests]`}
+#WORKFLOW: [Process for handling requests]`
+}
 [PROMPT_END]
 
-${currentPrompt ?
-  `Current Prompt:\n${currentPrompt}\n\nChanges to Apply:\n${changesToApply}${brainstormContext ? `\n\nBrainstorming Context:\n${brainstormContext}` : ''}` :
-  `Create a new prompt with these requirements:\n${changesToApply}${brainstormContext ? `\n\nBrainstorming Context:\n${brainstormContext}` : ''}`}`;
+${
+  currentPrompt
+    ? `Current Prompt:\n${currentPrompt}\n\nChanges to Apply:\n${changesToApply}${
+        brainstormContext
+          ? `\n\nBrainstorming Context:\n${brainstormContext}`
+          : ""
+      }`
+    : `Create a new prompt with these requirements:\n${changesToApply}${
+        brainstormContext
+          ? `\n\nBrainstorming Context:\n${brainstormContext}`
+          : ""
+      }`
+}`;
 
-    // Call OpenAI
-    const completion = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
-      messages: [
-        {
-          role: "user",
-          content: promptInstructions
-        }
-      ],
+    // Add user message to thread
+    await addMessage(threadID, fullPrompt);
+
+    // Create and run the assistant
+    const assistantResponse = await openai.beta.threads.runs.create(threadID, {
+      assistant_id: process.env.ASSISTANT_ID || "asst_1rBPyRoK6iW7UZftWqFIfI1u",
     });
 
-    const answer = completion.choices[0].message.content;
+    // Wait for the assistant to complete
+    let runStatus;
+    do {
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+      runStatus = await openai.beta.threads.runs.retrieve(
+        threadID,
+        assistantResponse.id
+      );
+    } while (runStatus.status !== "completed");
+
+    // Retrieve the assistant's response
+    const messages = await openai.beta.threads.messages.list(threadID);
+    const answer = messages.data[0].content[0].text.value;
 
     // Parse the response to separate analysis and prompt
-    const analysisMatch = answer.match(/\[ANALYSIS_START\]([\s\S]*?)\[ANALYSIS_END\]/);
-    const promptMatch = answer.match(/\[PROMPT_START\]([\s\S]*?)\[PROMPT_END\]/);
+    const analysisMatch = answer.match(
+      /\[ANALYSIS_START\]([\s\S]*?)\[ANALYSIS_END\]/
+    );
+    const promptMatch = answer.match(
+      /\[PROMPT_START\]([\s\S]*?)\[PROMPT_END\]/
+    );
 
-    const analysis = analysisMatch ? analysisMatch[1].trim() : '';
-    const updatedPrompt = promptMatch ? promptMatch[1].trim() : '';
+    const analysis = analysisMatch ? analysisMatch[1].trim() : "";
+    const updatedPrompt = promptMatch ? promptMatch[1].trim() : "";
 
-    // Save the interaction to the thread
-    await addMessageAssistant(threadID, `Apply Changes Request: ${changesToApply}\nCurrent Prompt: ${currentPrompt || 'None'}\nBrainstorm Context: ${brainstormContext || 'None'}\nResponse: ${answer}`);
+    // Save the interaction to the thread for future reference
+    await addMessageAssistant(
+      threadID,
+      `Apply Changes Request: ${changesToApply}\nCurrent Prompt: ${
+        currentPrompt || "None"
+      }\nBrainstorm Context: ${
+        brainstormContext || "None"
+      }\nResponse: ${answer}`
+    );
 
     // Send structured response
     res.json({
@@ -2283,517 +3258,20 @@ ${currentPrompt ?
       data: {
         analysis: analysis,
         updatedPrompt: updatedPrompt,
-        originalPrompt: currentPrompt || null
-      }
+        originalPrompt: currentPrompt || null,
+        threadID: threadID, // Return thread ID for future use
+      },
     });
-
   } catch (error) {
-    console.error('Prompt apply changes error:', {
+    console.error("Prompt apply changes error:", {
       name: error.name,
       message: error.message,
-      code: error.code
+      code: error.code,
     });
     res.status(500).json({
       success: false,
       error: error.code,
-      details: error.message
-    });
-  }
-});
-
-// ============================================
-// AI-POWERED FOLLOW-UP MESSAGE GENERATOR
-// ============================================
-
-// Generate follow-up messages based on AI workflow stages
-app.post('/api/generate-followup-messages/', async (req, res) => {
-  try {
-    const email = req.query.email;
-    const { currentPrompt, companyId } = req.body;
-
-    if (!currentPrompt) {
-      return res.status(400).json({
-        success: false,
-        error: 'currentPrompt is required'
-      });
-    }
-
-    let threadID;
-    const contactData = await getContactDataFromDatabaseByEmail(email);
-
-    if (contactData?.thread_id) {
-      threadID = contactData.thread_id;
-    } else {
-      const thread = await createThread();
-      threadID = thread.id;
-      await saveThreadIDPostgres(email, threadID);
-    }
-
-    const promptInstructions = `As an AI workflow analysis expert, analyze the provided AI prompt to understand the business context, workflow stages, and specific questions/tasks at each stage. Then generate intelligent follow-up message templates with contextually relevant trigger tags and keywords.
-
-Your task:
-1. **FIRST**: Deeply analyze the AI prompt to understand:
-   - Business context and purpose
-   - Specific workflow stages and their objectives
-   - What questions or information is needed at each stage
-   - Customer interaction patterns
-
-2. **THEN**: For each identified stage, generate:
-   - 5 follow-up messages based on the stage's specific questions/requirements
-   - Contextually relevant trigger tags that would indicate this stage
-   - **Trigger keywords that the AI uses in this stage** (keywords/phrases from the AI's workflow)
-   - Messages that directly address the stage's purpose
-
-Required output format:
-Your response must be structured using these exact markers:
-
-[ANALYSIS_START]
-Explain what you understand about the business context and workflow stages from the prompt
-[ANALYSIS_END]
-
-[WORKFLOW_STAGES_START]
-List the identified workflow stages with their specific purposes/questions
-[WORKFLOW_STAGES_END]
-
-[STAGE_TEMPLATES_START]
-For each stage, provide this exact format:
-
-Stage 1: [Stage Name]
-Purpose: [What this stage accomplishes]
-Trigger Tags: [comma-separated tags relevant to this stage]
-Trigger Keywords: [comma-separated keywords that the AI uses in this stage]
-Messages:
-- Day 1 - 30 minutes after: [Message based on stage's specific question/requirement]
-- Day 1 - 2 hours after: [Message based on stage's specific question/requirement]
-- Day 3: [Message based on stage's specific question/requirement]
-- Day 4: [Message based on stage's specific question/requirement]
-- Day 10: [Message based on stage's specific question/requirement]
-
-Stage 2: [Stage Name]
-Purpose: [What this stage accomplishes]
-Trigger Tags: [comma-separated tags relevant to this stage]
-Trigger Keywords: [comma-separated keywords that the AI uses in this stage]
-Messages:
-- Day 1 - 30 minutes after: [Message based on stage's specific question/requirement]
-- Day 1 - 2 hours after: [Message based on stage's specific question/requirement]
-- Day 3: [Message based on stage's specific question/requirement]
-- Day 4: [Message based on stage's specific question/requirement]
-- Day 10: [Message based on stage's specific question/requirement]
-
-[Continue for all identified stages with the same format]
-[STAGE_TEMPLATES_END]
-
-AI Prompt to analyze:
-${currentPrompt}
-
-**IMPORTANT**: 
-- Read and understand the prompt FIRST before generating anything
-- Each stage should have its own unique trigger tags and keywords
-- **Trigger keywords should be the actual keywords/phrases the AI uses in that stage**
-- Follow-up messages must directly relate to what the stage is asking for
-- Make trigger tags/keywords specific to the business context and stage purpose
-- Ensure messages encourage customers to provide the specific information needed for that stage`;
-
-    // Call OpenAI
-    const completion = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
-      messages: [
-        {
-          role: "user",
-          content: promptInstructions
-        }
-      ],
-    });
-
-    const answer = completion.choices[0].message.content;
-
-    // Parse the response to extract different sections
-    const analysisMatch = answer.match(/\[ANALYSIS_START\]([\s\S]*?)\[ANALYSIS_END\]/);
-    const workflowStagesMatch = answer.match(/\[WORKFLOW_STAGES_START\]([\s\S]*?)\[WORKFLOW_STAGES_END\]/);
-    const stageTemplatesMatch = answer.match(/\[STAGE_TEMPLATES_START\]([\s\S]*?)\[STAGE_TEMPLATES_END\]/);
-
-    const analysis = analysisMatch ? analysisMatch[1].trim() : '';
-    const workflowStages = workflowStagesMatch ? workflowStagesMatch[1].trim() : '';
-    const stageTemplates = stageTemplatesMatch ? stageTemplatesMatch[1].trim() : '';
-
-    // Save the interaction to the thread
-    await addMessageAssistant(threadID, `Follow-up Message Generation Request\nCurrent Prompt: ${currentPrompt}\nResponse: ${answer}`);
-
-    // Send structured response
-    res.json({
-      success: true,
-      data: {
-        analysis: analysis,
-        workflowStages: workflowStages,
-        stageTemplates: stageTemplates,
-        originalPrompt: currentPrompt
-      }
-    });
-
-  } catch (error) {
-    console.error('Follow-up message generation error:', {
-      name: error.name,
-      message: error.message,
-      code: error.code
-    });
-    res.status(500).json({
-      success: false,
-      error: error.code,
-      details: error.message
-    });
-  }
-});
-
-// Apply generated follow-up messages to create templates
-app.post('/api/apply-followup-messages/', async (req, res) => {
-  try {
-    const email = req.query.email;
-    const { 
-      companyId, 
-      templateName, 
-      workflowStages, 
-      stageTemplates, 
-      triggerTags = [], 
-      triggerKeywords = [] 
-    } = req.body;
-
-    if (!companyId || !templateName || !workflowStages || !stageTemplates) {
-      return res.status(400).json({
-        success: false,
-        error: 'companyId, templateName, workflowStages, and stageTemplates are required'
-      });
-    }
-
-    let threadID;
-    const contactData = await getContactDataFromDatabaseByEmail(email);
-
-    if (contactData?.thread_id) {
-      threadID = contactData.thread_id;
-    } else {
-      const thread = await createThread();
-      threadID = thread.id;
-      await saveThreadIDPostgres(email, threadID);
-    }
-
-    const promptInstructions = `As a follow-up template creation expert, convert the provided workflow stages and stage templates into a structured format that can be used by a follow-up system. Each stage should have its own template with its specific trigger tags and keywords.
-
-Your task:
-1. Parse the workflow stages and stage templates
-2. Extract trigger tags and **AI workflow keywords** for each stage
-3. Convert into a structured template format with stage-specific configurations
-4. Ensure proper timing and sequencing for each stage
-
-Required output format:
-Your response must be structured using these exact markers:
-
-[TEMPLATE_STRUCTURE_START]
-Provide the template structure in this format:
-{
-  "name": "Template Name",
-  "stages": [
-    {
-      "stageName": "Stage Name",
-      "purpose": "What this stage accomplishes",
-      "triggerTags": ["tag1", "tag2"],
-      "triggerKeywords": ["ai_workflow_keyword1", "ai_workflow_keyword2"],
-      "messages": [
-        {
-          "timing": "Day 1 - 30 minutes after",
-          "message": "Actual message content",
-          "delayHours": 0.5
-        },
-        {
-          "timing": "Day 1 - 2 hours after", 
-          "message": "Actual message content",
-          "delayHours": 2
-        },
-        {
-          "timing": "Day 3",
-          "message": "Actual message content", 
-          "delayHours": 72
-        },
-        {
-          "timing": "Day 4",
-          "message": "Actual message content",
-          "delayHours": 96
-        },
-        {
-          "timing": "Day 10",
-          "message": "Actual message content",
-          "delayHours": 240
-        }
-      ]
-    }
-  ]
-}
-[TEMPLATE_STRUCTURE_END]
-
-[IMPLEMENTATION_NOTES_START]
-Provide notes on how to implement these stage-specific templates in the follow-up system
-[IMPLEMENTATION_NOTES_END]
-
-Workflow Stages:
-${workflowStages}
-
-Stage Templates:
-${stageTemplates}
-
-Convert this into a structured template format with stage-specific trigger tags and **AI workflow keywords**.`;
-
-    // Call OpenAI
-    const completion = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
-      messages: [
-        {
-          role: "user",
-          content: promptInstructions
-        }
-      ],
-    });
-
-    const answer = completion.choices[0].message.content;
-
-    // Parse the response to extract different sections
-    const templateStructureMatch = answer.match(/\[TEMPLATE_STRUCTURE_START\]([\s\S]*?)\[TEMPLATE_STRUCTURE_END\]/);
-    const implementationNotesMatch = answer.match(/\[IMPLEMENTATION_NOTES_START\]([\s\S]*?)\[IMPLEMENTATION_NOTES_END\]/);
-
-    const templateStructure = templateStructureMatch ? templateStructureMatch[1].trim() : '';
-    const implementationNotes = implementationNotesMatch ? implementationNotesMatch[1].trim() : '';
-
-    // Try to parse the JSON structure
-    let parsedTemplate = null;
-    try {
-      // Extract JSON from the response
-      const jsonMatch = templateStructure.match(/\{[\s\S]*\}/);
-      if (jsonMatch) {
-        parsedTemplate = JSON.parse(jsonMatch[0]);
-      }
-    } catch (parseError) {
-      console.error('Error parsing template structure:', parseError);
-    }
-
-    // Save the interaction to the thread
-    await addMessageAssistant(threadID, `Apply Follow-up Messages Request\nTemplate Name: ${templateName}\nWorkflow Stages: ${workflowStages}\nStage Templates: ${stageTemplates}\nResponse: ${answer}`);
-
-    // Send structured response
-    res.json({
-      success: true,
-      data: {
-        templateStructure: templateStructure,
-        parsedTemplate: parsedTemplate,
-        implementationNotes: implementationNotes,
-        templateName: templateName,
-        companyId: companyId
-      }
-    });
-
-  } catch (error) {
-    console.error('Apply follow-up messages error:', {
-      name: error.name,
-      message: error.message,
-      code: error.code
-    });
-    res.status(500).json({
-      success: false,
-      error: error.code,
-      details: error.message
-    });
-  }
-});
-
-// Create separate follow-up templates for each stage
-app.post('/api/create-ai-followup-template/', async (req, res) => {
-  try {
-    const { 
-      companyId, 
-      templateName, 
-      templateStructure, 
-      triggerTags = [], 
-      triggerKeywords = [] 
-    } = req.body;
-
-    if (!companyId || !templateName || !templateStructure) {
-      return res.status(400).json({
-        success: false,
-        error: 'companyId, templateName, and templateStructure are required'
-      });
-    }
-
-    const sqlClient = await pool.connect();
-
-    try {
-      await sqlClient.query("BEGIN");
-      console.log("Database transaction started for AI follow-up templates");
-
-      // Parse the template structure
-      let parsedStructure;
-      try {
-        parsedStructure = JSON.parse(templateStructure);
-      } catch (parseError) {
-        console.error('Error parsing template structure:', parseError);
-        throw new Error('Invalid template structure format');
-      }
-
-      if (!parsedStructure.stages || !Array.isArray(parsedStructure.stages)) {
-        throw new Error('Invalid template structure: stages array not found');
-      }
-
-      const createdTemplates = [];
-      console.log(`Creating ${parsedStructure.stages.length} separate stage templates`);
-
-      // Create a separate template for each stage
-      for (let stageIndex = 0; stageIndex < parsedStructure.stages.length; stageIndex++) {
-        const stage = parsedStructure.stages[stageIndex];
-        
-        if (!stage.stageName || !stage.messages || !Array.isArray(stage.messages)) {
-          console.warn(`Skipping invalid stage ${stageIndex + 1}:`, stage);
-          continue;
-        }
-
-        console.log(`Creating template for stage ${stageIndex + 1}: ${stage.stageName}`);
-
-        // Generate unique template_id for this stage
-        const stageTemplateId = require('crypto').randomUUID();
-        
-        // Create stage-specific template name
-        const stageTemplateName = `${templateName} - ${stage.stageName}`;
-
-        // Insert the stage template
-        const insertTemplateQuery = `
-          INSERT INTO public.followup_templates (
-            id,
-            template_id,
-            company_id,
-            name,
-            created_at,
-            updated_at,
-            trigger_keywords,
-            trigger_tags,
-            keyword_source,
-            status,
-            content,
-            delay_hours
-          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-          RETURNING *
-        `;
-
-        // Use stage-specific trigger tags and keywords if available
-        const stageTriggerTags = stage.triggerTags || Array.isArray(trigger_tags) ? trigger_tags : [];
-        const stageTriggerKeywords = stage.triggerKeywords || Array.isArray(trigger_keywords) ? trigger_keywords : [];
-
-        const templateParams = [
-          require('crypto').randomUUID(), // id (UUID)
-          stageTemplateId, // template_id for this stage
-          companyId,
-          stageTemplateName.trim(),
-          new Date(),
-          new Date(),
-          stageTriggerKeywords,
-          stageTriggerTags,
-          'ai_generated', // keyword_source
-          'active',
-          JSON.stringify({
-            stageName: stage.stageName,
-            stageIndex: stageIndex + 1,
-            purpose: stage.purpose || '',
-            originalTemplate: templateName,
-            messages: stage.messages,
-            triggerTags: stageTriggerTags,
-            triggerKeywords: stageTriggerKeywords
-          }), // Store stage-specific content
-          24 // default delay_hours
-        ];
-
-        console.log(`Executing template insert for stage ${stage.stageName}:`, templateParams);
-        const templateResult = await sqlClient.query(insertTemplateQuery, templateParams);
-        console.log(`Stage template created successfully:`, templateResult.rows[0]);
-
-        // Create follow-up messages for this stage
-        if (stage.messages && stage.messages.length > 0) {
-          console.log(`Creating ${stage.messages.length} messages for stage ${stage.stageName}`);
-          
-          for (let messageIndex = 0; messageIndex < stage.messages.length; messageIndex++) {
-            const message = stage.messages[messageIndex];
-            
-            if (!message.message) {
-              console.warn(`Skipping message ${messageIndex + 1} for stage ${stage.stageName}: no message content`);
-              continue;
-            }
-
-            const insertMessageQuery = `
-              INSERT INTO public.followup_messages (
-                id,
-                template_id,
-                message,
-                day_number,
-                sequence,
-                status,
-                created_at,
-                delay_after,
-                add_tags,
-                remove_tags
-              ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-            `;
-
-            const messageParams = [
-              require('crypto').randomUUID(), // id
-              stageTemplateId, // template_id for this specific stage
-              message.message,
-              message.timing || `Day ${messageIndex + 1}`,
-              messageIndex + 1, // sequence within this stage
-              'active',
-              new Date(),
-              message.delayHours ? JSON.stringify({ hours: message.delayHours }) : null,
-              [], // add_tags
-              [], // remove_tags
-            ];
-
-            console.log(`Inserting message ${messageIndex + 1} for stage ${stage.stageName}:`, messageParams);
-            await sqlClient.query(insertMessageQuery, messageParams);
-            console.log(`Message ${messageIndex + 1} for stage ${stage.stageName} inserted successfully`);
-          }
-        }
-
-        // Add to created templates list
-        createdTemplates.push({
-          stageName: stage.stageName,
-          stageIndex: stageIndex + 1,
-          templateId: stageTemplateId,
-          templateName: stageTemplateName,
-          messageCount: stage.messages ? stage.messages.length : 0,
-          purpose: stage.purpose || '',
-          triggerTags: stageTriggerTags,
-          triggerKeywords: stageTriggerKeywords
-        });
-      }
-
-      await sqlClient.query("COMMIT");
-      console.log(`Successfully created ${createdTemplates.length} stage templates`);
-
-      res.json({
-        success: true,
-        data: {
-          message: `Successfully created ${createdTemplates.length} stage templates`,
-          createdTemplates: createdTemplates,
-          totalStages: parsedStructure.stages.length,
-          originalTemplateName: templateName
-        }
-      });
-
-    } catch (error) {
-      await safeRollback(sqlClient);
-      console.error('Database error during template creation:', error);
-      throw error;
-    } finally {
-      await safeRelease(sqlClient);
-    }
-
-  } catch (error) {
-    console.error('Error creating AI follow-up templates:', error);
-    res.status(500).json({
-      success: false,
-      error: error.message || 'Failed to create AI follow-up templates',
-      details: error.stack
+      details: error.message,
     });
   }
 });
@@ -2801,7 +3279,10 @@ app.post('/api/create-ai-followup-template/', async (req, res) => {
 // ... existing code ...
 app.get("/api/lalamove/quote", async (req, res) => {
   res.header("Access-Control-Allow-Origin", "https://storeguru.com.my");
-  res.header("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS");
+  res.header(
+    "Access-Control-Allow-Methods",
+    "GET, POST, PUT, PATCH, DELETE, OPTIONS"
+  );
   res.header(
     "Access-Control-Allow-Headers",
     "Content-Type, Authorization, Accept"
@@ -3290,7 +3771,7 @@ app.get("/api/facebook-lead-webhook", (req, res) => {
 
 app.put("/api/update-user", async (req, res) => {
   try {
-    const { 
+    const {
       contactId, // email of user to update
       name,
       phoneNumber,
@@ -3306,7 +3787,7 @@ app.put("/api/update-user", async (req, res) => {
       imageUrl,
       viewEmployees,
       phoneAccess,
-      weightages
+      weightages,
     } = req.body;
 
     if (!contactId) {
@@ -3316,7 +3797,7 @@ app.put("/api/update-user", async (req, res) => {
     // Start transaction
     const client = await pool.connect();
     try {
-      await client.query('BEGIN');
+      await client.query("BEGIN");
 
       // Update users table - only update if values are provided
       const userUpdateFields = [];
@@ -3339,13 +3820,13 @@ app.put("/api/update-user", async (req, res) => {
       if (userUpdateFields.length > 0) {
         userUpdateFields.push(`last_updated = CURRENT_TIMESTAMP`);
         userUpdateValues.push(contactId, companyId);
-        
+
         const userUpdateQuery = `
           UPDATE users 
-          SET ${userUpdateFields.join(', ')}
+          SET ${userUpdateFields.join(", ")}
           WHERE email = $${paramIndex++} AND company_id = $${paramIndex++}
         `;
-        
+
         await client.query(userUpdateQuery, userUpdateValues);
       }
 
@@ -3353,7 +3834,10 @@ app.put("/api/update-user", async (req, res) => {
       const employeeCheckQuery = `
         SELECT id FROM employees WHERE email = $1 AND company_id = $2
       `;
-      const employeeCheck = await client.query(employeeCheckQuery, [contactId, companyId]);
+      const employeeCheck = await client.query(employeeCheckQuery, [
+        contactId,
+        companyId,
+      ]);
 
       if (employeeCheck.rows.length > 0) {
         // Update existing employee
@@ -3413,13 +3897,13 @@ app.put("/api/update-user", async (req, res) => {
         if (empUpdateFields.length > 0) {
           empUpdateFields.push(`last_updated = CURRENT_TIMESTAMP`);
           empUpdateValues.push(contactId, companyId);
-          
+
           const employeeUpdateQuery = `
             UPDATE employees 
-            SET ${empUpdateFields.join(', ')}
+            SET ${empUpdateFields.join(", ")}
             WHERE email = $${empParamIndex++} AND company_id = $${empParamIndex++}
           `;
-          
+
           await client.query(employeeUpdateQuery, empUpdateValues);
         }
       } else {
@@ -3431,12 +3915,22 @@ app.put("/api/update-user", async (req, res) => {
             view_employees, invoice_number, emp_group
           ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
         `;
-        
+
         await client.query(employeeInsertQuery, [
-          companyId, name, contactId, role, phoneNumber, employeeId || null,
-          JSON.stringify(phoneAccess || {}), JSON.stringify(weightages || {}),
-          imageUrl || null, notes || null, quotaLeads || 0,
-          JSON.stringify(viewEmployees || []), invoiceNumber || null, group || null
+          companyId,
+          name,
+          contactId,
+          role,
+          phoneNumber,
+          employeeId || null,
+          JSON.stringify(phoneAccess || {}),
+          JSON.stringify(weightages || {}),
+          imageUrl || null,
+          notes || null,
+          quotaLeads || 0,
+          JSON.stringify(viewEmployees || []),
+          invoiceNumber || null,
+          group || null,
         ]);
       }
 
@@ -3446,7 +3940,7 @@ app.put("/api/update-user", async (req, res) => {
           const user = await admin.auth().getUserByEmail(contactId);
           await admin.auth().updateUser(user.uid, {
             password: password,
-            displayName: name
+            displayName: name,
           });
         } catch (authError) {
           console.error("Error updating Firebase Auth:", authError);
@@ -3454,16 +3948,14 @@ app.put("/api/update-user", async (req, res) => {
         }
       }
 
-      await client.query('COMMIT');
+      await client.query("COMMIT");
       res.json({ message: "User updated successfully" });
-
     } catch (error) {
-      await client.query('ROLLBACK');
+      await client.query("ROLLBACK");
       throw error;
     } finally {
       await safeRelease(client);
     }
-
   } catch (error) {
     console.error("Error updating user:", error);
     res.status(500).json({ error: "Failed to update user" });
@@ -3475,8 +3967,11 @@ app.put("/api/update-user", async (req, res) => {
 // Delete user endpoint
 // Delete user endpoint
 app.delete("/api/delete-user", async (req, res) => {
-  console.log("Delete user request received:", { body: req.body, headers: req.headers });
-  
+  console.log("Delete user request received:", {
+    body: req.body,
+    headers: req.headers,
+  });
+
   try {
     const { email, companyId } = req.body;
 
@@ -3491,12 +3986,16 @@ app.delete("/api/delete-user", async (req, res) => {
       return res.status(400).json({ error: "Company ID is required" });
     }
 
-    console.log(`Attempting to delete user: ${email} from company: ${companyId}`);
+    console.log(
+      `Attempting to delete user: ${email} from company: ${companyId}`
+    );
 
     // Check database connection
     if (!pool) {
       console.error("Delete user error: Database pool not initialized");
-      return res.status(500).json({ error: "Database connection not available" });
+      return res
+        .status(500)
+        .json({ error: "Database connection not available" });
     }
 
     // Start transaction
@@ -3504,99 +4003,112 @@ app.delete("/api/delete-user", async (req, res) => {
     try {
       client = await pool.connect();
       console.log("Database connection acquired for delete user transaction");
-      
-      await client.query('BEGIN');
+
+      await client.query("BEGIN");
       console.log("Transaction started for delete user");
 
       // Check if user exists before deletion
       const userCheckResult = await client.query(
-        'SELECT id, employee_id FROM employees WHERE email = $1 AND company_id = $2',
+        "SELECT id, employee_id FROM employees WHERE email = $1 AND company_id = $2",
         [email, companyId]
       );
 
       if (userCheckResult.rows.length === 0) {
-        console.log(`Delete user warning: User ${email} not found in employees table`);
-        await client.query('ROLLBACK');
+        console.log(
+          `Delete user warning: User ${email} not found in employees table`
+        );
+        await client.query("ROLLBACK");
         return res.status(404).json({ error: "User not found" });
       }
 
       const employeeId = userCheckResult.rows[0].id;
-      const employeeIdForConstraints = userCheckResult.rows[0].employee_id || email;
+      const employeeIdForConstraints =
+        userCheckResult.rows[0].employee_id || email;
 
-      console.log(`Found employee with ID: ${employeeId}, employee_id: ${employeeIdForConstraints}`);
+      console.log(
+        `Found employee with ID: ${employeeId}, employee_id: ${employeeIdForConstraints}`
+      );
 
       // Delete related records in the correct order to avoid foreign key violations
-      
+
       // 1. Delete from assignments table first (if it exists)
       try {
         const deleteAssignmentsResult = await client.query(
-          'DELETE FROM assignments WHERE employee_id = $1',
+          "DELETE FROM assignments WHERE employee_id = $1",
           [email] // Use email instead of employeeIdForConstraints
         );
-        console.log(`Assignments deleted: ${deleteAssignmentsResult.rows.length} rows affected`);
+        console.log(
+          `Assignments deleted: ${deleteAssignmentsResult.rows.length} rows affected`
+        );
       } catch (assignmentsError) {
-        console.log(`No assignments table or no assignments to delete: ${assignmentsError.message}`);
+        console.log(
+          `No assignments table or no assignments to delete: ${assignmentsError.message}`
+        );
       }
 
       // 2. Delete from other potential related tables (add more as needed)
       // You can add more DELETE statements here for other tables that reference employees
-      
+
       // 3. Now delete from employees table
       const deleteEmployeeResult = await client.query(
-        'DELETE FROM employees WHERE email = $1 AND company_id = $2 RETURNING id',
+        "DELETE FROM employees WHERE email = $1 AND company_id = $2 RETURNING id",
         [email, companyId]
       );
-      console.log(`Employee deleted: ${deleteEmployeeResult.rows.length} rows affected`);
+      console.log(
+        `Employee deleted: ${deleteEmployeeResult.rows.length} rows affected`
+      );
 
       // 4. Deactivate user in users table (soft delete)
       const updateUserResult = await client.query(
-        'UPDATE users SET active = false, last_updated = CURRENT_TIMESTAMP WHERE email = $1 AND company_id = $2 RETURNING id',
+        "UPDATE users SET active = false, last_updated = CURRENT_TIMESTAMP WHERE email = $1 AND company_id = $2 RETURNING id",
         [email, companyId]
       );
-      console.log(`User deactivated: ${updateUserResult.rows.length} rows affected`);
+      console.log(
+        `User deactivated: ${updateUserResult.rows.length} rows affected`
+      );
 
-      await client.query('COMMIT');
+      await client.query("COMMIT");
       console.log("Delete user transaction committed successfully");
-      
-      res.json({ 
-        success: true, 
+
+      res.json({
+        success: true,
         message: "User deleted successfully",
         deletedEmployeeId: deleteEmployeeResult.rows[0]?.id,
-        deactivatedUserId: updateUserResult.rows[0]?.id
+        deactivatedUserId: updateUserResult.rows[0]?.id,
       });
-
     } catch (dbError) {
       console.error("Database error during delete user:", dbError);
-      
+
       if (client) {
         try {
-          await client.query('ROLLBACK');
+          await client.query("ROLLBACK");
           console.log("Delete user transaction rolled back due to error");
         } catch (rollbackError) {
           console.error("Error during rollback:", rollbackError);
         }
       }
-      
+
       // Provide more specific error messages
-      if (dbError.code === '23503') {
-        return res.status(400).json({ 
-          error: "Cannot delete user due to foreign key constraints. Please remove related data first.",
+      if (dbError.code === "23503") {
+        return res.status(400).json({
+          error:
+            "Cannot delete user due to foreign key constraints. Please remove related data first.",
           details: dbError.detail,
-          constraint: dbError.constraint
+          constraint: dbError.constraint,
         });
-      } else if (dbError.code === '42P01') {
-        return res.status(500).json({ 
-          error: "Database table not found. Please check database schema." 
+      } else if (dbError.code === "42P01") {
+        return res.status(500).json({
+          error: "Database table not found. Please check database schema.",
         });
-      } else if (dbError.code === '08006') {
-        return res.status(500).json({ 
-          error: "Database connection lost. Please try again." 
+      } else if (dbError.code === "08006") {
+        return res.status(500).json({
+          error: "Database connection lost. Please try again.",
         });
       } else {
-        return res.status(500).json({ 
-          error: "Database operation failed", 
+        return res.status(500).json({
+          error: "Database operation failed",
           details: dbError.message,
-          code: dbError.code
+          code: dbError.code,
         });
       }
     } finally {
@@ -3605,12 +4117,11 @@ app.delete("/api/delete-user", async (req, res) => {
         console.log("Database connection released");
       }
     }
-
   } catch (error) {
     console.error("Unexpected error in delete user endpoint:", error);
-    res.status(500).json({ 
-      error: "Internal server error", 
-      message: error.message 
+    res.status(500).json({
+      error: "Internal server error",
+      message: error.message,
     });
   }
 });
@@ -3643,8 +4154,8 @@ async function createNeonAuthUser(email, name) {
 const assistantFileStorage = multer.diskStorage({
   destination: (req, file, cb) => {
     const { companyId } = req.body;
-    const uploadPath = path.join(MEDIA_DIR, 'files', companyId || 'default');
-    
+    const uploadPath = path.join(MEDIA_DIR, "files", companyId || "default");
+
     // Ensure directory exists
     if (!fs.existsSync(uploadPath)) {
       fs.mkdirSync(uploadPath, { recursive: true });
@@ -3657,7 +4168,7 @@ const assistantFileStorage = multer.diskStorage({
     const baseName = path.basename(file.originalname, ext);
     const uniqueName = `${timestamp}_${baseName}${ext}`;
     cb(null, uniqueName);
-  }
+  },
 });
 
 const assistantFileUpload = multer({
@@ -3668,38 +4179,46 @@ const assistantFileUpload = multer({
 });
 
 // Enhanced file upload endpoint for assistant files
-app.post('/api/upload-file', assistantFileUpload.single('file'), async (req, res) => {
-  try {
-    if (!req.file) {
-      return res.status(400).json({ error: 'No file uploaded' });
-    }
+app.post(
+  "/api/upload-file",
+  assistantFileUpload.single("file"),
+  async (req, res) => {
+    try {
+      if (!req.file) {
+        return res.status(400).json({ error: "No file uploaded" });
+      }
 
-    const { fileName, companyId } = req.body;
-    
-    if (!fileName || !companyId) {
-      return res.status(400).json({ error: 'fileName and companyId are required' });
-    }
+      const { fileName, companyId } = req.body;
 
-    const baseUrl = process.env.BASE_URL || 'https://juta-dev.ngrok.dev';
-    const fileUrl = `${baseUrl}/media/files/${companyId}/${req.file.filename}`;
-    
-    console.log(`Assistant file uploaded: ${req.file.originalname} -> ${req.file.filename} for company ${companyId}`);
-    
-    res.json({ 
-      success: true,
-      url: fileUrl,
-      filename: req.file.filename,
-      originalName: req.file.originalname,
-      size: req.file.size
-    });
-  } catch (error) {
-    console.error('Error uploading assistant file:', error);
-    res.status(500).json({ 
-      success: false,
-      error: 'Failed to upload file' 
-    });
+      if (!fileName || !companyId) {
+        return res
+          .status(400)
+          .json({ error: "fileName and companyId are required" });
+      }
+
+      const baseUrl = process.env.BASE_URL || "https://juta-dev.ngrok.dev";
+      const fileUrl = `${baseUrl}/media/files/${companyId}/${req.file.filename}`;
+
+      console.log(
+        `Assistant file uploaded: ${req.file.originalname} -> ${req.file.filename} for company ${companyId}`
+      );
+
+      res.json({
+        success: true,
+        url: fileUrl,
+        filename: req.file.filename,
+        originalName: req.file.originalname,
+        size: req.file.size,
+      });
+    } catch (error) {
+      console.error("Error uploading assistant file:", error);
+      res.status(500).json({
+        success: false,
+        error: "Failed to upload file",
+      });
+    }
   }
-});
+);
 
 // Create assistant_files table if it doesn't exist
 async function createAssistantFilesTable() {
@@ -3719,19 +4238,19 @@ async function createAssistantFilesTable() {
           updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
       `);
-      
+
       // Create index for faster lookups
       await client.query(`
         CREATE INDEX IF NOT EXISTS idx_assistant_files_company_id 
         ON assistant_files(company_id)
       `);
-      
-      console.log('Assistant files table created/verified successfully');
+
+      console.log("Assistant files table created/verified successfully");
     } finally {
       await safeRelease(client);
     }
   } catch (error) {
-    console.error('Error creating assistant_files table:', error);
+    console.error("Error creating assistant_files table:", error);
   }
 }
 
@@ -3739,27 +4258,21 @@ async function createAssistantFilesTable() {
 createAssistantFilesTable();
 
 // POST /api/assistant-files - Save file metadata after upload
-app.post('/api/assistant-files', async (req, res) => {
+app.post("/api/assistant-files", async (req, res) => {
   try {
-    const {
-      name,
-      url,
-      vectorStoreId,
-      openAIFileId,
-      companyId,
-      createdBy
-    } = req.body;
+    const { name, url, vectorStoreId, openAIFileId, companyId, createdBy } =
+      req.body;
 
     if (!name || !url || !companyId) {
-      return res.status(400).json({ 
+      return res.status(400).json({
         success: false,
-        error: 'name, url, and companyId are required' 
+        error: "name, url, and companyId are required",
       });
     }
 
     const client = await pool.connect();
     try {
-      await client.query('BEGIN');
+      await client.query("BEGIN");
 
       const insertQuery = `
         INSERT INTO assistant_files (
@@ -3774,42 +4287,40 @@ app.post('/api/assistant-files', async (req, res) => {
         vectorStoreId || null,
         openAIFileId || null,
         companyId,
-        createdBy || null
+        createdBy || null,
       ]);
 
-      await client.query('COMMIT');
+      await client.query("COMMIT");
 
       res.json({
         success: true,
         id: result.rows[0].id,
-        message: 'File metadata saved successfully'
+        message: "File metadata saved successfully",
       });
-
     } catch (error) {
       await safeRollback(client);
       throw error;
     } finally {
       await safeRelease(client);
     }
-
   } catch (error) {
-    console.error('Error saving assistant file metadata:', error);
+    console.error("Error saving assistant file metadata:", error);
     res.status(500).json({
       success: false,
-      error: 'Failed to save file metadata'
+      error: "Failed to save file metadata",
     });
   }
 });
 
 // GET /api/assistant-files - Fetch all files for a company
-app.get('/api/assistant-files', async (req, res) => {
+app.get("/api/assistant-files", async (req, res) => {
   try {
     const { companyId } = req.query;
 
     if (!companyId) {
       return res.status(400).json({
         success: false,
-        error: 'companyId is required'
+        error: "companyId is required",
       });
     }
 
@@ -3828,94 +4339,95 @@ app.get('/api/assistant-files', async (req, res) => {
 
       res.json({
         success: true,
-        files: result.rows
+        files: result.rows,
       });
-
     } finally {
       await safeRelease(client);
     }
-
   } catch (error) {
-    console.error('Error fetching assistant files:', error);
+    console.error("Error fetching assistant files:", error);
     res.status(500).json({
       success: false,
-      error: 'Failed to fetch files'
+      error: "Failed to fetch files",
     });
   }
 });
 
 // DELETE /api/assistant-files/:fileId - Delete file metadata and physical file
-app.delete('/api/assistant-files/:fileId', async (req, res) => {
+app.delete("/api/assistant-files/:fileId", async (req, res) => {
   try {
     const { fileId } = req.params;
 
     if (!fileId) {
       return res.status(400).json({
         success: false,
-        error: 'fileId is required'
+        error: "fileId is required",
       });
     }
 
     const client = await pool.connect();
     try {
-      await client.query('BEGIN');
+      await client.query("BEGIN");
 
       // Get file info before deletion
-      const selectQuery = 'SELECT url, company_id FROM assistant_files WHERE id = $1';
+      const selectQuery =
+        "SELECT url, company_id FROM assistant_files WHERE id = $1";
       const fileResult = await client.query(selectQuery, [fileId]);
 
       if (fileResult.rows.length === 0) {
-        await client.query('ROLLBACK');
+        await client.query("ROLLBACK");
         return res.status(404).json({
           success: false,
-          error: 'File not found'
+          error: "File not found",
         });
       }
 
       const fileInfo = fileResult.rows[0];
-      
+
       // Delete from database
-      const deleteQuery = 'DELETE FROM assistant_files WHERE id = $1';
+      const deleteQuery = "DELETE FROM assistant_files WHERE id = $1";
       await client.query(deleteQuery, [fileId]);
 
-      await client.query('COMMIT');
+      await client.query("COMMIT");
 
       // Attempt to delete physical file
       try {
-        const urlParts = fileInfo.url.split('/');
+        const urlParts = fileInfo.url.split("/");
         const filename = urlParts[urlParts.length - 1];
-        const filePath = path.join(MEDIA_DIR, 'files', fileInfo.company_id, filename);
-        
+        const filePath = path.join(
+          MEDIA_DIR,
+          "files",
+          fileInfo.company_id,
+          filename
+        );
+
         if (fs.existsSync(filePath)) {
           fs.unlinkSync(filePath);
           console.log(`Physical file deleted: ${filePath}`);
         }
       } catch (fsError) {
-        console.error('Error deleting physical file:', fsError);
+        console.error("Error deleting physical file:", fsError);
         // Don't fail the API call if file deletion fails
       }
 
       res.json({
         success: true,
-        message: 'File deleted successfully'
+        message: "File deleted successfully",
       });
-
     } catch (error) {
       await safeRollback(client);
       throw error;
     } finally {
       await safeRelease(client);
     }
-
   } catch (error) {
-    console.error('Error deleting assistant file:', error);
+    console.error("Error deleting assistant file:", error);
     res.status(500).json({
       success: false,
-      error: 'Failed to delete file'
+      error: "Failed to delete file",
     });
   }
 });
-
 
 app.post("/api/channel/create/:companyID", async (req, res) => {
   const { companyID } = req.params;
@@ -3928,8 +4440,8 @@ app.post("/api/channel/create/:companyID", async (req, res) => {
     phoneNumber,
     email,
     password,
-    plan = 'blaster', // Default plan
-    country
+    plan = "blaster", // Default plan
+    country,
   } = req.body || {};
 
   try {
@@ -3938,14 +4450,14 @@ app.post("/api/channel/create/:companyID", async (req, res) => {
       "SELECT * FROM companies WHERE company_id = $1",
       [companyID]
     );
-    
+
     let company = companyResult.rows[0];
     let companyCreated = false;
 
     // If company doesn't exist, create it with the provided data
     if (!company) {
       console.log(`Company ${companyID} not found, creating new company...`);
-      
+
       try {
         // Create company with the provided information including apiUrl
         await sqlDb.query(
@@ -3974,7 +4486,7 @@ app.post("/api/channel/create/:companyID", async (req, res) => {
             process.env.URL, // Set the API URL
           ]
         );
-        
+
         // Fetch the newly created company
         companyResult = await sqlDb.query(
           "SELECT * FROM companies WHERE company_id = $1",
@@ -3982,8 +4494,10 @@ app.post("/api/channel/create/:companyID", async (req, res) => {
         );
         company = companyResult.rows[0];
         companyCreated = true;
-        
-        console.log(`Company ${companyID} created successfully with plan: ${plan} and apiUrl: ${process.env.URL}`);
+
+        console.log(
+          `Company ${companyID} created successfully with plan: ${plan} and apiUrl: ${process.env.URL}`
+        );
       } catch (createError) {
         console.error("Error creating company:", createError);
         return res.status(500).json({
@@ -4029,7 +4543,9 @@ app.post("/api/channel/create/:companyID", async (req, res) => {
           updateValues.push(companyID);
 
           await sqlDb.query(
-            `UPDATE companies SET ${updateFields.join(', ')} WHERE company_id = $${paramIndex}`,
+            `UPDATE companies SET ${updateFields.join(
+              ", "
+            )} WHERE company_id = $${paramIndex}`,
             updateValues
           );
 
@@ -4056,7 +4572,7 @@ app.post("/api/channel/create/:companyID", async (req, res) => {
     // Respond to the client immediately
     res.json({
       success: true,
-      message: companyCreated 
+      message: companyCreated
         ? "Company and channel created successfully. Bot initialization in progress."
         : "Channel created successfully. Bot initialization in progress.",
       companyId: companyID,
@@ -4107,7 +4623,7 @@ app.post(
       };
       const name = decodedEmail.split("@")[0];
       console.log("Creating user in Neon Auth:", userData, name);
-      
+
       // Create user in Neon Auth
       const neonUser = await createNeonAuthUser(decodedEmail, name);
 
@@ -4150,7 +4666,7 @@ app.post(
           userData.password,
         ]
       );
-      
+
       res.json({
         message: "User created successfully",
         userId,
@@ -4191,7 +4707,7 @@ app.post(
         invoiceNumber,
         empGroup,
         profile,
-        threadId
+        threadId,
       } = req.body || {};
 
       if (!decodedEmail || !decodedEmail.includes("@")) {
@@ -4216,95 +4732,127 @@ app.post(
       const finalEmployeeId = employeeId || uuidv4();
 
       // Insert into users table with flexible field handling
-      const userFields = ['user_id', 'company_id', 'email', 'phone', 'role', 'active', 'created_at', 'password'];
-      const userValues = [userId, companyId, decodedEmail, 0, role, true, password];
-      let userPlaceholders = '$1, $2, $3, $4, $5, $6, CURRENT_TIMESTAMP, $7';
+      const userFields = [
+        "user_id",
+        "company_id",
+        "email",
+        "phone",
+        "role",
+        "active",
+        "created_at",
+        "password",
+      ];
+      const userValues = [
+        userId,
+        companyId,
+        decodedEmail,
+        0,
+        role,
+        true,
+        password,
+      ];
+      let userPlaceholders = "$1, $2, $3, $4, $5, $6, CURRENT_TIMESTAMP, $7";
       let paramIndex = 8;
 
       // Add optional user fields
       if (providedName) {
-        userFields.push('name');
+        userFields.push("name");
         userValues.push(name);
         userPlaceholders += `, $${paramIndex++}`;
       }
       if (profile) {
-        userFields.push('profile');
+        userFields.push("profile");
         userValues.push(JSON.stringify(profile));
         userPlaceholders += `, $${paramIndex++}`;
       }
       if (threadId) {
-        userFields.push('thread_id');
+        userFields.push("thread_id");
         userValues.push(threadId);
         userPlaceholders += `, $${paramIndex++}`;
       }
 
       const userQuery = `
-        INSERT INTO users (${userFields.join(', ')}) 
+        INSERT INTO users (${userFields.join(", ")}) 
         VALUES (${userPlaceholders})
       `;
 
       await sqlDb.query(userQuery, userValues);
 
       // Insert into employees table with flexible field handling
-      const empFields = ['employee_id', 'company_id', 'name', 'email', 'role', 'active', 'created_at'];
-      const empValues = [finalEmployeeId, companyId, name, decodedEmail, role, true];
-      let empPlaceholders = '$1, $2, $3, $4, $5, $6, CURRENT_TIMESTAMP';
+      const empFields = [
+        "employee_id",
+        "company_id",
+        "name",
+        "email",
+        "role",
+        "active",
+        "created_at",
+      ];
+      const empValues = [
+        finalEmployeeId,
+        companyId,
+        name,
+        decodedEmail,
+        role,
+        true,
+      ];
+      let empPlaceholders = "$1, $2, $3, $4, $5, $6, CURRENT_TIMESTAMP";
       paramIndex = 7;
 
       // Add optional employee fields
       if (phoneNumber) {
-        empFields.push('phone_number');
+        empFields.push("phone_number");
         empValues.push(phoneNumber);
         empPlaceholders += `, $${paramIndex++}`;
       }
       if (phoneAccess) {
-        empFields.push('phone_access');
+        empFields.push("phone_access");
         empValues.push(JSON.stringify(phoneAccess));
         empPlaceholders += `, $${paramIndex++}`;
       }
       if (weightages) {
-        empFields.push('weightages');
+        empFields.push("weightages");
         empValues.push(JSON.stringify(weightages));
         empPlaceholders += `, $${paramIndex++}`;
       }
       if (company) {
-        empFields.push('company');
+        empFields.push("company");
         empValues.push(company);
         empPlaceholders += `, $${paramIndex++}`;
       }
       if (imageUrl) {
-        empFields.push('image_url');
+        empFields.push("image_url");
         empValues.push(imageUrl);
         empPlaceholders += `, $${paramIndex++}`;
       }
       if (notes) {
-        empFields.push('notes');
+        empFields.push("notes");
         empValues.push(notes);
         empPlaceholders += `, $${paramIndex++}`;
       }
       if (quotaLeads !== undefined) {
-        empFields.push('quota_leads');
+        empFields.push("quota_leads");
         empValues.push(quotaLeads);
         empPlaceholders += `, $${paramIndex++}`;
       }
       if (viewEmployees) {
-        empFields.push('view_employees');
+        empFields.push("view_employees");
         empValues.push(JSON.stringify(viewEmployees));
         empPlaceholders += `, $${paramIndex++}`;
       }
       if (invoiceNumber) {
-        empFields.push('invoice_number');
+        empFields.push("invoice_number");
         empValues.push(invoiceNumber);
         empPlaceholders += `, $${paramIndex++}`;
       }
       if (empGroup) {
-        empFields.push('emp_group');
+        empFields.push("emp_group");
         empValues.push(empGroup);
         empPlaceholders += `, $${paramIndex++}`;
       }
 
       const empQuery = `
-        INSERT INTO employees (${empFields.join(', ')}) 
+        INSERT INTO employees (${empFields.join(", ")}) 
         VALUES (${empPlaceholders})
       `;
 
@@ -4318,7 +4866,7 @@ app.post(
         neonUserId: neonUser.id,
         role,
         email: decodedEmail,
-        name
+        name,
       });
     } catch (error) {
       console.error("Error adding user:", error);
@@ -4702,6 +5250,117 @@ function toPgTimestamp(firestoreTimestamp) {
   return null;
 }
 
+app.post("/api/contacts/:contactId/mark-unread", async (req, res) => {
+  try {
+    const { contactId } = req.params;
+    const { company_id, increment = 1 } = req.body;
+
+    if (!company_id) {
+      return res.status(400).json({
+        success: false,
+        error: "company_id is required",
+      });
+    }
+
+    // Get current unread count
+    const currentResult = await sqlDb.query(
+      `SELECT unread_count FROM contacts WHERE contact_id = $1 AND company_id = $2`,
+      [contactId, company_id]
+    );
+
+    if (currentResult.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: "Contact not found",
+      });
+    }
+
+    const currentUnreadCount = currentResult.rows[0].unread_count || 0;
+    const newUnreadCount = currentUnreadCount + increment;
+
+    // Update unread count
+    const result = await sqlDb.query(
+      `UPDATE contacts 
+       SET unread_count = $1, 
+           last_updated = CURRENT_TIMESTAMP
+       WHERE contact_id = $2 AND company_id = $3
+       RETURNING contact_id, unread_count, last_updated`,
+      [newUnreadCount, contactId, company_id]
+    );
+
+    res.json({
+      success: true,
+      contact_id: contactId,
+      unread_count: newUnreadCount,
+      previous_unread_count: currentUnreadCount,
+      increment: increment,
+      last_updated: result.rows[0].last_updated,
+    });
+  } catch (error) {
+    console.error("Error marking contact as unread:", error);
+    res.status(500).json({
+      success: false,
+      error: "Failed to mark contact as unread",
+      message: error.message,
+    });
+  }
+});
+
+// Mark contact as read (reset unread count to 0)
+app.post("/api/contacts/:contactId/mark-read", async (req, res) => {
+  try {
+    const { contactId } = req.params;
+    const { company_id } = req.body;
+
+    if (!company_id) {
+      return res.status(400).json({
+        success: false,
+        error: "company_id is required",
+      });
+    }
+
+    // Get current unread count
+    const currentResult = await sqlDb.query(
+      `SELECT unread_count FROM contacts WHERE contact_id = $1 AND company_id = $2`,
+      [contactId, company_id]
+    );
+
+    if (currentResult.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: "Contact not found",
+      });
+    }
+
+    const currentUnreadCount = currentResult.rows[0].unread_count || 0;
+
+    // Reset unread count to 0
+    const result = await sqlDb.query(
+      `UPDATE contacts 
+       SET unread_count = 0, 
+           last_updated = CURRENT_TIMESTAMP
+       WHERE contact_id = $1 AND company_id = $2
+       RETURNING contact_id, unread_count, last_updated`,
+      [contactId, company_id]
+    );
+
+    res.json({
+      success: true,
+      contact_id: contactId,
+      unread_count: 0,
+      previous_unread_count: currentUnreadCount,
+      last_updated: result.rows[0].last_updated,
+    });
+  } catch (error) {
+    console.error("Error marking contact as read:", error);
+    res.status(500).json({
+      success: false,
+      error: "Failed to mark contact as read",
+      message: error.message,
+    });
+  }
+});
+
 // POST endpoint to schedule a message
 app.post("/api/schedule-message/:companyId", async (req, res) => {
   const { companyId } = req.params;
@@ -4718,7 +5377,9 @@ app.post("/api/schedule-message/:companyId", async (req, res) => {
     ),
     hasCaption: Boolean(scheduledMessage.caption),
     multiple: Boolean(scheduledMessage.multiple),
-    contactCount: Array.isArray(scheduledMessage.contactId) ? scheduledMessage.contactId.length : 1,
+    contactCount: Array.isArray(scheduledMessage.contactId)
+      ? scheduledMessage.contactId.length
+      : 1,
   });
 
   try {
@@ -4736,28 +5397,30 @@ app.post("/api/schedule-message/:companyId", async (req, res) => {
 
       // Handle multiple vs single contact logic
       const isMultiple = Boolean(scheduledMessage.multiple);
-      const contactIds = Array.isArray(scheduledMessage.contact_id) 
-        ? scheduledMessage.contact_id 
+      const contactIds = Array.isArray(scheduledMessage.contact_id)
+        ? scheduledMessage.contact_id
         : [scheduledMessage.contact_id].filter(Boolean);
-      
+
       console.log("Contact processing:", {
         isMultiple,
         contactIds,
-        originalContactId: scheduledMessage.contact_id
+        originalContactId: scheduledMessage.contact_id,
       });
-      
+
       // Validation: ensure we have contacts
       if (!contactIds.length) {
         throw new Error("No valid contacts provided");
       }
-      
+
       // For single contact, store in contact_id field
       // For multiple contacts, store in contact_ids field
-      const singleContactId = !isMultiple && contactIds.length > 0 ? contactIds[0] : null;
-      const multipleContactIds = isMultiple && contactIds.length > 0 ? contactIds : null;
+      const singleContactId =
+        !isMultiple && contactIds.length > 0 ? contactIds[0] : null;
+      const multipleContactIds =
+        isMultiple && contactIds.length > 0 ? contactIds : null;
 
       const chatIds = scheduledMessage.chatIds || [];
-      
+
       // Calculate batching based on CONTACTS (not messages)
       const totalContacts = contactIds.length;
       const contactsPerBatch = scheduledMessage.batchQuantity || totalContacts;
@@ -4768,7 +5431,7 @@ app.post("/api/schedule-message/:companyId", async (req, res) => {
         contactsPerBatch,
         numberOfBatches,
         isMultiple,
-        contactIds
+        contactIds,
       });
 
       const mainMessageQuery = `
@@ -4823,19 +5486,22 @@ app.post("/api/schedule-message/:companyId", async (req, res) => {
         scheduledMessage.template_id || null,
       ]);
 
-      const queue = getQueueForBot(companyId);        
+      const queue = getQueueForBot(companyId);
       const batches = [];
-        
+
       // Create batches if there are multiple contacts requiring batching
       if (isMultiple && numberOfBatches > 1) {
         for (let batchIndex = 0; batchIndex < numberOfBatches; batchIndex++) {
           const startIndex = batchIndex * contactsPerBatch;
-          const endIndex = Math.min((batchIndex + 1) * contactsPerBatch, totalContacts);
+          const endIndex = Math.min(
+            (batchIndex + 1) * contactsPerBatch,
+            totalContacts
+          );
 
           const batchDelay =
             batchIndex *
             (scheduledMessage.repeatInterval || 0) *
-            getMillisecondsForUnit(scheduledMessage.repeatUnit || 'minutes');
+            getMillisecondsForUnit(scheduledMessage.repeatUnit || "minutes");
           const batchScheduledTime = new Date(
             toPgTimestamp(scheduledMessage.scheduledTime).getTime() + batchDelay
           );
@@ -4847,18 +5513,24 @@ app.post("/api/schedule-message/:companyId", async (req, res) => {
           const batchChatIds = chatIds.slice(startIndex, endIndex);
 
           // Prepare messages for this batch
-          const batchMessages = batchChatIds.map(chatId => ({
+          const batchMessages = batchChatIds.map((chatId) => ({
             chatId: chatId,
             message: scheduledMessage.message || null,
-            delay: scheduledMessage.messageDelays 
-              ? (JSON.parse(scheduledMessage.messageDelays)[0] || 0)
-              : Math.floor(Math.random() * ((scheduledMessage.maxDelay || 5) - (scheduledMessage.minDelay || 1) + 1) + (scheduledMessage.minDelay || 1)),
+            delay: scheduledMessage.messageDelays
+              ? JSON.parse(scheduledMessage.messageDelays)[0] || 0
+              : Math.floor(
+                  Math.random() *
+                    ((scheduledMessage.maxDelay || 5) -
+                      (scheduledMessage.minDelay || 1) +
+                      1) +
+                    (scheduledMessage.minDelay || 1)
+                ),
             mediaUrl: scheduledMessage.mediaUrl || "",
             documentUrl: scheduledMessage.documentUrl || "",
             fileName: scheduledMessage.fileName || "",
-            caption: scheduledMessage.caption || ""
+            caption: scheduledMessage.caption || "",
           }));
-          
+
           const batchQuery = `
           INSERT INTO scheduled_messages (
             id, schedule_id, company_id, scheduled_time, status, created_at,
@@ -4889,7 +5561,9 @@ app.post("/api/schedule-message/:companyId", async (req, res) => {
             scheduledMessage.infiniteLoop || false,
             scheduledMessage.repeatInterval || null,
             scheduledMessage.repeatUnit || null,
-            scheduledMessage.activeHours ? JSON.stringify(scheduledMessage.activeHours) : null,
+            scheduledMessage.activeHours
+              ? JSON.stringify(scheduledMessage.activeHours)
+              : null,
             isMultiple, // Use the defined variable
             null, // For batches, contact_id is always null
             JSON.stringify(batchContactIds), // Store the batch contacts in contact_ids
@@ -4971,15 +5645,21 @@ app.put("/api/schedule-message/:companyId/:messageId", async (req, res) => {
 
     if (!client) {
       console.error("Failed to get database connection - aborting update");
-      return res.status(500).json({ error: "Failed to update scheduled message" });
+      return res
+        .status(500)
+        .json({ error: "Failed to update scheduled message" });
     }
 
     try {
       await client.query("BEGIN");
 
       // Get existing message to access its properties
-      const existingMessageQuery = "SELECT * FROM scheduled_messages WHERE id = $1 AND company_id = $2";
-      const existingMessageResult = await client.query(existingMessageQuery, [messageId, companyId]);
+      const existingMessageQuery =
+        "SELECT * FROM scheduled_messages WHERE id = $1 AND company_id = $2";
+      const existingMessageResult = await client.query(existingMessageQuery, [
+        messageId,
+        companyId,
+      ]);
 
       if (existingMessageResult.rowCount === 0) {
         console.log("Scheduled message not found");
@@ -5014,7 +5694,10 @@ app.put("/api/schedule-message/:companyId/:messageId", async (req, res) => {
       const messageCaption =
         updatedMessage.caption || updatedMessage.message || "";
 
-      console.log("Updating content for all scheduled message records with schedule_id:", messageId);
+      console.log(
+        "Updating content for all scheduled message records with schedule_id:",
+        messageId
+      );
       await client.query(updateQuery, [
         updatedMessage.message || null,
         updatedMessage.mediaUrl || null,
@@ -5030,17 +5713,23 @@ app.put("/api/schedule-message/:companyId/:messageId", async (req, res) => {
       // No need to modify the queue jobs or recreate batches
       // Just update the content of the existing messages
       // The existing job scheduling remains intact
-      
-      // If the status has changed to something other than "scheduled", 
+
+      // If the status has changed to something other than "scheduled",
       // we should remove any pending jobs from the queue
       if (updatedMessage.status && updatedMessage.status !== "scheduled") {
-        console.log(`Message status changed to ${updatedMessage.status}, removing jobs from queue if they exist`);
-        
+        console.log(
+          `Message status changed to ${updatedMessage.status}, removing jobs from queue if they exist`
+        );
+
         // Get all batch IDs associated with this message
-        const batchesQuery = "SELECT id FROM scheduled_messages WHERE (id::text = $1::text OR schedule_id = $1) AND company_id = $2";
-        const batchesResult = await client.query(batchesQuery, [messageId, companyId]);
-        const batchIds = batchesResult.rows.map(row => row.id);
-        
+        const batchesQuery =
+          "SELECT id FROM scheduled_messages WHERE (id::text = $1::text OR schedule_id = $1) AND company_id = $2";
+        const batchesResult = await client.query(batchesQuery, [
+          messageId,
+          companyId,
+        ]);
+        const batchIds = batchesResult.rows.map((row) => row.id);
+
         // Remove jobs from queue
         const queue = getQueueForBot(companyId);
         for (const id of batchIds) {
@@ -5049,11 +5738,15 @@ app.put("/api/schedule-message/:companyId/:messageId", async (req, res) => {
             console.log(`Removed job with ID ${id} from queue`);
           } catch (e) {
             // Job might not exist, which is fine
-            console.log(`Job with ID ${id} not found in queue or already processed`);
+            console.log(
+              `Job with ID ${id} not found in queue or already processed`
+            );
           }
         }
       } else {
-        console.log("Message status remains 'scheduled', keeping existing jobs in the queue");
+        console.log(
+          "Message status remains 'scheduled', keeping existing jobs in the queue"
+        );
       }
 
       await client.query("COMMIT");
@@ -5066,7 +5759,10 @@ app.put("/api/schedule-message/:companyId/:messageId", async (req, res) => {
       });
     } catch (error) {
       await safeRollback(client);
-      console.error("Error during scheduled message update transaction:", error);
+      console.error(
+        "Error during scheduled message update transaction:",
+        error
+      );
       throw error;
     } finally {
       await safeRelease(client);
@@ -5086,7 +5782,9 @@ app.delete("/api/schedule-message/:companyId/:messageId", async (req, res) => {
 
     if (!client) {
       console.error("Failed to get database connection - aborting delete");
-      return res.status(500).json({ error: "Failed to delete scheduled message" });
+      return res
+        .status(500)
+        .json({ error: "Failed to delete scheduled message" });
     }
 
     try {
@@ -5107,15 +5805,15 @@ app.delete("/api/schedule-message/:companyId/:messageId", async (req, res) => {
       }
 
       // First, get all batch IDs associated with this message for queue job removal
-      const getBatchesQuery = 
+      const getBatchesQuery =
         "SELECT id FROM scheduled_messages WHERE (id::text = $1::text OR schedule_id = $1) AND company_id = $2";
       const batchesResult = await client.query(getBatchesQuery, [
         messageId,
         companyId,
       ]);
-      
-      const batchIds = batchesResult.rows.map(row => row.id);
-      
+
+      const batchIds = batchesResult.rows.map((row) => row.id);
+
       // Delete the message records from database
       const deleteQuery =
         "DELETE FROM scheduled_messages WHERE (id::text = $1::text OR schedule_id = $1) AND company_id = $2";
@@ -5123,19 +5821,21 @@ app.delete("/api/schedule-message/:companyId/:messageId", async (req, res) => {
         messageId,
         companyId,
       ]);
-      
+
       // Get the queue and remove all related jobs
       const queue = getQueueForBot(companyId);
-      
+
       // Remove main message job if it exists
       await queue.removeRepeatableByKey(messageId);
       try {
         await queue.remove(messageId);
       } catch (e) {
         // Job might not exist, which is fine
-        console.log(`Job with ID ${messageId} not found in queue or already processed`);
+        console.log(
+          `Job with ID ${messageId} not found in queue or already processed`
+        );
       }
-      
+
       // Remove all batch jobs if they exist
       for (const batchId of batchIds) {
         if (batchId !== messageId) {
@@ -5143,7 +5843,9 @@ app.delete("/api/schedule-message/:companyId/:messageId", async (req, res) => {
             await queue.remove(batchId);
           } catch (e) {
             // Job might not exist, which is fine
-            console.log(`Batch job with ID ${batchId} not found in queue or already processed`);
+            console.log(
+              `Batch job with ID ${batchId} not found in queue or already processed`
+            );
           }
         }
       }
@@ -5155,7 +5857,7 @@ app.delete("/api/schedule-message/:companyId/:messageId", async (req, res) => {
         message: "Message deleted successfully",
         success: true,
         batchesDeleted: deleteResult.rowCount - 1,
-        jobsRemoved: batchIds.length
+        jobsRemoved: batchIds.length,
       });
     } catch (error) {
       await safeRollback(client);
@@ -5173,22 +5875,26 @@ app.delete("/api/schedule-message/:companyId/:messageId", async (req, res) => {
 });
 
 // DELETE endpoint to remove scheduled messages by template_id
-app.delete("/api/schedule-message/:companyId/template/:templateId/contact/:contactId", async (req, res) => {
-  const { companyId, templateId, contactId } = req.params;
-
-  try {
-    const client = await getDatabaseConnection();
-
-    if (!client) {
-      console.error("Failed to get database connection - aborting delete");
-      return res.status(500).json({ error: "Failed to delete scheduled messages" });
-    }
+app.delete(
+  "/api/schedule-message/:companyId/template/:templateId/contact/:contactId",
+  async (req, res) => {
+    const { companyId, templateId, contactId } = req.params;
 
     try {
-      await client.query("BEGIN");
+      const client = await getDatabaseConnection();
 
-      // Find all scheduled messages for this template and contact
-      const findQuery = `
+      if (!client) {
+        console.error("Failed to get database connection - aborting delete");
+        return res
+          .status(500)
+          .json({ error: "Failed to delete scheduled messages" });
+      }
+
+      try {
+        await client.query("BEGIN");
+
+        // Find all scheduled messages for this template and contact
+        const findQuery = `
         SELECT id FROM scheduled_messages
         WHERE company_id = $1
           AND template_id = $2
@@ -5197,19 +5903,23 @@ app.delete("/api/schedule-message/:companyId/template/:templateId/contact/:conta
             OR (contact_ids IS NOT NULL AND contact_ids::jsonb ? $3)
           )
       `;
-      const findResult = await client.query(findQuery, [companyId, templateId, contactId]);
-      const messageIds = findResult.rows.map(row => row.id);
+        const findResult = await client.query(findQuery, [
+          companyId,
+          templateId,
+          contactId,
+        ]);
+        const messageIds = findResult.rows.map((row) => row.id);
 
-      if (messageIds.length === 0) {
-        await client.query("ROLLBACK");
-        return res.status(404).json({
-          success: false,
-          error: "No scheduled messages found for this template and contact",
-        });
-      }
+        if (messageIds.length === 0) {
+          await client.query("ROLLBACK");
+          return res.status(404).json({
+            success: false,
+            error: "No scheduled messages found for this template and contact",
+          });
+        }
 
-      // Delete from database
-      const deleteQuery = `
+        // Delete from database
+        const deleteQuery = `
         DELETE FROM scheduled_messages
         WHERE company_id = $1
           AND template_id = $2
@@ -5218,40 +5928,48 @@ app.delete("/api/schedule-message/:companyId/template/:templateId/contact/:conta
             OR (contact_ids IS NOT NULL AND contact_ids::jsonb ? $3)
           )
       `;
-      const deleteResult = await client.query(deleteQuery, [companyId, templateId, contactId]);
+        const deleteResult = await client.query(deleteQuery, [
+          companyId,
+          templateId,
+          contactId,
+        ]);
 
-      // Remove jobs from queue
-      const queue = getQueueForBot(companyId);
-      for (const id of messageIds) {
-        try {
-          await queue.remove(id);
-        } catch (e) {
-          // Job might not exist, which is fine
+        // Remove jobs from queue
+        const queue = getQueueForBot(companyId);
+        for (const id of messageIds) {
+          try {
+            await queue.remove(id);
+          } catch (e) {
+            // Job might not exist, which is fine
+          }
         }
+
+        await client.query("COMMIT");
+
+        res.json({
+          success: true,
+          deletedCount: deleteResult.rowCount,
+          jobsRemoved: messageIds.length,
+          message: `Deleted ${deleteResult.rowCount} scheduled message(s) for template and contact`,
+        });
+      } catch (error) {
+        await client.query("ROLLBACK");
+        throw error;
+      } finally {
+        client.release();
       }
-
-      await client.query("COMMIT");
-
-      res.json({
-        success: true,
-        deletedCount: deleteResult.rowCount,
-        jobsRemoved: messageIds.length,
-        message: `Deleted ${deleteResult.rowCount} scheduled message(s) for template and contact`,
-      });
     } catch (error) {
-      await client.query("ROLLBACK");
-      throw error;
-    } finally {
-      client.release();
+      console.error(
+        "Error deleting scheduled messages by template/contact:",
+        error
+      );
+      res.status(500).json({
+        success: false,
+        error: error.message || "Failed to delete scheduled messages",
+      });
     }
-  } catch (error) {
-    console.error("Error deleting scheduled messages by template/contact:", error);
-    res.status(500).json({
-      success: false,
-      error: error.message || "Failed to delete scheduled messages",
-    });
   }
-});
+);
 
 app.post(
   "/api/schedule-message/:companyId/:messageId/stop",
@@ -5486,7 +6204,9 @@ app.post("/api/sync-contact-names/:companyId", async (req, res) => {
     });
   } catch (error) {
     console.error(`Error starting contact names sync for ${companyId}:`, error);
-    res.status(500).json({ error: "Failed to start contact names synchronization" });
+    res
+      .status(500)
+      .json({ error: "Failed to start contact names synchronization" });
   }
 });
 
@@ -5521,7 +6241,12 @@ app.post("/api/sync-single-contact/:companyId", async (req, res) => {
     }
 
     try {
-      await syncSingleContact(client, companyId, contactPhone, selectedPhoneIndex);
+      await syncSingleContact(
+        client,
+        companyId,
+        contactPhone,
+        selectedPhoneIndex
+      );
       console.log(
         `Single contact synchronization completed for company ${companyId}, phone ${selectedPhoneIndex}, contact ${contactPhone}`
       );
@@ -5536,11 +6261,21 @@ app.post("/api/sync-single-contact/:companyId", async (req, res) => {
         `Error during single contact sync for company ${companyId}, phone ${selectedPhoneIndex}, contact ${contactPhone}:`,
         error
       );
-      res.status(500).json({ error: "Failed to sync single contact", details: error.message });
+      res
+        .status(500)
+        .json({
+          error: "Failed to sync single contact",
+          details: error.message,
+        });
     }
   } catch (error) {
-    console.error(`Error starting single contact sync for ${companyId}:`, error);
-    res.status(500).json({ error: "Failed to start single contact synchronization" });
+    console.error(
+      `Error starting single contact sync for ${companyId}:`,
+      error
+    );
+    res
+      .status(500)
+      .json({ error: "Failed to start single contact synchronization" });
   }
 });
 
@@ -5575,7 +6310,12 @@ app.post("/api/sync-single-contact-name/:companyId", async (req, res) => {
     }
 
     try {
-      await syncSingleContactName(client, companyId, contactPhone, selectedPhoneIndex);
+      await syncSingleContactName(
+        client,
+        companyId,
+        contactPhone,
+        selectedPhoneIndex
+      );
       console.log(
         `Single contact name synchronization completed for company ${companyId}, phone ${selectedPhoneIndex}, contact ${contactPhone}`
       );
@@ -5590,11 +6330,21 @@ app.post("/api/sync-single-contact-name/:companyId", async (req, res) => {
         `Error during single contact name sync for company ${companyId}, phone ${selectedPhoneIndex}, contact ${contactPhone}:`,
         error
       );
-      res.status(500).json({ error: "Failed to sync single contact name", details: error.message });
+      res
+        .status(500)
+        .json({
+          error: "Failed to sync single contact name",
+          details: error.message,
+        });
     }
   } catch (error) {
-    console.error(`Error starting single contact name sync for ${companyId}:`, error);
-    res.status(500).json({ error: "Failed to start single contact name synchronization" });
+    console.error(
+      `Error starting single contact name sync for ${companyId}:`,
+      error
+    );
+    res
+      .status(500)
+      .json({ error: "Failed to start single contact name synchronization" });
   }
 });
 
@@ -5693,10 +6443,15 @@ app.get("/api/stats/:companyId", async (req, res) => {
       FROM employees 
       WHERE employee_id = $1 AND company_id = $2
     `;
-    const employeeResult = await pool.query(employeeQuery, [employeeId, companyId]);
+    const employeeResult = await pool.query(employeeQuery, [
+      employeeId,
+      companyId,
+    ]);
 
     if (employeeResult.rows.length === 0) {
-      return res.status(400).json({ error: "No employee found with the given ID" });
+      return res
+        .status(400)
+        .json({ error: "No employee found with the given ID" });
     }
 
     const employee = employeeResult.rows[0];
@@ -5723,11 +6478,12 @@ app.get("/api/stats/:companyId", async (req, res) => {
         AND month_key = $3
     `;
     const assignmentsResult = await pool.query(assignmentsQuery, [
-      employeeId, 
+      employeeId,
       companyId,
-      monthKey
+      monthKey,
     ]);
-    stats.currentMonthAssignments = parseInt(assignmentsResult.rows[0].count) || 0;
+    stats.currentMonthAssignments =
+      parseInt(assignmentsResult.rows[0].count) || 0;
 
     const assignedContactsQuery = `
       SELECT a.contact_id, c.tags
@@ -5735,17 +6491,20 @@ app.get("/api/stats/:companyId", async (req, res) => {
       LEFT JOIN contacts c ON a.contact_id = c.contact_id AND a.company_id = c.company_id
       WHERE a.employee_id = $1 AND a.company_id = $2
     `;
-    const assignedContactsResult = await pool.query(assignedContactsQuery, [employeeId, companyId]);
+    const assignedContactsResult = await pool.query(assignedContactsQuery, [
+      employeeId,
+      companyId,
+    ]);
     stats.conversationsAssigned = assignedContactsResult.rows.length;
 
     if (assignedContactsResult.rows.length === 0) {
       return res.json(stats);
     }
 
-    const closedContacts = assignedContactsResult.rows.filter(row => {
+    const closedContacts = assignedContactsResult.rows.filter((row) => {
       try {
         const tags = row.tags || [];
-        return tags.includes('closed');
+        return tags.includes("closed");
       } catch (e) {
         return false;
       }
@@ -5765,16 +6524,21 @@ app.get("/api/stats/:companyId", async (req, res) => {
         WHERE company_id = $1 AND contact_id = $2
         ORDER BY timestamp ASC
       `;
-      const messagesResult = await pool.query(messagesQuery, [companyId, contactId]);
+      const messagesResult = await pool.query(messagesQuery, [
+        companyId,
+        contactId,
+      ]);
 
-      outgoingMessages += messagesResult.rows.filter(msg => msg.from_me).length;
+      outgoingMessages += messagesResult.rows.filter(
+        (msg) => msg.from_me
+      ).length;
 
       let firstAgentMessageTime = null;
       let firstCustomerMessageTime = null;
 
       for (const message of messagesResult.rows) {
         const timestamp = new Date(message.timestamp).getTime();
-        
+
         if (message.from_me) {
           if (!firstAgentMessageTime) {
             firstAgentMessageTime = timestamp;
@@ -5784,11 +6548,13 @@ app.get("/api/stats/:companyId", async (req, res) => {
         }
 
         if (firstAgentMessageTime && firstCustomerMessageTime) {
-          const responseTime = Math.abs(firstAgentMessageTime - firstCustomerMessageTime);
+          const responseTime = Math.abs(
+            firstAgentMessageTime - firstCustomerMessageTime
+          );
           stats.responseTimes.push({
             contactId,
             responseTime,
-            timestamp: message.timestamp
+            timestamp: message.timestamp,
           });
           totalResponseTime += responseTime;
           responseCount++;
@@ -5798,15 +6564,18 @@ app.get("/api/stats/:companyId", async (req, res) => {
     }
 
     stats.outgoingMessagesSent = outgoingMessages;
-    
+
     if (responseCount > 0) {
       stats.averageResponseTime = Math.floor(totalResponseTime / responseCount);
-      
-      const sortedTimes = stats.responseTimes.map(rt => rt.responseTime).sort((a, b) => a - b);
+
+      const sortedTimes = stats.responseTimes
+        .map((rt) => rt.responseTime)
+        .sort((a, b) => a - b);
       const mid = Math.floor(sortedTimes.length / 2);
-      stats.medianResponseTime = sortedTimes.length % 2 !== 0 
-        ? sortedTimes[mid] 
-        : (sortedTimes[mid - 1] + sortedTimes[mid]) / 2;
+      stats.medianResponseTime =
+        sortedTimes.length % 2 !== 0
+          ? sortedTimes[mid]
+          : (sortedTimes[mid - 1] + sortedTimes[mid]) / 2;
     }
 
     const metricsQuery = `
@@ -5820,21 +6589,23 @@ app.get("/api/stats/:companyId", async (req, res) => {
       GROUP BY phone_index
     `;
     const metricsResult = await pool.query(metricsQuery, [
-      employeeId, 
+      employeeId,
       companyId,
-      monthKey
+      monthKey,
     ]);
 
-    metricsResult.rows.forEach(row => {
-      stats.phoneAssignments[`phone${row.phone_index}`] = parseInt(row.assignment_count) || 0;
+    metricsResult.rows.forEach((row) => {
+      stats.phoneAssignments[`phone${row.phone_index}`] =
+        parseInt(row.assignment_count) || 0;
     });
 
     res.json(stats);
   } catch (error) {
     console.error("Error fetching stats:", error);
-    res.status(500).json({ 
+    res.status(500).json({
       error: "Failed to fetch stats",
-      details: process.env.NODE_ENV === 'development' ? error.message : undefined
+      details:
+        process.env.NODE_ENV === "development" ? error.message : undefined,
     });
   }
 });
@@ -5842,7 +6613,7 @@ app.get("/api/stats/:companyId", async (req, res) => {
 // Helper function
 function getCurrentMonthKey() {
   const date = new Date();
-  const month = date.toLocaleString('default', { month: 'short' });
+  const month = date.toLocaleString("default", { month: "short" });
   const year = date.getFullYear();
   return `${month}-${year}`;
 }
@@ -5854,9 +6625,9 @@ function mapFirestoreContactToNeon(contact, companyId) {
   if (contact.last_message && contact.last_message.timestamp) {
     const timestamp = contact.last_message.timestamp;
     let timestampMs;
-    
+
     // Handle different timestamp formats
-    if (typeof timestamp === 'string') {
+    if (typeof timestamp === "string") {
       // Try to parse as ISO string first
       const parsedDate = new Date(timestamp);
       if (!isNaN(parsedDate.getTime())) {
@@ -5865,83 +6636,86 @@ function mapFirestoreContactToNeon(contact, companyId) {
         // If it's an invalid string, use current time
         timestampMs = Date.now();
       }
-    } else if (typeof timestamp === 'number') {
+    } else if (typeof timestamp === "number") {
       // Check if it's seconds or milliseconds
       timestampMs = timestamp < 1000000000000 ? timestamp * 1000 : timestamp;
     } else {
       // Fallback to current time
       timestampMs = Date.now();
     }
-    
+
     const messageDate = new Date(timestampMs);
     const now = new Date();
-    
+
     // If timestamp is in the future or invalid, use current time
     if (messageDate > now || isNaN(messageDate.getTime())) {
       timestampMs = Date.now();
     }
-    
+
     // Update the timestamp in the contact data
     contact.last_message.timestamp = timestampMs;
   }
-  
+
   // Handle customFields properly
   let customFieldsJson = null;
   if (contact.customFields) {
     // If customFields is already an object, stringify it
-    if (typeof contact.customFields === 'object' && contact.customFields !== null) {
+    if (
+      typeof contact.customFields === "object" &&
+      contact.customFields !== null
+    ) {
       customFieldsJson = JSON.stringify(contact.customFields);
-    } else if (typeof contact.customFields === 'string') {
+    } else if (typeof contact.customFields === "string") {
       // If it's already a string, use it as is
       customFieldsJson = contact.customFields;
     }
   }
-  
-// ... existing code ...
-return {
-  contact_id: companyId + "-" + contact.phone.split("+")[1] || null,
-  company_id: companyId,
-  name: contact.name || contact.contactName || null,
-  contact_name: contact.contactName || contact.name || null,
-  phone: contact.phone || null,
-  email: contact.email || null,
-  phone_index: contact.phoneIndex || 0,
-  chat_id: contact.chat_id || contact.id || null,
-  tags: JSON.stringify(contact.tags || []),
-  unread_count: contact.unreadCount || 0,
-  last_message: contact.last_message ? JSON.stringify({
-    ...contact.last_message,
-    phone_index: contact.last_message.phoneIndex || 0,
-    timestamp: contact.last_message.timestamp
-  }) : null,
-  profile_pic_url: contact.profilePicUrl || null,
-  not_spam: contact.not_spam || false,
-  pinned: contact.pinned || false,
-  address1: contact.address1 || null,
-  assigned_to: contact.assignedTo || null,
-  business_id: contact.businessId || null,
-  thread_id: contact.threadid || contact.thread_id || null,
-  branch: contact.branch || null,
-  expiry_date: contact.expiryDate || null,
-  vehicle_number: contact.vehicleNumber || null,
-  ic: contact.ic || null,
-  lead_number: contact.leadNumber || null,
-  custom_fields: customFieldsJson,
-  created_at: new Date(),
-  updated_at: new Date(),
-};
-// ... existing code ...
+
+  // ... existing code ...
+  return {
+    contact_id: companyId + "-" + contact.phone.split("+")[1] || null,
+    company_id: companyId,
+    name: contact.name || contact.contactName || null,
+    contact_name: contact.contactName || contact.name || null,
+    phone: contact.phone || null,
+    email: contact.email || null,
+    phone_index: contact.phoneIndex || 0,
+    chat_id: contact.chat_id || contact.id || null,
+    tags: JSON.stringify(contact.tags || []),
+    unread_count: contact.unreadCount || 0,
+    last_message: contact.last_message
+      ? JSON.stringify({
+          ...contact.last_message,
+          phone_index: contact.last_message.phoneIndex || 0,
+          timestamp: contact.last_message.timestamp,
+        })
+      : null,
+    profile_pic_url: contact.profilePicUrl || null,
+    not_spam: contact.not_spam || false,
+    pinned: contact.pinned || false,
+    address1: contact.address1 || null,
+    assigned_to: contact.assignedTo || null,
+    business_id: contact.businessId || null,
+    thread_id: contact.threadid || contact.thread_id || null,
+    branch: contact.branch || null,
+    expiry_date: contact.expiryDate || null,
+    vehicle_number: contact.vehicleNumber || null,
+    ic: contact.ic || null,
+    lead_number: contact.leadNumber || null,
+    custom_fields: customFieldsJson,
+    created_at: new Date(),
+    updated_at: new Date(),
+  };
+  // ... existing code ...
 }
 // ... existing code ...
 
 function mapFirestoreMessageToNeon(msg, companyId, contactId) {
-
-  
   // Fix timestamp handling for messages
   let messageTimestamp;
-  
+
   if (msg.timestamp) {
-    if (typeof msg.timestamp === 'string') {
+    if (typeof msg.timestamp === "string") {
       // Try to parse as ISO string first
       const parsedDate = new Date(msg.timestamp);
       if (!isNaN(parsedDate.getTime())) {
@@ -5950,15 +6724,16 @@ function mapFirestoreMessageToNeon(msg, companyId, contactId) {
         // If it's an invalid string, use current time
         messageTimestamp = new Date();
       }
-    } else if (typeof msg.timestamp === 'number') {
+    } else if (typeof msg.timestamp === "number") {
       // Check if it's seconds or milliseconds
-      const timestampMs = msg.timestamp < 1000000000000 ? msg.timestamp * 1000 : msg.timestamp;
+      const timestampMs =
+        msg.timestamp < 1000000000000 ? msg.timestamp * 1000 : msg.timestamp;
       messageTimestamp = new Date(timestampMs);
     } else {
       // Fallback to current time
       messageTimestamp = new Date();
     }
-    
+
     // Validate the timestamp
     if (isNaN(messageTimestamp.getTime()) || messageTimestamp > new Date()) {
       messageTimestamp = new Date();
@@ -5976,11 +6751,8 @@ function mapFirestoreMessageToNeon(msg, companyId, contactId) {
 
   // Handle image messages - check multiple possible structures
   if (msg.type === "image") {
-   
-    
     // Check if image data is in msg.image object
     if (msg.image) {
-     
       content = msg.image.caption || "";
       mediaUrl = msg.image.data || null;
       mediaData = msg.image.data || null;
@@ -5989,12 +6761,12 @@ function mapFirestoreMessageToNeon(msg, companyId, contactId) {
         height: msg.image.height || null,
         width: msg.image.width || null,
         mimetype: msg.image.mimetype || "image/jpeg",
-        mediaKey: msg.image.mediaKey || null
+        mediaKey: msg.image.mediaKey || null,
       };
     }
     // Check if image data is directly in msg
     else if (msg.data) {
-     // console.log(`Found image data directly in msg.data`);
+      // console.log(`Found image data directly in msg.data`);
       content = msg.caption || "";
       mediaUrl = msg.data || null;
       mediaData = msg.data || null;
@@ -6003,7 +6775,7 @@ function mapFirestoreMessageToNeon(msg, companyId, contactId) {
         height: msg.height || null,
         width: msg.width || null,
         mimetype: msg.mimetype || "image/jpeg",
-        mediaKey: msg.mediaKey || null
+        mediaKey: msg.mediaKey || null,
       };
     }
     // Check if image data is in msg.text (some structures have this)
@@ -6017,12 +6789,12 @@ function mapFirestoreMessageToNeon(msg, companyId, contactId) {
         height: msg.text.height || null,
         width: msg.text.width || null,
         mimetype: msg.text.mimetype || "image/jpeg",
-        mediaKey: msg.text.mediaKey || null
+        mediaKey: msg.text.mediaKey || null,
       };
     }
     // If no image data found, treat as text with image type
     else {
-     // console.log(`No image data found, treating as text with image type`);
+      // console.log(`No image data found, treating as text with image type`);
       content = msg.text?.body || msg.body || "";
       messageType = "text"; // Change to text since no media data
     }
@@ -6030,17 +6802,17 @@ function mapFirestoreMessageToNeon(msg, companyId, contactId) {
   }
   // Handle document messages
   else if (msg.type === "document") {
-   // console.log(`Processing document message: ${msg.id}`);
-    
+    // console.log(`Processing document message: ${msg.id}`);
+
     if (msg.document) {
-     // console.log(`Found document data in msg.document:`, msg.document);
+      // console.log(`Found document data in msg.document:`, msg.document);
       content = msg.document.caption || "";
       mediaUrl = msg.document.data || null;
       mediaData = msg.document.data || null;
       mediaMetadata = {
         filename: msg.document.filename || "",
         mimetype: msg.document.mimetype || "application/octet-stream",
-        mediaKey: msg.document.mediaKey || null
+        mediaKey: msg.document.mediaKey || null,
       };
     } else if (msg.data) {
       //console.log(`Found document data directly in msg.data`);
@@ -6050,7 +6822,7 @@ function mapFirestoreMessageToNeon(msg, companyId, contactId) {
       mediaMetadata = {
         filename: msg.filename || "",
         mimetype: msg.mimetype || "application/octet-stream",
-        mediaKey: msg.mediaKey || null
+        mediaKey: msg.mediaKey || null,
       };
     } else {
       //console.log(`No document data found, treating as text with document type`);
@@ -6061,10 +6833,10 @@ function mapFirestoreMessageToNeon(msg, companyId, contactId) {
   }
   // Handle video messages
   else if (msg.type === "video") {
-   // console.log(`Processing video message: ${msg.id}`);
-    
+    // console.log(`Processing video message: ${msg.id}`);
+
     if (msg.video) {
-    //  console.log(`Found video data in msg.video:`, msg.video);
+      //  console.log(`Found video data in msg.video:`, msg.video);
       content = msg.video.caption || "";
       mediaUrl = msg.video.data || null;
       mediaData = msg.video.data || null;
@@ -6073,10 +6845,10 @@ function mapFirestoreMessageToNeon(msg, companyId, contactId) {
         height: msg.video.height || null,
         width: msg.video.width || null,
         mimetype: msg.video.mimetype || "video/mp4",
-        mediaKey: msg.video.mediaKey || null
+        mediaKey: msg.video.mediaKey || null,
       };
     } else if (msg.data) {
-     // console.log(`Found video data directly in msg.data`);
+      // console.log(`Found video data directly in msg.data`);
       content = msg.caption || "";
       mediaUrl = msg.data || null;
       mediaData = msg.data || null;
@@ -6085,10 +6857,10 @@ function mapFirestoreMessageToNeon(msg, companyId, contactId) {
         height: msg.height || null,
         width: msg.width || null,
         mimetype: msg.mimetype || "video/mp4",
-        mediaKey: msg.mediaKey || null
+        mediaKey: msg.mediaKey || null,
       };
     } else {
-     // console.log(`No video data found, treating as text with video type`);
+      // console.log(`No video data found, treating as text with video type`);
       content = msg.text?.body || msg.body || "";
       messageType = "text"; // Change to text since no media data
     }
@@ -6097,29 +6869,29 @@ function mapFirestoreMessageToNeon(msg, companyId, contactId) {
   // Handle audio messages
   else if (msg.type === "audio") {
     // console.log(`Processing audio message: ${msg.id}`);
-    
+
     if (msg.audio) {
-     // console.log(`Found audio data in msg.audio:`, msg.audio);
+      // console.log(`Found audio data in msg.audio:`, msg.audio);
       content = msg.audio.caption || "";
       mediaUrl = msg.audio.data || null;
       mediaData = msg.audio.data || null;
       mediaMetadata = {
         filename: msg.audio.filename || "",
         mimetype: msg.audio.mimetype || "audio/ogg",
-        mediaKey: msg.audio.mediaKey || null
+        mediaKey: msg.audio.mediaKey || null,
       };
     } else if (msg.data) {
-     // console.log(`Found audio data directly in msg.data`);
+      // console.log(`Found audio data directly in msg.data`);
       content = msg.caption || "";
       mediaUrl = msg.data || null;
       mediaData = msg.data || null;
       mediaMetadata = {
         filename: msg.filename || "",
         mimetype: msg.mimetype || "audio/ogg",
-        mediaKey: msg.mediaKey || null
+        mediaKey: msg.mediaKey || null,
       };
     } else {
-     // console.log(`No audio data found, treating as text with audio type`);
+      // console.log(`No audio data found, treating as text with audio type`);
       content = msg.text?.body || msg.body || "";
       messageType = "text"; // Change to text since no media data
     }
@@ -6130,8 +6902,7 @@ function mapFirestoreMessageToNeon(msg, companyId, contactId) {
     content = msg.text?.body || msg.body || "";
     messageType = "text";
   }
- 
-  
+
   return {
     message_id: msg.id || msg.message_id || null,
     company_id: companyId,
@@ -6148,7 +6919,9 @@ function mapFirestoreMessageToNeon(msg, companyId, contactId) {
     chat_id: msg.chat_id || null,
     author: msg.author || null,
     phone_index: msg.phoneIndex || 0,
-    quoted_message: msg.quoted_message ? JSON.stringify(msg.quoted_message) : null,
+    quoted_message: msg.quoted_message
+      ? JSON.stringify(msg.quoted_message)
+      : null,
     thread_id: msg.threadid || msg.thread_id || null,
     customer_phone: msg.customer_phone || null,
     created_at: new Date(),
@@ -6160,10 +6933,15 @@ function mapFirestoreMessageToNeon(msg, companyId, contactId) {
 
 // ... existing code ...
 async function syncContactsFromFirebaseToNeon(companyId, phoneIndex = 0) {
-  console.log(`=== Starting Firebase to Neon sync for company: ${companyId}, phone: ${phoneIndex} ===`);
-  
+  console.log(
+    `=== Starting Firebase to Neon sync for company: ${companyId}, phone: ${phoneIndex} ===`
+  );
+
   try {
-    const contactsRef = db.collection("companies").doc(companyId).collection("contacts");
+    const contactsRef = db
+      .collection("companies")
+      .doc(companyId)
+      .collection("contacts");
     const contactsSnapshot = await contactsRef.get();
     console.log(`Found ${contactsSnapshot.docs.length} contacts in Firestore`);
 
@@ -6175,32 +6953,46 @@ async function syncContactsFromFirebaseToNeon(companyId, phoneIndex = 0) {
     // Process contacts in batches of 10 concurrently
     const batchSize = 10;
     const contactBatches = [];
-    
+
     for (let i = 0; i < contactsSnapshot.docs.length; i += batchSize) {
       contactBatches.push(contactsSnapshot.docs.slice(i, i + batchSize));
     }
 
     for (let batchIndex = 0; batchIndex < contactBatches.length; batchIndex++) {
       const batch = contactBatches[batchIndex];
-      console.log(`Processing batch ${batchIndex + 1}/${contactBatches.length} (${batch.length} contacts)`);
-      
+      console.log(
+        `Processing batch ${batchIndex + 1}/${contactBatches.length} (${
+          batch.length
+        } contacts)`
+      );
+
       // Process contacts in current batch concurrently
       const contactPromises = batch.map(async (doc) => {
         try {
           const contact = doc.data();
           let contactId = contact.contact_id || contact.id || doc.id;
           if (!contactId) {
-            console.warn(`Skipping contact with missing contact_id. Firestore doc ID: ${doc.id}`);
-            errors.push({ type: 'missing_contact_id', docId: doc.id });
+            console.warn(
+              `Skipping contact with missing contact_id. Firestore doc ID: ${doc.id}`
+            );
+            errors.push({ type: "missing_contact_id", docId: doc.id });
             return { processed: false };
           }
-          
+
           const neonContact = mapFirestoreContactToNeon(contact, companyId);
-          console.log(`---> Syncing contact: ${neonContact.contact_id} (Firestore doc ID: ${doc.id})`);
+          console.log(
+            `---> Syncing contact: ${neonContact.contact_id} (Firestore doc ID: ${doc.id})`
+          );
 
           if (!neonContact.contact_id || !neonContact.company_id) {
-            console.warn(`Skipping contact with missing required fields. contact_id: ${neonContact.contact_id}, company_id: ${neonContact.company_id}`);
-            errors.push({ type: 'missing_required_fields', contactId, neonContact });
+            console.warn(
+              `Skipping contact with missing required fields. contact_id: ${neonContact.contact_id}, company_id: ${neonContact.company_id}`
+            );
+            errors.push({
+              type: "missing_required_fields",
+              contactId,
+              neonContact,
+            });
             return { processed: false };
           }
 
@@ -6209,76 +7001,122 @@ async function syncContactsFromFirebaseToNeon(companyId, phoneIndex = 0) {
           const contactValues = Object.values(neonContact);
           const contactPlaceholders = contactFields.map((_, i) => `$${i + 1}`);
           const contactUpdateSet = contactFields
-            .filter(f => f !== "contact_id" && f !== "company_id" && f !== "created_at" && f !== "updated_at")
-            .map(f => `${f} = EXCLUDED.${f}`)
+            .filter(
+              (f) =>
+                f !== "contact_id" &&
+                f !== "company_id" &&
+                f !== "created_at" &&
+                f !== "updated_at"
+            )
+            .map((f) => `${f} = EXCLUDED.${f}`)
             .join(", ");
 
           const contactQuery = `
             INSERT INTO contacts (${contactFields.join(", ")})
             VALUES (${contactPlaceholders.join(", ")})
             ON CONFLICT (contact_id, company_id) DO UPDATE SET
-            ${contactUpdateSet}${contactUpdateSet ? ', ' : ''}updated_at = CURRENT_TIMESTAMP
+            ${contactUpdateSet}${
+            contactUpdateSet ? ", " : ""
+          }updated_at = CURRENT_TIMESTAMP
           `;
           await sqlDb.query(contactQuery, contactValues);
-          
+
           // Fetch and upsert messages for this contact
           const messagesRef = contactsRef.doc(doc.id).collection("messages");
           const messagesSnapshot = await messagesRef.get();
-          
+
           // Limit to 50 messages max per contact
           const limitedMessages = messagesSnapshot.docs.slice(0, 50);
-          
+
           if (limitedMessages.length > 0) {
             // Process messages in smaller batches of 10 concurrently
             const messageBatchSize = 10;
             const messageBatches = [];
-            
+
             for (let j = 0; j < limitedMessages.length; j += messageBatchSize) {
-              messageBatches.push(limitedMessages.slice(j, j + messageBatchSize));
+              messageBatches.push(
+                limitedMessages.slice(j, j + messageBatchSize)
+              );
             }
-            
+
             for (const messageBatch of messageBatches) {
               const messagePromises = messageBatch.map(async (msgDoc) => {
                 try {
                   const msg = msgDoc.data();
-                  
+
                   // Handle private notes separately
                   if (msg.type === "privateNote") {
-                    const neonNote = mapFirestorePrivateNoteToNeon(msg, companyId, neonContact.contact_id);
-                    
-                    if (!neonNote.id || !neonNote.company_id || !neonNote.contact_id) {
-                      console.warn(`  Skipping private note with missing required fields. id: ${neonNote.id}, company_id: ${neonNote.company_id}, contact_id: ${neonNote.contact_id}`);
-                      errors.push({ type: 'missing_private_note_fields', msgDocId: msgDoc.id });
+                    const neonNote = mapFirestorePrivateNoteToNeon(
+                      msg,
+                      companyId,
+                      neonContact.contact_id
+                    );
+
+                    if (
+                      !neonNote.id ||
+                      !neonNote.company_id ||
+                      !neonNote.contact_id
+                    ) {
+                      console.warn(
+                        `  Skipping private note with missing required fields. id: ${neonNote.id}, company_id: ${neonNote.company_id}, contact_id: ${neonNote.contact_id}`
+                      );
+                      errors.push({
+                        type: "missing_private_note_fields",
+                        msgDocId: msgDoc.id,
+                      });
                       return { processed: false };
                     }
 
                     // Upsert private note
                     const noteFields = Object.keys(neonNote);
                     const noteValues = Object.values(neonNote);
-                    const notePlaceholders = noteFields.map((_, i) => `$${i + 1}`);
+                    const notePlaceholders = noteFields.map(
+                      (_, i) => `$${i + 1}`
+                    );
                     const noteUpdateSet = noteFields
-                      .filter(f => f !== "id" && f !== "company_id" && f !== "created_at" && f !== "updated_at")
-                      .map(f => `${f} = EXCLUDED.${f}`)
+                      .filter(
+                        (f) =>
+                          f !== "id" &&
+                          f !== "company_id" &&
+                          f !== "created_at" &&
+                          f !== "updated_at"
+                      )
+                      .map((f) => `${f} = EXCLUDED.${f}`)
                       .join(", ");
-                  
+
                     const noteQuery = `
                       INSERT INTO private_notes (${noteFields.join(", ")})
                       VALUES (${notePlaceholders.join(", ")})
                       ON CONFLICT (id) DO UPDATE SET
-                      ${noteUpdateSet}${noteUpdateSet ? ', ' : ''}updated_at = CURRENT_TIMESTAMP
+                      ${noteUpdateSet}${
+                      noteUpdateSet ? ", " : ""
+                    }updated_at = CURRENT_TIMESTAMP
                     `;
                     await sqlDb.query(noteQuery, noteValues);
-                    
+
                     // Also insert as a message for compatibility
-                    const neonMsg = mapFirestoreMessageToNeon(msg, companyId, neonContact.contact_id);
-                    const msgFields = Object.keys(neonMsg).filter(f => f !== "updated_at");
-                    const msgValues = msgFields.map(f => neonMsg[f]);
-                    const msgPlaceholders = msgFields.map((_, i) => `$${i + 1}`);
+                    const neonMsg = mapFirestoreMessageToNeon(
+                      msg,
+                      companyId,
+                      neonContact.contact_id
+                    );
+                    const msgFields = Object.keys(neonMsg).filter(
+                      (f) => f !== "updated_at"
+                    );
+                    const msgValues = msgFields.map((f) => neonMsg[f]);
+                    const msgPlaceholders = msgFields.map(
+                      (_, i) => `$${i + 1}`
+                    );
                     const msgUpdateSet = msgFields
-                      .filter(f => f !== "message_id" && f !== "company_id" && f !== "created_at")
-                      .map(f => `${f} = EXCLUDED.${f}`)
+                      .filter(
+                        (f) =>
+                          f !== "message_id" &&
+                          f !== "company_id" &&
+                          f !== "created_at"
+                      )
+                      .map((f) => `${f} = EXCLUDED.${f}`)
                       .join(", ");
-                  
+
                     const msgQuery = `
                       INSERT INTO messages (${msgFields.join(", ")})
                       VALUES (${msgPlaceholders.join(", ")})
@@ -6286,27 +7124,49 @@ async function syncContactsFromFirebaseToNeon(companyId, phoneIndex = 0) {
                       ${msgUpdateSet}
                     `;
                     await sqlDb.query(msgQuery, msgValues);
-                    
-                    return { processed: true, type: 'private_note' };
+
+                    return { processed: true, type: "private_note" };
                   } else {
                     // Handle regular messages
-                    const neonMsg = mapFirestoreMessageToNeon(msg, companyId, neonContact.contact_id);
+                    const neonMsg = mapFirestoreMessageToNeon(
+                      msg,
+                      companyId,
+                      neonContact.contact_id
+                    );
 
-                    if (!neonMsg.message_id || !neonMsg.company_id || !neonMsg.contact_id) {
-                      console.warn(`  Skipping message with missing required fields. message_id: ${neonMsg.message_id}, company_id: ${neonMsg.company_id}, contact_id: ${neonMsg.contact_id}`);
-                      errors.push({ type: 'missing_message_fields', msgDocId: msgDoc.id });
+                    if (
+                      !neonMsg.message_id ||
+                      !neonMsg.company_id ||
+                      !neonMsg.contact_id
+                    ) {
+                      console.warn(
+                        `  Skipping message with missing required fields. message_id: ${neonMsg.message_id}, company_id: ${neonMsg.company_id}, contact_id: ${neonMsg.contact_id}`
+                      );
+                      errors.push({
+                        type: "missing_message_fields",
+                        msgDocId: msgDoc.id,
+                      });
                       return { processed: false };
                     }
 
                     // Remove updated_at from both fields and values for messages
-                    const msgFields = Object.keys(neonMsg).filter(f => f !== "updated_at");
-                    const msgValues = msgFields.map(f => neonMsg[f]);
-                    const msgPlaceholders = msgFields.map((_, i) => `$${i + 1}`);
+                    const msgFields = Object.keys(neonMsg).filter(
+                      (f) => f !== "updated_at"
+                    );
+                    const msgValues = msgFields.map((f) => neonMsg[f]);
+                    const msgPlaceholders = msgFields.map(
+                      (_, i) => `$${i + 1}`
+                    );
                     const msgUpdateSet = msgFields
-                      .filter(f => f !== "message_id" && f !== "company_id" && f !== "created_at")
-                      .map(f => `${f} = EXCLUDED.${f}`)
+                      .filter(
+                        (f) =>
+                          f !== "message_id" &&
+                          f !== "company_id" &&
+                          f !== "created_at"
+                      )
+                      .map((f) => `${f} = EXCLUDED.${f}`)
                       .join(", ");
-                  
+
                     const msgQuery = `
                       INSERT INTO messages (${msgFields.join(", ")})
                       VALUES (${msgPlaceholders.join(", ")})
@@ -6314,47 +7174,65 @@ async function syncContactsFromFirebaseToNeon(companyId, phoneIndex = 0) {
                       ${msgUpdateSet}
                     `;
                     await sqlDb.query(msgQuery, msgValues);
-                    return { processed: true, type: 'message' };
+                    return { processed: true, type: "message" };
                   }
-                  
                 } catch (msgError) {
-                  console.error(`  Error processing message ${msgDoc.id}: ${msgError.message}`);
-                  errors.push({ type: 'message_error', msgDocId: msgDoc.id, error: msgError.message });
+                  console.error(
+                    `  Error processing message ${msgDoc.id}: ${msgError.message}`
+                  );
+                  errors.push({
+                    type: "message_error",
+                    msgDocId: msgDoc.id,
+                    error: msgError.message,
+                  });
                   return { processed: false };
                 }
               });
-              
+
               // Wait for current message batch to complete
               const messageResults = await Promise.all(messagePromises);
-              processedMessages += messageResults.filter(r => r.processed && r.type === 'message').length;
-              processedPrivateNotes += messageResults.filter(r => r.processed && r.type === 'private_note').length;
-              
+              processedMessages += messageResults.filter(
+                (r) => r.processed && r.type === "message"
+              ).length;
+              processedPrivateNotes += messageResults.filter(
+                (r) => r.processed && r.type === "private_note"
+              ).length;
+
               // Small delay between message batches
-              await new Promise(resolve => setTimeout(resolve, 100));
+              await new Promise((resolve) => setTimeout(resolve, 100));
             }
           }
-          
+
           return { processed: true };
-          
         } catch (contactError) {
-          console.error(`Error processing contact ${doc.id}: ${contactError.message}`);
-          errors.push({ type: 'contact_error', docId: doc.id, error: contactError.message });
+          console.error(
+            `Error processing contact ${doc.id}: ${contactError.message}`
+          );
+          errors.push({
+            type: "contact_error",
+            docId: doc.id,
+            error: contactError.message,
+          });
           return { processed: false };
         }
       });
-      
+
       // Wait for current contact batch to complete
       const contactResults = await Promise.all(contactPromises);
-      processedContacts += contactResults.filter(r => r.processed).length;
-      
+      processedContacts += contactResults.filter((r) => r.processed).length;
+
       // Small delay between contact batches
-      await new Promise(resolve => setTimeout(resolve, 200));
+      await new Promise((resolve) => setTimeout(resolve, 200));
     }
 
     console.log(`=== Sync Summary ===`);
-    console.log(`Processed: ${processedContacts} contacts, ${processedMessages} messages, ${processedPrivateNotes} private notes`);
+    console.log(
+      `Processed: ${processedContacts} contacts, ${processedMessages} messages, ${processedPrivateNotes} private notes`
+    );
     if (errors.length > 0) {
-      console.warn(`Encountered ${errors.length} errors. See above for details.`);
+      console.warn(
+        `Encountered ${errors.length} errors. See above for details.`
+      );
     } else {
       console.log(`No errors encountered.`);
     }
@@ -6364,9 +7242,8 @@ async function syncContactsFromFirebaseToNeon(companyId, phoneIndex = 0) {
       processedContacts,
       processedMessages,
       processedPrivateNotes,
-      errors
+      errors,
     };
-
   } catch (error) {
     console.error(`Fatal sync error: ${error.message}`);
     throw error;
@@ -6381,7 +7258,10 @@ app.post("/api/sync-firebase-to-neon/:companyId", async (req, res) => {
   const { companyId } = req.params;
   try {
     await syncContactsFromFirebaseToNeon(companyId);
-    res.json({ success: true, message: "Contacts and messages synced from Firebase to Neon." });
+    res.json({
+      success: true,
+      message: "Contacts and messages synced from Firebase to Neon.",
+    });
   } catch (error) {
     console.error("Sync error:", error);
     res.status(500).json({ success: false, error: error.message });
@@ -6435,7 +7315,11 @@ async function syncContacts(client, companyId, phoneIndex = 0) {
           try {
             // Use the same comprehensive message saving as addMessageToPostgres
             const basicInfo = await extractBasicMessageInfo(msg);
-            const messageData = await prepareMessageData(msg, companyId, phoneIndex);
+            const messageData = await prepareMessageData(
+              msg,
+              companyId,
+              phoneIndex
+            );
 
             // Get message body (with audio transcription if applicable)
             let messageBody = messageData.text?.body || "";
@@ -6444,7 +7328,11 @@ async function syncContacts(client, companyId, phoneIndex = 0) {
               try {
                 const media = await msg.downloadMedia();
                 const transcription = await transcribeAudio(media.data);
-                if (transcription && transcription !== "Audio transcription failed. Please try again.") {
+                if (
+                  transcription &&
+                  transcription !==
+                    "Audio transcription failed. Please try again."
+                ) {
                   messageBody += transcription;
                 } else {
                   messageBody += "Audio message";
@@ -6476,12 +7364,12 @@ async function syncContacts(client, companyId, phoneIndex = 0) {
                     mediaKey: mediaTypeData.media_key || null,
                     ...(msg.type === "image" && {
                       width: mediaTypeData.width,
-                      height: mediaTypeData.height
+                      height: mediaTypeData.height,
                     }),
                     ...(msg.type === "document" && {
                       pageCount: mediaTypeData.page_count,
-                      fileSize: mediaTypeData.file_size
-                    })
+                      fileSize: mediaTypeData.file_size,
+                    }),
                   };
                 }
               } else if (msg.type === "audio" || msg.type === "ptt") {
@@ -6495,7 +7383,10 @@ async function syncContacts(client, companyId, phoneIndex = 0) {
             // Determine author
             let author = null;
             if (msg.from.includes("@g.us") && basicInfo.author) {
-              const authorData = await getContactDataFromDatabaseByPhone(basicInfo.author, companyId);
+              const authorData = await getContactDataFromDatabaseByPhone(
+                basicInfo.author,
+                companyId
+              );
               author = authorData ? authorData.contactName : basicInfo.author;
             }
 
@@ -6517,7 +7408,9 @@ async function syncContacts(client, companyId, phoneIndex = 0) {
               basicInfo.type,
               mediaUrl,
               mediaData,
-              Object.keys(mediaMetadata).length > 0 ? JSON.stringify(mediaMetadata) : null,
+              Object.keys(mediaMetadata).length > 0
+                ? JSON.stringify(mediaMetadata)
+                : null,
               new Date(basicInfo.timestamp * 1000),
               msg.fromMe ? "outbound" : "inbound",
               "delivered",
@@ -6527,7 +7420,7 @@ async function syncContacts(client, companyId, phoneIndex = 0) {
               phoneIndex,
               quotedMessage ? JSON.stringify(quotedMessage) : null,
               msg.to,
-              contactPhone
+              contactPhone,
             ]);
 
             // Keep track of the most recent message for last_message
@@ -6542,11 +7435,14 @@ async function syncContacts(client, companyId, phoneIndex = 0) {
                 status: "delivered",
                 text: { body: messageBody },
                 timestamp: basicInfo.timestamp,
-                type: basicInfo.type
+                type: basicInfo.type,
               };
             }
           } catch (error) {
-            console.error(`Error processing message ${msg.id._serialized} during sync:`, error);
+            console.error(
+              `Error processing message ${msg.id._serialized} during sync:`,
+              error
+            );
           }
         }
 
@@ -6595,15 +7491,16 @@ async function syncContactNames(client, companyId, phoneIndex = 0) {
 
         const profilePicUrl = await contact.getProfilePicUrl();
 
-        const potentialName = contact.name || contact.pushname || contact.shortName || contactPhone;
-        
+        const potentialName =
+          contact.name || contact.pushname || contact.shortName || contactPhone;
+
         // Function to check if a string is just a phone number
         function isJustPhoneNumber(str) {
           if (!str) return false;
-          const cleanStr = str.replace(/[\s\-\(\)\+]/g, '');
+          const cleanStr = str.replace(/[\s\-\(\)\+]/g, "");
           return /^[\+]?\d+$/.test(cleanStr);
         }
-        
+
         // Function to check if name contains both text and numbers (mixed content)
         function hasMixedContent(str) {
           if (!str) return false;
@@ -6611,12 +7508,14 @@ async function syncContactNames(client, companyId, phoneIndex = 0) {
           const hasNumbers = /\d/.test(str);
           return hasLetters && hasNumbers;
         }
-        
+
         let shouldSaveName = false;
         let nameToSave = potentialName;
-        
+
         if (isJustPhoneNumber(potentialName)) {
-          console.log(`Skipping name sync for ${contactID} - name is just a phone number: ${potentialName}`);
+          console.log(
+            `Skipping name sync for ${contactID} - name is just a phone number: ${potentialName}`
+          );
           shouldSaveName = false;
         } else if (hasMixedContent(potentialName)) {
           shouldSaveName = true;
@@ -6632,7 +7531,7 @@ async function syncContactNames(client, companyId, phoneIndex = 0) {
               profile_pic_url = $2
             WHERE contact_id = $3 AND company_id = $4;
           `;
-          
+
           const result = await sqlDb.query(contactQuery, [
             nameToSave,
             profilePicUrl,
@@ -6641,7 +7540,9 @@ async function syncContactNames(client, companyId, phoneIndex = 0) {
           ]);
 
           if (result.rowCount === 0) {
-            console.log(`Contact ${contactID} not found in database, skipping name sync`);
+            console.log(
+              `Contact ${contactID} not found in database, skipping name sync`
+            );
           } else {
             console.log(`Updated name for ${contactID}: ${nameToSave}`);
           }
@@ -6652,16 +7553,18 @@ async function syncContactNames(client, companyId, phoneIndex = 0) {
               profile_pic_url = $1
             WHERE contact_id = $2 AND company_id = $3;
           `;
-          
+
           await sqlDb.query(profileQuery, [
             profilePicUrl,
             contactID,
             companyId,
           ]);
         }
-
       } catch (error) {
-        console.error(`Error processing contact name for chat ${chat.id._serialized}:`, error);
+        console.error(
+          `Error processing contact name for chat ${chat.id._serialized}:`,
+          error
+        );
       }
     }
 
@@ -6676,22 +7579,31 @@ async function syncContactNames(client, companyId, phoneIndex = 0) {
   }
 }
 
-async function syncSingleContact(client, companyId, contactPhone, phoneIndex = 0) {
+async function syncSingleContact(
+  client,
+  companyId,
+  contactPhone,
+  phoneIndex = 0
+) {
   try {
     console.log(
       `Syncing single contact ${contactPhone} for company ${companyId}, phone ${phoneIndex}`
     );
 
-    const phoneWithPlus = contactPhone.startsWith("+") ? contactPhone : `+${contactPhone}`;
-    const phoneWithoutPlus = contactPhone.startsWith("+") ? contactPhone.slice(1) : contactPhone;
+    const phoneWithPlus = contactPhone.startsWith("+")
+      ? contactPhone
+      : `+${contactPhone}`;
+    const phoneWithoutPlus = contactPhone.startsWith("+")
+      ? contactPhone.slice(1)
+      : contactPhone;
     const chatId = `${phoneWithoutPlus}@c.us`;
-    
+
     try {
       const sync = await client.syncHistory(chatId);
-      if (sync){
-        console.log('Synced Chat ID history');
+      if (sync) {
+        console.log("Synced Chat ID history");
       } else {
-        console.log('Sync Failed');
+        console.log("Sync Failed");
       }
       const chat = await client.getChatById(chatId);
       const contact = await chat.getContact();
@@ -6730,7 +7642,9 @@ async function syncSingleContact(client, companyId, contactPhone, phoneIndex = 0
       let lastMessage = null;
 
       const totalMessages = messages.length;
-      console.log(`Found ${totalMessages} messages for contact ${contactPhone} in company ${companyId}, phone ${phoneIndex}`);
+      console.log(
+        `Found ${totalMessages} messages for contact ${contactPhone} in company ${companyId}, phone ${phoneIndex}`
+      );
       let processedMessages = 0;
       let lastProgress = 0;
 
@@ -6738,7 +7652,11 @@ async function syncSingleContact(client, companyId, contactPhone, phoneIndex = 0
         try {
           // Use the same comprehensive message saving as addMessageToPostgres
           const basicInfo = await extractBasicMessageInfo(msg);
-          const messageData = await prepareMessageData(msg, companyId, phoneIndex);
+          const messageData = await prepareMessageData(
+            msg,
+            companyId,
+            phoneIndex
+          );
 
           // Get message body (with audio transcription if applicable)
           let messageBody = messageData.text?.body || "";
@@ -6747,7 +7665,11 @@ async function syncSingleContact(client, companyId, contactPhone, phoneIndex = 0
             try {
               const media = await msg.downloadMedia();
               const transcription = await transcribeAudio(media.data);
-              if (transcription && transcription !== "Audio transcription failed. Please try again.") {
+              if (
+                transcription &&
+                transcription !==
+                  "Audio transcription failed. Please try again."
+              ) {
                 messageBody += transcription;
               } else {
                 messageBody += "Audio message";
@@ -6778,12 +7700,12 @@ async function syncSingleContact(client, companyId, contactPhone, phoneIndex = 0
                   mediaKey: mediaTypeData.media_key || null,
                   ...(msg.type === "image" && {
                     width: mediaTypeData.width,
-                    height: mediaTypeData.height
+                    height: mediaTypeData.height,
                   }),
                   ...(msg.type === "document" && {
                     pageCount: mediaTypeData.page_count,
-                    fileSize: mediaTypeData.file_size
-                  })
+                    fileSize: mediaTypeData.file_size,
+                  }),
                 };
               }
             } else if (msg.type === "audio" || msg.type === "ptt") {
@@ -6797,7 +7719,10 @@ async function syncSingleContact(client, companyId, contactPhone, phoneIndex = 0
           // Determine author
           let author = null;
           if (msg.from.includes("@g.us") && basicInfo.author) {
-            const authorData = await getContactDataFromDatabaseByPhone(basicInfo.author, companyId);
+            const authorData = await getContactDataFromDatabaseByPhone(
+              basicInfo.author,
+              companyId
+            );
             author = authorData ? authorData.contactName : basicInfo.author;
           }
 
@@ -6819,7 +7744,9 @@ async function syncSingleContact(client, companyId, contactPhone, phoneIndex = 0
             basicInfo.type,
             mediaUrl,
             mediaData,
-            Object.keys(mediaMetadata).length > 0 ? JSON.stringify(mediaMetadata) : null,
+            Object.keys(mediaMetadata).length > 0
+              ? JSON.stringify(mediaMetadata)
+              : null,
             new Date(basicInfo.timestamp * 1000),
             msg.fromMe ? "outbound" : "inbound",
             "delivered",
@@ -6829,7 +7756,7 @@ async function syncSingleContact(client, companyId, contactPhone, phoneIndex = 0
             phoneIndex,
             quotedMessage ? JSON.stringify(quotedMessage) : null,
             msg.to,
-            contactPhone
+            contactPhone,
           ]);
 
           // Keep track of the most recent message for last_message
@@ -6844,7 +7771,7 @@ async function syncSingleContact(client, companyId, contactPhone, phoneIndex = 0
               status: "delivered",
               text: { body: messageBody },
               timestamp: basicInfo.timestamp,
-              type: basicInfo.type
+              type: basicInfo.type,
             };
           }
         } catch (error) {
@@ -6855,7 +7782,9 @@ async function syncSingleContact(client, companyId, contactPhone, phoneIndex = 0
         // Calculate progress in 10% steps
         const progress = Math.floor((processedMessages / totalMessages) * 100);
         if (progress >= lastProgress + 10 || progress === 100) {
-          console.log(`Sync progress for ${contactPhone}: ${progress}% (${processedMessages}/${totalMessages})`);
+          console.log(
+            `Sync progress for ${contactPhone}: ${progress}% (${processedMessages}/${totalMessages})`
+          );
           lastProgress = progress;
         }
       }
@@ -6882,7 +7811,6 @@ async function syncSingleContact(client, companyId, contactPhone, phoneIndex = 0
       console.error(`Error processing single contact ${contactPhone}:`, error);
       throw error;
     }
-
   } catch (error) {
     console.error(
       `Error syncing single contact for company ${companyId}, phone ${phoneIndex}, contact ${contactPhone}:`,
@@ -6892,15 +7820,24 @@ async function syncSingleContact(client, companyId, contactPhone, phoneIndex = 0
   }
 }
 
-async function syncSingleContactName(client, companyId, contactPhone, phoneIndex = 0) {
+async function syncSingleContactName(
+  client,
+  companyId,
+  contactPhone,
+  phoneIndex = 0
+) {
   try {
     console.log(
       `Syncing single contact name ${contactPhone} for company ${companyId}, phone ${phoneIndex}`
     );
 
     // Format the contact ID to match WhatsApp format
-    const phoneWithPlus = contactPhone.startsWith("+") ? contactPhone : `+${contactPhone}`;
-    const phoneWithoutPlus = contactPhone.startsWith("+") ? contactPhone.slice(1) : contactPhone;
+    const phoneWithPlus = contactPhone.startsWith("+")
+      ? contactPhone
+      : `+${contactPhone}`;
+    const phoneWithoutPlus = contactPhone.startsWith("+")
+      ? contactPhone.slice(1)
+      : contactPhone;
     const chatId = `${phoneWithoutPlus}@c.us`;
 
     try {
@@ -6909,12 +7846,13 @@ async function syncSingleContactName(client, companyId, contactPhone, phoneIndex
       const contactID = `${companyId}-${phoneWithoutPlus}`;
 
       const profilePicUrl = await contact.getProfilePicUrl();
-      const potentialName = contact.name || contact.pushname || contact.shortName || phoneWithPlus;
+      const potentialName =
+        contact.name || contact.pushname || contact.shortName || phoneWithPlus;
 
       // Helper: is just a phone number
       function isJustPhoneNumber(str) {
         if (!str) return false;
-        const cleanStr = str.replace(/[\s\-\(\)\+]/g, '');
+        const cleanStr = str.replace(/[\s\-\(\)\+]/g, "");
         return /^[\+]?\d+$/.test(cleanStr);
       }
       // Helper: has mixed content (letters and numbers)
@@ -6929,7 +7867,9 @@ async function syncSingleContactName(client, companyId, contactPhone, phoneIndex
       let nameToSave = potentialName;
 
       if (isJustPhoneNumber(potentialName)) {
-        console.log(`Skipping name sync for ${contactID} - name is just a phone number: ${potentialName}`);
+        console.log(
+          `Skipping name sync for ${contactID} - name is just a phone number: ${potentialName}`
+        );
         shouldSaveName = false;
       } else if (hasMixedContent(potentialName)) {
         shouldSaveName = true;
@@ -6952,7 +7892,9 @@ async function syncSingleContactName(client, companyId, contactPhone, phoneIndex
           companyId,
         ]);
         if (result.rowCount === 0) {
-          console.log(`Contact ${contactID} not found in database, cannot sync name`);
+          console.log(
+            `Contact ${contactID} not found in database, cannot sync name`
+          );
           throw new Error(`Contact ${contactPhone} not found in database`);
         }
         console.log(
@@ -6966,17 +7908,16 @@ async function syncSingleContactName(client, companyId, contactPhone, phoneIndex
             profile_pic_url = $1
           WHERE contact_id = $2 AND company_id = $3;
         `;
-        await sqlDb.query(profileQuery, [
-          profilePicUrl,
-          contactID,
-          companyId,
-        ]);
+        await sqlDb.query(profileQuery, [profilePicUrl, contactID, companyId]);
         console.log(
           `Updated profile picture only for ${contactPhone} in company ${companyId}, phone ${phoneIndex}`
         );
       }
     } catch (error) {
-      console.error(`Error processing single contact name ${contactPhone}:`, error);
+      console.error(
+        `Error processing single contact name ${contactPhone}:`,
+        error
+      );
       throw error;
     }
   } catch (error) {
@@ -7005,8 +7946,6 @@ function getMillisecondsForUnit(unit) {
 const botQueues = new Map();
 const botWorkers = new Map();
 const processingChatIds = new Map();
-
-
 
 setInterval(() => {
   const now = Date.now();
@@ -7038,53 +7977,70 @@ const getQueueForBot = (botId) => {
 
 // Enhanced sendScheduledMessage function with better connection management
 // Enhanced JSON parsing with better error handling
-const safeJsonParse = (data, defaultValue = null, context = '') => {
+const safeJsonParse = (data, defaultValue = null, context = "") => {
   if (!data) {
-    console.log(`[JSON Parse] No data provided for ${context}, using default:`, defaultValue);
+    console.log(
+      `[JSON Parse] No data provided for ${context}, using default:`,
+      defaultValue
+    );
     return defaultValue;
   }
 
   // If it's already an array or object, return it
-  if (Array.isArray(data) || (typeof data === 'object' && data !== null)) {
+  if (Array.isArray(data) || (typeof data === "object" && data !== null)) {
     console.log(`[JSON Parse] Data is already parsed for ${context}:`, data);
     return data;
   }
 
   // If it's a string, try to parse it
-  if (typeof data === 'string') {
+  if (typeof data === "string") {
     try {
       // Check if it looks like JSON
       const trimmed = data.trim();
-      if ((trimmed.startsWith('[') && trimmed.endsWith(']')) || 
-          (trimmed.startsWith('{') && trimmed.endsWith('}'))) {
+      if (
+        (trimmed.startsWith("[") && trimmed.endsWith("]")) ||
+        (trimmed.startsWith("{") && trimmed.endsWith("}"))
+      ) {
         const parsed = JSON.parse(trimmed);
-        console.log(`[JSON Parse] Successfully parsed JSON for ${context}:`, parsed);
+        console.log(
+          `[JSON Parse] Successfully parsed JSON for ${context}:`,
+          parsed
+        );
         return parsed;
       } else {
         // It's not JSON, treat as single value
-        console.log(`[JSON Parse] Data is not JSON for ${context}, treating as single value:`, data);
+        console.log(
+          `[JSON Parse] Data is not JSON for ${context}, treating as single value:`,
+          data
+        );
         return [data];
       }
     } catch (error) {
       console.error(`[JSON Parse] Error parsing JSON for ${context}:`, {
         error: error.message,
         data: data,
-        position: error.message.match(/position (\d+)/)?.[1] || 'unknown',
-        context: context
+        position: error.message.match(/position (\d+)/)?.[1] || "unknown",
+        context: context,
       });
-      
+
       // If it's a string that's not JSON, treat it as a single value
-      if (typeof data === 'string') {
-        console.log(`[JSON Parse] Treating non-JSON string as single value for ${context}:`, data);
+      if (typeof data === "string") {
+        console.log(
+          `[JSON Parse] Treating non-JSON string as single value for ${context}:`,
+          data
+        );
         return [data];
       }
-      
+
       return defaultValue;
     }
   }
 
   // For other types, return as is
-  console.log(`[JSON Parse] Data is not string for ${context}, returning as is:`, data);
+  console.log(
+    `[JSON Parse] Data is not string for ${context}, returning as is:`,
+    data
+  );
   return data;
 };
 // ======================
@@ -7093,43 +8049,51 @@ const safeJsonParse = (data, defaultValue = null, context = '') => {
 
 // Function to clean up old jobs with JSON parsing errors
 
-
 // Function to clean up specific bot's jobs
 async function cleanupBotJobs(botId) {
   console.log(`Cleaning up jobs for bot ${botId}...`);
-  
+
   try {
     const queue = botQueues.get(botId);
     if (!queue) {
       console.log(`Bot ${botId} - No queue found`);
-            return;
-          }
+      return;
+    }
 
     // Get all jobs
-    const waitingJobs = await queue.getJobs(['waiting']);
-    const delayedJobs = await queue.getJobs(['delayed']);
-    const activeJobs = await queue.getJobs(['active']);
-    const failedJobs = await queue.getJobs(['failed']);
-    
-    const allJobs = [...waitingJobs, ...delayedJobs, ...activeJobs, ...failedJobs];
-    
+    const waitingJobs = await queue.getJobs(["waiting"]);
+    const delayedJobs = await queue.getJobs(["delayed"]);
+    const activeJobs = await queue.getJobs(["active"]);
+    const failedJobs = await queue.getJobs(["failed"]);
+
+    const allJobs = [
+      ...waitingJobs,
+      ...delayedJobs,
+      ...activeJobs,
+      ...failedJobs,
+    ];
+
     console.log(`Bot ${botId} - Found ${allJobs.length} jobs to check`);
-    
+
     let removedCount = 0;
-    
+
     for (const job of allJobs) {
       try {
         // Remove all jobs for this bot (since they're likely problematic)
         await job.remove();
         removedCount++;
         console.log(`Bot ${botId} - Removed job ${job.id}`);
-          } catch (error) {
-        console.error(`Bot ${botId} - Error removing job ${job.id}:`, error.message);
+      } catch (error) {
+        console.error(
+          `Bot ${botId} - Error removing job ${job.id}:`,
+          error.message
+        );
       }
     }
-    
-    console.log(`Bot ${botId} - Cleanup completed, removed ${removedCount} jobs`);
-    
+
+    console.log(
+      `Bot ${botId} - Cleanup completed, removed ${removedCount} jobs`
+    );
   } catch (error) {
     console.error(`Bot ${botId} - Error during cleanup:`, error.message);
   }
@@ -7137,25 +8101,26 @@ async function cleanupBotJobs(botId) {
 
 // Add cleanup endpoints
 
-
-app.post('/api/cleanup-jobs/:botId', async (req, res) => {
+app.post("/api/cleanup-jobs/:botId", async (req, res) => {
   try {
     const { botId } = req.params;
     await cleanupBotJobs(botId);
-    res.json({ success: true, message: `Job cleanup completed for bot ${botId}` });
-      } catch (error) {
-    console.error('Error during bot job cleanup:', error);
+    res.json({
+      success: true,
+      message: `Job cleanup completed for bot ${botId}`,
+    });
+  } catch (error) {
+    console.error("Error during bot job cleanup:", error);
     res.status(500).json({ success: false, error: error.message });
   }
 });
-
 
 // Enhanced sendScheduledMessage function with better JSON parsing
 async function sendScheduledMessage(message) {
   const companyId = message.company_id;
   let client = null;
   const startTime = Date.now();
-  
+
   // FIXED: Declare messages variable at function scope
   let messages = [];
   let totalMessagesSent = 0;
@@ -7164,7 +8129,9 @@ async function sendScheduledMessage(message) {
   let dayCount = 1;
 
   try {
-    console.log(`\n=== [Company ${companyId}] Starting sendScheduledMessage ===`);
+    console.log(
+      `\n=== [Company ${companyId}] Starting sendScheduledMessage ===`
+    );
     console.log(`[Company ${companyId}] Message ID: ${message.id}`);
     console.log(`[Company ${companyId}] Schedule ID: ${message.schedule_id}`);
     console.log(`[Company ${companyId}] Status: ${message.status}`);
@@ -7176,7 +8143,9 @@ async function sendScheduledMessage(message) {
 
     // Validate phone_index
     if (message.phone_index === null || message.phone_index === undefined) {
-      console.log(`[Company ${companyId}] Phone index is null/undefined, defaulting to 0`);
+      console.log(
+        `[Company ${companyId}] Phone index is null/undefined, defaulting to 0`
+      );
       message.phone_index = 0;
     }
     message.phone_index = parseInt(message.phone_index);
@@ -7186,16 +8155,23 @@ async function sendScheduledMessage(message) {
     }
 
     const botData = botMap.get(companyId);
-    console.log(`[Company ${companyId}] Available phone indices:`, botData ? botData.map((_, i) => i) : []);
+    console.log(
+      `[Company ${companyId}] Available phone indices:`,
+      botData ? botData.map((_, i) => i) : []
+    );
     console.log(`[Company ${companyId}] Client status:`, {
       phoneIndex: message.phone_index,
       hasClient: Boolean(botData?.[message.phone_index]?.client),
-      clientInfo: botData?.[message.phone_index]?.client ? "Client exists" : null,
+      clientInfo: botData?.[message.phone_index]?.client
+        ? "Client exists"
+        : null,
       totalBots: botData ? botData.length : 0,
     });
 
     if (!botData?.[message.phone_index]?.client) {
-      const error = new Error(`No active WhatsApp client found for phone index: ${message.phone_index}`);
+      const error = new Error(
+        `No active WhatsApp client found for phone index: ${message.phone_index}`
+      );
       console.error(`[Company ${companyId}] Client not found:`, {
         phoneIndex: message.phone_index,
         availableIndices: botData ? botData.map((_, i) => i) : [],
@@ -7209,11 +8185,13 @@ async function sendScheduledMessage(message) {
     const whatsappClient = botData[message.phone_index].client;
     console.log(`[Company ${companyId}] WhatsApp client info:`, {
       hasInfo: Boolean(whatsappClient.info),
-      info: whatsappClient.info ? {
-        wid: whatsappClient.info.wid?._serialized,
-        platform: whatsappClient.info.platform,
-        pushname: whatsappClient.info.pushname,
-      } : null,
+      info: whatsappClient.info
+        ? {
+            wid: whatsappClient.info.wid?._serialized,
+            platform: whatsappClient.info.platform,
+            pushname: whatsappClient.info.pushname,
+          }
+        : null,
       isReady: Boolean(whatsappClient.info),
     });
 
@@ -7221,53 +8199,80 @@ async function sendScheduledMessage(message) {
       console.log(`\n=== [Company ${companyId}] Processing V2 Message ===`);
 
       let chatIds = [];
-      
+
       // Parse chat_ids with safe JSON parsing
       console.log(`[Company ${companyId}] Parsing chat_ids:`, message.chat_ids);
-      chatIds = safeJsonParse(message.chat_ids, [], `chat_ids for company ${companyId}`);
-      
+      chatIds = safeJsonParse(
+        message.chat_ids,
+        [],
+        `chat_ids for company ${companyId}`
+      );
+
       if (Array.isArray(chatIds)) {
-        console.log(`[Company ${companyId}] chat_ids parsed as array with ${chatIds.length} items`);
+        console.log(
+          `[Company ${companyId}] chat_ids parsed as array with ${chatIds.length} items`
+        );
       } else {
-        console.log(`[Company ${companyId}] chat_ids parsed as single value:`, chatIds);
-              chatIds = [chatIds];
+        console.log(
+          `[Company ${companyId}] chat_ids parsed as single value:`,
+          chatIds
+        );
+        chatIds = [chatIds];
       }
 
       // Parse messages array with safe JSON parsing
-          console.log(`[Company ${companyId}] Parsing messages field:`, message.messages);
-      messages = safeJsonParse(message.messages, [], `messages for company ${companyId}`);
-      
+      console.log(
+        `[Company ${companyId}] Parsing messages field:`,
+        message.messages
+      );
+      messages = safeJsonParse(
+        message.messages,
+        [],
+        `messages for company ${companyId}`
+      );
+
       if (Array.isArray(messages)) {
-        console.log(`[Company ${companyId}] messages parsed as array with ${messages.length} items`);
+        console.log(
+          `[Company ${companyId}] messages parsed as array with ${messages.length} items`
+        );
       } else {
-        console.log(`[Company ${companyId}] messages parsed as single value:`, messages);
-              messages = [messages];
+        console.log(
+          `[Company ${companyId}] messages parsed as single value:`,
+          messages
+        );
+        messages = [messages];
       }
 
       // If no messages array, create from individual message fields
       if (!messages || messages.length === 0) {
-        console.log(`[Company ${companyId}] Creating messages from individual fields`);
+        console.log(
+          `[Company ${companyId}] Creating messages from individual fields`
+        );
         messages = chatIds.map((chatId) => {
-          const delay = message.min_delay && message.max_delay 
-            ? Math.floor(Math.random() * (message.max_delay - message.min_delay + 1) + message.min_delay)
-            : 0;
-          
+          const delay =
+            message.min_delay && message.max_delay
+              ? Math.floor(
+                  Math.random() * (message.max_delay - message.min_delay + 1) +
+                    message.min_delay
+                )
+              : 0;
+
           const messageObj = {
-          chatId: chatId,
-          message: message.message_content,
+            chatId: chatId,
+            message: message.message_content,
             delay: delay,
-          mediaUrl: message.media_url || "",
-          documentUrl: message.document_url || "",
-          fileName: message.file_name || "",
-          caption: message.caption || ""
+            mediaUrl: message.media_url || "",
+            documentUrl: message.document_url || "",
+            fileName: message.file_name || "",
+            caption: message.caption || "",
           };
-          
+
           console.log(`[Company ${companyId}] Created message for ${chatId}:`, {
             messageLength: messageObj.message?.length,
             delay: messageObj.delay,
             hasMedia: Boolean(messageObj.mediaUrl || messageObj.documentUrl),
           });
-          
+
           return messageObj;
         });
       }
@@ -7275,7 +8280,13 @@ async function sendScheduledMessage(message) {
       console.log(`[Company ${companyId}] Final batch details:`, {
         messageId: message.id,
         infiniteLoop: message.infinite_loop,
-        activeHours: message.active_hours ? safeJsonParse(message.active_hours, null, `active_hours for company ${companyId}`) : null,
+        activeHours: message.active_hours
+          ? safeJsonParse(
+              message.active_hours,
+              null,
+              `active_hours for company ${companyId}`
+            )
+          : null,
         totalMessages: messages.length,
         messages: messages.map((m, index) => ({
           index: index,
@@ -7294,12 +8305,15 @@ async function sendScheduledMessage(message) {
           return "";
         }
 
-        console.log(`[Company ${companyId}] Processing message with placeholders:`, {
-          originalLength: messageText.length,
-          hasContact: Boolean(contact),
-          contactName: contact?.contact_name || null,
-          contactPhone: contact?.phone || null,
-        });
+        console.log(
+          `[Company ${companyId}] Processing message with placeholders:`,
+          {
+            originalLength: messageText.length,
+            hasContact: Boolean(contact),
+            contactName: contact?.contact_name || null,
+            contactPhone: contact?.phone || null,
+          }
+        );
 
         let processedMessage = messageText;
         const placeholders = {
@@ -7315,7 +8329,10 @@ async function sendScheduledMessage(message) {
         };
 
         // Log available placeholders
-        console.log(`[Company ${companyId}] Available placeholders:`, placeholders);
+        console.log(
+          `[Company ${companyId}] Available placeholders:`,
+          placeholders
+        );
 
         Object.entries(placeholders).forEach(([key, value]) => {
           const placeholder = `@{${key}}`;
@@ -7325,13 +8342,19 @@ async function sendScheduledMessage(message) {
             value
           );
           if (originalMessage !== processedMessage) {
-            console.log(`[Company ${companyId}] Replaced ${placeholder} with: ${value}`);
+            console.log(
+              `[Company ${companyId}] Replaced ${placeholder} with: ${value}`
+            );
           }
         });
 
         if (contact?.custom_fields) {
           console.log(`[Company ${companyId}] Processing custom fields`);
-          const customFields = safeJsonParse(contact.custom_fields, {}, `custom_fields for contact ${contact.contact_id}`);
+          const customFields = safeJsonParse(
+            contact.custom_fields,
+            {},
+            `custom_fields for contact ${contact.contact_id}`
+          );
 
           console.log(`[Company ${companyId}] Custom fields:`, customFields);
 
@@ -7345,7 +8368,9 @@ async function sendScheduledMessage(message) {
               stringValue
             );
             if (originalMessage !== processedMessage) {
-              console.log(`[Company ${companyId}] Replaced ${customPlaceholder} with: ${stringValue}`);
+              console.log(
+                `[Company ${companyId}] Replaced ${customPlaceholder} with: ${stringValue}`
+              );
             }
           });
         }
@@ -7361,39 +8386,54 @@ async function sendScheduledMessage(message) {
 
       const isWithinActiveHours = () => {
         if (!message.active_hours) {
-          console.log(`[Company ${companyId}] No active hours set, always active`);
+          console.log(
+            `[Company ${companyId}] No active hours set, always active`
+          );
           return true;
         }
-        
+
         try {
-          const activeHours = safeJsonParse(message.active_hours, null, `active_hours for company ${companyId}`);
+          const activeHours = safeJsonParse(
+            message.active_hours,
+            null,
+            `active_hours for company ${companyId}`
+          );
           if (!activeHours) {
-            console.log(`[Company ${companyId}] No active hours parsed, assuming active`);
+            console.log(
+              `[Company ${companyId}] No active hours parsed, assuming active`
+            );
             return true;
           }
-          
+
           const now = new Date();
           const currentHour = now.getHours();
           const currentMinute = now.getMinutes();
           const currentTime = currentHour * 60 + currentMinute;
-          
-          const startTime = activeHours.start ? 
-            (parseInt(activeHours.start.split(':')[0]) * 60 + parseInt(activeHours.start.split(':')[1])) : 0;
-          const endTime = activeHours.end ? 
-            (parseInt(activeHours.end.split(':')[0]) * 60 + parseInt(activeHours.end.split(':')[1])) : 1440;
-          
+
+          const startTime = activeHours.start
+            ? parseInt(activeHours.start.split(":")[0]) * 60 +
+              parseInt(activeHours.start.split(":")[1])
+            : 0;
+          const endTime = activeHours.end
+            ? parseInt(activeHours.end.split(":")[0]) * 60 +
+              parseInt(activeHours.end.split(":")[1])
+            : 1440;
+
           const isActive = currentTime >= startTime && currentTime <= endTime;
-          
+
           console.log(`[Company ${companyId}] Active hours check:`, {
             currentTime: `${currentHour}:${currentMinute}`,
             startTime: activeHours.start,
             endTime: activeHours.end,
             isActive: isActive,
           });
-          
+
           return isActive;
         } catch (e) {
-          console.warn(`[Company ${companyId}] Error parsing active hours, assuming active:`, e);
+          console.warn(
+            `[Company ${companyId}] Error parsing active hours, assuming active:`,
+            e
+          );
           return true;
         }
       };
@@ -7412,26 +8452,37 @@ async function sendScheduledMessage(message) {
         });
 
         try {
-        const messageCheck = await client.query(
-          "SELECT status FROM scheduled_messages WHERE id = $1",
-          [message.id]
-        );
+          const messageCheck = await client.query(
+            "SELECT status FROM scheduled_messages WHERE id = $1",
+            [message.id]
+          );
 
           if (messageCheck.rowCount === 0) {
-            console.log(`[Company ${companyId}] Message not found in database, stopping`);
-          return true;
-        }
+            console.log(
+              `[Company ${companyId}] Message not found in database, stopping`
+            );
+            return true;
+          }
 
           if (messageCheck.rows[0].status === "stopped") {
             console.log(`[Company ${companyId}] Message sequence stopped`);
             return true;
           }
 
-          console.log(`[Company ${companyId}] Waiting ${timeUntilTomorrow / 1000 / 60} minutes until next day`);
-        await new Promise((resolve) => setTimeout(resolve, timeUntilTomorrow));
-        return false;
+          console.log(
+            `[Company ${companyId}] Waiting ${
+              timeUntilTomorrow / 1000 / 60
+            } minutes until next day`
+          );
+          await new Promise((resolve) =>
+            setTimeout(resolve, timeUntilTomorrow)
+          );
+          return false;
         } catch (error) {
-          console.error(`[Company ${companyId}] Error checking message status:`, error);
+          console.error(
+            `[Company ${companyId}] Error checking message status:`,
+            error
+          );
           return true; // Stop on error
         }
       };
@@ -7445,38 +8496,50 @@ async function sendScheduledMessage(message) {
       while (true) {
         try {
           const loopStartTime = Date.now();
-          
+
           // Check if we're within active hours
           if (!isWithinActiveHours()) {
-            console.log(`[Company ${companyId}] Outside active hours, waiting 10 minutes...`);
-            await new Promise(resolve => setTimeout(resolve, 600000));
+            console.log(
+              `[Company ${companyId}] Outside active hours, waiting 10 minutes...`
+            );
+            await new Promise((resolve) => setTimeout(resolve, 600000));
             continue;
           }
 
           // Add rate limiting check
           if (!checkRateLimit(`message_processing_${companyId}`)) {
-            console.log(`[Company ${companyId}] Rate limit reached, waiting 1 minute...`);
-            await new Promise(resolve => setTimeout(resolve, 60000));
+            console.log(
+              `[Company ${companyId}] Rate limit reached, waiting 1 minute...`
+            );
+            await new Promise((resolve) => setTimeout(resolve, 60000));
             continue;
           }
 
           // Add a longer delay between processing cycles to reduce network load
-          console.log(`[Company ${companyId}] Waiting 10 seconds between cycles...`);
-          await new Promise(resolve => setTimeout(resolve, 10000));
+          console.log(
+            `[Company ${companyId}] Waiting 10 seconds between cycles...`
+          );
+          await new Promise((resolve) => setTimeout(resolve, 10000));
 
           // FIXED: Check if currentMessageIndex is within bounds
           if (currentMessageIndex >= messages.length) {
-            console.log(`[Company ${companyId}] Reached end of messages array (${currentMessageIndex}/${messages.length})`);
-            
+            console.log(
+              `[Company ${companyId}] Reached end of messages array (${currentMessageIndex}/${messages.length})`
+            );
+
             if (!message.infinite_loop) {
               console.log(`[Company ${companyId}] Sequence complete - ending`);
               break;
             }
 
-            console.log(`[Company ${companyId}] Day ${dayCount} complete - preparing for next day`);
+            console.log(
+              `[Company ${companyId}] Day ${dayCount} complete - preparing for next day`
+            );
             const shouldStop = await waitUntilNextDay();
             if (shouldStop) {
-              console.log(`[Company ${companyId}] Sequence stopped during day transition`);
+              console.log(
+                `[Company ${companyId}] Sequence stopped during day transition`
+              );
               break;
             }
 
@@ -7486,21 +8549,33 @@ async function sendScheduledMessage(message) {
             continue; // Skip to next iteration to process first message again
           }
 
-          console.log(`\n=== [Company ${companyId}] Processing Message Item ${currentMessageIndex + 1}/${messages.length} ===`);
+          console.log(
+            `\n=== [Company ${companyId}] Processing Message Item ${
+              currentMessageIndex + 1
+            }/${messages.length} ===`
+          );
           const messageItem = messages[currentMessageIndex];
-          
+
           // FIXED: Validate messageItem exists
           if (!messageItem) {
-            console.error(`[Company ${companyId}] Message item at index ${currentMessageIndex} is undefined`);
+            console.error(
+              `[Company ${companyId}] Message item at index ${currentMessageIndex} is undefined`
+            );
             console.log(`[Company ${companyId}] Messages array:`, messages);
-            console.log(`[Company ${companyId}] Messages length:`, messages.length);
-            console.log(`[Company ${companyId}] Current index:`, currentMessageIndex);
-            
+            console.log(
+              `[Company ${companyId}] Messages length:`,
+              messages.length
+            );
+            console.log(
+              `[Company ${companyId}] Current index:`,
+              currentMessageIndex
+            );
+
             // Skip this message and move to next
             currentMessageIndex++;
             continue;
           }
-          
+
           console.log(`[Company ${companyId}] Current message item:`, {
             index: currentMessageIndex,
             chatId: messageItem.chatId,
@@ -7512,15 +8587,17 @@ async function sendScheduledMessage(message) {
           });
 
           const { chatId, message: messageText, delay } = messageItem;
-          
+
           // FIXED: Validate chatId exists
           if (!chatId) {
-            console.error(`[Company ${companyId}] chatId is undefined for message item at index ${currentMessageIndex}`);
+            console.error(
+              `[Company ${companyId}] chatId is undefined for message item at index ${currentMessageIndex}`
+            );
             currentMessageIndex++;
             continue;
           }
-          
-          const phone = '+' + chatId.split("@")[0];
+
+          const phone = "+" + chatId.split("@")[0];
 
           console.log(`[Company ${companyId}] Processing chat:`, {
             chatId: chatId,
@@ -7528,34 +8605,54 @@ async function sendScheduledMessage(message) {
             originalPhone: chatId.split("@")[0],
           });
 
-          console.log(`[Company ${companyId}] Fetching contact data for:`, phone);
-          
+          console.log(
+            `[Company ${companyId}] Fetching contact data for:`,
+            phone
+          );
+
           let contactData = {};
-          
+
           // Determine which contacts to get for this batch
           let contactIds = [];
           if (message.multiple && message.contact_ids) {
             try {
-              contactIds = safeJsonParse(message.contact_ids, [], `contact_ids for company ${companyId}`);
-              console.log(`[Company ${companyId}] Using multiple contact IDs:`, contactIds);
+              contactIds = safeJsonParse(
+                message.contact_ids,
+                [],
+                `contact_ids for company ${companyId}`
+              );
+              console.log(
+                `[Company ${companyId}] Using multiple contact IDs:`,
+                contactIds
+              );
             } catch (e) {
-              console.warn(`[Company ${companyId}] Could not parse contact_ids:`, {
-                error: e.message,
-                contact_ids: message.contact_ids,
-                type: typeof message.contact_ids,
-              });
+              console.warn(
+                `[Company ${companyId}] Could not parse contact_ids:`,
+                {
+                  error: e.message,
+                  contact_ids: message.contact_ids,
+                  type: typeof message.contact_ids,
+                }
+              );
               contactIds = [];
             }
           } else if (message.contact_id) {
             contactIds = [message.contact_id];
-            console.log(`[Company ${companyId}] Using single contact ID:`, contactIds);
+            console.log(
+              `[Company ${companyId}] Using single contact ID:`,
+              contactIds
+            );
           } else {
-            console.log(`[Company ${companyId}] No contact IDs specified, will use phone lookup`);
+            console.log(
+              `[Company ${companyId}] No contact IDs specified, will use phone lookup`
+            );
           }
-          
+
           // Fetch contact by ID if available, otherwise by phone
           if (contactIds.length > 0) {
-            console.log(`[Company ${companyId}] Looking up contact by ID and phone`);
+            console.log(
+              `[Company ${companyId}] Looking up contact by ID and phone`
+            );
             const contactQuery = `
               SELECT * FROM contacts 
               WHERE company_id = $1 AND contact_id = ANY($2::text[]) AND phone = $3
@@ -7565,16 +8662,21 @@ async function sendScheduledMessage(message) {
               contactIds,
               phone,
             ]);
-            
+
             if (contactResult.rowCount > 0) {
               contactData = contactResult.rows[0];
-              console.log(`[Company ${companyId}] Found contact by ID and phone:`, {
-                contactId: contactData.contact_id,
-                name: contactData.contact_name,
-                phone: contactData.phone,
-              });
+              console.log(
+                `[Company ${companyId}] Found contact by ID and phone:`,
+                {
+                  contactId: contactData.contact_id,
+                  name: contactData.contact_name,
+                  phone: contactData.phone,
+                }
+              );
             } else {
-              console.log(`[Company ${companyId}] No contact found by ID and phone, trying phone-only lookup`);
+              console.log(
+                `[Company ${companyId}] No contact found by ID and phone, trying phone-only lookup`
+              );
               const phoneContactQuery = `
                 SELECT * FROM contacts 
                 WHERE company_id = $1 AND phone = $2
@@ -7583,7 +8685,10 @@ async function sendScheduledMessage(message) {
                 companyId,
                 phone,
               ]);
-              contactData = phoneContactResult.rowCount > 0 ? phoneContactResult.rows[0] : {};
+              contactData =
+                phoneContactResult.rowCount > 0
+                  ? phoneContactResult.rows[0]
+                  : {};
               console.log(`[Company ${companyId}] Phone-only lookup result:`, {
                 found: phoneContactResult.rowCount > 0,
                 contactId: contactData.contact_id || null,
@@ -7591,7 +8696,9 @@ async function sendScheduledMessage(message) {
               });
             }
           } else {
-            console.log(`[Company ${companyId}] Looking up contact by phone only`);
+            console.log(
+              `[Company ${companyId}] Looking up contact by phone only`
+            );
             const contactQuery = `
               SELECT * FROM contacts 
               WHERE company_id = $1 AND phone = $2
@@ -7600,21 +8707,22 @@ async function sendScheduledMessage(message) {
               companyId,
               phone,
             ]);
-            contactData = contactResult.rowCount > 0 ? contactResult.rows[0] : {};
+            contactData =
+              contactResult.rowCount > 0 ? contactResult.rows[0] : {};
             console.log(`[Company ${companyId}] Phone lookup result:`, {
               found: contactResult.rowCount > 0,
               contactId: contactData.contact_id || null,
               name: contactData.contact_name || null,
             });
           }
-          
+
           console.log(`[Company ${companyId}] Contact data summary:`, {
             exists: Object.keys(contactData).length > 0,
             contactId: contactData.contact_id || null,
             name: contactData.contact_name || null,
             phone: contactData.phone || null,
             tags: contactData.tags || null,
-            customFields: contactData.custom_fields ? 'Present' : 'None',
+            customFields: contactData.custom_fields ? "Present" : "None",
           });
 
           // Check for stop bot tag
@@ -7623,7 +8731,9 @@ async function sendScheduledMessage(message) {
             contactData.tags &&
             contactData.tags.includes("stop bot")
           ) {
-            console.log(`[Company ${companyId}] Skipping message - contact has 'stop bot' tag`);
+            console.log(
+              `[Company ${companyId}] Skipping message - contact has 'stop bot' tag`
+            );
             totalMessagesSkipped++;
             currentMessageIndex++;
             continue;
@@ -7658,7 +8768,9 @@ async function sendScheduledMessage(message) {
           ]);
 
           if (sentCheck.rowCount > 0) {
-            console.log(`[Company ${companyId}] Message already sent to ${chatId}, skipping...`);
+            console.log(
+              `[Company ${companyId}] Message already sent to ${chatId}, skipping...`
+            );
             totalMessagesSkipped++;
             currentMessageIndex++;
             continue;
@@ -7672,7 +8784,9 @@ async function sendScheduledMessage(message) {
           });
 
           if (delay > 0) {
-            console.log(`[Company ${companyId}] Adding delay of ${delay} seconds`);
+            console.log(
+              `[Company ${companyId}] Adding delay of ${delay} seconds`
+            );
             await new Promise((resolve) => setTimeout(resolve, delay * 1000));
           }
 
@@ -7680,13 +8794,20 @@ async function sendScheduledMessage(message) {
             console.log(`\n=== [Company ${companyId}] Sending Message ===`);
 
             const mediaUrl = messageItem.mediaUrl || message.media_url || "";
-            const documentUrl = messageItem.documentUrl || message.document_url || "";
+            const documentUrl =
+              messageItem.documentUrl || message.document_url || "";
             const fileName = messageItem.fileName || message.file_name || "";
 
-            const endpoint = mediaUrl ? "image" : documentUrl ? "document" : "text";
+            const endpoint = mediaUrl
+              ? "image"
+              : documentUrl
+              ? "document"
+              : "text";
 
             // FIXED: Properly construct the URL without double slashes
-            const baseUrl = (process.env.URL || 'http://localhost:8443').replace(/\/$/, ''); // Remove trailing slash
+            const baseUrl = (
+              process.env.URL || "http://localhost:8443"
+            ).replace(/\/$/, ""); // Remove trailing slash
             const url = `${baseUrl}/api/v2/messages/${endpoint}/${companyId}/${chatId}`;
 
             console.log(`[Company ${companyId}] URL construction:`, {
@@ -7696,7 +8817,7 @@ async function sendScheduledMessage(message) {
               chatId: chatId,
               fullUrl: url,
               envUrl: process.env.URL,
-              originalBaseUrl: process.env.URL || 'http://localhost:8443',
+              originalBaseUrl: process.env.URL || "http://localhost:8443",
             });
 
             console.log(`[Company ${companyId}] Request details:`, {
@@ -7711,21 +8832,21 @@ async function sendScheduledMessage(message) {
             });
 
             const requestBody = mediaUrl
-                  ? {
-                      imageUrl: mediaUrl,
-                      caption: processedMessageText,
-                      phoneIndex: message.phone_index,
-                    }
-                  : documentUrl
-                  ? {
-                      documentUrl: documentUrl,
-                      filename: fileName,
-                      caption: processedMessageText,
-                      phoneIndex: message.phone_index,
-                    }
-                  : {
-                      message: processedMessageText || message.message_content,
-                      phoneIndex: message.phone_index,
+              ? {
+                  imageUrl: mediaUrl,
+                  caption: processedMessageText,
+                  phoneIndex: message.phone_index,
+                }
+              : documentUrl
+              ? {
+                  documentUrl: documentUrl,
+                  filename: fileName,
+                  caption: processedMessageText,
+                  phoneIndex: message.phone_index,
+                }
+              : {
+                  message: processedMessageText || message.message_content,
+                  phoneIndex: message.phone_index,
                 };
 
             console.log(`[Company ${companyId}] Request body:`, requestBody);
@@ -7750,7 +8871,9 @@ async function sendScheduledMessage(message) {
                 errorText: errorText,
                 url: url,
               });
-              throw new Error(`Failed to send message: ${response.status} - ${errorText}`);
+              throw new Error(
+                `Failed to send message: ${response.status} - ${errorText}`
+              );
             }
 
             const responseData = await response.json();
@@ -7774,14 +8897,19 @@ async function sendScheduledMessage(message) {
               ]
             );
 
-            console.log(`[Company ${companyId}] Recorded message as sent with ID: ${messageIdentifier}`);
+            console.log(
+              `[Company ${companyId}] Recorded message as sent with ID: ${messageIdentifier}`
+            );
             totalMessagesSent++;
 
             const messageTime = Date.now() - loopStartTime;
-            console.log(`[Company ${companyId}] Message sent successfully in ${messageTime}ms`);
-
+            console.log(
+              `[Company ${companyId}] Message sent successfully in ${messageTime}ms`
+            );
           } catch (error) {
-            console.error(`\n=== [Company ${companyId}] Message Send Error ===`);
+            console.error(
+              `\n=== [Company ${companyId}] Message Send Error ===`
+            );
             console.error(`[Company ${companyId}] Error details:`, {
               name: error.name,
               message: error.message,
@@ -7810,21 +8938,30 @@ async function sendScheduledMessage(message) {
           }
 
           currentMessageIndex++;
-          
+
           // Check if we need to sleep after a certain number of messages
-          if (message.activate_sleep && message.sleep_after_messages && message.sleep_duration) {
+          if (
+            message.activate_sleep &&
+            message.sleep_after_messages &&
+            message.sleep_duration
+          ) {
             if (currentMessageIndex % message.sleep_after_messages === 0) {
-              console.log(`[Company ${companyId}] Sleeping for ${message.sleep_duration} seconds after ${message.sleep_after_messages} messages`);
-              await new Promise(resolve => setTimeout(resolve, message.sleep_duration * 1000));
+              console.log(
+                `[Company ${companyId}] Sleeping for ${message.sleep_duration} seconds after ${message.sleep_after_messages} messages`
+              );
+              await new Promise((resolve) =>
+                setTimeout(resolve, message.sleep_duration * 1000)
+              );
             }
           }
-          
+
           console.log(`\n=== [Company ${companyId}] Sequence Status ===`);
           console.log({
             currentIndex: currentMessageIndex,
             totalMessages: messages.length,
             dayCount: dayCount,
-            willContinue: currentMessageIndex < messages.length || message.infinite_loop,
+            willContinue:
+              currentMessageIndex < messages.length || message.infinite_loop,
             totalSent: totalMessagesSent,
             totalSkipped: totalMessagesSkipped,
             totalErrors: totalErrors,
@@ -7832,7 +8969,6 @@ async function sendScheduledMessage(message) {
           });
 
           consecutiveErrors = 0; // Reset on successful message
-
         } catch (error) {
           console.error(`[Company ${companyId}] Error in message processing:`, {
             error: error.message,
@@ -7840,24 +8976,30 @@ async function sendScheduledMessage(message) {
             currentIndex: currentMessageIndex,
             consecutiveErrors: consecutiveErrors + 1,
             messagesLength: messages.length,
-            messageItem: messages[currentMessageIndex] || 'undefined',
+            messageItem: messages[currentMessageIndex] || "undefined",
           });
-          
+
           consecutiveErrors++;
           totalErrors++;
-          
+
           if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
-            console.error(`[Company ${companyId}] Max consecutive errors reached (${MAX_CONSECUTIVE_ERRORS}), stopping sequence`);
+            console.error(
+              `[Company ${companyId}] Max consecutive errors reached (${MAX_CONSECUTIVE_ERRORS}), stopping sequence`
+            );
             break;
           }
-          
-          console.log(`[Company ${companyId}] Waiting 1 minute before retrying...`);
-          await new Promise(resolve => setTimeout(resolve, 60000));
+
+          console.log(
+            `[Company ${companyId}] Waiting 1 minute before retrying...`
+          );
+          await new Promise((resolve) => setTimeout(resolve, 60000));
         }
       }
 
       const totalTime = Date.now() - startTime;
-      console.log(`\n=== [Company ${companyId}] sendScheduledMessage Complete ===`);
+      console.log(
+        `\n=== [Company ${companyId}] sendScheduledMessage Complete ===`
+      );
       console.log(`[Company ${companyId}] Final statistics:`, {
         totalTime: `${totalTime}ms`,
         totalMessages: messages.length,
@@ -7867,13 +9009,12 @@ async function sendScheduledMessage(message) {
         dayCount: dayCount,
         success: true,
       });
-
     } else {
       console.log(`[Company ${companyId}] Message is not V2 - skipping`);
     }
 
     // FIXED: Return statement now has access to all variables
-    return { 
+    return {
       success: true,
       statistics: {
         totalTime: Date.now() - startTime,
@@ -7882,12 +9023,13 @@ async function sendScheduledMessage(message) {
         totalSkipped: totalMessagesSkipped,
         totalErrors: totalErrors,
         dayCount: dayCount,
-      }
+      },
     };
-
   } catch (error) {
     const totalTime = Date.now() - startTime;
-    console.error(`\n=== [Company ${companyId}] sendScheduledMessage Error ===`);
+    console.error(
+      `\n=== [Company ${companyId}] sendScheduledMessage Error ===`
+    );
     console.error(`[Company ${companyId}] Error details:`, {
       name: error.name,
       message: error.message,
@@ -7897,8 +9039,8 @@ async function sendScheduledMessage(message) {
       messageId: message.id,
     });
 
-    return { 
-      success: false, 
+    return {
+      success: false,
       error: error.message,
       details: {
         name: error.name,
@@ -7906,13 +9048,13 @@ async function sendScheduledMessage(message) {
         totalTime: totalTime,
         phoneIndex: message.phone_index,
         messageId: message.id,
-      }
+      },
     };
   } finally {
     if (client) {
-    await safeRelease(client);
+      await safeRelease(client);
+    }
   }
-}
 }
 async function scheduleAllMessages() {
   const client = await pool.connect();
@@ -7934,7 +9076,7 @@ async function scheduleAllMessages() {
       const apiUrlResult = await client.query(apiUrlQuery, [companyId]);
       const companyApiUrl = apiUrlResult.rows[0]?.api_url;
 
-      if (companyApiUrl !== 'https://juta-dev.ngrok.app') {
+      if (companyApiUrl !== "https://juta-dev.ngrok.app") {
         continue;
       }
 
@@ -7995,8 +9137,10 @@ async function scheduleAllMessages() {
 }
 
 // Add this import at the top of server.js
-const { broadcastNewMessageToCompany } = require('./utils/broadcast');
-const { handleNewMessagesTemplateWweb } = require("./bots/handleMessagesFiraz.js");
+const { broadcastNewMessageToCompany } = require("./utils/broadcast");
+const {
+  handleNewMessagesTemplateWweb,
+} = require("./bots/handleMessagesFiraz.js");
 
 function setupMessageHandler(client, botName, phoneIndex) {
   client.on("message", async (msg) => {
@@ -8009,11 +9153,13 @@ function setupMessageHandler(client, botName, phoneIndex) {
       console.log(`🔔 [MESSAGE_HANDLER] From Me: ${msg.fromMe}`);
       console.log(`🔔 [MESSAGE_HANDLER] Timestamp: ${msg.timestamp}`);
       console.log(`🔔 [MESSAGE_HANDLER] ID: ${msg.id._serialized}`);
-      
+
       await handleNewMessagesTemplateWweb(client, msg, botName, phoneIndex);
-      
+
       // Add broadcast call here
-      const extractedNumber = msg.from.replace("@c.us", "").replace("@g.us", "");
+      const extractedNumber = msg.from
+        .replace("@c.us", "")
+        .replace("@g.us", "");
       const messageData = {
         chatId: msg.from,
         message: msg.body,
@@ -8022,16 +9168,21 @@ function setupMessageHandler(client, botName, phoneIndex) {
         fromMe: msg.fromMe,
         timestamp: Math.floor(Date.now() / 1000),
         messageType: msg.type,
-        contactName: msg.notifyName || extractedNumber
+        contactName: msg.notifyName || extractedNumber,
       };
-      
-      console.log(`🔔 [MESSAGE_HANDLER] Calling broadcastNewMessageToCompany with company: ${botName}`);
+
+      console.log(
+        `🔔 [MESSAGE_HANDLER] Calling broadcastNewMessageToCompany with company: ${botName}`
+      );
       broadcastNewMessageToCompany(botName, messageData);
-      
+
       console.log(`🔔 [MESSAGE_HANDLER] ✅ Message processed successfully`);
       console.log(`🔔 [MESSAGE_HANDLER] ===== INCOMING MESSAGE END =====`);
     } catch (error) {
-      console.error(`🔔 [MESSAGE_HANDLER] ❌ Error in message handling:`, error);
+      console.error(
+        `🔔 [MESSAGE_HANDLER] ❌ Error in message handling:`,
+        error
+      );
     }
   });
 }
@@ -8129,7 +9280,9 @@ function setupMessageCreateHandler(client, botName, phoneIndex) {
         }
 
         // 4.5. Handle AI Responses for Own Messages
-        console.log("\n=== Processing AI Responses in MessageCreateHandler ===");
+        console.log(
+          "\n=== Processing AI Responses in MessageCreateHandler ==="
+        );
         const contactData = await getContactDataFromDatabaseByPhone(
           extractedNumber,
           botName
@@ -8159,7 +9312,7 @@ function setupMessageCreateHandler(client, botName, phoneIndex) {
             video: true,
             voice: true,
           },
-        });// Add broadcast call here
+        }); // Add broadcast call here
         const messageData = {
           chatId: msg.to,
           message: msg.body,
@@ -8168,12 +9321,14 @@ function setupMessageCreateHandler(client, botName, phoneIndex) {
           fromMe: msg.fromMe,
           timestamp: Math.floor(Date.now() / 1000),
           messageType: msg.type,
-          contactName: extractedNumber
+          contactName: extractedNumber,
         };
-        
-        console.log(`🔔 [MESSAGE_CREATE] Calling broadcastNewMessageToCompany with company: ${botName}`);
+
+        console.log(
+          `🔔 [MESSAGE_CREATE] Calling broadcastNewMessageToCompany with company: ${botName}`
+        );
         broadcastNewMessageToCompany(botName, messageData);
-        
+
         // ... rest of existing code ...l
 
         // 5. Handle bot tags for certain companies
@@ -8261,12 +9416,15 @@ async function processAIResponses({
   },
 }) {
   console.log(`[processAIResponses] Starting for company ${idSubstring}`);
-  
+
   let followUpTemplates = [];
   try {
     followUpTemplates = await getFollowUpTemplates(idSubstring);
   } catch (error) {
-    console.error(`[processAIResponses] Error getting follow-up templates for company ${idSubstring}:`, error);
+    console.error(
+      `[processAIResponses] Error getting follow-up templates for company ${idSubstring}:`,
+      error
+    );
     followUpTemplates = [];
   }
 
@@ -8329,9 +9487,9 @@ async function processAIResponses({
   }
 }
 
-app.post('/api/upload-media', upload.single('file'), (req, res) => {
+app.post("/api/upload-media", upload.single("file"), (req, res) => {
   if (!req.file) {
-    return res.status(400).json({ error: 'No file uploaded' });
+    return res.status(400).json({ error: "No file uploaded" });
   }
   const baseUrl = process.env.URL;
   const fileUrl = `${baseUrl}/media/${req.file.filename}`;
@@ -8339,71 +9497,77 @@ app.post('/api/upload-media', upload.single('file'), (req, res) => {
 });
 
 // New file upload endpoint for general file uploads
-app.post('/api/upload-file', upload.single('file'), (req, res) => {
+app.post("/api/upload-file", upload.single("file"), (req, res) => {
   try {
     if (!req.file) {
-      return res.status(400).json({ error: 'No file uploaded' });
+      return res.status(400).json({ error: "No file uploaded" });
     }
 
     // Get additional parameters
     const { fileName, companyId } = req.body;
-    
+
     // Validate required fields
     if (!fileName) {
-      return res.status(400).json({ error: 'fileName is required' });
+      return res.status(400).json({ error: "fileName is required" });
     }
 
     const baseUrl = process.env.URL;
     const fileUrl = `${baseUrl}/media/${req.file.filename}`;
-    
+
     // Log the upload for debugging
-    console.log(`File uploaded: ${req.file.originalname} -> ${req.file.filename}`);
+    console.log(
+      `File uploaded: ${req.file.originalname} -> ${req.file.filename}`
+    );
     console.log(`Company ID: ${companyId}`);
     console.log(`Requested filename: ${fileName}`);
-    
-    res.json({ 
+
+    res.json({
       success: true,
       url: fileUrl,
       filename: req.file.filename,
       originalName: req.file.originalname,
-      size: req.file.size
+      size: req.file.size,
     });
   } catch (error) {
-    console.error('Error uploading file:', error);
-    res.status(500).json({ 
+    console.error("Error uploading file:", error);
+    res.status(500).json({
       success: false,
-      error: 'Failed to upload file' 
+      error: "Failed to upload file",
     });
   }
 });
 
 // ... rest of existing code ...
 // Create a new follow-up template
-app.post('/api/followup-templates', async (req, res) => {
+app.post("/api/followup-templates", async (req, res) => {
   console.log("=== Starting POST /api/followup-templates ===");
   console.log("Request body:", JSON.stringify(req.body, null, 2));
-  
+
   const {
     companyId,
     name,
-    status = 'active',
+    status = "active",
     createdAt,
     startTime,
     isCustomStartTime,
     trigger_tags = [],
     trigger_keywords = [],
-    batchSettings = {}
+    batchSettings = {},
   } = req.body;
 
   // Validation
   if (!companyId) {
     console.error("Missing companyId");
-    return res.status(400).json({ success: false, message: 'Missing companyId' });
+    return res
+      .status(400)
+      .json({ success: false, message: "Missing companyId" });
   }
-  
+
   if (!name || !name.trim()) {
     console.error("Missing or empty template name");
-    return res.status(400).json({ success: false, message: 'Template name is required' });
+    return res
+      .status(400)
+      .json({ success: false, message: "Template name is required" });
   }
 
   const sqlClient = await pool.connect();
@@ -8413,7 +9577,7 @@ app.post('/api/followup-templates', async (req, res) => {
     console.log("Database transaction started");
 
     // Generate template_id (UUID)
-    const templateId = require('crypto').randomUUID();
+    const templateId = require("crypto").randomUUID();
     console.log("Generated template ID:", templateId);
 
     // Insert the template
@@ -8436,7 +9600,7 @@ app.post('/api/followup-templates', async (req, res) => {
     `;
 
     const templateParams = [
-      require('crypto').randomUUID(), // id (UUID)
+      require("crypto").randomUUID(), // id (UUID)
       templateId, // template_id
       companyId,
       name.trim(),
@@ -8444,20 +9608,23 @@ app.post('/api/followup-templates', async (req, res) => {
       new Date(),
       Array.isArray(trigger_keywords) ? trigger_keywords : [],
       Array.isArray(trigger_tags) ? trigger_tags : [],
-      'bot', // default keyword_source
+      "bot", // default keyword_source
       status,
-      '', // default content (empty for now)
-      24 // default delay_hours
+      "", // default content (empty for now)
+      24, // default delay_hours
     ];
 
     console.log("Executing template insert with params:", templateParams);
-    const templateResult = await sqlClient.query(insertTemplateQuery, templateParams);
+    const templateResult = await sqlClient.query(
+      insertTemplateQuery,
+      templateParams
+    );
     console.log("Template inserted successfully:", templateResult.rows[0]);
 
     // If batchSettings has messages, insert them into followup_messages
     if (batchSettings.messages && Array.isArray(batchSettings.messages)) {
       console.log(`Inserting ${batchSettings.messages.length} messages`);
-      
+
       for (let i = 0; i < batchSettings.messages.length; i++) {
         const message = batchSettings.messages[i];
         console.log(`Processing message ${i + 1}:`, message);
@@ -8484,22 +9651,24 @@ app.post('/api/followup-templates', async (req, res) => {
         `;
 
         const messageParams = [
-          require('crypto').randomUUID(), // id
+          require("crypto").randomUUID(), // id
           templateId, // template_id
-          message.content || '',
+          message.content || "",
           message.dayNumber || 0,
           message.sequence || i + 1,
-          'active',
+          "active",
           new Date(),
           message.document || null,
           message.image || null,
           message.video || null,
           message.delayAfter ? JSON.stringify(message.delayAfter) : null,
-          message.specificNumbers ? JSON.stringify(message.specificNumbers) : null,
+          message.specificNumbers
+            ? JSON.stringify(message.specificNumbers)
+            : null,
           message.useScheduledTime || false,
           message.scheduledTime || null,
           Array.isArray(message.addTags) ? message.addTags : [],
-          Array.isArray(message.removeTags) ? message.removeTags : []
+          Array.isArray(message.removeTags) ? message.removeTags : [],
         ];
 
         console.log(`Inserting message ${i + 1} with params:`, messageParams);
@@ -8524,7 +9693,7 @@ app.post('/api/followup-templates', async (req, res) => {
       keywordSource: templateResult.rows[0].keyword_source,
       status: templateResult.rows[0].status,
       content: templateResult.rows[0].content,
-      delayHours: templateResult.rows[0].delay_hours
+      delayHours: templateResult.rows[0].delay_hours,
     };
 
     console.log("Returning created template:", createdTemplate);
@@ -8532,21 +9701,20 @@ app.post('/api/followup-templates', async (req, res) => {
 
     res.status(201).json({
       success: true,
-      message: 'Template created successfully',
-      template: createdTemplate
+      message: "Template created successfully",
+      template: createdTemplate,
     });
-
   } catch (error) {
     await safeRollback(sqlClient);
     console.error("=== Error in POST /api/followup-templates ===");
     console.error("Error message:", error.message);
     console.error("Error stack:", error.stack);
     console.error("Full error:", error);
-    
+
     res.status(500).json({
       success: false,
-      message: 'Failed to create template',
-      error: error.message
+      message: "Failed to create template",
+      error: error.message,
     });
   } finally {
     await safeRelease(sqlClient);
@@ -8593,7 +9761,9 @@ async function getFollowUpTemplates(companyId) {
         name: row.name,
         createdAt: row.created_at,
         updatedAt: row.updated_at,
-        triggerKeywords: Array.isArray(row.trigger_keywords) ? row.trigger_keywords : [],
+        triggerKeywords: Array.isArray(row.trigger_keywords)
+          ? row.trigger_keywords
+          : [],
         triggerTags: Array.isArray(row.trigger_tags) ? row.trigger_tags : [],
         keywordSource: row.keyword_source || "bot",
         status: row.status || "active",
@@ -8616,17 +9786,19 @@ async function getFollowUpTemplates(companyId) {
 }
 
 // Add a new message to a follow-up template
-app.post('/api/followup-templates/:templateId/messages', async (req, res) => {
-  console.log("=== Starting POST /api/followup-templates/:templateId/messages ===");
+app.post("/api/followup-templates/:templateId/messages", async (req, res) => {
+  console.log(
+    "=== Starting POST /api/followup-templates/:templateId/messages ==="
+  );
   console.log("Template ID:", req.params.templateId);
   console.log("Request body:", JSON.stringify(req.body, null, 2));
-  
+
   const { templateId } = req.params;
   const {
     message,
     dayNumber = 1,
     sequence = 1,
-    status = 'active',
+    status = "active",
     createdAt,
     document = null,
     image = null,
@@ -8634,37 +9806,52 @@ app.post('/api/followup-templates/:templateId/messages', async (req, res) => {
     delayAfter = null,
     specificNumbers = null,
     useScheduledTime = false,
-    scheduledTime = '',
+    scheduledTime = "",
     addTags = [],
-    removeTags = []
+    removeTags = [],
   } = req.body;
 
   // Validation
   if (!templateId) {
     console.error("Missing templateId");
-    return res.status(400).json({ success: false, message: 'Missing templateId' });
+    return res
+      .status(400)
+      .json({ success: false, message: "Missing templateId" });
   }
-  
+
   if (!message || !message.trim()) {
     console.error("Missing or empty message content");
-    return res.status(400).json({ success: false, message: 'Message content is required' });
+    return res
+      .status(400)
+      .json({ success: false, message: "Message content is required" });
   }
 
   if (!dayNumber || dayNumber < 0) {
     console.error("Invalid day number");
-    return res.status(400).json({ success: false, message: 'Day number must be a positive number' });
+    return res
+      .status(400)
+      .json({
+        success: false,
+        message: "Day number must be a positive number",
+      });
   }
 
   if (!sequence || sequence < 1) {
     console.error("Invalid sequence number");
-    return res.status(400).json({ success: false, message: 'Sequence number must be at least 1' });
+    return res
+      .status(400)
+      .json({ success: false, message: "Sequence number must be at least 1" });
   }
 
   const sqlClient = await getDatabaseConnection();
 
   if (!sqlClient) {
-    console.error("Failed to get database connection - aborting message insert");
-    return res.status(500).json({ success: false, message: 'Failed to add message' });
+    console.error(
+      "Failed to get database connection - aborting message insert"
+    );
+    return res
+      .status(500)
+      .json({ success: false, message: "Failed to add message" });
   }
 
   try {
@@ -8678,14 +9865,16 @@ app.post('/api/followup-templates/:templateId/messages', async (req, res) => {
       WHERE template_id = $1::character varying AND status = 'active'
     `;
     console.log("Checking if template exists with ID:", templateId);
-    const templateCheckResult = await sqlClient.query(templateCheckQuery, [templateId]);
-    
+    const templateCheckResult = await sqlClient.query(templateCheckQuery, [
+      templateId,
+    ]);
+
     if (templateCheckResult.rows.length === 0) {
       console.error(`Template not found: ${templateId}`);
       await safeRollback(sqlClient);
-      return res.status(404).json({ 
-        success: false, 
-        message: 'Template not found or inactive' 
+      return res.status(404).json({
+        success: false,
+        message: "Template not found or inactive",
       });
     }
 
@@ -8699,17 +9888,19 @@ app.post('/api/followup-templates/:templateId/messages', async (req, res) => {
     `;
     console.log("Checking for duplicate message...");
     const duplicateCheckResult = await sqlClient.query(duplicateCheckQuery, [
-      templateId, 
-      dayNumber, 
-      sequence
+      templateId,
+      dayNumber,
+      sequence,
     ]);
 
     if (duplicateCheckResult.rows.length > 0) {
-      console.error(`Duplicate message found: day ${dayNumber}, sequence ${sequence}`);
+      console.error(
+        `Duplicate message found: day ${dayNumber}, sequence ${sequence}`
+      );
       await safeRollback(sqlClient);
-      return res.status(409).json({ 
-        success: false, 
-        message: 'A message with this day and sequence number already exists' 
+      return res.status(409).json({
+        success: false,
+        message: "A message with this day and sequence number already exists",
       });
     }
 
@@ -8737,7 +9928,7 @@ app.post('/api/followup-templates/:templateId/messages', async (req, res) => {
     `;
 
     const messageParams = [
-      require('crypto').randomUUID(), // id
+      require("crypto").randomUUID(), // id
       templateId, // template_id (will be cast to VARCHAR)
       message.trim(), // message
       dayNumber, // day_number
@@ -8752,11 +9943,14 @@ app.post('/api/followup-templates/:templateId/messages', async (req, res) => {
       useScheduledTime, // use_scheduled_time
       scheduledTime || null, // scheduled_time
       Array.isArray(addTags) ? addTags : [], // add_tags
-      Array.isArray(removeTags) ? removeTags : [] // remove_tags
+      Array.isArray(removeTags) ? removeTags : [], // remove_tags
     ];
 
     console.log("Executing message insert with params:", messageParams);
-    const messageResult = await sqlClient.query(insertMessageQuery, messageParams);
+    const messageResult = await sqlClient.query(
+      insertMessageQuery,
+      messageParams
+    );
     console.log("Message inserted successfully:", messageResult.rows[0]);
 
     await sqlClient.query("COMMIT");
@@ -8779,30 +9973,33 @@ app.post('/api/followup-templates/:templateId/messages', async (req, res) => {
       useScheduledTime: messageResult.rows[0].use_scheduled_time,
       scheduledTime: messageResult.rows[0].scheduled_time,
       addTags: messageResult.rows[0].add_tags || [],
-      removeTags: messageResult.rows[0].remove_tags || []
+      removeTags: messageResult.rows[0].remove_tags || [],
     };
 
     console.log("Returning created message:", createdMessage);
-    console.log("=== Completed POST /api/followup-templates/:templateId/messages ===");
+    console.log(
+      "=== Completed POST /api/followup-templates/:templateId/messages ==="
+    );
 
     res.status(201).json({
       success: true,
-      message: 'Message added successfully',
-      data: createdMessage
+      message: "Message added successfully",
+      data: createdMessage,
     });
-
   } catch (error) {
     await safeRollback(sqlClient);
-    console.error("=== Error in POST /api/followup-templates/:templateId/messages ===");
+    console.error(
+      "=== Error in POST /api/followup-templates/:templateId/messages ==="
+    );
     console.error("Template ID:", templateId);
     console.error("Error message:", error.message);
     console.error("Error stack:", error.stack);
     console.error("Full error:", error);
-    
+
     res.status(500).json({
       success: false,
-      message: 'Failed to add message',
-      error: error.message
+      message: "Failed to add message",
+      error: error.message,
     });
   } finally {
     await safeRelease(sqlClient);
@@ -8816,7 +10013,9 @@ async function getMessagesForTemplate(templateId) {
   const sqlClient = await getDatabaseConnection();
 
   if (!sqlClient) {
-    console.error("Failed to get database connection - aborting getMessagesForTemplate");
+    console.error(
+      "Failed to get database connection - aborting getMessagesForTemplate"
+    );
     return [];
   }
 
@@ -8892,68 +10091,79 @@ async function getMessagesForTemplate(templateId) {
 }
 
 // Get all follow-up templates for a company
-app.get('/api/followup-templates', async (req, res) => {
+app.get("/api/followup-templates", async (req, res) => {
   const { companyId } = req.query;
   if (!companyId) {
-    return res.status(400).json({ success: false, message: 'Missing companyId' });
+    return res
+      .status(400)
+      .json({ success: false, message: "Missing companyId" });
   }
   try {
     const templates = await getFollowUpTemplates(companyId);
     res.json({ success: true, templates });
   } catch (error) {
-    console.error('Error fetching follow-up templates:', error);
-    res.status(500).json({ success: false, message: 'Server error' });
+    console.error("Error fetching follow-up templates:", error);
+    res.status(500).json({ success: false, message: "Server error" });
   }
 });
 
 // Get all messages for a specific follow-up template
-app.get('/api/followup-templates/:templateId/messages', async (req, res) => {
+app.get("/api/followup-templates/:templateId/messages", async (req, res) => {
   const { templateId } = req.params;
   if (!templateId) {
-    return res.status(400).json({ success: false, message: 'Missing templateId' });
+    return res
+      .status(400)
+      .json({ success: false, message: "Missing templateId" });
   }
   try {
     // You need to implement this function based on your DB structure
     const messages = await getMessagesForTemplate(templateId);
     res.json({ success: true, messages });
   } catch (error) {
-    console.error('Error fetching template messages:', error);
-    res.status(500).json({ success: false, message: 'Server error' });
+    console.error("Error fetching template messages:", error);
+    res.status(500).json({ success: false, message: "Server error" });
   }
 });
 
-
 // Update a follow-up template
-app.put('/api/followup-templates/:templateId', async (req, res) => {
+app.put("/api/followup-templates/:templateId", async (req, res) => {
   console.log("=== Starting PUT /api/followup-templates/:templateId ===");
   console.log("Template ID:", req.params.templateId);
   console.log("Request body:", JSON.stringify(req.body, null, 2));
-  
+
   const { templateId } = req.params;
   const {
     name,
     status,
     trigger_tags = [],
     trigger_keywords = [],
-    batchSettings = {}
+    batchSettings = {},
   } = req.body;
 
   // Validation
   if (!templateId) {
     console.error("Missing templateId");
-    return res.status(400).json({ success: false, message: 'Missing templateId' });
+    return res
+      .status(400)
+      .json({ success: false, message: "Missing templateId" });
   }
-  
+
   if (!name || !name.trim()) {
     console.error("Missing or empty template name");
-    return res.status(400).json({ success: false, message: 'Template name is required' });
+    return res
+      .status(400)
+      .json({ success: false, message: "Template name is required" });
   }
 
   const sqlClient = await getDatabaseConnection();
 
   if (!sqlClient) {
-    console.error("Failed to get database connection - aborting template update");
-    return res.status(500).json({ success: false, message: 'Failed to update template' });
+    console.error(
+      "Failed to get database connection - aborting template update"
+    );
+    return res
+      .status(500)
+      .json({ success: false, message: "Failed to update template" });
   }
 
   try {
@@ -8978,16 +10188,21 @@ app.put('/api/followup-templates/:templateId', async (req, res) => {
       new Date(),
       Array.isArray(trigger_keywords) ? trigger_keywords : [],
       Array.isArray(trigger_tags) ? trigger_tags : [],
-      status || 'active',
-      templateId
+      status || "active",
+      templateId,
     ];
 
     console.log("Executing template update with params:", templateParams);
-    const templateResult = await sqlClient.query(updateTemplateQuery, templateParams);
-    
+    const templateResult = await sqlClient.query(
+      updateTemplateQuery,
+      templateParams
+    );
+
     if (templateResult.rows.length === 0) {
       await sqlClient.query("ROLLBACK");
-      return res.status(404).json({ success: false, message: 'Template not found' });
+      return res
+        .status(404)
+        .json({ success: false, message: "Template not found" });
     }
 
     console.log("Template updated successfully:", templateResult.rows[0]);
@@ -9008,7 +10223,7 @@ app.put('/api/followup-templates/:templateId', async (req, res) => {
       keywordSource: templateResult.rows[0].keyword_source,
       status: templateResult.rows[0].status,
       content: templateResult.rows[0].content,
-      delayHours: templateResult.rows[0].delay_hours
+      delayHours: templateResult.rows[0].delay_hours,
     };
 
     console.log("Returning updated template:", updatedTemplate);
@@ -9016,20 +10231,19 @@ app.put('/api/followup-templates/:templateId', async (req, res) => {
 
     res.status(200).json({
       success: true,
-      message: 'Template updated successfully',
-      template: updatedTemplate
+      message: "Template updated successfully",
+      template: updatedTemplate,
     });
-
   } catch (error) {
     await sqlClient.query("ROLLBACK");
     console.error("=== Error in PUT /api/followup-templates/:templateId ===");
     console.error("Error message:", error.message);
     console.error("Error stack:", error.stack);
-    
+
     res.status(500).json({
       success: false,
-      message: 'Failed to update template',
-      error: error.message
+      message: "Failed to update template",
+      error: error.message,
     });
   } finally {
     await safeRelease(sqlClient);
@@ -9038,23 +10252,29 @@ app.put('/api/followup-templates/:templateId', async (req, res) => {
 });
 
 // Delete a follow-up template
-app.delete('/api/followup-templates/:templateId', async (req, res) => {
+app.delete("/api/followup-templates/:templateId", async (req, res) => {
   console.log("=== Starting DELETE /api/followup-templates/:templateId ===");
   console.log("Template ID:", req.params.templateId);
-  
+
   const { templateId } = req.params;
 
   // Validation
   if (!templateId) {
     console.error("Missing templateId");
-    return res.status(400).json({ success: false, message: 'Missing templateId' });
+    return res
+      .status(400)
+      .json({ success: false, message: "Missing templateId" });
   }
 
   const sqlClient = await getDatabaseConnection();
 
   if (!sqlClient) {
-    console.error("Failed to get database connection - aborting template delete");
-    return res.status(500).json({ success: false, message: 'Failed to delete template' });
+    console.error(
+      "Failed to get database connection - aborting template delete"
+    );
+    return res
+      .status(500)
+      .json({ success: false, message: "Failed to delete template" });
   }
 
   try {
@@ -9068,7 +10288,9 @@ app.delete('/api/followup-templates/:templateId', async (req, res) => {
     `;
 
     console.log("Deleting messages for template:", templateId);
-    const messagesResult = await sqlClient.query(deleteMessagesQuery, [templateId]);
+    const messagesResult = await sqlClient.query(deleteMessagesQuery, [
+      templateId,
+    ]);
     console.log("Deleted messages count:", messagesResult.rowCount);
 
     // Then delete the template
@@ -9079,11 +10301,15 @@ app.delete('/api/followup-templates/:templateId', async (req, res) => {
     `;
 
     console.log("Deleting template:", templateId);
-    const templateResult = await sqlClient.query(deleteTemplateQuery, [templateId]);
-    
+    const templateResult = await sqlClient.query(deleteTemplateQuery, [
+      templateId,
+    ]);
+
     if (templateResult.rows.length === 0) {
       await sqlClient.query("ROLLBACK");
-      return res.status(404).json({ success: false, message: 'Template not found' });
+      return res
+        .status(404)
+        .json({ success: false, message: "Template not found" });
     }
 
     console.log("Template deleted successfully:", templateResult.rows[0]);
@@ -9095,19 +10321,20 @@ app.delete('/api/followup-templates/:templateId', async (req, res) => {
 
     res.status(200).json({
       success: true,
-      message: 'Template and associated messages deleted successfully'
+      message: "Template and associated messages deleted successfully",
     });
-
   } catch (error) {
     await sqlClient.query("ROLLBACK");
-    console.error("=== Error in DELETE /api/followup-templates/:templateId ===");
+    console.error(
+      "=== Error in DELETE /api/followup-templates/:templateId ==="
+    );
     console.error("Error message:", error.message);
     console.error("Error stack:", error.stack);
-    
+
     res.status(500).json({
       success: false,
-      message: 'Failed to delete template',
-      error: error.message
+      message: "Failed to delete template",
+      error: error.message,
     });
   } finally {
     await safeRelease(sqlClient);
@@ -9116,53 +10343,65 @@ app.delete('/api/followup-templates/:templateId', async (req, res) => {
 });
 
 // Update a follow-up message
-app.put('/api/followup-templates/:templateId/messages/:messageId', async (req, res) => {
-  console.log("=== Starting PUT /api/followup-templates/:templateId/messages/:messageId ===");
-  console.log("Template ID:", req.params.templateId);
-  console.log("Message ID:", req.params.messageId);
-  console.log("Request body:", JSON.stringify(req.body, null, 2));
-  
-  const { templateId, messageId } = req.params;
-  const {
-    message,
-    dayNumber = 1,
-    sequence = 1,
-    status = 'active',
-    document = null,
-    image = null,
-    video = null,
-    delayAfter = null,
-    specificNumbers = null,
-    useScheduledTime = false,
-    scheduledTime = '',
-    addTags = [],
-    removeTags = []
-  } = req.body;
+app.put(
+  "/api/followup-templates/:templateId/messages/:messageId",
+  async (req, res) => {
+    console.log(
+      "=== Starting PUT /api/followup-templates/:templateId/messages/:messageId ==="
+    );
+    console.log("Template ID:", req.params.templateId);
+    console.log("Message ID:", req.params.messageId);
+    console.log("Request body:", JSON.stringify(req.body, null, 2));
 
-  // Validation
-  if (!templateId || !messageId) {
-    console.error("Missing templateId or messageId");
-    return res.status(400).json({ success: false, message: 'Missing templateId or messageId' });
-  }
+    const { templateId, messageId } = req.params;
+    const {
+      message,
+      dayNumber = 1,
+      sequence = 1,
+      status = "active",
+      document = null,
+      image = null,
+      video = null,
+      delayAfter = null,
+      specificNumbers = null,
+      useScheduledTime = false,
+      scheduledTime = "",
+      addTags = [],
+      removeTags = [],
+    } = req.body;
 
-  if (!message || !message.trim()) {
-    console.error("Missing or empty message content");
-    return res.status(400).json({ success: false, message: 'Message content is required' });
-  }
+    // Validation
+    if (!templateId || !messageId) {
+      console.error("Missing templateId or messageId");
+      return res
+        .status(400)
+        .json({ success: false, message: "Missing templateId or messageId" });
+    }
 
-  const sqlClient = await getDatabaseConnection();
+    if (!message || !message.trim()) {
+      console.error("Missing or empty message content");
+      return res
+        .status(400)
+        .json({ success: false, message: "Message content is required" });
+    }
 
-  if (!sqlClient) {
-    console.error("Failed to get database connection - aborting message update");
-    return res.status(500).json({ success: false, message: 'Failed to update message' });
-  }
+    const sqlClient = await getDatabaseConnection();
 
-  try {
-    await sqlClient.query("BEGIN");
-    console.log("Database transaction started");
+    if (!sqlClient) {
+      console.error(
+        "Failed to get database connection - aborting message update"
+      );
+      return res
+        .status(500)
+        .json({ success: false, message: "Failed to update message" });
+    }
 
-    // Update the message
-    const updateMessageQuery = `
+    try {
+      await sqlClient.query("BEGIN");
+      console.log("Database transaction started");
+
+      // Update the message
+      const updateMessageQuery = `
       UPDATE public.followup_messages 
       SET 
         message = $1,
@@ -9183,152 +10422,444 @@ app.put('/api/followup-templates/:templateId/messages/:messageId', async (req, r
       RETURNING *
     `;
 
-    const messageParams = [
-      message.trim(),
-      dayNumber,
-      sequence,
-      status,
-      document,
-      image,
-      video,
-      delayAfter ? JSON.stringify(delayAfter) : null,
-      specificNumbers ? JSON.stringify(specificNumbers) : null,
-      useScheduledTime,
-      scheduledTime,
-      Array.isArray(addTags) ? addTags : [],
-      Array.isArray(removeTags) ? removeTags : [],
-      new Date(),
-      messageId,
-      templateId
-    ];
+      const messageParams = [
+        message.trim(),
+        dayNumber,
+        sequence,
+        status,
+        document,
+        image,
+        video,
+        delayAfter ? JSON.stringify(delayAfter) : null,
+        specificNumbers ? JSON.stringify(specificNumbers) : null,
+        useScheduledTime,
+        scheduledTime,
+        Array.isArray(addTags) ? addTags : [],
+        Array.isArray(removeTags) ? removeTags : [],
+        new Date(),
+        messageId,
+        templateId,
+      ];
 
-    console.log("Executing message update with params:", messageParams);
-    const messageResult = await sqlClient.query(updateMessageQuery, messageParams);
-    
-    if (messageResult.rows.length === 0) {
+      console.log("Executing message update with params:", messageParams);
+      const messageResult = await sqlClient.query(
+        updateMessageQuery,
+        messageParams
+      );
+
+      if (messageResult.rows.length === 0) {
+        await sqlClient.query("ROLLBACK");
+        return res
+          .status(404)
+          .json({ success: false, message: "Message not found" });
+      }
+
+      console.log("Message updated successfully:", messageResult.rows[0]);
+
+      await sqlClient.query("COMMIT");
+      console.log("Database transaction committed successfully");
+
+      // Return the updated message
+      const updatedMessage = {
+        id: messageResult.rows[0].id,
+        templateId: messageResult.rows[0].template_id,
+        message: messageResult.rows[0].message,
+        dayNumber: messageResult.rows[0].day_number,
+        sequence: messageResult.rows[0].sequence,
+        status: messageResult.rows[0].status,
+        createdAt: messageResult.rows[0].created_at,
+        document: messageResult.rows[0].document,
+        image: messageResult.rows[0].image,
+        video: messageResult.rows[0].video,
+        delayAfter: messageResult.rows[0].delay_after,
+        specificNumbers: messageResult.rows[0].specific_numbers,
+        useScheduledTime: messageResult.rows[0].use_scheduled_time,
+        scheduledTime: messageResult.rows[0].scheduled_time,
+        addTags: messageResult.rows[0].add_tags || [],
+        removeTags: messageResult.rows[0].remove_tags || [],
+      };
+
+      console.log("Returning updated message:", updatedMessage);
+      console.log(
+        "=== Completed PUT /api/followup-templates/:templateId/messages/:messageId ==="
+      );
+
+      res.status(200).json({
+        success: true,
+        message: "Message updated successfully",
+        data: updatedMessage,
+      });
+    } catch (error) {
       await sqlClient.query("ROLLBACK");
-      return res.status(404).json({ success: false, message: 'Message not found' });
+      console.error(
+        "=== Error in PUT /api/followup-templates/:templateId/messages/:messageId ==="
+      );
+      console.error("Error message:", error.message);
+      console.error("Error stack:", error.stack);
+
+      res.status(500).json({
+        success: false,
+        message: "Failed to update message",
+        error: error.message,
+      });
+    } finally {
+      await safeRelease(sqlClient);
+      console.log("Database client released");
     }
-
-    console.log("Message updated successfully:", messageResult.rows[0]);
-
-    await sqlClient.query("COMMIT");
-    console.log("Database transaction committed successfully");
-
-    // Return the updated message
-    const updatedMessage = {
-      id: messageResult.rows[0].id,
-      templateId: messageResult.rows[0].template_id,
-      message: messageResult.rows[0].message,
-      dayNumber: messageResult.rows[0].day_number,
-      sequence: messageResult.rows[0].sequence,
-      status: messageResult.rows[0].status,
-      createdAt: messageResult.rows[0].created_at,
-      document: messageResult.rows[0].document,
-      image: messageResult.rows[0].image,
-      video: messageResult.rows[0].video,
-      delayAfter: messageResult.rows[0].delay_after,
-      specificNumbers: messageResult.rows[0].specific_numbers,
-      useScheduledTime: messageResult.rows[0].use_scheduled_time,
-      scheduledTime: messageResult.rows[0].scheduled_time,
-      addTags: messageResult.rows[0].add_tags || [],
-      removeTags: messageResult.rows[0].remove_tags || []
-    };
-
-    console.log("Returning updated message:", updatedMessage);
-    console.log("=== Completed PUT /api/followup-templates/:templateId/messages/:messageId ===");
-
-    res.status(200).json({
-      success: true,
-      message: 'Message updated successfully',
-      data: updatedMessage
-    });
-
-  } catch (error) {
-    await sqlClient.query("ROLLBACK");
-    console.error("=== Error in PUT /api/followup-templates/:templateId/messages/:messageId ===");
-    console.error("Error message:", error.message);
-    console.error("Error stack:", error.stack);
-    
-    res.status(500).json({
-      success: false,
-      message: 'Failed to update message',
-      error: error.message
-    });
-  } finally {
-    await safeRelease(sqlClient);
-    console.log("Database client released");
   }
-});
+);
 
 // Delete a follow-up message
-app.delete('/api/followup-templates/:templateId/messages/:messageId', async (req, res) => {
-  console.log("=== Starting DELETE /api/followup-templates/:templateId/messages/:messageId ===");
-  console.log("Template ID:", req.params.templateId);
-  console.log("Message ID:", req.params.messageId);
-  
-  const { templateId, messageId } = req.params;
+app.delete(
+  "/api/followup-templates/:templateId/messages/:messageId",
+  async (req, res) => {
+    console.log(
+      "=== Starting DELETE /api/followup-templates/:templateId/messages/:messageId ==="
+    );
+    console.log("Template ID:", req.params.templateId);
+    console.log("Message ID:", req.params.messageId);
 
-  // Validation
-  if (!templateId || !messageId) {
-    console.error("Missing templateId or messageId");
-    return res.status(400).json({ success: false, message: 'Missing templateId or messageId' });
-  }
+    const { templateId, messageId } = req.params;
 
-  const sqlClient = await getDatabaseConnection();
+    // Validation
+    if (!templateId || !messageId) {
+      console.error("Missing templateId or messageId");
+      return res
+        .status(400)
+        .json({ success: false, message: "Missing templateId or messageId" });
+    }
 
-  if (!sqlClient) {
-    console.error("Failed to get database connection - aborting message delete");
-    return res.status(500).json({ success: false, message: 'Failed to delete message' });
-  }
+    const sqlClient = await getDatabaseConnection();
 
-  try {
-    await sqlClient.query("BEGIN");
-    console.log("Database transaction started");
+    if (!sqlClient) {
+      console.error(
+        "Failed to get database connection - aborting message delete"
+      );
+      return res
+        .status(500)
+        .json({ success: false, message: "Failed to delete message" });
+    }
 
-    // Delete the message
-    const deleteMessageQuery = `
+    try {
+      await sqlClient.query("BEGIN");
+      console.log("Database transaction started");
+
+      // Delete the message
+      const deleteMessageQuery = `
       DELETE FROM public.followup_messages 
       WHERE id = $1 AND template_id = $2
       RETURNING *
     `;
 
-    console.log("Deleting message:", messageId, "from template:", templateId);
-    const messageResult = await sqlClient.query(deleteMessageQuery, [messageId, templateId]);
-    
-    if (messageResult.rows.length === 0) {
+      console.log("Deleting message:", messageId, "from template:", templateId);
+      const messageResult = await sqlClient.query(deleteMessageQuery, [
+        messageId,
+        templateId,
+      ]);
+
+      if (messageResult.rows.length === 0) {
+        await sqlClient.query("ROLLBACK");
+        return res
+          .status(404)
+          .json({ success: false, message: "Message not found" });
+      }
+
+      console.log("Message deleted successfully:", messageResult.rows[0]);
+
+      await sqlClient.query("COMMIT");
+      console.log("Database transaction committed successfully");
+
+      console.log(
+        "=== Completed DELETE /api/followup-templates/:templateId/messages/:messageId ==="
+      );
+
+      res.status(200).json({
+        success: true,
+        message: "Message deleted successfully",
+      });
+    } catch (error) {
       await sqlClient.query("ROLLBACK");
-      return res.status(404).json({ success: false, message: 'Message not found' });
+      console.error(
+        "=== Error in DELETE /api/followup-templates/:templateId/messages/:messageId ==="
+      );
+      console.error("Error message:", error.message);
+      console.error("Error stack:", error.stack);
+
+      res.status(500).json({
+        success: false,
+        message: "Failed to delete message",
+        error: error.message,
+      });
+    } finally {
+      await safeRelease(sqlClient);
+      console.log("Database client released");
+    }
+  }
+);
+
+// API 1: Follow-up Brainstorm - analyzes current AI context and suggests improvements
+app.post("/api/followup-brainstorm/", async (req, res) => {
+  try {
+    const { message, email, currentPrompt, currentFollowUps } = req.body;
+
+    // Log request data
+    console.log("Follow-up Brainstorm Request:", {
+      message,
+      email,
+      currentPrompt: currentPrompt ? "Provided" : "Not provided",
+      currentFollowUps: currentFollowUps ? "Provided" : "Not provided",
+    });
+
+    // Validate required fields
+    if (!message || !email) {
+      return res.status(400).json({
+        success: false,
+        error: "message and email are required",
+      });
     }
 
-    console.log("Message deleted successfully:", messageResult.rows[0]);
+    let threadID;
+    const contactData = await getContactDataFromDatabaseByEmail(email);
 
-    await sqlClient.query("COMMIT");
-    console.log("Database transaction committed successfully");
+    if (contactData?.thread_id) {
+      threadID = contactData.thread_id;
+      console.log("Using existing thread ID:", threadID);
+    } else {
+      const thread = await createThread();
+      threadID = thread.id;
+      console.log("Created new thread ID:", threadID);
+      await saveThreadIDPostgres(email, threadID);
+      console.log("Saved new thread ID to database for email:", email);
+    }
 
-    console.log("=== Completed DELETE /api/followup-templates/:templateId/messages/:messageId ===");
+    // Create the full prompt for the assistant
+    const fullPrompt = `You are a follow-up sequence specialist. The user wants to create or modify follow-up templates.
 
-    res.status(200).json({
+Your task: Generate complete follow-up templates based on the user's request.
+
+IMPORTANT: Return ONLY a JSON array of templates in this exact format:
+[
+  {
+    "stageName": "Stage 1: Profiling Questions",
+    "purpose": "Collect initial customer information",
+    "triggerTags": ["Stage 1", "Profiling"],
+    "triggerKeywords": ["hi", "hello", "interested"],
+    "messages": [
+      "Hi! I'd love to learn more about your business needs.",
+      "What industry are you in?",
+      "How many employees do you have?"
+    ],
+    "messageCount": 3
+  }
+]
+
+Rules:
+- If modifying existing templates, preserve existing data and only change what's requested
+- If creating new templates, base them on the AI assistant's conversation stages
+- Trigger keywords should be phrases the AI assistant uses to identify conversation stages
+- Messages should be natural, engaging, and aligned with the business context
+- Return ONLY the JSON array, no other text
+
+Current AI Assistant Instructions: ${currentPrompt || "No current AI assistant instructions provided."}
+Current Follow-up Templates: ${currentFollowUps ? JSON.stringify(currentFollowUps, null, 2) : "No current follow-up templates provided."}
+User Request: ${message}
+
+Generate the follow-up templates as a JSON array:`;
+
+    // Add user message to thread
+    await addMessage(threadID, fullPrompt);
+
+    // Create and run the assistant
+    const assistantResponse = await openai.beta.threads.runs.create(threadID, {
+      assistant_id: process.env.ASSISTANT_ID || "asst_Wt2wiCOafpCecMoxibXwYQ5P",
+    });
+
+    // Wait for the assistant to complete
+    let runStatus;
+    do {
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+      runStatus = await openai.beta.threads.runs.retrieve(
+        threadID,
+        assistantResponse.id
+      );
+    } while (runStatus.status !== "completed");
+
+    // Retrieve the assistant's response
+    const messages = await openai.beta.threads.messages.list(threadID);
+    const answer = messages.data[0].content[0].text.value;
+
+    // Parse the structured response
+    let parsedResponse;
+    try {
+      // Look for JSON array in the response
+      const jsonMatch = answer.match(/\[[\s\S]*\]/);
+      if (jsonMatch) {
+        parsedResponse = JSON.parse(jsonMatch[0]);
+      } else {
+        throw new Error("No JSON array found in response");
+      }
+    } catch (parseError) {
+      console.log("Failed to parse AI response:", parseError.message);
+      parsedResponse = { error: "Failed to parse template structure", rawResponse: answer };
+    }
+
+    // Save the interaction to the thread for future reference
+    await addMessageAssistant(
+      threadID,
+      `Follow-up Brainstorm Request: ${message}\nCurrent Prompt: ${
+        currentPrompt || "None"
+      }\nCurrent Follow-ups: ${
+        currentFollowUps ? JSON.stringify(currentFollowUps) : "None"
+      }\nResponse: ${answer}`
+    );
+
+    // Send structured response (ONLY ONCE)
+    res.json({
       success: true,
-      message: 'Message deleted successfully'
+      data: {
+        templates: Array.isArray(parsedResponse) ? parsedResponse : [],
+        explanation: "Templates generated successfully"
+      },
+      threadID: threadID,
     });
 
   } catch (error) {
-    await sqlClient.query("ROLLBACK");
-    console.error("=== Error in DELETE /api/followup-templates/:templateId/messages/:messageId ===");
-    console.error("Error message:", error.message);
-    console.error("Error stack:", error.stack);
-    
+    console.error("Follow-up brainstorm error:", {
+      name: error.name,
+      message: error.message,
+      code: error.code,
+    });
     res.status(500).json({
       success: false,
-      message: 'Failed to delete message',
-      error: error.message
+      error: error.code,
+      details: error.message,
     });
-  } finally {
-    await safeRelease(sqlClient);
-    console.log("Database client released");
   }
 });
+
+app.post("/api/followup-save-templates/", async (req, res) => {
+  try {
+    const { companyId, email, templates } = req.body;
+    
+    console.log("Save templates request:", { companyId, email, templatesCount: templates?.length });
+    
+    if (!companyId || !email || !templates || !Array.isArray(templates)) {
+      return res.status(400).json({
+        success: false,
+        error: "companyId, email, and templates array are required"
+      });
+    }
+
+    const sqlClient = await pool.connect();
+    let templatesUpdated = 0;
+    let templatesCreated = 0;
+
+    try {
+      await sqlClient.query("BEGIN");
+      
+      for (const template of templates) {
+        console.log("Processing template:", template.stageName);
+        console.log("Template ID:", template.templateId);
+        
+        // Check if template exists by name and company (more reliable than template_id)
+        const existingTemplate = await sqlClient.query(
+          `SELECT id, template_id FROM public.followup_templates WHERE company_id = $1 AND name = $2`,
+          [companyId, template.stageName]
+        );
+
+        if (existingTemplate.rows.length > 0) {
+          console.log("Updating existing template:", template.stageName);
+          
+          // Update existing template
+          await sqlClient.query(
+            `UPDATE public.followup_templates SET 
+             trigger_keywords = $1, trigger_tags = $2, content = $3, updated_at = NOW() 
+             WHERE company_id = $4 AND name = $5`,
+            [
+              template.triggerKeywords || [],
+              template.triggerTags || [],
+              template.purpose,
+              companyId,
+              template.stageName
+            ]
+          );
+
+          // Update messages
+          await sqlClient.query(
+            `DELETE FROM public.followup_messages WHERE template_id = (SELECT id FROM public.followup_templates WHERE company_id = $1 AND name = $2)`,
+            [companyId, template.stageName]
+          );
+
+          // Insert new messages
+          for (let i = 0; i < template.messages.length; i++) {
+            await sqlClient.query(
+              `INSERT INTO public.followup_messages (template_id, message, day_number, sequence, status, created_at) 
+               VALUES ((SELECT id FROM public.followup_templates WHERE company_id = $1 AND name = $2), $3, $4, $5, 'active', NOW())`,
+              [companyId, template.stageName, template.messages[i], i + 1, i + 1]
+            );
+          }
+          templatesUpdated++;
+        } else {
+          console.log("Creating new template:", template.stageName);
+          
+          // Generate a new template_id
+          const newTemplateId = `template_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+          
+          const templateResult = await sqlClient.query(
+            `INSERT INTO public.followup_templates (company_id, template_id, name, trigger_keywords, trigger_tags, content, status, created_at, updated_at) 
+             VALUES ($1, $2, $3, $4, $5, $6, 'active', NOW(), NOW()) RETURNING id`,
+            [
+              companyId,
+              newTemplateId,
+              template.stageName,
+              template.triggerKeywords || [],
+              template.triggerTags || [],
+              template.purpose
+            ]
+          );
+
+          // Insert messages
+          for (let i = 0; i < template.messages.length; i++) {
+            await sqlClient.query(
+              `INSERT INTO public.followup_messages (template_id, message, day_number, sequence, status, created_at) 
+               VALUES ($1, $2, $3, $4, 'active', NOW())`,
+              [templateResult.rows[0].id, template.messages[i], i + 1, i + 1]
+            );
+          }
+          templatesCreated++;
+        }
+      }
+
+      await sqlClient.query("COMMIT");
+      
+      console.log("Save completed:", { templatesUpdated, templatesCreated });
+
+      res.json({
+        success: true,
+        data: {
+          templatesUpdated,
+          templatesCreated,
+          totalChanges: templatesUpdated + templatesCreated
+        }
+      });
+
+    } catch (error) {
+      await sqlClient.query("ROLLBACK");
+      throw error;
+    } finally {
+      sqlClient.release();
+    }
+
+  } catch (error) {
+    console.error("Follow-up save templates error:", error);
+    res.status(500).json({
+      success: false,
+      error: error.code,
+      details: error.message
+    });
+  }
+});
+
 
 async function getAIAssignResponses(companyId) {
   console.log("Starting getAIAssignResponses for companyId:", companyId);
@@ -9336,7 +10867,9 @@ async function getAIAssignResponses(companyId) {
   const sqlClient = await getDatabaseConnection();
 
   if (!sqlClient) {
-    console.error("Failed to get database connection - aborting getAIAssignResponses");
+    console.error(
+      "Failed to get database connection - aborting getAIAssignResponses"
+    );
     return [];
   }
 
@@ -9402,7 +10935,9 @@ async function getAITagResponses(companyId) {
   const sqlClient = await getDatabaseConnection();
 
   if (!sqlClient) {
-    console.error("Failed to get database connection - aborting getAITagResponses");
+    console.error(
+      "Failed to get database connection - aborting getAITagResponses"
+    );
     return [];
   }
 
@@ -9452,7 +10987,9 @@ async function getAIImageResponses(companyId) {
   const sqlClient = await getDatabaseConnection();
 
   if (!sqlClient) {
-    console.error("Failed to get database connection - aborting getAIImageResponses");
+    console.error(
+      "Failed to get database connection - aborting getAIImageResponses"
+    );
     return [];
   }
 
@@ -9499,7 +11036,9 @@ async function getAIVideoResponses(companyId) {
   const sqlClient = await getDatabaseConnection();
 
   if (!sqlClient) {
-    console.error("Failed to get database connection - aborting getAIVideoResponses");
+    console.error(
+      "Failed to get database connection - aborting getAIVideoResponses"
+    );
     return [];
   }
 
@@ -9548,7 +11087,9 @@ async function getAIVoiceResponses(companyId) {
   const sqlClient = await getDatabaseConnection();
 
   if (!sqlClient) {
-    console.error("Failed to get database connection - aborting getAIVoiceResponses");
+    console.error(
+      "Failed to get database connection - aborting getAIVoiceResponses"
+    );
     return [];
   }
 
@@ -9596,7 +11137,9 @@ async function getAIDocumentResponses(companyId) {
   const sqlClient = await getDatabaseConnection();
 
   if (!sqlClient) {
-    console.error("Failed to get database connection - aborting getAIDocumentResponses");
+    console.error(
+      "Failed to get database connection - aborting getAIDocumentResponses"
+    );
     return [];
   }
 
@@ -9616,7 +11159,7 @@ async function getAIDocumentResponses(companyId) {
         company_id = $1 
         AND status = 'active'
     `;
-
+    
     const result = await sqlClient.query(query, [companyId]);
 
     for (const row of result.rows) {
@@ -9648,12 +11191,15 @@ async function checkKeywordMatch(response, message, keywordSource) {
   );
 }
 
-async function checkKeywordMatchTemplate(keywords, message, tempKeywordSource, keywordSource) {
+async function checkKeywordMatchTemplate(
+  keywords,
+  message,
+  tempKeywordSource,
+  keywordSource
+) {
   return (
     keywordSource === tempKeywordSource &&
-    keywords.some((kw) =>
-      message.toLowerCase().includes(kw.toLowerCase())
-    )
+    keywords.some((kw) => message.toLowerCase().includes(kw.toLowerCase()))
   );
 }
 
@@ -9928,7 +11474,7 @@ async function handleAITagResponses({
             response,
             extractedNumber,
             idSubstring,
-            followUpTemplates,
+            followUpTemplates
           );
         } else {
           await handleTagAddition(
@@ -9937,7 +11483,7 @@ async function handleAITagResponses({
             idSubstring,
             followUpTemplates,
             contactName,
-            phoneIndex,
+            phoneIndex
           );
         }
       } catch (error) {
@@ -9977,7 +11523,7 @@ async function handleAIAssignResponses({
           extractedNumber,
           contactName,
           client,
-          matchedKeyword,
+          matchedKeyword
         );
       } catch (error) {
         console.error(`Error handling assignment:`, error);
@@ -10016,7 +11562,14 @@ async function handleAIFollowUpResponses({
   followUpTemplates,
 }) {
   for (const template of followUpTemplates) {
-    if (await checkKeywordMatchTemplate(template.triggerKeywords, msg, template.keywordSource, keywordSource)) {
+    if (
+      await checkKeywordMatchTemplate(
+        template.triggerKeywords,
+        msg,
+        template.keywordSource,
+        keywordSource
+      )
+    ) {
       console.log("Follow-up trigger found for template:", template.name);
 
       try {
@@ -10081,28 +11634,33 @@ async function handleTagAddition(
       try {
         await addTagToPostgres(extractedNumber, tagToRemove, idSubstring, true);
         console.log(`Successfully removed tag: ${tagToRemove}`);
-        
+
         await handleFollowUpTemplateCleanup(
           tagToRemove,
           extractedNumber,
           idSubstring,
           followUpTemplates
         );
-        console.log(`Successfully cleaned up followup templates for removed tag: ${tagToRemove}`);
+        console.log(
+          `Successfully cleaned up followup templates for removed tag: ${tagToRemove}`
+        );
       } catch (error) {
         console.error(`Error removing tag ${tagToRemove}:`, error);
       }
     }
 
     // Handle tag addition
-    const tagsToAdd = response.tags || response.add_tags || response.addTags || [];
+    const tagsToAdd =
+      response.tags || response.add_tags || response.addTags || [];
     console.log("Tags to add:", tagsToAdd);
 
     for (const tag of tagsToAdd) {
       console.log(`Processing tag addition: ${tag}`);
       try {
         await addTagToPostgres(extractedNumber, tag, idSubstring);
-        console.log(`Successfully added tag: ${tag} for number: ${extractedNumber}`);
+        console.log(
+          `Successfully added tag: ${tag} for number: ${extractedNumber}`
+        );
 
         await handleFollowUpTemplateActivation(
           tag,
@@ -10112,7 +11670,9 @@ async function handleTagAddition(
           phoneIndex,
           followUpTemplates
         );
-        console.log(`Successfully activated followup templates for added tag: ${tag}`);
+        console.log(
+          `Successfully activated followup templates for added tag: ${tag}`
+        );
       } catch (error) {
         console.error(`Error adding tag ${tag}:`, error);
       }
@@ -10134,13 +11694,18 @@ async function addTagToPostgres(contactID, tag, companyID, remove = false) {
   console.log(`Remove flag: ${remove}`);
 
   // Construct the full contact ID
-  const fullContactID = companyID + "-" + (contactID.startsWith("+") ? contactID.slice(1) : contactID);
+  const fullContactID =
+    companyID +
+    "-" +
+    (contactID.startsWith("+") ? contactID.slice(1) : contactID);
   console.log(`Full contact ID: ${fullContactID}`);
 
   const sqlClient = await getDatabaseConnection();
 
   if (!sqlClient) {
-    console.error("Failed to get database connection - aborting addTagToPostgres");
+    console.error(
+      "Failed to get database connection - aborting addTagToPostgres"
+    );
     return;
   }
 
@@ -10154,11 +11719,16 @@ async function addTagToPostgres(contactID, tag, companyID, remove = false) {
       WHERE contact_id = $1 AND company_id = $2
     `;
     console.log("Checking if contact exists...");
-    const checkResult = await sqlClient.query(checkQuery, [fullContactID, companyID]);
+    const checkResult = await sqlClient.query(checkQuery, [
+      fullContactID,
+      companyID,
+    ]);
     console.log(`Contact check result: ${checkResult.rows.length} rows found`);
 
     if (checkResult.rows.length === 0) {
-      console.error(`Contact does not exist: ${fullContactID} in company ${companyID}`);
+      console.error(
+        `Contact does not exist: ${fullContactID} in company ${companyID}`
+      );
       throw new Error("Contact does not exist!");
     }
 
@@ -10166,7 +11736,7 @@ async function addTagToPostgres(contactID, tag, companyID, remove = false) {
 
     if (remove) {
       console.log("Executing tag removal...");
-      
+
       // First check if tag exists
       const tagExistsQuery = `
         SELECT (tags ? $1::text) AS tag_exists 
@@ -10178,7 +11748,7 @@ async function addTagToPostgres(contactID, tag, companyID, remove = false) {
         fullContactID,
         companyID,
       ]);
-      
+
       const tagExists = tagExistsResult.rows[0]?.tag_exists || false;
       console.log(`Tag "${tag}" exists before removal: ${tagExists}`);
 
@@ -10195,15 +11765,13 @@ async function addTagToPostgres(contactID, tag, companyID, remove = false) {
           last_updated = CURRENT_TIMESTAMP
         WHERE contact_id = $2 AND company_id = $3
       `;
-      await sqlClient.query(removeQuery, [
-        tag,
-        fullContactID,
-        companyID,
-      ]);
+      await sqlClient.query(removeQuery, [tag, fullContactID, companyID]);
 
       if (tagExists) {
-        console.log(`Tag "${tag}" removed successfully from contact ${fullContactID}`);
-        
+        console.log(
+          `Tag "${tag}" removed successfully from contact ${fullContactID}`
+        );
+
         // Handle monthly assignment tracking for employee tags
         if (await isEmployeeTag(tag, companyID)) {
           console.log(`Decrementing monthly assignment for employee: ${tag}`);
@@ -10214,7 +11782,7 @@ async function addTagToPostgres(contactID, tag, companyID, remove = false) {
       }
     } else {
       console.log("Executing tag addition...");
-      
+
       // First check if tag already exists
       const tagExistsQuery = `
         SELECT (tags ? $1::text) AS tag_exists 
@@ -10226,7 +11794,7 @@ async function addTagToPostgres(contactID, tag, companyID, remove = false) {
         fullContactID,
         companyID,
       ]);
-      
+
       const tagExists = tagExistsResult.rows[0]?.tag_exists || false;
       console.log(`Tag "${tag}" exists before addition: ${tagExists}`);
 
@@ -10242,15 +11810,13 @@ async function addTagToPostgres(contactID, tag, companyID, remove = false) {
           last_updated = CURRENT_TIMESTAMP
         WHERE contact_id = $2 AND company_id = $3
       `;
-      await sqlClient.query(addQuery, [
-        tag,
-        fullContactID,
-        companyID,
-      ]);
+      await sqlClient.query(addQuery, [tag, fullContactID, companyID]);
 
       if (!tagExists) {
-        console.log(`Tag "${tag}" added successfully to contact ${fullContactID}`);
-        
+        console.log(
+          `Tag "${tag}" added successfully to contact ${fullContactID}`
+        );
+
         // Handle monthly assignment tracking for employee tags
         if (await isEmployeeTag(tag, companyID)) {
           console.log(`Incrementing monthly assignment for employee: ${tag}`);
@@ -10276,14 +11842,16 @@ async function addTagToPostgres(contactID, tag, companyID, remove = false) {
 }
 
 async function isEmployeeTag(tag, companyID) {
-  console.log(`Checking if tag "${tag}" is an employee for company ${companyID}`);
+  console.log(
+    `Checking if tag "${tag}" is an employee for company ${companyID}`
+  );
   const sqlClient = await getDatabaseConnection();
-  
+
   if (!sqlClient) {
     console.error("Failed to get database connection - aborting isEmployeeTag");
     return false;
   }
-  
+
   try {
     const query = `
       SELECT 1 FROM public.employees 
@@ -10303,27 +11871,32 @@ async function isEmployeeTag(tag, companyID) {
 
 async function incrementMonthlyAssignment(companyID, employeeName, sqlClient) {
   console.log(`Incrementing monthly assignment for employee: ${employeeName}`);
-  
+
   try {
     const currentMonth = getCurrentMonthKey();
     console.log(`Current month key: ${currentMonth}`);
-    
+
     // First get the employee ID from the employees table
     const employeeQuery = `
       SELECT id FROM public.employees 
       WHERE company_id = $1 AND name = $2
     `;
-    
-    const employeeResult = await sqlClient.query(employeeQuery, [companyID, employeeName]);
-    
+
+    const employeeResult = await sqlClient.query(employeeQuery, [
+      companyID,
+      employeeName,
+    ]);
+
     if (employeeResult.rows.length === 0) {
-      console.log(`No employee found with name ${employeeName} in company ${companyID}`);
+      console.log(
+        `No employee found with name ${employeeName} in company ${companyID}`
+      );
       return 0;
     }
-    
+
     const employeeId = employeeResult.rows[0].id;
     console.log(`Found employee ID: ${employeeId} for name: ${employeeName}`);
-    
+
     const upsertQuery = `
       INSERT INTO public.employee_monthly_assignments (company_id, employee_id, month_key, assignments_count)
       VALUES ($1, $2, $3, 1)
@@ -10331,11 +11904,17 @@ async function incrementMonthlyAssignment(companyID, employeeName, sqlClient) {
       DO UPDATE SET assignments_count = employee_monthly_assignments.assignments_count + 1
       RETURNING assignments_count
     `;
-    
-    const result = await sqlClient.query(upsertQuery, [companyID, employeeId, currentMonth]);
+
+    const result = await sqlClient.query(upsertQuery, [
+      companyID,
+      employeeId,
+      currentMonth,
+    ]);
     const newCount = result.rows[0].assignments_count;
-    console.log(`Monthly assignment count for ${employeeName} is now: ${newCount}`);
-    
+    console.log(
+      `Monthly assignment count for ${employeeName} is now: ${newCount}`
+    );
+
     return newCount;
   } catch (error) {
     console.error("Error incrementing monthly assignment:", error);
@@ -10345,42 +11924,54 @@ async function incrementMonthlyAssignment(companyID, employeeName, sqlClient) {
 
 async function decrementMonthlyAssignment(companyID, employeeName, sqlClient) {
   console.log(`Decrementing monthly assignment for employee: ${employeeName}`);
-  
+
   try {
     const currentMonth = getCurrentMonthKey();
     console.log(`Current month key: ${currentMonth}`);
-    
+
     // First get the employee ID from the employees table
     const employeeQuery = `
       SELECT id FROM public.employees 
       WHERE company_id = $1 AND name = $2
     `;
-    
-    const employeeResult = await sqlClient.query(employeeQuery, [companyID, employeeName]);
-    
+
+    const employeeResult = await sqlClient.query(employeeQuery, [
+      companyID,
+      employeeName,
+    ]);
+
     if (employeeResult.rows.length === 0) {
-      console.log(`No employee found with name ${employeeName} in company ${companyID}`);
+      console.log(
+        `No employee found with name ${employeeName} in company ${companyID}`
+      );
       return 0;
     }
-    
+
     const employeeId = employeeResult.rows[0].id;
     console.log(`Found employee ID: ${employeeId} for name: ${employeeName}`);
-    
+
     const updateQuery = `
       UPDATE public.employee_monthly_assignments 
       SET assignments_count = GREATEST(assignments_count - 1, 0)
       WHERE employee_id = $1 AND month_key = $2
       RETURNING assignments_count
     `;
-    
-    const result = await sqlClient.query(updateQuery, [employeeId, currentMonth]);
-    
+
+    const result = await sqlClient.query(updateQuery, [
+      employeeId,
+      currentMonth,
+    ]);
+
     if (result.rows.length > 0) {
       const newCount = result.rows[0].assignments_count;
-      console.log(`Monthly assignment count for ${employeeName} is now: ${newCount}`);
+      console.log(
+        `Monthly assignment count for ${employeeName} is now: ${newCount}`
+      );
       return newCount;
     } else {
-      console.log(`No monthly assignment record found for ${employeeName} in ${currentMonth}`);
+      console.log(
+        `No monthly assignment record found for ${employeeName} in ${currentMonth}`
+      );
       return 0;
     }
   } catch (error) {
@@ -10453,7 +12044,7 @@ async function assignToEmployee(
   triggerKeyword = "",
   phoneIndex = 0
 ) {
-  const rawNumber = employee.phone_number?.replace(/\D/g, '');
+  const rawNumber = employee.phone_number?.replace(/\D/g, "");
   const employeeID = rawNumber ? rawNumber + "@c.us" : null;
 
   // Get current date and time in Malaysia timezone
@@ -10493,15 +12084,17 @@ Thank you.`;
 
   // Send WhatsApp message to employee
   await client.sendMessage(employeeID, message);
-  
+
   // Add employee name as tag to contact
   await addTagToPostgres(contactID, employee.name, idSubstring);
-  
+
   // Create assignment record in assignments table
   try {
     const sqlClient = await getDatabaseConnection();
     if (!sqlClient) {
-      console.error("Failed to get database connection - aborting assignToEmployee");
+      console.error(
+        "Failed to get database connection - aborting assignToEmployee"
+      );
       return;
     }
     try {
@@ -10512,16 +12105,23 @@ Thank you.`;
         SELECT contact_id FROM contacts 
         WHERE phone = $1 AND company_id = $2
       `;
-      const contactResult = await sqlClient.query(contactQuery, [contactID, idSubstring]);
-      
+      const contactResult = await sqlClient.query(contactQuery, [
+        contactID,
+        idSubstring,
+      ]);
+
       if (contactResult.rows.length > 0) {
         const currentDate = new Date();
         const currentMonthKey = `${currentDate.getFullYear()}-${(
           currentDate.getMonth() + 1
-        ).toString().padStart(2, "0")}`;
+        )
+          .toString()
+          .padStart(2, "0")}`;
 
-        const assignmentId = `${idSubstring}-${contactResult.rows[0].contact_id}-${employee.employee_id}-${Date.now()}`;
-        
+        const assignmentId = `${idSubstring}-${
+          contactResult.rows[0].contact_id
+        }-${employee.employee_id}-${Date.now()}`;
+
         const assignmentInsertQuery = `
           INSERT INTO assignments (
             assignment_id, company_id, employee_id, contact_id, 
@@ -10529,7 +12129,7 @@ Thank you.`;
             phone_index, weightage_used, employee_role
           ) VALUES ($1, $2, $3, $4, CURRENT_TIMESTAMP, 'active', $5, 'auto', $6, 1, $7)
         `;
-        
+
         await sqlClient.query(assignmentInsertQuery, [
           assignmentId,
           idSubstring,
@@ -10537,7 +12137,7 @@ Thank you.`;
           contactResult.rows[0].contact_id,
           currentMonthKey,
           phoneIndex,
-          role
+          role,
         ]);
 
         // Update employee's assigned_contacts count
@@ -10546,8 +12146,11 @@ Thank you.`;
           SET assigned_contacts = assigned_contacts + 1
           WHERE company_id = $1 AND employee_id = $2
         `;
-        
-        await sqlClient.query(employeeUpdateQuery, [idSubstring, employee.employee_id]);
+
+        await sqlClient.query(employeeUpdateQuery, [
+          idSubstring,
+          employee.employee_id,
+        ]);
 
         // Update monthly assignments
         const monthlyAssignmentUpsertQuery = `
@@ -10557,11 +12160,11 @@ Thank you.`;
           SET assignments_count = employee_monthly_assignments.assignments_count + 1,
               last_updated = CURRENT_TIMESTAMP
         `;
-        
+
         await sqlClient.query(monthlyAssignmentUpsertQuery, [
           employee.id,
           idSubstring,
-          currentMonthKey
+          currentMonthKey,
         ]);
       }
 
@@ -10575,7 +12178,7 @@ Thank you.`;
   } catch (error) {
     console.error("Error in assignToEmployee database operations:", error);
   }
-  
+
   console.log(`Assigned ${role}: ${employee.name}`);
 }
 
@@ -10636,28 +12239,40 @@ async function handleFollowUpTemplateCleanup(
   console.log(`=== Starting handleFollowUpTemplateCleanup ===`);
   console.log(`Tag to remove: ${tag}`);
   console.log(`Company ID: ${idSubstring}`);
-  console.log(`Number of templates to check: ${followUpTemplates ? followUpTemplates.length : 'undefined'}`);
-  
+  console.log(
+    `Number of templates to check: ${
+      followUpTemplates ? followUpTemplates.length : "undefined"
+    }`
+  );
+
   if (!followUpTemplates || !Array.isArray(followUpTemplates)) {
     console.log(`No follow-up templates provided or not an array`);
     return;
   }
-  
+
   for (const template of followUpTemplates) {
-    console.log(`\n--- Checking template: ${template.name || 'unnamed'} ---`);
+    console.log(`\n--- Checking template: ${template.name || "unnamed"} ---`);
     console.log(`Template ID: ${template.id || template.templateId}`);
     console.log(`Template object:`, JSON.stringify(template, null, 2));
-    
+
     // Check both possible field names for trigger tags
     const triggerTags = template.trigger_tags || template.triggerTags;
     console.log(`Trigger tags found: ${triggerTags}`);
     console.log(`Is trigger_tags array? ${Array.isArray(triggerTags)}`);
     console.log(`Tag to match: ${tag}`);
     console.log(`Includes check: ${triggerTags && triggerTags.includes(tag)}`);
-    
-    if (triggerTags && Array.isArray(triggerTags) && triggerTags.includes(tag)) {
-      console.log(`✓ Template "${template.name}" matches tag "${tag}" - calling removeTemplate API`);
-      console.log(`Using templateId: ${template.templateId} (not UUID: ${template.id})`);
+
+    if (
+      triggerTags &&
+      Array.isArray(triggerTags) &&
+      triggerTags.includes(tag)
+    ) {
+      console.log(
+        `✓ Template "${template.name}" matches tag "${tag}" - calling removeTemplate API`
+      );
+      console.log(
+        `Using templateId: ${template.templateId} (not UUID: ${template.id})`
+      );
       await callFollowUpAPI(
         "removeTemplate",
         extractedNumber,
@@ -10687,7 +12302,7 @@ async function handleFollowUpTemplateActivation(
   console.log("Contact name:", contactName);
   console.log("Phone index:", phoneIndex);
   console.log("Number of templates:", followUpTemplates);
-  
+
   for (const template of followUpTemplates) {
     console.log(`\n--- Checking template: ${template.name} ---`);
     console.log("Template ID:", template.templateId);
@@ -10695,8 +12310,11 @@ async function handleFollowUpTemplateActivation(
     console.log("Trigger tags:", template.triggerTags);
     console.log("Is trigger_tags array?", Array.isArray(template.triggerTags));
     console.log("Tag to match:", tag);
-    console.log("Includes check:", template.triggerTags && template.triggerTags.includes(tag));
-    
+    console.log(
+      "Includes check:",
+      template.triggerTags && template.triggerTags.includes(tag)
+    );
+
     if (template.triggerTags && template.triggerTags.includes(tag)) {
       console.log(`✓ Template "${template.name}" matches tag "${tag}"`);
       await callFollowUpAPI(
@@ -10710,27 +12328,37 @@ async function handleFollowUpTemplateActivation(
     } else {
       console.log(`✗ Template "${template.name}" does not match tag "${tag}"`);
     }
-  } 
+  }
   console.log("=== Completed handleFollowUpTemplateActivation ===");
 }
 
 // Get scheduled messages for a company
-app.get('/api/scheduled-messages', async (req, res) => {  
+app.get("/api/scheduled-messages", async (req, res) => {
   const { companyId, status } = req.query;
-  
-  console.log(`Fetching scheduled messages for companyId: ${companyId}, status: ${status || 'all'}`);
-  
+
+  console.log(
+    `Fetching scheduled messages for companyId: ${companyId}, status: ${
+      status || "all"
+    }`
+  );
+
   // Validation
   if (!companyId) {
     console.error("Missing companyId parameter");
-    return res.status(400).json({ success: false, message: 'Missing companyId parameter' });
+    return res
+      .status(400)
+      .json({ success: false, message: "Missing companyId parameter" });
   }
 
   const sqlClient = await getDatabaseConnection();
 
   if (!sqlClient) {
-    console.error("Failed to get database connection - aborting scheduled messages fetch");
-    return res.status(500).json({ success: false, message: 'Failed to fetch scheduled messages' });
+    console.error(
+      "Failed to get database connection - aborting scheduled messages fetch"
+    );
+    return res
+      .status(500)
+      .json({ success: false, message: "Failed to fetch scheduled messages" });
   }
 
   try {
@@ -10759,13 +12387,13 @@ app.get('/api/scheduled-messages', async (req, res) => {
       WHERE company_id = $1
       AND id::text = schedule_id
     `;
-    
+
     const queryParams = [companyId];
     let paramIndex = 2;
 
     // Add status filter if provided
-    if (status && status !== 'all') {
-      let dbStatus = status;      
+    if (status && status !== "all") {
+      let dbStatus = status;
       query += ` AND status = $${paramIndex}`;
       queryParams.push(dbStatus);
       paramIndex++;
@@ -10776,13 +12404,13 @@ app.get('/api/scheduled-messages', async (req, res) => {
     const { rows } = await sqlClient.query(query, queryParams);
 
     // Transform the data to match frontend expectations
-    const messages = rows.map(row => {
+    const messages = rows.map((row) => {
       let contactIds = null;
       if (row.contact_ids) {
         try {
           contactIds = Array.isArray(row.contact_ids)
-          ? row.contact_ids
-          : JSON.parse(row.contact_ids);
+            ? row.contact_ids
+            : JSON.parse(row.contact_ids);
         } catch (e) {
           contactIds = [row.contact_ids];
         }
@@ -10803,26 +12431,25 @@ app.get('/api/scheduled-messages', async (req, res) => {
         createdAt: row.created_at,
         sentAt: row.sent_at,
         phoneIndex: row.phone_index,
-        fromMe: row.from_me
+        fromMe: row.from_me,
       };
     });
 
     await sqlClient.query("COMMIT");
-        
-    res.json({ 
-      success: true, 
-      messages: messages,
-      count: messages.length
-    });
 
+    res.json({
+      success: true,
+      messages: messages,
+      count: messages.length,
+    });
   } catch (error) {
     await safeRollback(sqlClient);
     console.error("Error fetching scheduled messages:", error);
     console.error("Full error:", error.stack);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Failed to fetch scheduled messages',
-      error: error.message 
+    res.status(500).json({
+      success: false,
+      message: "Failed to fetch scheduled messages",
+      error: error.message,
     });
   } finally {
     await safeRelease(sqlClient);
@@ -10830,20 +12457,36 @@ app.get('/api/scheduled-messages', async (req, res) => {
 });
 
 // New API: Get scheduled messages for a single contact
-app.get('/api/scheduled-messages/contact', async (req, res) => {
+app.get("/api/scheduled-messages/contact", async (req, res) => {
   const { companyId, contactId, status } = req.query;
-  
-  console.log(`Fetching scheduled messages for companyId: ${companyId}, contactId: ${contactId}, status: ${status || 'all'}`);
+
+  console.log(
+    `Fetching scheduled messages for companyId: ${companyId}, contactId: ${contactId}, status: ${
+      status || "all"
+    }`
+  );
 
   if (!companyId || !contactId) {
-    return res.status(400).json({ success: false, message: 'Missing companyId or contactId parameter' });
+    return res
+      .status(400)
+      .json({
+        success: false,
+        message: "Missing companyId or contactId parameter",
+      });
   }
 
   const sqlClient = await getDatabaseConnection();
 
   if (!sqlClient) {
-    console.error("Failed to get database connection - aborting scheduled messages fetch for contact");
-    return res.status(500).json({ success: false, message: 'Failed to fetch scheduled messages for contact' });
+    console.error(
+      "Failed to get database connection - aborting scheduled messages fetch for contact"
+    );
+    return res
+      .status(500)
+      .json({
+        success: false,
+        message: "Failed to fetch scheduled messages for contact",
+      });
   }
 
   try {
@@ -10879,7 +12522,7 @@ app.get('/api/scheduled-messages/contact', async (req, res) => {
     const queryParams = [companyId, contactId];
     let paramIndex = 3;
 
-    if (status && status !== 'all') {
+    if (status && status !== "all") {
       query += ` AND status = $${paramIndex}`;
       queryParams.push(status);
       paramIndex++;
@@ -10888,7 +12531,7 @@ app.get('/api/scheduled-messages/contact', async (req, res) => {
     query += ` ORDER BY scheduled_time ASC`;
     const { rows } = await sqlClient.query(query, queryParams);
 
-    const messages = rows.map(row => {
+    const messages = rows.map((row) => {
       let contactIds = null;
       if (row.contact_ids) {
         try {
@@ -10915,27 +12558,28 @@ app.get('/api/scheduled-messages/contact', async (req, res) => {
         createdAt: row.created_at,
         sentAt: row.sent_at,
         phoneIndex: row.phone_index,
-        fromMe: row.from_me
+        fromMe: row.from_me,
       };
     });
 
     await sqlClient.query("COMMIT");
-    
-    console.log(`Returning ${messages.length} main scheduled messages for contactId: ${contactId} (excluding batch entries)`);
+
+    console.log(
+      `Returning ${messages.length} main scheduled messages for contactId: ${contactId} (excluding batch entries)`
+    );
 
     res.json({
       success: true,
       messages: messages,
-      count: messages.length
+      count: messages.length,
     });
-
   } catch (error) {
     await safeRollback(sqlClient);
     console.error("Error fetching scheduled messages for contact:", error);
     res.status(500).json({
       success: false,
-      message: 'Failed to fetch scheduled messages for contact',
-      error: error.message
+      message: "Failed to fetch scheduled messages for contact",
+      error: error.message,
     });
   } finally {
     await safeRelease(sqlClient);
@@ -10952,9 +12596,9 @@ async function callFollowUpAPI(
 ) {
   try {
     const response = await fetch(`${process.env.URL}/api/tag/followup`, {
-      method: 'POST',
+      method: "POST",
       headers: {
-        'Content-Type': 'application/json',
+        "Content-Type": "application/json",
       },
       body: JSON.stringify({
         requestType: action,
@@ -10962,8 +12606,8 @@ async function callFollowUpAPI(
         first_name: contactName || phone,
         phoneIndex: phoneIndex || 0,
         templateId: templateId,
-        idSubstring: idSubstring
-      })
+        idSubstring: idSubstring,
+      }),
     });
 
     if (!response.ok) {
@@ -10972,9 +12616,10 @@ async function callFollowUpAPI(
     }
 
     const result = await response.json();
-    console.log(`Successfully completed ${action} for template ${templateId} via API`);
+    console.log(
+      `Successfully completed ${action} for template ${templateId} via API`
+    );
     return result;
-
   } catch (error) {
     console.error(`Error in callFollowUpAPI for ${action}:`, error);
     throw error;
@@ -11046,8 +12691,12 @@ async function addMessageToPostgres(
   }
 
   // Prepare contact ID
-  const contactID = idSubstring + "-" + 
-    (extractedNumber.startsWith("+") ? extractedNumber.slice(1) : extractedNumber);
+  const contactID =
+    idSubstring +
+    "-" +
+    (extractedNumber.startsWith("+")
+      ? extractedNumber.slice(1)
+      : extractedNumber);
 
   // Extract all message data using modular functions
   const basicInfo = await extractBasicMessageInfo(msg);
@@ -11060,10 +12709,14 @@ async function addMessageToPostgres(
     const media = await msg.downloadMedia();
     const transcription = await transcribeAudio(media.data);
 
-    if (transcription && transcription !== "Audio transcription failed. Please try again.") {
+    if (
+      transcription &&
+      transcription !== "Audio transcription failed. Please try again."
+    ) {
       messageBody += transcription;
     } else {
-      messageBody += "I couldn't transcribe the audio. Could you please type your message instead?";
+      messageBody +=
+        "I couldn't transcribe the audio. Could you please type your message instead?";
     }
   }
 
@@ -11088,12 +12741,12 @@ async function addMessageToPostgres(
           mediaKey: mediaTypeData.media_key || null,
           ...(msg.type === "image" && {
             width: mediaTypeData.width,
-            height: mediaTypeData.height
+            height: mediaTypeData.height,
           }),
           ...(msg.type === "document" && {
             pageCount: mediaTypeData.page_count,
-            fileSize: mediaTypeData.file_size
-          })
+            fileSize: mediaTypeData.file_size,
+          }),
         };
       }
     } else if (msg.type === "audio" || msg.type === "ptt") {
@@ -11107,7 +12760,10 @@ async function addMessageToPostgres(
   // Determine author
   let author = userName;
   if (!author && msg.from.includes("@g.us") && basicInfo.author) {
-    const authorData = await getContactDataFromDatabaseByPhone(basicInfo.author, idSubstring);
+    const authorData = await getContactDataFromDatabaseByPhone(
+      basicInfo.author,
+      idSubstring
+    );
     author = authorData ? authorData.contactName : basicInfo.author;
   }
 
@@ -11122,10 +12778,15 @@ async function addMessageToPostgres(
         SELECT id FROM public.contacts 
         WHERE contact_id = $1 AND company_id = $2
       `;
-      const contactResult = await client.query(contactCheckQuery, [contactID, idSubstring]);
+      const contactResult = await client.query(contactCheckQuery, [
+        contactID,
+        idSubstring,
+      ]);
 
       if (contactResult.rows.length === 0) {
-        console.log(`Creating new contact: ${contactID} for company: ${idSubstring}`);
+        console.log(
+          `Creating new contact: ${contactID} for company: ${idSubstring}`
+        );
         const contactQuery = `
           INSERT INTO public.contacts (
             contact_id, company_id, name, contact_name, phone, email,
@@ -11161,7 +12822,7 @@ async function addMessageToPostgres(
       }
 
       // Insert message
-     // ... existing code ...
+      // ... existing code ...
       // Insert message
       const messageQuery = `
         INSERT INTO public.messages (
@@ -11173,7 +12834,7 @@ async function addMessageToPostgres(
         ON CONFLICT (message_id) DO NOTHING
         RETURNING id
       `;
-// ... existing code ...
+      // ... existing code ...
       const messageValues = [
         basicInfo.idSerialized,
         idSubstring,
@@ -11182,7 +12843,9 @@ async function addMessageToPostgres(
         basicInfo.type,
         mediaUrl,
         mediaData,
-        Object.keys(mediaMetadata).length > 0 ? JSON.stringify(mediaMetadata) : null,
+        Object.keys(mediaMetadata).length > 0
+          ? JSON.stringify(mediaMetadata)
+          : null,
         new Date(basicInfo.timestamp * 1000),
         msg.fromMe ? "outbound" : "inbound",
         "delivered",
@@ -11192,13 +12855,15 @@ async function addMessageToPostgres(
         phoneIndex,
         quotedMessage ? JSON.stringify(quotedMessage) : null,
         msg.to,
-        extractedNumber
+        extractedNumber,
       ];
 
       await client.query(messageQuery, messageValues);
 
       await client.query("COMMIT");
-      console.log(`Message successfully added to PostgreSQL with ID: ${basicInfo.idSerialized}`);
+      console.log(
+        `Message successfully added to PostgreSQL with ID: ${basicInfo.idSerialized}`
+      );
       return { type: basicInfo.type };
     } catch (error) {
       await safeRollback(client);
@@ -11271,7 +12936,6 @@ async function addNotificationToUser(companyId, message, contactName) {
       });
 
       await Promise.all(promises);
-   
     } finally {
       await safeRelease(client);
     }
@@ -11326,7 +12990,11 @@ async function processMessageMedia(msg) {
         mediaData.width = msg._data.width;
         mediaData.height = msg._data.height;
         if (fileSizeMB > FILE_SIZE_LIMIT_MB) {
-          mediaData.link = await storeMediaData(media.data, mediaData.filename, media.mimetype);
+          mediaData.link = await storeMediaData(
+            media.data,
+            mediaData.filename,
+            media.mimetype
+          );
           delete mediaData.data;
         }
         break;
@@ -11334,17 +13002,29 @@ async function processMessageMedia(msg) {
         mediaData.page_count = msg._data.pageCount;
         mediaData.file_size = msg._data.size;
         if (fileSizeMB > FILE_SIZE_LIMIT_MB) {
-          mediaData.link = await storeMediaData(media.data, mediaData.filename, media.mimetype);
+          mediaData.link = await storeMediaData(
+            media.data,
+            mediaData.filename,
+            media.mimetype
+          );
           delete mediaData.data;
         }
         break;
       case "video":
-        mediaData.link = await storeMediaData(media.data, mediaData.filename, media.mimetype);
+        mediaData.link = await storeMediaData(
+          media.data,
+          mediaData.filename,
+          media.mimetype
+        );
         delete mediaData.data;
         break;
       default:
         if (fileSizeMB > FILE_SIZE_LIMIT_MB) {
-          mediaData.link = await storeMediaData(media.data, mediaData.filename, media.mimetype);
+          mediaData.link = await storeMediaData(
+            media.data,
+            mediaData.filename,
+            media.mimetype
+          );
           delete mediaData.data;
         } else {
           mediaData.link = null;
@@ -11536,41 +13216,45 @@ async function transcribeAudio(audioData) {
 
 async function storeMediaData(mediaData, filename, mimeType) {
   try {
-    const buffer = Buffer.from(mediaData, 'base64');
+    const buffer = Buffer.from(mediaData, "base64");
     const stream = Readable.from(buffer);
 
     // Try to determine mimeType and extension if not provided
     if (!mimeType) {
       // Try to guess from filename
       if (filename) {
-        mimeType = mime.lookup(filename) || 'application/octet-stream';
+        mimeType = mime.lookup(filename) || "application/octet-stream";
       } else {
-        mimeType = 'application/octet-stream';
+        mimeType = "application/octet-stream";
       }
     }
 
     // If filename is missing or has no extension, generate one from mimeType
-    if (!filename || !filename.includes('.')) {
-      const ext = mime.extension(mimeType) || 'bin';
+    if (!filename || !filename.includes(".")) {
+      const ext = mime.extension(mimeType) || "bin";
       filename = `document-${Date.now()}.${ext}`;
     }
 
     const formData = new FormData();
-    formData.append('file', stream, {
+    formData.append("file", stream, {
       filename: filename,
       contentType: mimeType,
-      knownLength: buffer.length
+      knownLength: buffer.length,
     });
 
-    const response = await axios.post(`${process.env.URL}/api/upload-media`, formData, {
-      headers: formData.getHeaders(),
-      maxContentLength: Infinity,
-      maxBodyLength: Infinity
-    });
+    const response = await axios.post(
+      `${process.env.URL}/api/upload-media`,
+      formData,
+      {
+        headers: formData.getHeaders(),
+        maxContentLength: Infinity,
+        maxBodyLength: Infinity,
+      }
+    );
 
     return response.data.url;
   } catch (error) {
-    console.error('Error uploading document:', error);
+    console.error("Error uploading document:", error);
     throw error;
   }
 }
@@ -11869,9 +13553,9 @@ async function getContactDataFromDatabaseByPhone(phoneNumber, idSubstring) {
           WHERE phone = ${phoneNumber} AND company_id = ${idSubstring}
           LIMIT 1
         `,
-        new Promise((_, reject) => 
-          setTimeout(() => reject(new Error('Database query timeout')), 10000)
-        )
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error("Database query timeout")), 10000)
+        ),
       ]);
 
       if (result.length === 0) {
@@ -11889,25 +13573,30 @@ async function getContactDataFromDatabaseByPhone(phoneNumber, idSubstring) {
       }
     } catch (error) {
       lastError = error;
-      console.error(`Database attempt ${attempt}/${maxRetries} failed:`, error.message);
-      
+      console.error(
+        `Database attempt ${attempt}/${maxRetries} failed:`,
+        error.message
+      );
+
       if (attempt < maxRetries) {
         // Wait before retry with exponential backoff
-        await new Promise(resolve => setTimeout(resolve, Math.pow(2, attempt) * 1000));
+        await new Promise((resolve) =>
+          setTimeout(resolve, Math.pow(2, attempt) * 1000)
+        );
       }
     }
   }
-  
+
   // If all retries failed, log the error but don't throw
   console.error("All database retry attempts failed:", lastError);
   return null; // Return null instead of throwing
 }
 
 setInterval(() => {
-  console.log('Pool status:', {
+  console.log("Pool status:", {
     total: pool.totalCount,
     idle: pool.idleCount,
-    waiting: pool.waitingCount
+    waiting: pool.waitingCount,
   });
 }, 120000);
 
@@ -12068,7 +13757,7 @@ app.get("/api/user/config", async (req, res) => {
       company_id: user.company_id,
       role: user.role,
       email: user.email,
-      phone:user.selected_phone,
+      phone: user.selected_phone,
     });
   } catch (error) {
     console.error("Error fetching user config:", error);
@@ -12136,11 +13825,11 @@ app.get("/api/companies/:companyId/contacts/multi-phone", async (req, res) => {
   try {
     const { email, phoneIndex } = req.query;
     const { companyId } = req.params;
-    
+
     if (!email) {
       return res.status(400).json({ error: "Email is required" });
     }
-    
+
     if (phoneIndex === undefined || phoneIndex === null) {
       return res.status(400).json({ error: "phoneIndex is required" });
     }
@@ -12263,7 +13952,9 @@ app.get("/api/companies/:companyId/contacts/multi-phone", async (req, res) => {
         if (typeof phoneIndexes === "string") {
           phoneIndexes = JSON.parse(phoneIndexes);
         }
-        phoneIndexes = Array.isArray(phoneIndexes) ? phoneIndexes.filter((v) => v !== undefined && v !== null) : [];
+        phoneIndexes = Array.isArray(phoneIndexes)
+          ? phoneIndexes.filter((v) => v !== undefined && v !== null)
+          : [];
       } catch (error) {
         console.error("Error parsing phone_indexes:", error);
         phoneIndexes = [];
@@ -12299,13 +13990,17 @@ app.get("/api/companies/:companyId/contacts/multi-phone", async (req, res) => {
         lastUpdated: contact.last_updated,
         isIndividual: contact.is_individual,
         last_message: contact.last_message || null,
-        unreadCount: contact.unread_count || 0, 
-        customFields: contact.custom_fields || {},  
+        unreadCount: contact.unread_count || 0,
+        customFields: contact.custom_fields || {},
       };
     });
 
     // Filter contacts based on user role
-    const filteredContacts = filterContactsByUserRole(processedContacts, userData.role, userData.name);
+    const filteredContacts = filterContactsByUserRole(
+      processedContacts,
+      userData.role,
+      userData.name
+    );
 
     res.json({
       success: true,
@@ -12337,19 +14032,18 @@ async function main(reinitialize = false) {
   //   ["0145"]
   // );
 
- 
   // WHEN WANT TO INITIALIZE ALL BOTS
   const companiesPromise = sqlDb.query(
     "SELECT * FROM companies WHERE api_url = $1",
     ["https://juta-dev.ngrok.dev"]
   );
-  
+
   // const companiesPromise = sqlDb.query(
   //   "SELECT * FROM companies WHERE company_id IN ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33)",
   //   [
-  //     "0107", "0119", "0160", "0161", "0182", "0245", "0271", "0291", "0327", 
-  //     "0345", "0364", "0377", "0378", "063", "075", "079", "088", "098", 
-  //     "098410", "107145", "128137", "314648", "327971", "330643", "456236", 
+  //     "0107", "0119", "0160", "0161", "0182", "0245", "0271", "0291", "0327",
+  //     "0345", "0364", "0377", "0378", "063", "075", "079", "088", "098",
+  //     "098410", "107145", "128137", "314648", "327971", "330643", "456236",
   //     "478608", "503217", "509387", "659516", "765943", "771344", "0123", "0380"
   //   ]
   // );
@@ -12423,7 +14117,9 @@ async function main(reinitialize = false) {
     // Function to initialize mtdcSpreadsheet when bot 0380 is ready
     const initializeMtdcSpreadsheet = async () => {
       try {
-        console.log("Bot 0380 successfully initialized, starting mtdcSpreadsheet automation...");
+        console.log(
+          "Bot 0380 successfully initialized, starting mtdcSpreadsheet automation..."
+        );
         const automationInstances = {
           mtdcSpreadsheet: new mtdcSpreadsheet(botMap),
         };
@@ -12436,17 +14132,20 @@ async function main(reinitialize = false) {
 
     try {
       // Create an array of promises for all bot initializations
-      const initializationPromises = botConfigs.map(config => 
+      const initializationPromises = botConfigs.map((config) =>
         initializeBot(config.botName, config.phoneCount)
           .then(() => {
             console.log(`Successfully initialized bot ${config.botName}`);
-            
-            if (config.botName === '0380') {
+
+            if (config.botName === "0380") {
               initializeMtdcSpreadsheet();
             }
           })
-          .catch(error => {
-            console.error(`Error in initialization of bot ${config.botName}:`, error.message);
+          .catch((error) => {
+            console.error(
+              `Error in initialization of bot ${config.botName}:`,
+              error.message
+            );
             // You might want to rethrow the error here if you want the outer catch to handle it
             // throw error;
           })
@@ -12454,7 +14153,7 @@ async function main(reinitialize = false) {
 
       // Run all initializations concurrently
       await Promise.all(initializationPromises);
-      
+
       console.log("All bot initializations completed.");
     } catch (error) {
       // This will catch any errors that weren't handled in the individual promises
@@ -12920,15 +14619,17 @@ async function fetchCompanyConfigSql(companyId) {
     if (companyData.phone_numbers) {
       console.log("Parsing phone numbers:", companyData.phone_numbers);
       try {
-      if (Array.isArray(companyData.phone_numbers)) {
-        phoneNames = companyData.phone_numbers.map(phone => phone.trim());
-      } else if (typeof companyData.phone_numbers === 'string') {
-        phoneNames = companyData.phone_numbers.split(',').map(phone => phone.trim());
-      } else {
-        phoneNames = [];
-      }
+        if (Array.isArray(companyData.phone_numbers)) {
+          phoneNames = companyData.phone_numbers.map((phone) => phone.trim());
+        } else if (typeof companyData.phone_numbers === "string") {
+          phoneNames = companyData.phone_numbers
+            .split(",")
+            .map((phone) => phone.trim());
+        } else {
+          phoneNames = [];
+        }
       } catch (e) {
-      phoneNames = [];
+        phoneNames = [];
       }
     }
     // Set phone1, phone2, phone3, phone4 from phoneNames array
@@ -12943,9 +14644,11 @@ async function fetchCompanyConfigSql(companyId) {
       console.log("Parsing assistant IDs:", companyData.assistant_ids);
       try {
         if (Array.isArray(companyData.assistant_ids)) {
-          assistantIds = companyData.assistant_ids.map(id => id.trim());
-        } else if (typeof companyData.assistant_ids === 'string') {
-          assistantIds = companyData.assistant_ids.split(',').map(id => id.trim());
+          assistantIds = companyData.assistant_ids.map((id) => id.trim());
+        } else if (typeof companyData.assistant_ids === "string") {
+          assistantIds = companyData.assistant_ids
+            .split(",")
+            .map((id) => id.trim());
         } else {
           assistantIds = [];
         }
@@ -12967,21 +14670,21 @@ async function fetchCompanyConfigSql(companyId) {
 
     return {
       companyData: {
-      assistantId: assistantId1,
-      assistantId2,
-      assistantId3,
-      assistantId4,
-      name: companyData.name,
-      phoneCount: parseInt(companyData.phone_count || "1"),
-      phone1,
-      phone2,
-      phone3,
-      phone4,
-      ghl_accessToken: companyData.ghl_access_token,
-      apiUrl: companyData.api_url,
-      aiDelay: parseInt(companyData.ai_delay || "0"),
-      aiAutoResponse: companyData.ai_auto_response === "true",
-      dailyReport: companyData.daily_report,
+        assistantId: assistantId1,
+        assistantId2,
+        assistantId3,
+        assistantId4,
+        name: companyData.name,
+        phoneCount: parseInt(companyData.phone_count || "1"),
+        phone1,
+        phone2,
+        phone3,
+        phone4,
+        ghl_accessToken: companyData.ghl_access_token,
+        apiUrl: companyData.api_url,
+        aiDelay: parseInt(companyData.ai_delay || "0"),
+        aiAutoResponse: companyData.ai_auto_response === "true",
+        dailyReport: companyData.daily_report,
       },
       openaiApiKey: openaiToken,
     };
@@ -13034,7 +14737,7 @@ app.put("/api/user-data/:userEmail", async (req, res) => {
     // Start transaction
     const client = await pool.connect();
     try {
-      await client.query('BEGIN');
+      await client.query("BEGIN");
 
       // Update users table
       const userUpdateQuery = `
@@ -13043,11 +14746,14 @@ app.put("/api/user-data/:userEmail", async (req, res) => {
         WHERE email = $2
         RETURNING email, company_id
       `;
-      
-      const userResult = await client.query(userUpdateQuery, [company_id, userEmail]);
+
+      const userResult = await client.query(userUpdateQuery, [
+        company_id,
+        userEmail,
+      ]);
 
       if (userResult.rows.length === 0) {
-        await client.query('ROLLBACK');
+        await client.query("ROLLBACK");
         return res.status(404).json({ error: "User not found" });
       }
 
@@ -13057,27 +14763,25 @@ app.put("/api/user-data/:userEmail", async (req, res) => {
         SET company_id = $1, last_updated = CURRENT_TIMESTAMP
         WHERE email = $2
       `;
-      
+
       await client.query(employeeUpdateQuery, [company_id, userEmail]);
 
-      await client.query('COMMIT');
-      
-      res.json({ 
-        success: true, 
+      await client.query("COMMIT");
+
+      res.json({
+        success: true,
         message: "User company ID updated successfully",
         data: {
           email: userResult.rows[0].email,
-          company_id: userResult.rows[0].company_id
-        }
+          company_id: userResult.rows[0].company_id,
+        },
       });
-
     } catch (error) {
-      await client.query('ROLLBACK');
+      await client.query("ROLLBACK");
       throw error;
     } finally {
       await safeRelease(client);
     }
-
   } catch (error) {
     console.error("Error updating user company ID:", error);
     res.status(500).json({ error: "Failed to update user company ID" });
@@ -13147,7 +14851,7 @@ async function updateMonthlyAssignmentsSql(
   employeeName,
   incrementValue,
   contactId = null,
-  assignmentType = 'manual'
+  assignmentType = "manual"
 ) {
   const client = await pool.connect(); // Get a client from the pool
   try {
@@ -13180,10 +14884,12 @@ async function updateMonthlyAssignmentsSql(
       const currentDate = new Date();
       const currentMonthKey = `${currentDate.getFullYear()}-${(
         currentDate.getMonth() + 1
-      ).toString().padStart(2, "0")}`;
+      )
+        .toString()
+        .padStart(2, "0")}`;
 
       const assignmentId = `${companyId}-${contactId}-${employeeId}-${Date.now()}`;
-      
+
       const assignmentInsertQuery = `
         INSERT INTO assignments (
           assignment_id, company_id, employee_id, contact_id, 
@@ -13191,14 +14897,14 @@ async function updateMonthlyAssignmentsSql(
           phone_index, weightage_used
         ) VALUES ($1, $2, $3, $4, CURRENT_TIMESTAMP, 'active', $5, $6, 0, 1)
       `;
-      
+
       await client.query(assignmentInsertQuery, [
         assignmentId,
         companyId,
         employeeId,
         contactId,
         currentMonthKey,
-        assignmentType
+        assignmentType,
       ]);
     }
 
@@ -13371,47 +15077,6 @@ app.get(
   }
 );
 
-app.delete("/api/contacts/:contact_id", async (req, res) => {
-  try {
-    const { contact_id } = req.params;
-    const { companyId } = req.query;
-
-    if (!companyId || !contact_id) {
-      return res.status(400).json({
-        success: false,
-        message: "Missing required fields (companyId, contact_id)",
-      });
-    }
-
-    // Optionally: Delete associated data (e.g., scheduled messages) here if needed
-
-    // Delete the contact
-    const result = await sqlDb.query(
-      `DELETE FROM contacts WHERE contact_id = $1 AND company_id = $2 RETURNING contact_id`,
-      [contact_id, companyId]
-    );
-
-    if (result.rows.length === 0) {
-      return res
-        .status(404)
-        .json({ success: false, message: "Contact not found" });
-    }
-
-    res.json({
-      success: true,
-      contact_id: result.rows[0].contact_id,
-      message: "Contact deleted successfully",
-    });
-  } catch (error) {
-    console.error("Error deleting contact:", error);
-    res.status(500).json({
-      success: false,
-      message: "Failed to delete contact",
-      details: error.message,
-    });
-  }
-});
-
 app.delete(
   "/api/schedule-message/:companyId/contact/:contactId",
   async (req, res) => {
@@ -13459,29 +15124,36 @@ app.post("/api/contacts/bulk", async (req, res) => {
     // Deduplicate contacts based on contact_id and company_id combination
     const uniqueContacts = [];
     const seenCombinations = new Set();
-    
+
     for (const contact of contacts) {
       const key = `${contact.contact_id}-${contact.companyId}`;
       if (!seenCombinations.has(key)) {
         seenCombinations.add(key);
         uniqueContacts.push(contact);
       } else {
-        console.log(`Skipping duplicate contact: ${contact.contact_id} for company: ${contact.companyId}`);
+        console.log(
+          `Skipping duplicate contact: ${contact.contact_id} for company: ${contact.companyId}`
+        );
       }
     }
 
     if (uniqueContacts.length === 0) {
       return res
         .status(400)
-        .json({ success: false, message: "No unique contacts to import after deduplication" });
+        .json({
+          success: false,
+          message: "No unique contacts to import after deduplication",
+        });
     }
 
-    console.log(`Original contacts: ${contacts.length}, Unique contacts: ${uniqueContacts.length}`);
+    console.log(
+      `Original contacts: ${contacts.length}, Unique contacts: ${uniqueContacts.length}`
+    );
 
     // Process contacts individually to avoid constraint violations
     const results = [];
     const errors = [];
-    
+
     for (const contact of uniqueContacts) {
       try {
         const query = `
@@ -13534,16 +15206,19 @@ app.post("/api/contacts/bulk", async (req, res) => {
           (() => {
             if (contact.customFields) {
               // If customFields is already an object, stringify it
-              if (typeof contact.customFields === 'object' && contact.customFields !== null) {
+              if (
+                typeof contact.customFields === "object" &&
+                contact.customFields !== null
+              ) {
                 return JSON.stringify(contact.customFields);
-              } else if (typeof contact.customFields === 'string') {
+              } else if (typeof contact.customFields === "string") {
                 // If it's already a string, use it as is
                 return contact.customFields;
               }
             }
             return null;
           })(),
-          contact.tags ? JSON.stringify(contact.tags) : null
+          contact.tags ? JSON.stringify(contact.tags) : null,
         ];
 
         const result = await sqlDb.query(query, values);
@@ -13552,7 +15227,7 @@ app.post("/api/contacts/bulk", async (req, res) => {
         console.error(`Error importing contact ${contact.contact_id}:`, error);
         errors.push({
           contact_id: contact.contact_id,
-          error: error.message
+          error: error.message,
         });
       }
     }
@@ -13564,7 +15239,7 @@ app.post("/api/contacts/bulk", async (req, res) => {
       original_count: contacts.length,
       unique_count: uniqueContacts.length,
       duplicates_removed: contacts.length - uniqueContacts.length,
-      errors: errors.length > 0 ? errors : undefined
+      errors: errors.length > 0 ? errors : undefined,
     });
   } catch (error) {
     console.error("Error importing contacts in bulk:", error);
@@ -13737,40 +15412,323 @@ app.put("/api/contacts/:contact_id/pinned", async (req, res) => {
   }
 });
 
-
-// API to reset unread_count to 0 for a contact
-app.put("/api/contacts/:contact_id/reset-unread", async (req, res) => {
+app.delete("/api/contacts/:contact_id", async (req, res) => {
   try {
     const { contact_id } = req.params;
-    const { companyId } = req.body;
+    const { companyId } = req.query;
+
     if (!companyId || !contact_id) {
       return res.status(400).json({
         success: false,
         message: "Missing required fields (companyId, contact_id)",
       });
     }
-    const query = `
-      UPDATE contacts
-      SET unread_count = 0, updated_at = CURRENT_TIMESTAMP
-      WHERE contact_id = $1 AND company_id = $2
-      RETURNING contact_id
-    `;
-    const result = await sqlDb.query(query, [contact_id, companyId]);
+
+    // Check if contact has any assignments that would prevent deletion
+    const assignmentsCheck = await sqlDb.query(
+      `SELECT COUNT(*) as assignment_count FROM assignments WHERE contact_id = $1 AND company_id = $2`,
+      [contact_id, companyId]
+    );
+
+    if (parseInt(assignmentsCheck.rows[0].assignment_count) > 0) {
+      return res.status(409).json({
+        success: false,
+        message:
+          "Cannot delete contact: Contact has active assignments. Use /api/assignments/contact/{contactId} to remove assignments first, or use /api/contacts/{contactId}/force for force deletion.",
+        details: {
+          assignmentCount: parseInt(assignmentsCheck.rows[0].assignment_count),
+          suggestion:
+            "Use DELETE /api/assignments/contact/{contactId}?companyId={companyId} to remove assignments first",
+        },
+      });
+    }
+
+    // Check if contact has any messages
+    const messagesCheck = await sqlDb.query(
+      `SELECT COUNT(*) as message_count FROM messages WHERE contact_id = $1 AND company_id = $2`,
+      [contact_id, companyId]
+    );
+
+    if (parseInt(messagesCheck.rows[0].message_count) > 0) {
+      return res.status(409).json({
+        success: false,
+        message:
+          "Cannot delete contact: Contact has associated messages. Use /api/contacts/{contactId}/force for force deletion.",
+        details: {
+          messageCount: parseInt(messagesCheck.rows[0].message_count),
+          suggestion:
+            "Use DELETE /api/contacts/{contactId}/force?companyId={companyId} for force deletion",
+        },
+      });
+    }
+
+    // Delete scheduled messages for this contact
+    await sqlDb.query(
+      `DELETE FROM scheduled_messages WHERE company_id = $1 AND contact_id = $2`,
+      [companyId, contact_id]
+    );
+
+    // Delete the contact
+    const result = await sqlDb.query(
+      `DELETE FROM contacts WHERE contact_id = $1 AND company_id = $2 RETURNING contact_id`,
+      [contact_id, companyId]
+    );
+
     if (result.rows.length === 0) {
       return res
         .status(404)
         .json({ success: false, message: "Contact not found" });
     }
+
     res.json({
       success: true,
       contact_id: result.rows[0].contact_id,
-      message: "Unread count reset to 0",
+      message: "Contact deleted successfully",
     });
   } catch (error) {
-    console.error("Error resetting unread count:", error);
+    console.error("Error deleting contact:", error);
     res.status(500).json({
       success: false,
-      message: "Failed to reset unread count",
+      message: "Failed to delete contact",
+      details: error.message,
+    });
+  }
+});
+
+// New endpoint: Delete all assignments for a specific contact
+app.delete("/api/assignments/contact/:contactId", async (req, res) => {
+  try {
+    const { contactId } = req.params;
+    const { companyId } = req.query;
+
+    if (!companyId || !contactId) {
+      return res.status(400).json({
+        success: false,
+        message: "Missing required fields (companyId, contactId)",
+      });
+    }
+
+    const client = await getDatabaseConnection();
+    if (!client) {
+      return res.status(500).json({
+        success: false,
+        message: "Failed to get database connection",
+      });
+    }
+
+    try {
+      await client.query("BEGIN");
+
+      // First, verify the contact exists
+      const contactCheck = await client.query(
+        `SELECT contact_id, phone, tags FROM contacts WHERE contact_id = $1 AND company_id = $2`,
+        [contactId, companyId]
+      );
+
+      if (contactCheck.rows.length === 0) {
+        await safeRollback(client);
+        return res.status(404).json({
+          success: false,
+          message: "Contact not found",
+        });
+      }
+
+      const contact = contactCheck.rows[0];
+
+      // Get all assignments for this contact
+      const assignmentsResult = await client.query(
+        `SELECT a.assignment_id, a.employee_id, e.name, e.id as employee_uuid
+         FROM assignments a
+         JOIN employees e ON a.employee_id = e.employee_id
+         WHERE a.company_id = $1 AND a.contact_id = $2`,
+        [companyId, contactId]
+      );
+
+      if (assignmentsResult.rows.length === 0) {
+        await safeRollback(client);
+        return res.status(404).json({
+          success: false,
+          message: "No assignments found for this contact",
+        });
+      }
+
+      const assignments = assignmentsResult.rows;
+      const employeeNames = assignments.map((emp) => emp.name);
+
+      // Remove employee names from contact tags - handle JSON parsing safely
+      let currentTags = [];
+      try {
+        if (contact.tags) {
+          // If tags is already an array, use it directly
+          if (Array.isArray(contact.tags)) {
+            currentTags = contact.tags;
+          } else if (typeof contact.tags === "string") {
+            // If tags is a string, try to parse it as JSON
+            currentTags = JSON.parse(contact.tags);
+          }
+        }
+      } catch (parseError) {
+        console.warn(
+          `Failed to parse tags for contact ${contactId}:`,
+          parseError
+        );
+        currentTags = [];
+      }
+
+      const updatedTags = currentTags.filter(
+        (tag) => !employeeNames.includes(tag)
+      );
+
+      await client.query(
+        `UPDATE contacts SET tags = $3 WHERE contact_id = $1 AND company_id = $2`,
+        [contactId, companyId, JSON.stringify(updatedTags)]
+      );
+
+      // Update employees' assigned_contacts count
+      for (const assignment of assignments) {
+        await client.query(
+          `UPDATE employees 
+           SET assigned_contacts = GREATEST(assigned_contacts - 1, 0)
+           WHERE company_id = $1 AND employee_id = $2`,
+          [companyId, assignment.employee_id]
+        );
+      }
+
+      // Delete all assignments for this contact
+      const deleteResult = await client.query(
+        `DELETE FROM assignments WHERE company_id = $1 AND contact_id = $2 RETURNING assignment_id`,
+        [companyId, contactId]
+      );
+
+      await client.query("COMMIT");
+
+      res.json({
+        success: true,
+        message: `Successfully removed ${deleteResult.rowCount} assignment(s) for contact`,
+        deletedAssignments: deleteResult.rowCount,
+        contactId: contactId,
+        updatedTags: updatedTags,
+      });
+    } catch (error) {
+      await safeRollback(client);
+      throw error;
+    } finally {
+      client.release();
+    }
+  } catch (error) {
+    console.error("Error deleting contact assignments:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to delete contact assignments",
+      details: error.message,
+    });
+  }
+});
+
+// New endpoint: Force delete contact with cascade deletion
+app.delete("/api/contacts/:contactId/force", async (req, res) => {
+  try {
+    const { contactId } = req.params;
+    const { companyId } = req.query;
+
+    if (!companyId || !contactId) {
+      return res.status(400).json({
+        success: false,
+        message: "Missing required fields (companyId, contactId)",
+      });
+    }
+
+    const client = await getDatabaseConnection();
+    if (!client) {
+      return res.status(500).json({
+        success: false,
+        message: "Failed to get database connection",
+      });
+    }
+
+    try {
+      await client.query("BEGIN");
+
+      // First, verify the contact exists
+      const contactCheck = await client.query(
+        `SELECT contact_id, phone, tags FROM contacts WHERE contact_id = $1 AND company_id = $2`,
+        [contactId, companyId]
+      );
+
+      if (contactCheck.rows.length === 0) {
+        await safeRollback(client);
+        return res.status(404).json({
+          success: false,
+          message: "Contact not found",
+        });
+      }
+
+      const contact = contactCheck.rows[0];
+
+      // Get all assignments for this contact to update employee counts
+      const assignmentsResult = await client.query(
+        `SELECT DISTINCT employee_id FROM assignments WHERE company_id = $1 AND contact_id = $2`,
+        [companyId, contactId]
+      );
+
+      // Update employees' assigned_contacts count
+      for (const assignment of assignmentsResult.rows) {
+        await client.query(
+          `UPDATE employees 
+           SET assigned_contacts = GREATEST(assigned_contacts - 1, 0)
+           WHERE company_id = $1 AND employee_id = $2`,
+          [companyId, assignment.employee_id]
+        );
+      }
+
+      // Delete all assignments for this contact
+      const assignmentsDeleted = await client.query(
+        `DELETE FROM assignments WHERE company_id = $1 AND contact_id = $2`,
+        [companyId, contactId]
+      );
+
+      // Delete all messages for this contact
+      const messagesDeleted = await client.query(
+        `DELETE FROM messages WHERE company_id = $1 AND contact_id = $2`,
+        [companyId, contactId]
+      );
+
+      // Delete all scheduled messages for this contact
+      const scheduledMessagesDeleted = await client.query(
+        `DELETE FROM scheduled_messages WHERE company_id = $1 AND contact_id = $2`,
+        [companyId, contactId]
+      );
+
+      // Delete the contact
+      const contactDeleted = await client.query(
+        `DELETE FROM contacts WHERE contact_id = $1 AND company_id = $2 RETURNING contact_id`,
+        [contactId, companyId]
+      );
+
+      await client.query("COMMIT");
+
+      res.json({
+        success: true,
+        message: "Contact force deleted successfully with all related data",
+        contactId: contactId,
+        deletedData: {
+          assignments: assignmentsDeleted.rowCount,
+          messages: messagesDeleted.rowCount,
+          scheduledMessages: scheduledMessagesDeleted.rowCount,
+          contact: contactDeleted.rowCount,
+        },
+      });
+    } catch (error) {
+      await safeRollback(client);
+      throw error;
+    } finally {
+      client.release();
+    }
+  } catch (error) {
+    console.error("Error force deleting contact:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to force delete contact",
       details: error.message,
     });
   }
@@ -13819,11 +15777,11 @@ app.post("/api/contacts", async (req, res) => {
       SELECT column_name FROM information_schema.columns
       WHERE table_name = 'contacts'
     `);
-    const tableColumns = tableColumnsResult.rows.map(r => r.column_name);
+    const tableColumns = tableColumnsResult.rows.map((r) => r.column_name);
 
     // Helper to convert camelCase to snake_case
     function camelToSnake(str) {
-      return str.replace(/[A-Z]/g, letter => `_${letter.toLowerCase()}`);
+      return str.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`);
     }
 
     // Prepare custom_fields object
@@ -13874,7 +15832,13 @@ app.post("/api/contacts", async (req, res) => {
 
     // Build ON CONFLICT update set clause
     const updateSet = fields
-      .filter((f) => f !== "contact_id" && f !== "company_id" && f !== "created_at" && f !== "updated_at")
+      .filter(
+        (f) =>
+          f !== "contact_id" &&
+          f !== "company_id" &&
+          f !== "created_at" &&
+          f !== "updated_at"
+      )
       .map((f) => `${f} = EXCLUDED.${f}`)
       .join(", ");
 
@@ -13882,7 +15846,7 @@ app.post("/api/contacts", async (req, res) => {
       INSERT INTO contacts (${fields.join(", ")})
       VALUES (${placeholders.join(", ")})
       ON CONFLICT (contact_id, company_id) DO UPDATE
-      SET ${updateSet}${updateSet ? ', ' : ''}updated_at = CURRENT_TIMESTAMP
+      SET ${updateSet}${updateSet ? ", " : ""}updated_at = CURRENT_TIMESTAMP
       RETURNING contact_id
     `;
 
@@ -13946,6 +15910,10 @@ app.post("/api/bots/reinitialize", async (req, res) => {
       return res.status(400).json({ error: "botName is required" });
     }
 
+    console.log(
+      `[REINITIALIZE] Request received for bot: ${botName}, phoneIndex: ${phoneIndex}`
+    );
+
     let phoneCount = 1;
     try {
       const result = await sqlDb.query(
@@ -13960,107 +15928,155 @@ app.post("/api/bots/reinitialize", async (req, res) => {
       console.error(`Error getting phone count for ${botName}:`, error);
     }
 
-    const botData = botMap.get(botName);
-    let sessionsCleaned = false;
+    console.log(`[REINITIALIZE] Phone count for ${botName}: ${phoneCount}`);
 
-    try {
-      if (botData && Array.isArray(botData)) {
-        if (phoneIndex !== undefined) {
-          if (botData[phoneIndex]?.client) {
-            try {
-              await destroyClient(botData[phoneIndex].client);
-              botData[phoneIndex] = {
-                client: null,
-                status: "initializing",
-                qrCode: null,
-                initializationStartTime: Date.now(),
-              };
-            } catch (error) {
-              console.error(
-                `Error destroying client for ${botName} phone ${phoneIndex}:`,
-                error
-              );
-            }
-          }
-        } else {
-          await Promise.all(
-            botData.map(async (data, index) => {
-              if (data?.client) {
+    // Send immediate response to prevent frontend timeout
+    res.json({
+      success: true,
+      message: `Reinitialization started for ${
+        phoneIndex !== undefined ? `Phone ${phoneIndex + 1}` : "Bot"
+      }`,
+      phoneCount,
+      phoneIndex,
+    });
+
+    console.log(
+      `[REINITIALIZE] Response sent, starting async reinitialization...`
+    );
+
+    // Do the actual reinitialization asynchronously
+    const reinitializeAsync = async () => {
+      try {
+        const botData = botMap.get(botName);
+        let sessionsCleaned = false;
+
+        console.log(
+          `[REINITIALIZE] Starting client destruction for ${botName}`
+        );
+
+        try {
+          if (botData && Array.isArray(botData)) {
+            if (phoneIndex !== undefined) {
+              if (botData[phoneIndex]?.client) {
                 try {
-                  await destroyClient(data.client);
-                  botData[index] = {
+                  await destroyClient(botData[phoneIndex].client);
+                  botData[phoneIndex] = {
                     client: null,
                     status: "initializing",
                     qrCode: null,
                     initializationStartTime: Date.now(),
                   };
+                  console.log(
+                    `[REINITIALIZE] Client destroyed for ${botName} phone ${phoneIndex}`
+                  );
                 } catch (error) {
                   console.error(
-                    `Error destroying client for ${botName} phone ${index}:`,
+                    `Error destroying client for ${botName} phone ${phoneIndex}:`,
                     error
                   );
                 }
               }
-            })
+            } else {
+              await Promise.all(
+                botData.map(async (data, index) => {
+                  if (data?.client) {
+                    try {
+                      await destroyClient(data.client);
+                      botData[index] = {
+                        client: null,
+                        status: "initializing",
+                        qrCode: null,
+                        initializationStartTime: Date.now(),
+                      };
+                      console.log(
+                        `[REINITIALIZE] Client destroyed for ${botName} phone ${index}`
+                      );
+                    } catch (error) {
+                      console.error(
+                        `Error destroying client for ${botName} phone ${index}:`,
+                        error
+                      );
+                    }
+                  }
+                })
+              );
+            }
+          }
+
+          console.log(
+            `[REINITIALIZE] Waiting 2 seconds before initialization...`
+          );
+          await new Promise((resolve) => setTimeout(resolve, 2000));
+
+          console.log(
+            `[REINITIALIZE] Starting bot initialization for ${botName}`
+          );
+          if (phoneIndex !== undefined) {
+            await initializeBot(botName, phoneCount, phoneIndex);
+          } else {
+            await initializeBot(botName, phoneCount);
+          }
+          console.log(
+            `[REINITIALIZE] Bot initialization completed for ${botName}`
+          );
+        } catch (initError) {
+          console.error(
+            `Initial reinitialization failed for ${botName}, cleaning sessions and retrying...`,
+            initError
+          );
+
+          if (phoneIndex !== undefined) {
+            sessionsCleaned = await safeCleanup(botName, phoneIndex);
+          } else {
+            const cleanResults = await Promise.all(
+              Array.from({ length: phoneCount }, (_, i) =>
+                safeCleanup(botName, i)
+              )
+            );
+            sessionsCleaned = cleanResults.some((result) => result);
+          }
+
+          console.log(
+            `[REINITIALIZE] Session cleanup completed, waiting before retry...`
+          );
+          await new Promise((resolve) =>
+            setTimeout(resolve, sessionsCleaned ? 5000 : 2000)
+          );
+
+          console.log(
+            `[REINITIALIZE] Retrying bot initialization for ${botName}`
+          );
+          if (phoneIndex !== undefined) {
+            await initializeBot(botName, phoneCount, phoneIndex);
+          } else {
+            await initializeBot(botName, phoneCount);
+          }
+          console.log(
+            `[REINITIALIZE] Retry initialization completed for ${botName}`
           );
         }
-      }
 
-      await new Promise((resolve) => setTimeout(resolve, 2000));
-
-      if (phoneIndex !== undefined) {
-        await initializeBot(botName, phoneCount, phoneIndex);
-      } else {
-        await initializeBot(botName, phoneCount);
-      }
-    } catch (initError) {
-      console.error(
-        `Initial reinitialization failed for ${botName}, cleaning sessions and retrying...`,
-        initError
-      );
-
-      if (phoneIndex !== undefined) {
-        sessionsCleaned = await safeCleanup(botName, phoneIndex);
-      } else {
-        const cleanResults = await Promise.all(
-          Array.from({ length: phoneCount }, (_, i) => safeCleanup(botName, i))
+        console.log(
+          `[REINITIALIZE] Async reinitialization completed successfully for ${botName}`
         );
-        sessionsCleaned = cleanResults.some((result) => result);
+      } catch (error) {
+        console.error(
+          `[REINITIALIZE] Async reinitialization failed for ${botName}:`,
+          error
+        );
       }
+    };
 
-      await new Promise((resolve) =>
-        setTimeout(resolve, sessionsCleaned ? 5000 : 2000)
-      );
-
-      if (phoneIndex !== undefined) {
-        await initializeBot(botName, phoneCount, phoneIndex);
-      } else {
-        await initializeBot(botName, phoneCount);
-      }
-    }
-
-    res.json({
-      success: true,
-      message: sessionsCleaned
-        ? `${
-            phoneIndex !== undefined ? `Phone ${phoneIndex + 1}` : "Bot"
-          } reinitialized successfully with clean session`
-        : `${
-            phoneIndex !== undefined ? `Phone ${phoneIndex + 1}` : "Bot"
-          } reinitialized successfully`,
-      phoneCount,
-      phoneIndex,
-      sessionsCleaned,
-    });
+    // Start async reinitialization (no await)
+    reinitializeAsync();
   } catch (error) {
-    console.error("Error reinitializing bot:", error);
+    console.error("Error in reinitialize endpoint:", error);
     res.status(500).json({
-      error: "Failed to reinitialize bot",
+      error: "Failed to start reinitialization",
       details: error.message,
     });
   }
 });
-
 
 // Disconnect phone endpoint
 app.post("/api/bots/:botName/disconnect", async (req, res) => {
@@ -14080,42 +16096,65 @@ app.post("/api/bots/:botName/disconnect", async (req, res) => {
 
     if (phoneIndex !== undefined) {
       // Disconnect specific phone
-      if (phoneIndex >= 0 && phoneIndex < botData.length && botData[phoneIndex]?.client) {
+      if (
+        phoneIndex >= 0 &&
+        phoneIndex < botData.length &&
+        botData[phoneIndex]?.client
+      ) {
         try {
-          await destroyClient(botData[phoneIndex].client);
+          await logoutClient(botData[phoneIndex].client);
           botData[phoneIndex] = {
             client: null,
             status: "disconnected",
             qrCode: null,
             initializationStartTime: null,
           };
-          
+
           // Broadcast the disconnection status
           broadcastAuthStatus(botName, "disconnected", null, phoneIndex);
-          
+
+          // Reinitialize the client to generate new QR code
+          try {
+            await initializeBot(botName, 1, phoneIndex);
+          } catch (reinitError) {
+            console.error(
+              `Error reinitializing ${botName} phone ${phoneIndex} after logout:`,
+              reinitError
+            );
+          }
+
           res.json({
             success: true,
-            message: `Phone ${phoneIndex + 1} disconnected successfully`,
+            message: `Phone ${
+              phoneIndex + 1
+            } disconnected and reinitialized successfully`,
             phoneIndex,
           });
         } catch (error) {
-          console.error(`Error disconnecting ${botName} phone ${phoneIndex}:`, error);
+          console.error(
+            `Error disconnecting ${botName} phone ${phoneIndex}:`,
+            error
+          );
           res.status(500).json({
             error: "Failed to disconnect phone",
             details: error.message,
           });
         }
       } else {
-        res.status(400).json({ error: "Invalid phone index or phone not connected" });
+        res
+          .status(400)
+          .json({ error: "Invalid phone index or phone not connected" });
       }
     } else {
       // Disconnect all phones
       try {
+        const totalPhones = botData.length; // Get the actual phone count from botData
+
         await Promise.all(
           botData.map(async (data, index) => {
             if (data?.client) {
               try {
-                await destroyClient(data.client);
+                await logoutClient(data.client);
                 botData[index] = {
                   client: null,
                   status: "disconnected",
@@ -14124,15 +16163,28 @@ app.post("/api/bots/:botName/disconnect", async (req, res) => {
                 };
                 broadcastAuthStatus(botName, "disconnected", null, index);
               } catch (error) {
-                console.error(`Error disconnecting ${botName} phone ${index}:`, error);
+                console.error(
+                  `Error disconnecting ${botName} phone ${index}:`,
+                  error
+                );
               }
             }
           })
         );
 
+        // Reinitialize all phones after disconnection
+        try {
+          await initializeBot(botName, totalPhones);
+        } catch (reinitError) {
+          console.error(
+            `Error reinitializing ${botName} with ${totalPhones} phones after logout:`,
+            reinitError
+          );
+        }
+
         res.json({
           success: true,
-          message: "All phones disconnected successfully",
+          message: `All ${totalPhones} phones disconnected and reinitialized successfully`,
         });
       } catch (error) {
         console.error(`Error disconnecting all phones for ${botName}:`, error);
@@ -14151,12 +16203,109 @@ app.post("/api/bots/:botName/disconnect", async (req, res) => {
   }
 });
 
+// Delete company endpoint
+app.delete("/api/companies/:companyId", async (req, res) => {
+  let client;
+  try {
+    const { companyId } = req.params;
+
+    if (!companyId) {
+      return res.status(400).json({ error: "companyId is required" });
+    }
+
+    console.log(`[DELETE COMPANY] Request received for company: ${companyId}`);
+
+    // Get database connection
+    client = await pool.connect();
+
+    // First, check if the company exists
+    const checkCompanyQuery = "SELECT company_id, name FROM companies WHERE company_id = $1";
+    const companyResult = await client.query(checkCompanyQuery, [companyId]);
+
+    if (companyResult.rows.length === 0) {
+      return res.status(404).json({ 
+        error: "Company not found",
+        companyId 
+      });
+    }
+
+    const companyName = companyResult.rows[0].name;
+
+    // Disconnect and cleanup bot data if it exists
+    const botData = botMap.get(companyId);
+    if (botData && Array.isArray(botData)) {
+      console.log(`[DELETE COMPANY] Disconnecting ${botData.length} phones for company ${companyId}`);
+      
+      // Disconnect all phones
+      await Promise.all(
+        botData.map(async (data, index) => {
+          if (data?.client) {
+            try {
+              await logoutClient(data.client);
+              console.log(`[DELETE COMPANY] Disconnected phone ${index} for company ${companyId}`);
+            } catch (error) {
+              console.error(`[DELETE COMPANY] Error disconnecting phone ${index} for company ${companyId}:`, error);
+            }
+          }
+        })
+      );
+
+      // Remove from botMap
+      botMap.delete(companyId);
+      console.log(`[DELETE COMPANY] Removed company ${companyId} from botMap`);
+    }
+
+    // Delete the company from database (CASCADE will handle related records)
+    const deleteQuery = "DELETE FROM companies WHERE company_id = $1";
+    const deleteResult = await client.query(deleteQuery, [companyId]);
+
+    if (deleteResult.rowCount === 0) {
+      return res.status(404).json({ 
+        error: "Company not found in database",
+        companyId 
+      });
+    }
+
+    console.log(`[DELETE COMPANY] Successfully deleted company ${companyId} (${companyName}) and all related data`);
+
+    res.json({
+      success: true,
+      message: `Company ${companyId} (${companyName}) and all related data deleted successfully`,
+      companyId,
+      companyName
+    });
+
+  } catch (error) {
+    console.error(`[DELETE COMPANY] Error deleting company ${req.params.companyId}:`, error);
+    res.status(500).json({
+      error: "Failed to delete company",
+      details: error.message,
+      companyId: req.params.companyId
+    });
+  } finally {
+    if (client) {
+      client.release();
+    }
+  }
+});
+
+async function logoutClient(client) {
+  if (client) {
+    try {
+      await client.logout();
+      console.log("Client logged out successfully");
+    } catch (error) {
+      console.error("Error logging out client:", error);
+    }
+  }
+}
+
 // Get all bot statuses for status page
 app.get("/api/bot-statuses", async (req, res) => {
   let client;
   try {
     client = await pool.connect();
-    
+
     // Get all companies with v2 = true
     const botsQuery = `
       SELECT 
@@ -14185,18 +16334,18 @@ app.get("/api/bot-statuses", async (req, res) => {
       companiesResult.rows.map(async (company) => {
         const phoneCount = company.phoneCount || 1;
         const phoneStatuses = [];
-        
+
         // Get status for each phone
         for (let i = 0; i < phoneCount; i++) {
           let status = "unknown";
           let phoneNumber = null;
-          
+
           try {
             // Check if bot is in memory
             const botData = botMap.get(company.id);
             if (botData && Array.isArray(botData) && botData[i]) {
               status = botData[i].status || "unknown";
-              
+
               // Try to get phone number from client info
               if (botData[i].client) {
                 try {
@@ -14207,7 +16356,7 @@ app.get("/api/bot-statuses", async (req, res) => {
                 }
               }
             }
-            
+
             // Also check database status
             const dbStatusQuery = `
               SELECT status, phone_number 
@@ -14217,42 +16366,45 @@ app.get("/api/bot-statuses", async (req, res) => {
               LIMIT 1
             `;
             const dbResult = await client.query(dbStatusQuery, [company.id, i]);
-            
+
             if (dbResult.rows.length > 0) {
               const dbStatus = dbResult.rows[0].status;
               const dbPhoneNumber = dbResult.rows[0].phone_number;
-              
+
               // Use database status if more recent or if in-memory status is unknown
               if (status === "unknown" || dbStatus) {
                 status = dbStatus;
               }
-              
+
               if (!phoneNumber && dbPhoneNumber) {
                 phoneNumber = dbPhoneNumber;
               }
             }
           } catch (error) {
-            console.error(`Error getting status for ${company.id} phone ${i}:`, error);
+            console.error(
+              `Error getting status for ${company.id} phone ${i}:`,
+              error
+            );
           }
-          
+
           phoneStatuses.push({
             phoneIndex: i,
             status: status || "unknown",
-            phoneNumber: phoneNumber
+            phoneNumber: phoneNumber,
           });
         }
-        
+
         return {
           botName: company.id,
           name: company.name,
           phoneCount: phoneCount,
           category: company.category || "juta",
           employeeEmails: company.employeeEmails || [],
-          phones: phoneStatuses
+          phones: phoneStatuses,
         };
       })
     );
-    
+
     res.json(botStatuses);
   } catch (error) {
     console.error("Error fetching bot statuses:", error);
@@ -14528,7 +16680,7 @@ app.get(
           // Add rate limiting for WhatsApp API calls
           if (!checkRateLimit(`whatsapp_api_${companyId}`)) {
             console.log(`Rate limit reached for WhatsApp API, waiting...`);
-            await new Promise(resolve => setTimeout(resolve, 5000)); // Wait 5 seconds
+            await new Promise((resolve) => setTimeout(resolve, 5000)); // Wait 5 seconds
             continue;
           }
 
@@ -14547,9 +16699,9 @@ app.get(
           allChats = allChats.concat(data.chats);
           fetchedChats += data.chats.length; // Update the number of fetched chats
           offset += count;
-          
+
           // Add delay between API calls to prevent overwhelming the network
-          await new Promise(resolve => setTimeout(resolve, 2000)); // 2 second delay
+          await new Promise((resolve) => setTimeout(resolve, 2000)); // 2 second delay
         }
         count = 500;
         offset = 0;
@@ -14558,7 +16710,7 @@ app.get(
             // Add rate limiting for second WhatsApp API calls
             if (!checkRateLimit(`whatsapp_api2_${companyId}`)) {
               console.log(`Rate limit reached for WhatsApp API2, waiting...`);
-              await new Promise(resolve => setTimeout(resolve, 5000)); // Wait 5 seconds
+              await new Promise((resolve) => setTimeout(resolve, 5000)); // Wait 5 seconds
               continue;
             }
 
@@ -14576,9 +16728,9 @@ app.get(
             allChats = allChats.concat(data.chats);
             fetchedChats += data.chats.length; // Update the number of fetched chats
             offset += count;
-            
+
             // Add delay between API calls to prevent overwhelming the network
-            await new Promise(resolve => setTimeout(resolve, 2000)); // 2 second delay
+            await new Promise((resolve) => setTimeout(resolve, 2000)); // 2 second delay
           }
         }
       }
@@ -14590,7 +16742,7 @@ app.get(
         // Add rate limiting for contact fetching
         if (!checkRateLimit(`contact_fetch_${companyId}`)) {
           console.log(`Rate limit reached for contact fetching, waiting...`);
-          await new Promise(resolve => setTimeout(resolve, 3000)); // Wait 3 seconds
+          await new Promise((resolve) => setTimeout(resolve, 3000)); // Wait 3 seconds
           continue;
         }
 
@@ -14818,11 +16970,16 @@ app.get("/api/dashboard/:companyId", async (req, res) => {
     let numReplies = 0;
     const employeePerformance = {};
 
-    contactsResult.rows.forEach(contact => {
+    contactsResult.rows.forEach((contact) => {
       totalContacts++;
-      const dateAdded = contact.created_at ? new Date(contact.created_at) : null;
+      const dateAdded = contact.created_at
+        ? new Date(contact.created_at)
+        : null;
 
-      if (contact.tags && contact.tags.some(tag => tag.toLowerCase() === 'closed')) {
+      if (
+        contact.tags &&
+        contact.tags.some((tag) => tag.toLowerCase() === "closed")
+      ) {
         closedContacts++;
       } else {
         openContacts++;
@@ -14838,24 +16995,30 @@ app.get("/api/dashboard/:companyId", async (req, res) => {
 
       if (contact.tags && contact.tags.assigned_to) {
         const employeeName = contact.tags.assigned_to;
-        employeePerformance[employeeName] = employeePerformance[employeeName] || {
+        employeePerformance[employeeName] = employeePerformance[
+          employeeName
+        ] || {
           assignedContacts: 0,
           outgoingMessages: 0,
-          closedContacts: 0
+          closedContacts: 0,
         };
-        
+
         employeePerformance[employeeName].assignedContacts++;
         if (contact.tags.closed === true) {
           employeePerformance[employeeName].closedContacts++;
         }
-        employeePerformance[employeeName].outgoingMessages += parseInt(contact.outgoing_count) || 0;
+        employeePerformance[employeeName].outgoingMessages +=
+          parseInt(contact.outgoing_count) || 0;
       }
     });
 
-    const responseRate = totalContacts > 0 ? (numReplies / totalContacts) * 100 : 0;
-    const averageRepliesPerLead = totalContacts > 0 ? numReplies / totalContacts : 0;
+    const responseRate =
+      totalContacts > 0 ? (numReplies / totalContacts) * 100 : 0;
+    const averageRepliesPerLead =
+      totalContacts > 0 ? numReplies / totalContacts : 0;
     const engagementScore = responseRate * 0.4 + averageRepliesPerLead * 0.6;
-    const conversionRate = totalContacts > 0 ? (closedContacts / totalContacts) * 100 : 0;
+    const conversionRate =
+      totalContacts > 0 ? (closedContacts / totalContacts) * 100 : 0;
 
     const employeesQuery = `
       SELECT 
@@ -14875,15 +17038,18 @@ app.get("/api/dashboard/:companyId", async (req, res) => {
       WHERE e.company_id = $2
       ORDER BY current_month_assignments DESC
     `;
-    const employeesResult = await pool.query(employeesQuery, [monthKey, companyId]);
+    const employeesResult = await pool.query(employeesQuery, [
+      monthKey,
+      companyId,
+    ]);
 
-    const employees = employeesResult.rows.map(employee => ({
+    const employees = employeesResult.rows.map((employee) => ({
       ...employee,
       ...(employeePerformance[employee.name] || {
         assignedContacts: 0,
         outgoingMessages: 0,
-        closedContacts: 0
-      })
+        closedContacts: 0,
+      }),
     }));
 
     const phoneStatsQuery = `
@@ -14898,15 +17064,18 @@ app.get("/api/dashboard/:companyId", async (req, res) => {
       GROUP BY phone_index
       ORDER BY phone_index
     `;
-    const phoneStatsResult = await pool.query(phoneStatsQuery, [companyId, monthKey]);
+    const phoneStatsResult = await pool.query(phoneStatsQuery, [
+      companyId,
+      monthKey,
+    ]);
 
     const dashboardData = {
       company: companyResult.rows[0].name,
-      kpi: { 
-        totalContacts, 
-        numReplies, 
-        closedContacts, 
-        openContacts 
+      kpi: {
+        totalContacts,
+        numReplies,
+        closedContacts,
+        openContacts,
       },
       engagementMetrics: {
         responseRate: responseRate.toFixed(2),
@@ -14920,11 +17089,11 @@ app.get("/api/dashboard/:companyId", async (req, res) => {
         week: weekContacts,
         month: monthContacts,
       },
-      phoneLineStats: phoneStatsResult.rows.map(row => ({
+      phoneLineStats: phoneStatsResult.rows.map((row) => ({
         phoneIndex: row.phone_index,
         totalAssignments: row.total_assignments,
         uniqueContacts: row.unique_contacts,
-        activeAgents: row.active_agents
+        activeAgents: row.active_agents,
       })),
       employeePerformance: employees,
     };
@@ -14932,9 +17101,10 @@ app.get("/api/dashboard/:companyId", async (req, res) => {
     res.json(dashboardData);
   } catch (error) {
     console.error("Error fetching dashboard data:", error);
-    res.status(500).json({ 
+    res.status(500).json({
       error: "Internal server error",
-      details: process.env.NODE_ENV === 'development' ? error.message : undefined
+      details:
+        process.env.NODE_ENV === "development" ? error.message : undefined,
     });
   }
 });
@@ -15157,10 +17327,10 @@ app.put("/api/bots/:botId/category", async (req, res) => {
     }
 
     // Update the category in PostgreSQL
-    await sqlDb.query("UPDATE companies SET category = $1 WHERE company_id = $2", [
-      category,
-      botId,
-    ]);
+    await sqlDb.query(
+      "UPDATE companies SET category = $1 WHERE company_id = $2",
+      [category, botId]
+    );
 
     res.json({
       success: true,
@@ -15230,21 +17400,24 @@ app.delete("/api/bots/:botId/trial-end-date", async (req, res) => {
 
 app.get("/api/bot-status/:companyId", async (req, res) => {
   const { companyId } = req.params;
-  
-// Allow both localhost for development and your Vercel domain for production
-const allowedOrigins = [
-  "http://localhost:5173",
-  "https://juta-crm-v3.vercel.app"
-];
 
-const origin = req.headers.origin;
-if (allowedOrigins.includes(origin)) {
-  res.header("Access-Control-Allow-Origin", origin);
-}
-  res.header("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS");
+  // Allow both localhost for development and your Vercel domain for production
+  const allowedOrigins = [
+    "http://localhost:5173",
+    "https://juta-crm-v3.vercel.app",
+  ];
+
+  const origin = req.headers.origin;
+  if (allowedOrigins.includes(origin)) {
+    res.header("Access-Control-Allow-Origin", origin);
+  }
+  res.header(
+    "Access-Control-Allow-Methods",
+    "GET, POST, PUT, PATCH, DELETE, OPTIONS"
+  );
   res.header("Access-Control-Allow-Headers", "Content-Type, Authorization");
   res.header("Access-Control-Allow-Credentials", "true");
-  
+
   try {
     // First get the company from database
     const companyData = await sqlDb.getRow(
@@ -15256,14 +17429,14 @@ if (allowedOrigins.includes(origin)) {
       console.log("ERROR: Company not found in database");
       return res.status(404).json({ error: "Company not found" });
     }
-    
+
     // Then get the bot status
     const botData = botMap.get(companyId);
 
-    if (botData && Array.isArray(botData)) {      
+    if (botData && Array.isArray(botData)) {
       if (botData.length === 1) {
         const { status, qrCode } = botData[0];
-        
+
         let phoneInfo = null;
 
         if (botData[0]?.client) {
@@ -15294,7 +17467,7 @@ if (allowedOrigins.includes(origin)) {
         res.json(response);
       } else {
         const statusArray = await Promise.all(
-          botData.map(async (phone, index) => {            
+          botData.map(async (phone, index) => {
             let phoneInfo = null;
 
             if (phone?.client) {
@@ -15332,7 +17505,7 @@ if (allowedOrigins.includes(origin)) {
         };
         res.json(response);
       }
-    } else {    
+    } else {
       const response = {
         status: "initializing",
         qrCode: null,
@@ -15344,7 +17517,7 @@ if (allowedOrigins.includes(origin)) {
         phoneCount: companyData.phone_count,
       };
       res.json(response);
-    }   
+    }
   } catch (error) {
     console.error("=== BOT STATUS REQUEST FAILED ===");
     console.error(`Error getting status for company ${companyId}:`, error);
@@ -15356,7 +17529,7 @@ if (allowedOrigins.includes(origin)) {
   }
 });
 
-app.get('/api/ai-responses', async (req, res) => {
+app.get("/api/ai-responses", async (req, res) => {
   console.log("=== Starting GET /api/ai-responses ===");
   console.log("Query params:", req.query);
 
@@ -15365,14 +17538,20 @@ app.get('/api/ai-responses', async (req, res) => {
   // Validation
   if (!companyId) {
     console.error("Missing companyId");
-    return res.status(400).json({ success: false, message: 'Missing companyId' });
+    return res
+      .status(400)
+      .json({ success: false, message: "Missing companyId" });
   }
 
-  if (!type || !['video', 'voice', 'tag', 'document', 'image', 'assign'].includes(type)) {
+  if (
+    !type ||
+    !["video", "voice", "tag", "document", "image", "assign"].includes(type)
+  ) {
     console.error("Invalid or missing type");
-    return res.status(400).json({ 
-      success: false, 
-      message: 'Type is required and must be one of: video, voice, tag, document, image, assign' 
+    return res.status(400).json({
+      success: false,
+      message:
+        "Type is required and must be one of: video, voice, tag, document, image, assign",
     });
   }
 
@@ -15381,12 +17560,24 @@ app.get('/api/ai-responses', async (req, res) => {
   try {
     let tableName;
     switch (type) {
-      case 'video': tableName = 'ai_video_responses'; break;
-      case 'voice': tableName = 'ai_voice_responses'; break;
-      case 'tag': tableName = 'ai_tag_responses'; break;
-      case 'document': tableName = 'ai_document_responses'; break;
-      case 'image': tableName = 'ai_image_responses'; break;
-      case 'assign': tableName = 'ai_assign_responses'; break;
+      case "video":
+        tableName = "ai_video_responses";
+        break;
+      case "voice":
+        tableName = "ai_voice_responses";
+        break;
+      case "tag":
+        tableName = "ai_tag_responses";
+        break;
+      case "document":
+        tableName = "ai_document_responses";
+        break;
+      case "image":
+        tableName = "ai_image_responses";
+        break;
+      case "assign":
+        tableName = "ai_assign_responses";
+        break;
     }
 
     const query = `SELECT * FROM public.${tableName} WHERE company_id = $1 ORDER BY created_at DESC`;
@@ -15398,18 +17589,17 @@ app.get('/api/ai-responses', async (req, res) => {
     res.status(200).json({
       success: true,
       data: result.rows,
-      count: result.rowCount
+      count: result.rowCount,
     });
-
   } catch (error) {
     console.error("=== Error in GET /api/ai-responses ===");
     console.error("Error message:", error.message);
     console.error("Error stack:", error.stack);
-    
+
     res.status(500).json({
       success: false,
       message: `Failed to fetch ${type} responses`,
-      error: error.message
+      error: error.message,
     });
   } finally {
     await safeRelease(sqlClient);
@@ -15417,7 +17607,7 @@ app.get('/api/ai-responses', async (req, res) => {
   }
 });
 
-app.post('/api/ai-responses', async (req, res) => {
+app.post("/api/ai-responses", async (req, res) => {
   console.log("=== Starting POST /api/ai-responses ===");
   console.log("Request body:", JSON.stringify(req.body, null, 2));
 
@@ -15426,34 +17616,46 @@ app.post('/api/ai-responses', async (req, res) => {
   // Validation
   if (!companyId) {
     console.error("Missing companyId");
-    return res.status(400).json({ success: false, message: 'Missing companyId' });
+    return res
+      .status(400)
+      .json({ success: false, message: "Missing companyId" });
   }
 
-  if (!type || !['video', 'voice', 'tag', 'document', 'image', 'assign'].includes(type)) {
+  if (
+    !type ||
+    !["video", "voice", "tag", "document", "image", "assign"].includes(type)
+  ) {
     console.error("Invalid or missing type");
-    return res.status(400).json({ 
-      success: false, 
-      message: 'Type is required and must be one of: video, voice, tag, document, image, assign' 
+    return res.status(400).json({
+      success: false,
+      message:
+        "Type is required and must be one of: video, voice, tag, document, image, assign",
     });
   }
 
   if (!data) {
     console.error("Missing data");
-    return res.status(400).json({ success: false, message: 'Missing data for the response' });
+    return res
+      .status(400)
+      .json({ success: false, message: "Missing data for the response" });
   }
 
   const sqlClient = await getDatabaseConnection();
 
   if (!sqlClient) {
-    console.error("Failed to get database connection - aborting AI response creation");
-    return res.status(500).json({ success: false, message: 'Failed to create AI response' });
+    console.error(
+      "Failed to get database connection - aborting AI response creation"
+    );
+    return res
+      .status(500)
+      .json({ success: false, message: "Failed to create AI response" });
   }
 
   try {
     await sqlClient.query("BEGIN");
     console.log("Database transaction started");
 
-    const responseId = require('crypto').randomUUID();
+    const responseId = require("crypto").randomUUID();
     console.log("Generated response ID:", responseId);
 
     let insertQuery;
@@ -15461,7 +17663,7 @@ app.post('/api/ai-responses', async (req, res) => {
     let responseData;
 
     switch (type) {
-      case 'video':
+      case "video":
         insertQuery = `
           INSERT INTO public.ai_video_responses (
             response_id, company_id, keywords, 
@@ -15475,13 +17677,13 @@ app.post('/api/ai-responses', async (req, res) => {
           JSON.stringify(data.keywords) || [],
           JSON.stringify(data.video_urls) || [],
           data.captions || [],
-          data.keyword_source || 'user',
-          data.status || 'active',
-          data.description || '',
+          data.keyword_source || "user",
+          data.status || "active",
+          data.description || "",
         ];
         break;
 
-      case 'voice':
+      case "voice":
         insertQuery = `
           INSERT INTO public.ai_voice_responses (
             response_id, company_id, keywords, voice_urls, captions,
@@ -15495,13 +17697,13 @@ app.post('/api/ai-responses', async (req, res) => {
           JSON.stringify(data.keywords) || [],
           JSON.stringify(data.voice_urls) || [],
           data.captions || [],
-          data.keyword_source || 'user',
-          data.status || 'active',
-          data.description || '',
+          data.keyword_source || "user",
+          data.status || "active",
+          data.description || "",
         ];
         break;
 
-      case 'tag':
+      case "tag":
         insertQuery = `
           INSERT INTO public.ai_tag_responses (
             response_id, company_id, tags,
@@ -15515,14 +17717,14 @@ app.post('/api/ai-responses', async (req, res) => {
           JSON.stringify(data.tags) || null,
           JSON.stringify(data.keywords) || null,
           JSON.stringify(data.remove_tags) || null,
-          data.keyword_source || 'user',
-          data.tag_action_mode || 'add',
-          data.status || 'active',
-          data.description || '',
+          data.keyword_source || "user",
+          data.tag_action_mode || "add",
+          data.status || "active",
+          data.description || "",
         ];
         break;
 
-      case 'document':
+      case "document":
         insertQuery = `
           INSERT INTO public.ai_document_responses (
             response_id, company_id, document_urls,
@@ -15536,13 +17738,13 @@ app.post('/api/ai-responses', async (req, res) => {
           JSON.stringify(data.document_urls) || [],
           JSON.stringify(data.document_names) || [],
           JSON.stringify(data.keywords) || [],
-          data.keyword_source || 'user',
-          data.status || 'active',
-          data.description || '',
+          data.keyword_source || "user",
+          data.status || "active",
+          data.description || "",
         ];
         break;
 
-      case 'image':
+      case "image":
         insertQuery = `
           INSERT INTO public.ai_image_responses (
             response_id, company_id,
@@ -15555,13 +17757,13 @@ app.post('/api/ai-responses', async (req, res) => {
           companyId,
           JSON.stringify(data.keywords) || [],
           JSON.stringify(data.image_urls) || [],
-          data.keyword_source || 'user',
-          data.status || 'active',
-          data.description || '',
+          data.keyword_source || "user",
+          data.status || "active",
+          data.description || "",
         ];
         break;
 
-      case 'assign':
+      case "assign":
         insertQuery = `
           INSERT INTO public.ai_assign_responses (
             response_id, company_id, keywords,
@@ -15573,10 +17775,10 @@ app.post('/api/ai-responses', async (req, res) => {
           responseId,
           companyId,
           JSON.stringify(data.keywords) || null,
-          data.keyword_source || 'user',
+          data.keyword_source || "user",
           JSON.stringify(data.assigned_employees) || null,
-          data.description || '',
-          data.status || 'active'
+          data.description || "",
+          data.status || "active",
         ];
         break;
     }
@@ -15592,19 +17794,18 @@ app.post('/api/ai-responses', async (req, res) => {
     res.status(201).json({
       success: true,
       message: `${type} response created successfully`,
-      data: responseData
+      data: responseData,
     });
-
   } catch (error) {
     await safeRollback(sqlClient);
     console.error("=== Error in POST /api/ai-responses ===");
     console.error("Error message:", error.message);
     console.error("Error stack:", error.stack);
-    
+
     res.status(500).json({
       success: false,
       message: `Failed to create ${type} response`,
-      error: error.message
+      error: error.message,
     });
   } finally {
     await safeRelease(sqlClient);
@@ -15612,7 +17813,7 @@ app.post('/api/ai-responses', async (req, res) => {
   }
 });
 
-app.put('/api/ai-responses/:id', async (req, res) => {
+app.put("/api/ai-responses/:id", async (req, res) => {
   console.log("=== Starting PUT /api/ai-responses/:id ===");
   console.log("Request params:", req.params);
   console.log("Request body:", JSON.stringify(req.body, null, 2));
@@ -15623,27 +17824,39 @@ app.put('/api/ai-responses/:id', async (req, res) => {
   // Validation
   if (!id) {
     console.error("Missing id");
-    return res.status(400).json({ success: false, message: 'Missing response id' });
+    return res
+      .status(400)
+      .json({ success: false, message: "Missing response id" });
   }
 
-  if (!type || !['video', 'voice', 'tag', 'document', 'image', 'assign'].includes(type)) {
+  if (
+    !type ||
+    !["video", "voice", "tag", "document", "image", "assign"].includes(type)
+  ) {
     console.error("Invalid or missing type");
-    return res.status(400).json({ 
-      success: false, 
-      message: 'Type is required and must be one of: video, voice, tag, document, image, assign' 
+    return res.status(400).json({
+      success: false,
+      message:
+        "Type is required and must be one of: video, voice, tag, document, image, assign",
     });
   }
 
   if (!data) {
     console.error("Missing data");
-    return res.status(400).json({ success: false, message: 'Missing update data' });
+    return res
+      .status(400)
+      .json({ success: false, message: "Missing update data" });
   }
 
   const sqlClient = await getDatabaseConnection();
 
   if (!sqlClient) {
-    console.error("Failed to get database connection - aborting AI response update");
-    return res.status(500).json({ success: false, message: 'Failed to update AI response' });
+    console.error(
+      "Failed to get database connection - aborting AI response update"
+    );
+    return res
+      .status(500)
+      .json({ success: false, message: "Failed to update AI response" });
   }
 
   try {
@@ -15655,7 +17868,7 @@ app.put('/api/ai-responses/:id', async (req, res) => {
     let responseData;
 
     switch (type) {
-      case 'video':
+      case "video":
         updateQuery = `
           UPDATE public.ai_video_responses SET
             keywords = COALESCE($1, keywords),
@@ -15675,11 +17888,11 @@ app.put('/api/ai-responses/:id', async (req, res) => {
           data.keyword_source || null,
           data.status || null,
           data.description || null,
-          id
+          id,
         ];
         break;
 
-      case 'voice':
+      case "voice":
         updateQuery = `
           UPDATE public.ai_voice_responses SET
             keywords = COALESCE($1, keywords),
@@ -15699,11 +17912,11 @@ app.put('/api/ai-responses/:id', async (req, res) => {
           data.keyword_source || null,
           data.status || null,
           data.description || null,
-          id
+          id,
         ];
         break;
 
-      case 'tag':
+      case "tag":
         updateQuery = `
           UPDATE public.ai_tag_responses SET
             tags = COALESCE($1, tags),
@@ -15725,11 +17938,11 @@ app.put('/api/ai-responses/:id', async (req, res) => {
           data.tag_action_mode || null,
           data.status || null,
           data.description || null,
-          id
+          id,
         ];
         break;
 
-      case 'document':
+      case "document":
         updateQuery = `
           UPDATE public.ai_document_responses SET
             document_urls = COALESCE($1, document_urls),
@@ -15749,11 +17962,11 @@ app.put('/api/ai-responses/:id', async (req, res) => {
           data.keyword_source || null,
           data.status || null,
           data.description || null,
-          id
+          id,
         ];
         break;
 
-      case 'image':
+      case "image":
         updateQuery = `
           UPDATE public.ai_image_responses SET
             keywords = COALESCE($1, keywords),
@@ -15771,11 +17984,11 @@ app.put('/api/ai-responses/:id', async (req, res) => {
           data.keyword_source || null,
           data.status || null,
           data.description || null,
-          id
+          id,
         ];
         break;
 
-      case 'assign':
+      case "assign":
         updateQuery = `
           UPDATE public.ai_assign_responses SET
             keywords = COALESCE($1, keywords),
@@ -15790,23 +18003,25 @@ app.put('/api/ai-responses/:id', async (req, res) => {
         queryParams = [
           data.keywords ? JSON.stringify(data.keywords) : null,
           data.keyword_source || null,
-          data.assigned_employees ? JSON.stringify(data.assigned_employees) : null,
+          data.assigned_employees
+            ? JSON.stringify(data.assigned_employees)
+            : null,
           data.description || null,
           data.status || null,
-          id
+          id,
         ];
         break;
     }
 
     console.log("Executing update with params:", queryParams);
     const result = await sqlClient.query(updateQuery, queryParams);
-    
+
     if (result.rowCount === 0) {
       console.error("No response found with id:", id);
       await safeRollback(sqlClient);
       return res.status(404).json({
         success: false,
-        message: `${type} response not found with id: ${id}`
+        message: `${type} response not found with id: ${id}`,
       });
     }
 
@@ -15819,19 +18034,18 @@ app.put('/api/ai-responses/:id', async (req, res) => {
     res.status(200).json({
       success: true,
       message: `${type} response updated successfully`,
-      data: responseData
+      data: responseData,
     });
-
   } catch (error) {
     await safeRollback(sqlClient);
     console.error("=== Error in PUT /api/ai-responses/:id ===");
     console.error("Error message:", error.message);
     console.error("Error stack:", error.stack);
-    
+
     res.status(500).json({
       success: false,
       message: `Failed to update ${type} response`,
-      error: error.message
+      error: error.message,
     });
   } finally {
     await safeRelease(sqlClient);
@@ -15839,7 +18053,7 @@ app.put('/api/ai-responses/:id', async (req, res) => {
   }
 });
 
-app.delete('/api/ai-responses/:id', async (req, res) => {
+app.delete("/api/ai-responses/:id", async (req, res) => {
   console.log("=== Starting DELETE /api/ai-responses/:id ===");
   console.log("Request params:", req.params);
   console.log("Query params:", req.query);
@@ -15850,22 +18064,32 @@ app.delete('/api/ai-responses/:id', async (req, res) => {
   // Validation
   if (!id) {
     console.error("Missing id");
-    return res.status(400).json({ success: false, message: 'Missing response id' });
+    return res
+      .status(400)
+      .json({ success: false, message: "Missing response id" });
   }
 
-  if (!type || !['video', 'voice', 'tag', 'document', 'image', 'assign'].includes(type)) {
+  if (
+    !type ||
+    !["video", "voice", "tag", "document", "image", "assign"].includes(type)
+  ) {
     console.error("Invalid or missing type");
-    return res.status(400).json({ 
-      success: false, 
-      message: 'Type is required and must be one of: video, voice, tag, document, image, assign' 
+    return res.status(400).json({
+      success: false,
+      message:
+        "Type is required and must be one of: video, voice, tag, document, image, assign",
     });
   }
 
   const sqlClient = await getDatabaseConnection();
 
   if (!sqlClient) {
-    console.error("Failed to get database connection - aborting AI response deletion");
-    return res.status(500).json({ success: false, message: 'Failed to delete AI response' });
+    console.error(
+      "Failed to get database connection - aborting AI response deletion"
+    );
+    return res
+      .status(500)
+      .json({ success: false, message: "Failed to delete AI response" });
   }
 
   try {
@@ -15874,25 +18098,37 @@ app.delete('/api/ai-responses/:id', async (req, res) => {
 
     let tableName;
     switch (type) {
-      case 'video': tableName = 'ai_video_responses'; break;
-      case 'voice': tableName = 'ai_voice_responses'; break;
-      case 'tag': tableName = 'ai_tag_responses'; break;
-      case 'document': tableName = 'ai_document_responses'; break;
-      case 'image': tableName = 'ai_image_responses'; break;
-      case 'assign': tableName = 'ai_assign_responses'; break;
+      case "video":
+        tableName = "ai_video_responses";
+        break;
+      case "voice":
+        tableName = "ai_voice_responses";
+        break;
+      case "tag":
+        tableName = "ai_tag_responses";
+        break;
+      case "document":
+        tableName = "ai_document_responses";
+        break;
+      case "image":
+        tableName = "ai_image_responses";
+        break;
+      case "assign":
+        tableName = "ai_assign_responses";
+        break;
     }
 
     const deleteQuery = `DELETE FROM public.${tableName} WHERE response_id = $1 RETURNING *`;
     console.log("Executing delete query:", deleteQuery);
 
     const result = await sqlClient.query(deleteQuery, [id]);
-    
+
     if (result.rowCount === 0) {
       console.error("No response found with id:", id);
       await safeRollback(sqlClient);
       return res.status(404).json({
         success: false,
-        message: `${type} response not found with id: ${id}`
+        message: `${type} response not found with id: ${id}`,
       });
     }
 
@@ -15905,19 +18141,18 @@ app.delete('/api/ai-responses/:id', async (req, res) => {
     res.status(200).json({
       success: true,
       message: `${type} response deleted successfully`,
-      data: deletedResponse
+      data: deletedResponse,
     });
-
   } catch (error) {
     await safeRollback(sqlClient);
     console.error("=== Error in DELETE /api/ai-responses/:id ===");
     console.error("Error message:", error.message);
     console.error("Error stack:", error.stack);
-    
+
     res.status(500).json({
       success: false,
       message: `Failed to delete ${type} response`,
-      error: error.message
+      error: error.message,
     });
   } finally {
     await safeRelease(sqlClient);
@@ -16009,9 +18244,9 @@ app.post("/api/v2/messages/text/:companyId/:chatId", async (req, res) => {
       }
 
       console.log("Message sent successfully:", {
-        messageId: sentMessage?.id?._serialized ?? 'no id',
-        timestamp: sentMessage?.timestamp ?? 'no timestamp',
-        type: sentMessage?.type ?? 'no type',
+        messageId: sentMessage?.id?._serialized ?? "no id",
+        timestamp: sentMessage?.timestamp ?? "no timestamp",
+        type: sentMessage?.type ?? "no type",
       });
     } catch (sendError) {
       console.error("\n=== Message Send Error ===");
@@ -16105,8 +18340,8 @@ app.post("/api/v2/messages/text/:companyId/:chatId", async (req, res) => {
       console.log("\n=== Message Processing Complete ===");
       res.json({
         success: true,
-        messageId: sentMessage?.id?._serialized ?? 'no id',
-        timestamp: sentMessage?.timestamp ?? 'no timestamp',
+        messageId: sentMessage?.id?._serialized ?? "no id",
+        timestamp: sentMessage?.timestamp ?? "no timestamp",
       });
     } catch (dbError) {
       console.error("\n=== Database Error ===");
@@ -16128,13 +18363,20 @@ app.post("/api/v2/messages/text/:companyId/:chatId", async (req, res) => {
   }
 });
 
-async function findAndUpdateMessageAuthor(messageContent, contactId, companyId, userName) {
+async function findAndUpdateMessageAuthor(
+  messageContent,
+  contactId,
+  companyId,
+  userName
+) {
   console.log("Finding and updating message author based on content");
-  
+
   try {
     const client = await getDatabaseConnection();
     if (!client) {
-      console.error("Failed to get database connection - aborting findAndUpdateMessageAuthor");
+      console.error(
+        "Failed to get database connection - aborting findAndUpdateMessageAuthor"
+      );
       return null;
     }
 
@@ -16150,17 +18392,26 @@ async function findAndUpdateMessageAuthor(messageContent, contactId, companyId, 
         LIMIT 1
         FOR UPDATE
       `;
-      
-      const messageResult = await client.query(findMessageQuery, [contactId, companyId, messageContent]);
+
+      const messageResult = await client.query(findMessageQuery, [
+        contactId,
+        companyId,
+        messageContent,
+      ]);
 
       if (messageResult.rows.length === 0) {
-        console.log("No matching message found with content:", messageContent.substring(0, 50) + "...");
+        console.log(
+          "No matching message found with content:",
+          messageContent.substring(0, 50) + "..."
+        );
         await safeRollback(client);
         return null;
       }
 
       const foundMessage = messageResult.rows[0];
-      console.log(`Found message ID: ${foundMessage.id} with timestamp: ${foundMessage.timestamp}`);
+      console.log(
+        `Found message ID: ${foundMessage.id} with timestamp: ${foundMessage.timestamp}`
+      );
 
       // Update the author if it's different or null
       if (!foundMessage.author || foundMessage.author !== userName) {
@@ -16170,10 +18421,15 @@ async function findAndUpdateMessageAuthor(messageContent, contactId, companyId, 
           WHERE id = $2
           RETURNING id, author
         `;
-        const updateResult = await client.query(updateQuery, [userName, foundMessage.id]);
-        
-        console.log(`Successfully updated author for message ID: ${updateResult.rows[0].id} to: ${updateResult.rows[0].author}`);
-        
+        const updateResult = await client.query(updateQuery, [
+          userName,
+          foundMessage.id,
+        ]);
+
+        console.log(
+          `Successfully updated author for message ID: ${updateResult.rows[0].id} to: ${updateResult.rows[0].author}`
+        );
+
         await client.query("COMMIT");
         return updateResult.rows[0].id;
       } else {
@@ -16183,7 +18439,10 @@ async function findAndUpdateMessageAuthor(messageContent, contactId, companyId, 
       }
     } catch (error) {
       await safeRollback(client);
-      console.error("Error finding/updating message author in PostgreSQL:", error);
+      console.error(
+        "Error finding/updating message author in PostgreSQL:",
+        error
+      );
       throw error;
     } finally {
       await safeRelease(client);
@@ -16225,8 +18484,12 @@ app.post("/api/messages/react/:companyId/:messageId", async (req, res) => {
     // Update reaction in PostgreSQL
     const dbClient = await getDatabaseConnection();
     if (!dbClient) {
-      console.error("Failed to get database connection - aborting reaction update");
-      return res.status(500).json({ error: "Reaction sent but failed to update database" });
+      console.error(
+        "Failed to get database connection - aborting reaction update"
+      );
+      return res
+        .status(500)
+        .json({ error: "Reaction sent but failed to update database" });
     }
 
     try {
@@ -16248,17 +18511,24 @@ app.post("/api/messages/react/:companyId/:messageId", async (req, res) => {
         reaction || null,
         new Date(),
         messageId,
-        companyId
+        companyId,
       ];
 
-      const messageResult = await dbClient.query(messageUpdateQuery, messageUpdateValues);
+      const messageResult = await dbClient.query(
+        messageUpdateQuery,
+        messageUpdateValues
+      );
 
       if (messageResult.rowCount === 0) {
         await dbClient.query("ROLLBACK");
-        console.warn(`Message ${messageId} found in WhatsApp but not in PostgreSQL`);
+        console.warn(
+          `Message ${messageId} found in WhatsApp but not in PostgreSQL`
+        );
         return res.json({
           success: true,
-          message: reaction ? "Reaction added to WhatsApp only" : "Reaction removed from WhatsApp only",
+          message: reaction
+            ? "Reaction added to WhatsApp only"
+            : "Reaction removed from WhatsApp only",
           messageId,
           reaction,
         });
@@ -16268,7 +18538,9 @@ app.post("/api/messages/react/:companyId/:messageId", async (req, res) => {
 
       res.json({
         success: true,
-        message: reaction ? "Reaction added successfully" : "Reaction removed successfully",
+        message: reaction
+          ? "Reaction added successfully"
+          : "Reaction removed successfully",
         messageId,
         reaction,
       });
@@ -16322,7 +18594,9 @@ app.put("/api/v2/messages/:companyId/:chatId/:messageId", async (req, res) => {
       // Update the message in PostgreSQL
       const client = await getDatabaseConnection();
       if (!client) {
-        console.error("Failed to get database connection - aborting message edit");
+        console.error(
+          "Failed to get database connection - aborting message edit"
+        );
         return res.status(500).send("Internal Server Error");
       }
 
@@ -16347,14 +18621,16 @@ app.put("/api/v2/messages/:companyId/:chatId/:messageId", async (req, res) => {
           new Date(),
           messageId,
           companyId,
-          chatId
+          chatId,
         ];
 
         const result = await client.query(updateQuery, updateValues);
 
         if (result.rowCount === 0) {
           await safeRollback(client);
-          return res.status(404).json({ success: false, error: "Message not found in database" });
+          return res
+            .status(404)
+            .json({ success: false, error: "Message not found in database" });
         }
 
         await client.query("COMMIT");
@@ -16383,13 +18659,16 @@ app.delete(
     const { companyId, chatId, messageId } = req.params;
     const { deleteForEveryone, phoneIndex: requestedPhoneIndex } = req.body;
 
-    const phoneIndex = requestedPhoneIndex !== undefined ? parseInt(requestedPhoneIndex) : 0;
+    const phoneIndex =
+      requestedPhoneIndex !== undefined ? parseInt(requestedPhoneIndex) : 0;
 
     try {
       // Get the client for this company from botMap
       const botData = botMap.get(companyId);
       if (!botData || !botData[phoneIndex] || !botData[phoneIndex].client) {
-        return res.status(404).send("WhatsApp client not found for this company");
+        return res
+          .status(404)
+          .send("WhatsApp client not found for this company");
       }
       const client = botData[phoneIndex].client;
 
@@ -16409,7 +18688,9 @@ app.delete(
       // Delete the message from PostgreSQL
       const dbClient = await getDatabaseConnection();
       if (!dbClient) {
-        console.error("Failed to get database connection - aborting message deletion");
+        console.error(
+          "Failed to get database connection - aborting message deletion"
+        );
         return res.status(500).send("Internal Server Error");
       }
 
@@ -16431,7 +18712,9 @@ app.delete(
 
         if (result.rowCount === 0) {
           await dbClient.query("ROLLBACK");
-          return res.status(404).json({ success: false, error: "Message not found in database" });
+          return res
+            .status(404)
+            .json({ success: false, error: "Message not found in database" });
         }
 
         await dbClient.query("COMMIT");
@@ -16747,8 +19030,9 @@ app.delete("/api/contacts/:companyId/:contactId/tags", async (req, res) => {
   }
 
   // Normalize stop bot tags
-  tags = tags.map(tag =>
-    typeof tag === "string" && tag.trim().toLowerCase().replace(/\s+/g, "") === "stopbot"
+  tags = tags.map((tag) =>
+    typeof tag === "string" &&
+    tag.trim().toLowerCase().replace(/\s+/g, "") === "stopbot"
       ? "stop bot"
       : tag
   );
@@ -16757,7 +19041,7 @@ app.delete("/api/contacts/:companyId/:contactId/tags", async (req, res) => {
     let phoneNumber;
     if (contactId.startsWith(`${companyId}-`)) {
       const contactIdParts = contactId.split("-");
-      phoneNumber = '+' + contactIdParts[1];
+      phoneNumber = "+" + contactIdParts[1];
     } else {
       phoneNumber = contactId;
     }
@@ -16782,8 +19066,9 @@ app.post("/api/contacts/:companyId/:contactId/tags", async (req, res) => {
   }
 
   // Normalize stop bot tags
-  tags = tags.map(tag =>
-    typeof tag === "string" && tag.trim().toLowerCase().replace(/\s+/g, "") === "stopbot"
+  tags = tags.map((tag) =>
+    typeof tag === "string" &&
+    tag.trim().toLowerCase().replace(/\s+/g, "") === "stopbot"
       ? "stop bot"
       : tag
   );
@@ -16792,14 +19077,21 @@ app.post("/api/contacts/:companyId/:contactId/tags", async (req, res) => {
     let phoneNumber;
     if (contactId.startsWith(`${companyId}-`)) {
       const contactIdParts = contactId.split("-");
-      phoneNumber = '+' + contactIdParts[1];
+      phoneNumber = "+" + contactIdParts[1];
     } else {
       phoneNumber = contactId;
     }
 
-    const response = {tags: tags};
+    const response = { tags: tags };
     const followupTemplate = await getFollowUpTemplates(companyId);
-    await handleTagAddition(response, phoneNumber, companyId, followupTemplate, null, 0);
+    await handleTagAddition(
+      response,
+      phoneNumber,
+      companyId,
+      followupTemplate,
+      null,
+      0
+    );
     res.json({ success: true, tags: tags });
   } catch (error) {
     res
@@ -16809,34 +19101,41 @@ app.post("/api/contacts/:companyId/:contactId/tags", async (req, res) => {
 });
 
 // Assign employee to contact
-app.post("/api/contacts/:companyId/:contactId/assign-employee", async (req, res) => {
-  const { companyId, contactId } = req.params;
-  const { employeeName } = req.body;
-  
-  if (!employeeName) {
-    return res.status(400).json({ error: "employeeName is required" });
-  }
-  
-  try {
-    let phoneNumber;
-    if (contactId.startsWith(`${companyId}-`)) {
-      const contactIdParts = contactId.split("-");
-      phoneNumber = '+' + contactIdParts[1];
-    } else {
-      phoneNumber = contactId;
-    }
+// ... existing code ...
+// ... existing code ...
 
-    const client = await getDatabaseConnection();
-    if (!client) {
-      console.error("Failed to get database connection - aborting employee assignment");
-      return res.status(500).json({ error: "Failed to assign employee" });
+app.post(
+  "/api/contacts/:companyId/:contactId/assign-employee",
+  async (req, res) => {
+    const { companyId, contactId } = req.params;
+    const { employeeName } = req.body;
+
+    if (!employeeName) {
+      return res.status(400).json({ error: "employeeName is required" });
     }
 
     try {
-      await client.query("BEGIN");
+      let phoneNumber;
+      if (contactId.startsWith(`${companyId}-`)) {
+        const contactIdParts = contactId.split("-");
+        phoneNumber = "+" + contactIdParts[1];
+      } else {
+        phoneNumber = contactId;
+      }
 
-      // 1. Update the contact to assign the employee
-      const updateContactQuery = `
+      const client = await getDatabaseConnection();
+      if (!client) {
+        console.error(
+          "Failed to get database connection - aborting employee assignment"
+        );
+        return res.status(500).json({ error: "Failed to assign employee" });
+      }
+
+      try {
+        await client.query("BEGIN");
+
+        // 1. Update the contact to assign the employee
+        const updateContactQuery = `
         UPDATE contacts 
         SET tags = CASE 
           WHEN tags::jsonb ? $3 THEN tags::jsonb
@@ -16845,288 +19144,240 @@ app.post("/api/contacts/:companyId/:contactId/assign-employee", async (req, res)
         WHERE phone = $1 AND company_id = $2
         RETURNING *
       `;
-      
-      const employeeNameArray = JSON.stringify([employeeName]);
-      const updateResult = await client.query(updateContactQuery, [
-        phoneNumber,
-        companyId,
-        employeeName,
-        employeeNameArray
-      ]);
 
-      if (updateResult.rows.length === 0) {
-        await safeRollback(client);
-        return res.status(404).json({ error: "Contact not found" });
-      }
+        const employeeNameArray = JSON.stringify([employeeName]);
+        const updateResult = await client.query(updateContactQuery, [
+          phoneNumber,
+          companyId,
+          employeeName,
+          employeeNameArray,
+        ]);
 
-      // 2. Update employee's assigned_contacts count
-      const employeeUpdateQuery = `
+        if (updateResult.rows.length === 0) {
+          await safeRollback(client);
+          return res.status(404).json({ error: "Contact not found" });
+        }
+
+        // 2. Update employee's assigned_contacts count
+        const employeeUpdateQuery = `
         UPDATE employees
         SET assigned_contacts = assigned_contacts + 1
         WHERE company_id = $1 AND name = $2
         RETURNING id, employee_id, name, assigned_contacts
       `;
-      
-      const employeeResult = await client.query(employeeUpdateQuery, [
-        companyId,
-        employeeName
-      ]);
 
-      if (employeeResult.rows.length === 0) {
-        await safeRollback(client);
-        return res.status(404).json({ error: "Employee not found" });
-      }
+        const employeeResult = await client.query(employeeUpdateQuery, [
+          companyId,
+          employeeName,
+        ]);
 
-      // 3. Get contact details for assignments table
-      const contactQuery = `
+        if (employeeResult.rows.length === 0) {
+          await safeRollback(client);
+          return res.status(404).json({ error: "Employee not found" });
+        }
+
+        // 3. Get contact details for assignments table
+        const contactQuery = `
         SELECT contact_id FROM contacts 
         WHERE phone = $1 AND company_id = $2
       `;
-      const contactResult = await client.query(contactQuery, [phoneNumber, companyId]);
-      
-      if (contactResult.rows.length === 0) {
-        await safeRollback(client);
-        return res.status(404).json({ error: "Contact not found in database" });
-      }
+        const contactResult = await client.query(contactQuery, [
+          phoneNumber,
+          companyId,
+        ]);
 
-      // 4. Insert into assignments table
-      const currentDate = new Date();
-      const currentMonthKey = `${currentDate.getFullYear()}-${(
-        currentDate.getMonth() + 1
-      ).toString().padStart(2, "0")}`;
+        if (contactResult.rows.length === 0) {
+          await safeRollback(client);
+          return res
+            .status(404)
+            .json({ error: "Contact not found in database" });
+        }
 
-      const assignmentId = `${companyId}-${contactResult.rows[0].contact_id}-${employeeResult.rows[0].employee_id}-${Date.now()}`;
-      
-      const assignmentInsertQuery = `
+        // 4. Insert into assignments table
+        const currentDate = new Date();
+        const currentMonthKey = `${currentDate.getFullYear()}-${(
+          currentDate.getMonth() + 1
+        )
+          .toString()
+          .padStart(2, "0")}`;
+
+        const assignmentId = `${companyId}-${
+          contactResult.rows[0].contact_id
+        }-${employeeResult.rows[0].employee_id}-${Date.now()}`;
+
+        const assignmentInsertQuery = `
         INSERT INTO assignments (
           assignment_id, company_id, employee_id, contact_id, 
           assigned_at, status, month_key, assignment_type, 
           phone_index, weightage_used
         ) VALUES ($1, $2, $3, $4, CURRENT_TIMESTAMP, 'active', $5, 'manual', 0, 1)
       `;
-      
-      await client.query(assignmentInsertQuery, [
-        assignmentId,
-        companyId,
-        employeeResult.rows[0].employee_id,
-        contactResult.rows[0].contact_id,
-        currentMonthKey
-      ]);
 
-      // 5. Update monthly assignments
-      const monthlyAssignmentUpsertQuery = `
+        await client.query(assignmentInsertQuery, [
+          assignmentId,
+          companyId,
+          employeeResult.rows[0].employee_id,
+          contactResult.rows[0].contact_id,
+          currentMonthKey,
+        ]);
+
+        // 5. Update monthly assignments
+        const monthlyAssignmentUpsertQuery = `
         INSERT INTO employee_monthly_assignments (employee_id, company_id, month_key, assignments_count, last_updated)
         VALUES ($1, $2, $3, 1, CURRENT_TIMESTAMP)
         ON CONFLICT (employee_id, month_key) DO UPDATE
         SET assignments_count = employee_monthly_assignments.assignments_count + 1,
             last_updated = CURRENT_TIMESTAMP
       `;
-      
-      await client.query(monthlyAssignmentUpsertQuery, [
-        employeeResult.rows[0].id,
-        companyId,
-        currentMonthKey
-      ]);
 
-      await client.query("COMMIT");
+        await client.query(monthlyAssignmentUpsertQuery, [
+          employeeResult.rows[0].id,
+          companyId,
+          currentMonthKey,
+        ]);
 
-      res.json({ 
-        success: true, 
-        message: "Employee assigned successfully",
-        contact: updateResult.rows[0],
-        employee: employeeResult.rows[0]
-      });
+        await client.query("COMMIT");
 
-    } catch (error) {
-      await safeRollback(client);
-      throw error;
-    } finally {
-      await safeRelease(client);
-    }
+        // 6. Send notification message to the contact
+        try {
+          const botData = botMap.get(companyId);
+          if (botData && botData[0]?.client) {
+            const whatsappClient = botData[0].client;
+            const chatId = phoneNumber.replace("+", "") + "@c.us";
 
-  } catch (error) {
-    console.error("Error assigning employee to contact:", error);
-    res.status(500).json({ 
-      error: "Failed to assign employee", 
-      details: error.message 
-    });
-  }
-});
+            // Get the last message from this contact
+            const lastMessageQuery = `
+            SELECT content, timestamp, message_type
+            FROM messages 
+            WHERE company_id = $1 
+              AND customer_phone = $2 
+              AND from_me = false
+            ORDER BY timestamp DESC 
+            LIMIT 1
+          `;
 
-// Unassign employee from contact
-app.post("/api/contacts/:companyId/:contactId/unassign-employee", async (req, res) => {
-  const { companyId, contactId } = req.params;
-  const { employeeName } = req.body;
-  
-  if (!employeeName) {
-    return res.status(400).json({ error: "employeeName is required" });
-  }
-  
-  try {
-    let phoneNumber;
-    if (contactId.startsWith(`${companyId}-`)) {
-      const contactIdParts = contactId.split("-");
-      phoneNumber = '+' + contactIdParts[1];
-    } else {
-      phoneNumber = contactId;
-    }
+            let lastMessageInfo = "";
+            try {
+              const lastMessageResult = await client.query(lastMessageQuery, [
+                companyId,
+                phoneNumber,
+              ]);
+              if (lastMessageResult.rows.length > 0) {
+                const lastMsg = lastMessageResult.rows[0];
+                const messageType = lastMsg.message_type || "text";
+                const messageContent = lastMsg.content || "No content";
+                const messageTime = new Date(
+                  lastMsg.timestamp
+                ).toLocaleString();
 
-    const client = await getDatabaseConnection();
-    if (!client) {
-      console.error("Failed to get database connection - aborting employee unassignment");
-      return res.status(500).json({ error: "Failed to unassign employee" });
-    }
+                lastMessageInfo = `\n💬 *Last Message (${messageType}):*\n"${messageContent}"\n⏰ ${messageTime}`;
+              }
+            } catch (msgError) {
+              console.warn("Could not fetch last message:", msgError.message);
+              lastMessageInfo = "\n💬 *Last Message:* Unable to retrieve";
+            }
 
-    try {
-      await client.query("BEGIN");
+            const notificationMessage = `🎯 *Contact Assignment Notification*\n\nHello! This contact has been assigned to *${employeeName}*.\n\n📋 *Assignment Details:*\n• Employee: ${employeeName}\n• Contact Number: ${phoneNumber}\n• Assigned Date: ${new Date().toLocaleDateString()}\n• Time: ${new Date().toLocaleTimeString()}${lastMessageInfo}\n\n🌐 *Access Your Dashboard:*\nVisit: web.jutateknologi.com\n\nThank you for choosing our services!`;
 
-      // 1. Get current contact tags and remove the employee name
-      const getContactQuery = `
-        SELECT tags, contact_id FROM contacts 
-        WHERE phone = $1 AND company_id = $2
-      `;
-      const contactResult = await client.query(getContactQuery, [phoneNumber, companyId]);
-      
-      if (contactResult.rows.length === 0) {
+            const sentMessage = await whatsappClient.sendMessage(
+              chatId,
+              notificationMessage
+            );
+
+            // Save the notification message to database
+            if (sentMessage) {
+              await addMessageToPostgres(
+                sentMessage,
+                companyId,
+                phoneNumber,
+                updateResult.rows[0].contact_name ||
+                  updateResult.rows[0].name ||
+                  "",
+                0, // phoneIndex
+                "System" // userName
+              );
+            }
+
+            console.log(
+              `Notification message sent to ${phoneNumber} for employee assignment`
+            );
+          } else {
+            console.warn(
+              `WhatsApp client not available for company ${companyId} - skipping notification message`
+            );
+          }
+        } catch (messageError) {
+          console.error("Error sending notification message:", messageError);
+          // Don't fail the entire operation if message sending fails
+        }
+
+        res.json({
+          success: true,
+          message: "Employee assigned successfully",
+          contact: updateResult.rows[0],
+          employee: employeeResult.rows[0],
+        });
+      } catch (error) {
         await safeRollback(client);
-        return res.status(404).json({ error: "Contact not found" });
+        throw error;
+      } finally {
+        await safeRelease(client);
       }
-
-      const currentTags = contactResult.rows[0].tags || [];
-      const updatedTags = currentTags.filter(tag => tag !== employeeName);
-      
-      // Update the contact to remove the employee tag
-      const updateContactQuery = `
-        UPDATE contacts 
-        SET tags = $3
-        WHERE phone = $1 AND company_id = $2
-        RETURNING *
-      `;
-      
-      const updateResult = await client.query(updateContactQuery, [
-        phoneNumber,
-        companyId,
-        JSON.stringify(updatedTags)
-      ]);
-
-      // 2. Get employee details and decrease assigned_contacts count
-      const employeeUpdateQuery = `
-        UPDATE employees
-        SET assigned_contacts = GREATEST(assigned_contacts - 1, 0)
-        WHERE company_id = $1 AND name = $2
-        RETURNING id, employee_id, name, assigned_contacts
-      `;
-      
-      const employeeResult = await client.query(employeeUpdateQuery, [
-        companyId,
-        employeeName
-      ]);
-
-      if (employeeResult.rows.length === 0) {
-        await safeRollback(client);
-        return res.status(404).json({ error: "Employee not found" });
-      }
-
-      // 3. Update assignment record status to 'inactive'
-      const updateAssignmentQuery = `
-        UPDATE assignments 
-        SET status = 'inactive', 
-            updated_at = CURRENT_TIMESTAMP
-        WHERE company_id = $1 
-          AND employee_id = $2 
-          AND contact_id = $3 
-          AND status = 'active'
-      `;
-      
-      await client.query(updateAssignmentQuery, [
-        companyId,
-        employeeResult.rows[0].employee_id,
-        contactResult.rows[0].contact_id
-      ]);
-
-      // 4. Update monthly assignments (decrease count)
-      const currentDate = new Date();
-      const currentMonthKey = `${currentDate.getFullYear()}-${(
-        currentDate.getMonth() + 1
-      ).toString().padStart(2, "0")}`;
-
-      const monthlyAssignmentUpdateQuery = `
-        UPDATE employee_monthly_assignments 
-        SET assignments_count = GREATEST(assignments_count - 1, 0),
-            last_updated = CURRENT_TIMESTAMP
-        WHERE employee_id = $1 
-          AND company_id = $2 
-          AND month_key = $3
-      `;
-      
-      await client.query(monthlyAssignmentUpdateQuery, [
-        employeeResult.rows[0].id,
-        companyId,
-        currentMonthKey
-      ]);
-
-      await client.query("COMMIT");
-
-      res.json({ 
-        success: true, 
-        message: "Employee unassigned successfully",
-        contact: updateResult.rows[0],
-        employee: employeeResult.rows[0],
-        removedTags: [employeeName]
-      });
-
     } catch (error) {
-      await safeRollback(client);
-      throw error;
-    } finally {
-      await safeRelease(client);
+      console.error("Error assigning employee to contact:", error);
+      res.status(500).json({
+        error: "Failed to assign employee",
+        details: error.message,
+      });
     }
-
-  } catch (error) {
-    console.error("Error unassigning employee from contact:", error);
-    res.status(500).json({ 
-      error: "Failed to unassign employee", 
-      details: error.message 
-    });
   }
-});
+);
+
+// ... existing code ...
 
 // Bulk unassign all employees from contact
-app.delete("/api/contacts/:companyId/:contactId/assignments", async (req, res) => {
-  const { companyId, contactId } = req.params;
-  
-  try {
-    let phoneNumber;
-    if (contactId.startsWith(`${companyId}-`)) {
-      const contactIdParts = contactId.split("-");
-      phoneNumber = '+' + contactIdParts[1];
-    } else {
-      phoneNumber = contactId;
-    }
-
-    const client = await getDatabaseConnection();
-    if (!client) {
-      console.error("Failed to get database connection - aborting bulk unassignment");
-      return res.status(500).json({ error: "Failed to unassign employees" });
-    }
+app.delete(
+  "/api/contacts/:companyId/:contactId/assignments",
+  async (req, res) => {
+    const { companyId, contactId } = req.params;
 
     try {
-      await client.query("BEGIN");
+      let phoneNumber;
+      if (contactId.startsWith(`${companyId}-`)) {
+        const contactIdParts = contactId.split("-");
+        phoneNumber = "+" + contactIdParts[1];
+      } else {
+        phoneNumber = contactId;
+      }
 
-      // 1. Get current contact and all assigned employees
-      const getContactQuery = `
+      const client = await getDatabaseConnection();
+      if (!client) {
+        console.error(
+          "Failed to get database connection - aborting bulk unassignment"
+        );
+        return res.status(500).json({ error: "Failed to unassign employees" });
+      }
+
+      try {
+        await client.query("BEGIN");
+
+        // 1. Get current contact and all assigned employees
+        const getContactQuery = `
         SELECT tags, contact_id FROM contacts 
         WHERE phone = $1 AND company_id = $2
       `;
-      const contactResult = await client.query(getContactQuery, [phoneNumber, companyId]);
-      
-      if (contactResult.rows.length === 0) {
-        await safeRollback(client);
-        return res.status(404).json({ error: "Contact not found" });
-      }
+        const contactResult = await client.query(getContactQuery, [
+          phoneNumber,
+          companyId,
+        ]);
 
-      // 2. Get all active assignments for this contact
-      const getAssignmentsQuery = `
+        if (contactResult.rows.length === 0) {
+          await safeRollback(client);
+          return res.status(404).json({ error: "Contact not found" });
+        }
+
+        // 2. Get all active assignments for this contact
+        const getAssignmentsQuery = `
         SELECT DISTINCT a.employee_id, e.name, e.id as employee_uuid
         FROM assignments a
         JOIN employees e ON a.employee_id = e.employee_id
@@ -17134,50 +19385,57 @@ app.delete("/api/contacts/:companyId/:contactId/assignments", async (req, res) =
           AND a.contact_id = $2 
           AND a.status = 'active'
       `;
-      
-      const assignmentsResult = await client.query(getAssignmentsQuery, [
-        companyId,
-        contactResult.rows[0].contact_id
-      ]);
 
-      if (assignmentsResult.rows.length === 0) {
-        await safeRollback(client);
-        return res.status(404).json({ error: "No active assignments found for this contact" });
-      }
+        const assignmentsResult = await client.query(getAssignmentsQuery, [
+          companyId,
+          contactResult.rows[0].contact_id,
+        ]);
 
-      const assignedEmployees = assignmentsResult.rows;
-      const employeeNames = assignedEmployees.map(emp => emp.name);
+        if (assignmentsResult.rows.length === 0) {
+          await safeRollback(client);
+          return res
+            .status(404)
+            .json({ error: "No active assignments found for this contact" });
+        }
 
-      // 3. Remove all employee names from contact tags
-      const currentTags = contactResult.rows[0].tags || [];
-      const updatedTags = currentTags.filter(tag => !employeeNames.includes(tag));
-      
-      const updateContactQuery = `
+        const assignedEmployees = assignmentsResult.rows;
+        const employeeNames = assignedEmployees.map((emp) => emp.name);
+
+        // 3. Remove all employee names from contact tags
+        const currentTags = contactResult.rows[0].tags || [];
+        const updatedTags = currentTags.filter(
+          (tag) => !employeeNames.includes(tag)
+        );
+
+        const updateContactQuery = `
         UPDATE contacts 
         SET tags = $3
         WHERE phone = $1 AND company_id = $2
         RETURNING *
       `;
-      
-      const updateResult = await client.query(updateContactQuery, [
-        phoneNumber,
-        companyId,
-        JSON.stringify(updatedTags)
-      ]);
 
-      // 4. Update all employees' assigned_contacts count
-      for (const employee of assignedEmployees) {
-        const employeeUpdateQuery = `
+        const updateResult = await client.query(updateContactQuery, [
+          phoneNumber,
+          companyId,
+          JSON.stringify(updatedTags),
+        ]);
+
+        // 4. Update all employees' assigned_contacts count
+        for (const employee of assignedEmployees) {
+          const employeeUpdateQuery = `
           UPDATE employees
           SET assigned_contacts = GREATEST(assigned_contacts - 1, 0)
           WHERE company_id = $1 AND employee_id = $2
         `;
-        
-        await client.query(employeeUpdateQuery, [companyId, employee.employee_id]);
-      }
 
-      // 5. Update all assignment records to 'inactive'
-      const updateAssignmentsQuery = `
+          await client.query(employeeUpdateQuery, [
+            companyId,
+            employee.employee_id,
+          ]);
+        }
+
+        // 5. Update all assignment records to 'inactive'
+        const updateAssignmentsQuery = `
         UPDATE assignments 
         SET status = 'inactive', 
             updated_at = CURRENT_TIMESTAMP
@@ -17185,20 +19443,22 @@ app.delete("/api/contacts/:companyId/:contactId/assignments", async (req, res) =
           AND contact_id = $2 
           AND status = 'active'
       `;
-      
-      await client.query(updateAssignmentsQuery, [
-        companyId,
-        contactResult.rows[0].contact_id
-      ]);
 
-      // 6. Update monthly assignments for all employees
-      const currentDate = new Date();
-      const currentMonthKey = `${currentDate.getFullYear()}-${(
-        currentDate.getMonth() + 1
-      ).toString().padStart(2, "0")}`;
+        await client.query(updateAssignmentsQuery, [
+          companyId,
+          contactResult.rows[0].contact_id,
+        ]);
 
-      for (const employee of assignedEmployees) {
-        const monthlyAssignmentUpdateQuery = `
+        // 6. Update monthly assignments for all employees
+        const currentDate = new Date();
+        const currentMonthKey = `${currentDate.getFullYear()}-${(
+          currentDate.getMonth() + 1
+        )
+          .toString()
+          .padStart(2, "0")}`;
+
+        for (const employee of assignedEmployees) {
+          const monthlyAssignmentUpdateQuery = `
           UPDATE employee_monthly_assignments 
           SET assignments_count = GREATEST(assignments_count - 1, 0),
               last_updated = CURRENT_TIMESTAMP
@@ -17206,57 +19466,139 @@ app.delete("/api/contacts/:companyId/:contactId/assignments", async (req, res) =
             AND company_id = $2 
             AND month_key = $3
         `;
-        
-        await client.query(monthlyAssignmentUpdateQuery, [
-          employee.employee_uuid,
-          companyId,
-          currentMonthKey
-        ]);
+
+          await client.query(monthlyAssignmentUpdateQuery, [
+            employee.employee_uuid,
+            companyId,
+            currentMonthKey,
+          ]);
+        }
+
+        await client.query("COMMIT");
+
+        // 7. Send notification message to the contact about unassignment
+        try {
+          const botData = botMap.get(companyId);
+          if (botData && botData[0]?.client) {
+            const whatsappClient = botData[0].client;
+            const chatId = phoneNumber.replace("+", "") + "@c.us";
+
+            // Get the last message from this contact
+            const lastMessageQuery = `
+            SELECT content, timestamp, message_type
+            FROM messages 
+            WHERE company_id = $1 
+              AND customer_phone = $2 
+              AND from_me = false
+            ORDER BY timestamp DESC 
+            LIMIT 1
+          `;
+
+            let lastMessageInfo = "";
+            try {
+              const lastMessageResult = await client.query(lastMessageQuery, [
+                companyId,
+                phoneNumber,
+              ]);
+              if (lastMessageResult.rows.length > 0) {
+                const lastMsg = lastMessageResult.rows[0];
+                const messageType = lastMsg.message_type || "text";
+                const messageContent = lastMsg.content || "No content";
+                const messageTime = new Date(
+                  lastMsg.timestamp
+                ).toLocaleString();
+
+                lastMessageInfo = `\n💬 *Last Message (${messageType}):*\n"${messageContent}"\n⏰ ${messageTime}`;
+              }
+            } catch (msgError) {
+              console.warn("Could not fetch last message:", msgError.message);
+              lastMessageInfo = "\n💬 *Last Message:* Unable to retrieve";
+            }
+
+            const unassignmentMessage = `🎯 *Contact Assignment Update*\n\nHello! Your contact assignments have been updated.\n\n📋 *Unassignment Details:*\n• Contact Number: ${phoneNumber}\n• Unassigned Employees: ${employeeNames.join(
+              ", "
+            )}\n• Updated Date: ${new Date().toLocaleDateString()}\n• Time: ${new Date().toLocaleTimeString()}${lastMessageInfo}\n\n🌐 *Access Your Dashboard:*\nVisit: web.jutateknologi.com\n\nThank you for choosing our services!`;
+
+            const sentMessage = await whatsappClient.sendMessage(
+              chatId,
+              unassignmentMessage
+            );
+
+            // Save the notification message to database
+            if (sentMessage) {
+              await addMessageToPostgres(
+                sentMessage,
+                companyId,
+                phoneNumber,
+                updateResult.rows[0].contact_name ||
+                  updateResult.rows[0].name ||
+                  "",
+                0, // phoneIndex
+                "System" // userName
+              );
+            }
+
+            console.log(
+              `Unassignment notification message sent to ${phoneNumber}`
+            );
+          } else {
+            console.warn(
+              `WhatsApp client not available for company ${companyId} - skipping notification message`
+            );
+          }
+        } catch (messageError) {
+          console.error(
+            "Error sending unassignment notification message:",
+            messageError
+          );
+          // Don't fail the entire operation if message sending fails
+        }
+
+        res.json({
+          success: true,
+          message: `Successfully unassigned ${assignedEmployees.length} employee(s)`,
+          contact: updateResult.rows[0],
+          unassignedEmployees: employeeNames,
+          removedTags: employeeNames,
+        });
+      } catch (error) {
+        await safeRollback(client);
+        throw error;
+      } finally {
+        await safeRelease(client);
       }
-
-      await client.query("COMMIT");
-
-      res.json({ 
-        success: true, 
-        message: `Successfully unassigned ${assignedEmployees.length} employee(s)`,
-        contact: updateResult.rows[0],
-        unassignedEmployees: employeeNames,
-        removedTags: employeeNames
-      });
-
     } catch (error) {
-      await safeRollback(client);
-      throw error;
-    } finally {
-      await safeRelease(client);
+      console.error("Error bulk unassigning employees from contact:", error);
+      res.status(500).json({
+        error: "Failed to unassign employees",
+        details: error.message,
+      });
     }
-
-  } catch (error) {
-    console.error("Error bulk unassigning employees from contact:", error);
-    res.status(500).json({ 
-      error: "Failed to unassign employees", 
-      details: error.message 
-    });
   }
-});
+);
 
+// ... existing code ...
 // Get all assignments for a contact
 app.get("/api/contacts/:companyId/:contactId/assignments", async (req, res) => {
   const { companyId, contactId } = req.params;
-  
+
   try {
     let phoneNumber;
     if (contactId.startsWith(`${companyId}-`)) {
       const contactIdParts = contactId.split("-");
-      phoneNumber = '+' + contactIdParts[1];
+      phoneNumber = "+" + contactIdParts[1];
     } else {
       phoneNumber = contactId;
     }
 
     const client = await getDatabaseConnection();
     if (!client) {
-      console.error("Failed to get database connection - aborting assignments fetch");
-      return res.status(500).json({ error: "Failed to get contact assignments" });
+      console.error(
+        "Failed to get database connection - aborting assignments fetch"
+      );
+      return res
+        .status(500)
+        .json({ error: "Failed to get contact assignments" });
     }
 
     try {
@@ -17265,8 +19607,11 @@ app.get("/api/contacts/:companyId/:contactId/assignments", async (req, res) => {
         SELECT contact_id, tags FROM contacts 
         WHERE phone = $1 AND company_id = $2
       `;
-      const contactResult = await client.query(getContactQuery, [phoneNumber, companyId]);
-      
+      const contactResult = await client.query(getContactQuery, [
+        phoneNumber,
+        companyId,
+      ]);
+
       if (contactResult.rows.length === 0) {
         return res.status(404).json({ error: "Contact not found" });
       }
@@ -17292,46 +19637,48 @@ app.get("/api/contacts/:companyId/:contactId/assignments", async (req, res) => {
         WHERE a.company_id = $1 AND a.contact_id = $2
         ORDER BY a.assigned_at DESC
       `;
-      
+
       const assignmentsResult = await client.query(getAssignmentsQuery, [
         companyId,
-        contactResult.rows[0].contact_id
+        contactResult.rows[0].contact_id,
       ]);
 
       // 3. Separate active and inactive assignments
-      const activeAssignments = assignmentsResult.rows.filter(a => a.status === 'active');
-      const inactiveAssignments = assignmentsResult.rows.filter(a => a.status === 'inactive');
+      const activeAssignments = assignmentsResult.rows.filter(
+        (a) => a.status === "active"
+      );
+      const inactiveAssignments = assignmentsResult.rows.filter(
+        (a) => a.status === "inactive"
+      );
 
-      res.json({ 
+      res.json({
         success: true,
         contact: {
           contact_id: contactResult.rows[0].contact_id,
           phone: phoneNumber,
-          tags: contactResult.rows[0].tags
+          tags: contactResult.rows[0].tags,
         },
         assignments: {
           active: activeAssignments,
           inactive: inactiveAssignments,
-          total: assignmentsResult.rows.length
+          total: assignmentsResult.rows.length,
         },
         summary: {
           activeCount: activeAssignments.length,
           inactiveCount: inactiveAssignments.length,
-          totalCount: assignmentsResult.rows.length
-        }
+          totalCount: assignmentsResult.rows.length,
+        },
       });
-
     } catch (error) {
       throw error;
     } finally {
       await safeRelease(client);
     }
-
   } catch (error) {
     console.error("Error getting contact assignments:", error);
-    res.status(500).json({ 
-      error: "Failed to get contact assignments", 
-      details: error.message 
+    res.status(500).json({
+      error: "Failed to get contact assignments",
+      details: error.message,
     });
   }
 });
@@ -17400,12 +19747,19 @@ app.post("/api/v2/messages/video/:companyId/:chatId", async (req, res) => {
   }
 });
 
-app.post('/api/v2/messages/document/:companyId/:chatId', async (req, res) => {
+app.post("/api/v2/messages/document/:companyId/:chatId", async (req, res) => {
   const companyId = req.params.companyId;
   const chatId = req.params.chatId;
-  const { documentUrl, filename, caption, phoneIndex: requestedPhoneIndex, userName: requestedUserName } = req.body;
-  const phoneIndex = requestedPhoneIndex !== undefined ? parseInt(requestedPhoneIndex) : 0;
-  const userName = requestedUserName !== undefined ? requestedUserName : '';
+  const {
+    documentUrl,
+    filename,
+    caption,
+    phoneIndex: requestedPhoneIndex,
+    userName: requestedUserName,
+  } = req.body;
+  const phoneIndex =
+    requestedPhoneIndex !== undefined ? parseInt(requestedPhoneIndex) : 0;
+  const userName = requestedUserName !== undefined ? requestedUserName : "";
 
   console.log("\n=== New Document Message Request ===");
   console.log("Request details:", {
@@ -17425,25 +19779,30 @@ app.post('/api/v2/messages/document/:companyId/:chatId', async (req, res) => {
     // 1. Get the client for this company from botMap
     const botData = botMap.get(companyId);
     if (!botData) {
-      console.error('WhatsApp client not found for this company');
-      return res.status(404).send('WhatsApp client not found for this company');
+      console.error("WhatsApp client not found for this company");
+      return res.status(404).send("WhatsApp client not found for this company");
     }
     client = botData[phoneIndex].client;
 
     if (!client) {
-      console.error('No active WhatsApp client found for this company');
-      return res.status(404).send('No active WhatsApp client found for this company');
+      console.error("No active WhatsApp client found for this company");
+      return res
+        .status(404)
+        .send("No active WhatsApp client found for this company");
     }
 
     // 2. Use wwebjs to send the document message
-    const media = await MessageMedia.fromUrl(documentUrl, { unsafeMime: true, filename: filename });
+    const media = await MessageMedia.fromUrl(documentUrl, {
+      unsafeMime: true,
+      filename: filename,
+    });
     const sentMessage = await client.sendMessage(chatId, media, { caption });
     console.log("Message sent successfully:", {
-      messageId: sentMessage?.id?._serialized ?? 'no id',
-      timestamp: sentMessage?.timestamp ?? 'no timestamp',
-      type: sentMessage?.type ?? 'no type',
+      messageId: sentMessage?.id?._serialized ?? "no id",
+      timestamp: sentMessage?.timestamp ?? "no timestamp",
+      type: sentMessage?.type ?? "no type",
     });
-    let phoneNumber = '+' + (chatId).split('@')[0];
+    let phoneNumber = "+" + chatId.split("@")[0];
 
     // 3. Save the message to Database
     const contactData = await getContactDataFromDatabaseByPhone(
@@ -17467,8 +19826,8 @@ app.post('/api/v2/messages/document/:companyId/:chatId', async (req, res) => {
 
     res.json({ success: true, messageId: sentMessage.id._serialized });
   } catch (error) {
-    console.error('Error sending document message:', error);
-    res.status(500).send('Internal Server Error');
+    console.error("Error sending document message:", error);
+    res.status(500).send("Internal Server Error");
   }
 });
 
@@ -17477,20 +19836,22 @@ app.post("/api/user/update-phone", async (req, res) => {
     const { email, phoneIndex } = req.body;
     console.log("updating phone index", email, phoneIndex);
     if (!email || phoneIndex === undefined) {
-      return res.status(400).json({ 
-        error: "Email and phoneIndex are required" 
+      return res.status(400).json({
+        error: "Email and phoneIndex are required",
       });
     }
 
     // Validate phoneIndex is a number
     const validatedPhoneIndex = parseInt(phoneIndex);
     if (isNaN(validatedPhoneIndex) || validatedPhoneIndex < 0) {
-      return res.status(400).json({ 
-        error: "phoneIndex must be a valid non-negative number" 
+      return res.status(400).json({
+        error: "phoneIndex must be a valid non-negative number",
       });
     }
 
-    console.log(`Updating phone index for user ${email} to ${validatedPhoneIndex}`);
+    console.log(
+      `Updating phone index for user ${email} to ${validatedPhoneIndex}`
+    );
 
     // Update the user's phone field in the users table
     const updateResult = await sqlDb.query(
@@ -17502,12 +19863,14 @@ app.post("/api/user/update-phone", async (req, res) => {
     );
 
     if (updateResult.rowCount === 0) {
-      return res.status(404).json({ 
-        error: "User not found" 
+      return res.status(404).json({
+        error: "User not found",
       });
     }
 
-    console.log(`Successfully updated phone index for user ${email} to ${validatedPhoneIndex}`);
+    console.log(
+      `Successfully updated phone index for user ${email} to ${validatedPhoneIndex}`
+    );
 
     res.json({
       success: true,
@@ -17517,15 +19880,14 @@ app.post("/api/user/update-phone", async (req, res) => {
         name: updateResult.rows[0].name,
         phoneIndex: updateResult.rows[0].phone,
         userId: updateResult.rows[0].user_id,
-        companyId: updateResult.rows[0].company_id
-      }
+        companyId: updateResult.rows[0].company_id,
+      },
     });
-
   } catch (error) {
     console.error("Error updating user phone index:", error);
-    res.status(500).json({ 
+    res.status(500).json({
       error: "Failed to update phone index",
-      details: error.message 
+      details: error.message,
     });
   }
 });
@@ -17536,7 +19898,11 @@ app.put("/api/update-phone-name", async (req, res) => {
     console.log("Updating phone name:", { companyId, phoneIndex, phoneName });
 
     if (!companyId || phoneIndex === undefined || phoneName === undefined) {
-      return res.status(400).json({ error: "Company ID, phone index, and phone name are required" });
+      return res
+        .status(400)
+        .json({
+          error: "Company ID, phone index, and phone name are required",
+        });
     }
 
     // Fetch current phone_numbers array
@@ -17548,7 +19914,10 @@ app.put("/api/update-phone-name", async (req, res) => {
       return res.status(404).json({ error: "Company not found" });
     }
 
-    console.log("Raw phone_numbers from database:", companyResult.rows[0].phone_numbers);
+    console.log(
+      "Raw phone_numbers from database:",
+      companyResult.rows[0].phone_numbers
+    );
     let phoneNumbers = [];
     if (companyResult.rows[0].phone_numbers) {
       try {
@@ -17581,24 +19950,27 @@ app.put("/api/update-phone-name", async (req, res) => {
     );
     console.log("Phone name updated successfully:", phoneNumbers);
 
-    res.json({ success: true, message: "Phone name updated successfully", phoneNumbers });
-
+    res.json({
+      success: true,
+      message: "Phone name updated successfully",
+      phoneNumbers,
+    });
   } catch (error) {
     console.error("Error updating phone name:", error);
-    res.status(500).json({ success: false, error: "Failed to update phone name" });
+    res
+      .status(500)
+      .json({ success: false, error: "Failed to update phone name" });
   }
 });
 
 // Add this right after your existing endpoint (around line 12640)
 app.get("/api/debug-routes", (req, res) => {
-  res.json({ 
+  res.json({
     message: "Debug endpoint working",
     timestamp: new Date().toISOString(),
-    testEndpoint: "/api/user/update-phone should be available"
+    testEndpoint: "/api/user/update-phone should be available",
   });
 });
-
-
 
 async function copyDirectory(source, target, options = {}) {
   const {
@@ -17622,7 +19994,9 @@ async function copyDirectory(source, target, options = {}) {
     await fs.promises.access(source);
   } catch (err) {
     console.error(`Access error for source directory ${source}:`, err);
-    throw new Error(`Source directory does not exist or is not accessible: ${source}`);
+    throw new Error(
+      `Source directory does not exist or is not accessible: ${source}`
+    );
   }
 
   // Remove existing target if it exists
@@ -17815,12 +20189,7 @@ async function initializeBot(botName, phoneCount = 1, specificPhoneIndex) {
 // Add new function to manage phone status
 // Around line 15955, replace the second updatePhoneStatus function:
 // Around line 15955, replace the second updatePhoneStatus function:
-async function updatePhoneStatus(
-  companyId,
-  phoneIndex,
-  status,
-  metadata = {}
-) {
+async function updatePhoneStatus(companyId, phoneIndex, status, metadata = {}) {
   try {
     // First check if the company exists
     const companyResult = await sqlDb.query(
@@ -17829,15 +20198,21 @@ async function updatePhoneStatus(
     );
 
     if (companyResult.rows.length === 0) {
-      console.log(`Company ${companyId} not found, skipping phone status update`);
+      console.log(
+        `Company ${companyId} not found, skipping phone status update`
+      );
       return;
     }
 
     // Get phone number if status is 'ready'
     let phoneNumber = null;
-    if (status === 'ready') {
+    if (status === "ready") {
       const botData = botMap.get(companyId);
-      if (botData && botData[phoneIndex] && botData[phoneIndex].client?.info?.wid?.user) {
+      if (
+        botData &&
+        botData[phoneIndex] &&
+        botData[phoneIndex].client?.info?.wid?.user
+      ) {
         phoneNumber = botData[phoneIndex].client.info.wid.user;
       }
     }
@@ -17867,7 +20242,7 @@ async function updatePhoneStatus(
           status,
           Object.keys(metadata).length ? JSON.stringify(metadata) : null,
           companyId,
-          phoneIndex.toString()
+          phoneIndex.toString(),
         ]
       );
     } else {
@@ -17886,10 +20261,15 @@ async function updatePhoneStatus(
         ]
       );
     }
-    
-    console.log(`Phone status updated for company ${companyId}, phone ${phoneNumber}: ${status}`);
+
+    console.log(
+      `Phone status updated for company ${companyId}, phone ${phoneNumber}: ${status}`
+    );
   } catch (error) {
-    console.error(`Error updating phone status in SQL for ${companyId} Phone ${phoneIndex}:`, error);
+    console.error(
+      `Error updating phone status in SQL for ${companyId} Phone ${phoneIndex}:`,
+      error
+    );
     // Don't throw the error - just log it to prevent cascading failures
   }
 }
@@ -17921,7 +20301,7 @@ function startPhoneMonitoring(botName, phoneIndex) {
         );
 
         const { spawn } = require("child_process");
-const mime = require('mime-types');
+        const mime = require("mime-types");
         // Your existing cleanup code here
       }
     } catch (error) {
@@ -18167,29 +20547,35 @@ async function initializeWithTimeout(botName, phoneIndex, clientName, clients) {
         );
 
         // Handle network-related errors more gracefully
-        if (error.code === 'EADDRNOTAVAIL' || 
-            error.code === 'ENOTFOUND' || 
-            error.code === 'ECONNREFUSED' ||
-            error.code === 'ETIMEDOUT' ||
-            error.message.includes('read EADDRNOTAVAIL') ||
-            error.message.includes('TLSWrap')) {
+        if (
+          error.code === "EADDRNOTAVAIL" ||
+          error.code === "ENOTFOUND" ||
+          error.code === "ECONNREFUSED" ||
+          error.code === "ETIMEDOUT" ||
+          error.message.includes("read EADDRNOTAVAIL") ||
+          error.message.includes("TLSWrap")
+        ) {
           console.error(
-            `${botName} Phone ${phoneIndex + 1} - Network connectivity error detected, will retry...`
+            `${botName} Phone ${
+              phoneIndex + 1
+            } - Network connectivity error detected, will retry...`
           );
-          
+
           try {
             await updatePhoneStatus(botName, phoneIndex, "error", {
               error: `Network error: ${error.message}`,
             });
-            
+
             // Wait before attempting reconnection
             await new Promise((resolve) => setTimeout(resolve, 5000));
-            
+
             // Attempt reinitialization
             await initializeBot(botName, 1, phoneIndex);
           } catch (handlingError) {
             console.error(
-              `${botName} Phone ${phoneIndex + 1} - Error handling network error:`,
+              `${botName} Phone ${
+                phoneIndex + 1
+              } - Error handling network error:`,
               handlingError
             );
           }
@@ -18238,7 +20624,9 @@ async function initializeWithTimeout(botName, phoneIndex, clientName, clients) {
             reason: reason,
           });
 
-          console.log(`${botName} Phone ${phoneIndex + 1} - Attempting cleanup...`);
+          console.log(
+            `${botName} Phone ${phoneIndex + 1} - Attempting cleanup...`
+          );
 
           // Clean up session if disconnected due to navigation or logout
           if (reason === "NAVIGATION" || reason === "LOGOUT") {
@@ -18516,9 +20904,10 @@ async function deleteContentsIndividually(dirPath) {
 
 async function platformSpecificDelete(dirPath) {
   return new Promise((resolve, reject) => {
-    const command = process.platform === "win32" 
-      ? `rmdir /s /q "${dirPath}"` 
-      : `rm -rf "${dirPath}"`;
+    const command =
+      process.platform === "win32"
+        ? `rmdir /s /q "${dirPath}"`
+        : `rm -rf "${dirPath}"`;
 
     exec(command, (error) => {
       if (error) {
@@ -18534,7 +20923,7 @@ async function sendAlertToEmployees(companyId) {
   try {
     const companyQuery = `SELECT category FROM companies WHERE company_id = $1`;
     const { rows: companies } = await pool.query(companyQuery, [companyId]);
-    
+
     if (companies.length === 0) {
       console.error(`Company with ID ${companyId} not found.`);
       return;
@@ -18567,11 +20956,15 @@ async function sendAlertToEmployees(companyId) {
       WHERE company_id = $1 AND role = '1' AND active = true
     `;
     const { rows: employees } = await pool.query(query, [companyId]);
-    
-    console.log(`Fetched ${employees.length} employees with role '1' for company ${companyId}.`);
+
+    console.log(
+      `Fetched ${employees.length} employees with role '1' for company ${companyId}.`
+    );
 
     if (employees.length === 0) {
-      console.warn(`No active employees with role '1' found for company ${companyId}.`);
+      console.warn(
+        `No active employees with role '1' found for company ${companyId}.`
+      );
       return;
     }
 
@@ -18674,7 +21067,7 @@ async function createAssistant(companyID) {
     if (company && company.assistant_ids) {
       if (Array.isArray(company.assistant_ids)) {
         existingAssistantIds = company.assistant_ids;
-      } else if (typeof company.assistant_ids === 'string') {
+      } else if (typeof company.assistant_ids === "string") {
         try {
           existingAssistantIds = JSON.parse(company.assistant_ids);
         } catch (e) {
@@ -18696,9 +21089,14 @@ async function createAssistant(companyID) {
       [JSON.stringify(existingAssistantIds), companyID]
     );
 
-    console.log(`Assistant created successfully for company ${companyID}: ${assistantId}`);
-    console.log(`Updated assistant_ids for company ${companyID}:`, existingAssistantIds);
-    
+    console.log(
+      `Assistant created successfully for company ${companyID}: ${assistantId}`
+    );
+    console.log(
+      `Updated assistant_ids for company ${companyID}:`,
+      existingAssistantIds
+    );
+
     return assistantId;
   } catch (error) {
     console.error(
@@ -18731,38 +21129,47 @@ process.on("uncaughtException", (error) => {
   console.error("========================================");
 
   // Log to file for debugging
-  if (typeof logger !== 'undefined' && logger.logToFile) {
-    logger.logToFile('uncaught_exceptions', `${error.message}\n${error.stack}`);
+  if (typeof logger !== "undefined" && logger.logToFile) {
+    logger.logToFile("uncaught_exceptions", `${error.message}\n${error.stack}`);
   }
 
   // Handle specific database connection errors
   if (
-    error.message && (
-      error.message.includes("Connection terminated unexpectedly") ||
+    error.message &&
+    (error.message.includes("Connection terminated unexpectedly") ||
       error.message.includes("connection terminated") ||
       error.message.includes("Client has encountered a connection error") ||
       error.message.includes("Connection to server closed") ||
-      error.message.includes("server closed the connection unexpectedly")
-    )
+      error.message.includes("server closed the connection unexpectedly"))
   ) {
     console.error("DATABASE CONNECTION ERROR DETECTED");
-    console.error("This is likely a database connectivity issue - continuing operation...");
-    console.error("The connection pool will handle reconnection automatically.");
+    console.error(
+      "This is likely a database connectivity issue - continuing operation..."
+    );
+    console.error(
+      "The connection pool will handle reconnection automatically."
+    );
     return; // Don't crash for database connection issues
   }
-  
+
   // Handle specific network-related errors
-  if (error.code === 'EADDRNOTAVAIL' || 
-      error.code === 'ENOTFOUND' || 
-      error.code === 'ECONNREFUSED' ||
-      error.code === 'ETIMEDOUT' ||
-      error.message.includes('read EADDRNOTAVAIL') ||
-      error.message.includes('TLSWrap')) {
-    console.error("Network connectivity error detected - continuing operation...");
-    console.error("This is likely a temporary network issue or WhatsApp connection problem.");
+  if (
+    error.code === "EADDRNOTAVAIL" ||
+    error.code === "ENOTFOUND" ||
+    error.code === "ECONNREFUSED" ||
+    error.code === "ETIMEDOUT" ||
+    error.message.includes("read EADDRNOTAVAIL") ||
+    error.message.includes("TLSWrap")
+  ) {
+    console.error(
+      "Network connectivity error detected - continuing operation..."
+    );
+    console.error(
+      "This is likely a temporary network issue or WhatsApp connection problem."
+    );
     return; // Don't crash for network issues
   }
-  
+
   // For other critical errors, log but continue operation
   console.log("Continuing operation despite uncaught exception...");
 });
@@ -18777,43 +21184,46 @@ process.on("unhandledRejection", (reason, promise) => {
   console.error("========================================");
 
   // Log to file for debugging
-  if (typeof logger !== 'undefined' && logger.logToFile) {
-    logger.logToFile('unhandled_rejections', `${reason}\nPromise: ${promise}`);
+  if (typeof logger !== "undefined" && logger.logToFile) {
+    logger.logToFile("unhandled_rejections", `${reason}\nPromise: ${promise}`);
   }
 
   // Handle database connection rejections
   if (
     reason &&
-    reason.message && (
-      reason.message.includes("Connection terminated unexpectedly") ||
+    reason.message &&
+    (reason.message.includes("Connection terminated unexpectedly") ||
       reason.message.includes("connection terminated") ||
       reason.message.includes("Client has encountered a connection error") ||
       reason.message.includes("Connection to server closed") ||
-      reason.message.includes("server closed the connection unexpectedly")
-    )
+      reason.message.includes("server closed the connection unexpectedly"))
   ) {
     console.error("DATABASE CONNECTION REJECTION DETECTED");
-    console.error("This is likely a database connectivity issue - continuing operation...");
-    console.error("The connection pool will handle reconnection automatically.");
+    console.error(
+      "This is likely a database connectivity issue - continuing operation..."
+    );
+    console.error(
+      "The connection pool will handle reconnection automatically."
+    );
     return; // Don't crash for database connection issues
   }
-  
+
   // Handle network-related rejections
-  if (reason && (
-    reason.code === 'EADDRNOTAVAIL' || 
-    reason.code === 'ENOTFOUND' || 
-    reason.code === 'ECONNREFUSED' ||
-    reason.code === 'ETIMEDOUT' ||
-    (reason.message && (
-      reason.message.includes('fetch failed') ||
-      reason.message.includes('read EADDRNOTAVAIL') ||
-      reason.message.includes('TLSWrap')
-    ))
-  )) {
+  if (
+    reason &&
+    (reason.code === "EADDRNOTAVAIL" ||
+      reason.code === "ENOTFOUND" ||
+      reason.code === "ECONNREFUSED" ||
+      reason.code === "ETIMEDOUT" ||
+      (reason.message &&
+        (reason.message.includes("fetch failed") ||
+          reason.message.includes("read EADDRNOTAVAIL") ||
+          reason.message.includes("TLSWrap"))))
+  ) {
     console.error("Network connectivity error detected - continuing operation");
     return; // Don't shutdown for network issues
   }
-  
+
   // For other errors, just log and continue
   console.log("Continuing operation despite unhandled rejection...");
 });
@@ -18828,9 +21238,9 @@ process.on("unhandledRejection", (reason, promise) => {
 process.on("SIGINT", async () => {
   console.log("\n=== Graceful Shutdown Initiated ===");
   // ... existing cleanup code ...
-  
+
   // Only exit if it's a manual shutdown
-  if (process.env.MANUAL_SHUTDOWN === 'true') {
+  if (process.env.MANUAL_SHUTDOWN === "true") {
     process.exit(0);
   } else {
     console.log("Shutdown prevented - continuing operation...");
@@ -18857,9 +21267,9 @@ process.on("uncaughtException", (error) => {
 async function checkDatabaseHealth() {
   try {
     await sql`SELECT 1`;
-    console.log('Database health check: OK');
+    console.log("Database health check: OK");
   } catch (error) {
-    console.error('Database health check failed:', error.message);
+    console.error("Database health check failed:", error.message);
     // Log but don't crash
   }
 }
@@ -18881,7 +21291,10 @@ app.get(
           WHERE id = $1 AND company_id = $2
           LIMIT 1
         `;
-        const messageResult = await client.query(messageQuery, [messageId, companyId]);
+        const messageResult = await client.query(messageQuery, [
+          messageId,
+          companyId,
+        ]);
 
         if (messageResult.rowCount === 0) {
           return res.status(404).json({ error: "Message not found" });
@@ -18896,21 +21309,34 @@ app.get(
             AND id != $1
           ORDER BY batch_index ASC
         `;
-        const batchesResult = await client.query(batchesQuery, [messageId, companyId]);
+        const batchesResult = await client.query(batchesQuery, [
+          messageId,
+          companyId,
+        ]);
 
-        const batches = batchesResult.rows.map(batch => ({
+        const batches = batchesResult.rows.map((batch) => ({
           id: batch.id,
           ...batch,
           chat_ids: batch.chat_ids ? JSON.parse(batch.chat_ids) : [],
-          message_delays: batch.message_delays ? JSON.parse(batch.message_delays) : null,
-          active_hours: batch.active_hours ? JSON.parse(batch.active_hours) : null
+          message_delays: batch.message_delays
+            ? JSON.parse(batch.message_delays)
+            : null,
+          active_hours: batch.active_hours
+            ? JSON.parse(batch.active_hours)
+            : null,
         }));
 
         const parsedMessageData = {
           ...messageData,
-          chat_ids: messageData.chat_ids ? JSON.parse(messageData.chat_ids) : [],
-          message_delays: messageData.message_delays ? JSON.parse(messageData.message_delays) : null,
-          active_hours: messageData.active_hours ? JSON.parse(messageData.active_hours) : null
+          chat_ids: messageData.chat_ids
+            ? JSON.parse(messageData.chat_ids)
+            : [],
+          message_delays: messageData.message_delays
+            ? JSON.parse(messageData.message_delays)
+            : null,
+          active_hours: messageData.active_hours
+            ? JSON.parse(messageData.active_hours)
+            : null,
         };
 
         res.json({
@@ -19164,22 +21590,22 @@ app.get("/api/user-company-data", async (req, res) => {
     let tags = [];
     if (companyData.v2) {
       const contactsResult = await sqlDb.getRows(
-      "SELECT DISTINCT jsonb_array_elements(CASE WHEN jsonb_typeof(tags) = 'array' THEN tags ELSE '[]'::jsonb END) as tag_name FROM contacts WHERE company_id = $1",
-      [companyId]
+        "SELECT DISTINCT jsonb_array_elements(CASE WHEN jsonb_typeof(tags) = 'array' THEN tags ELSE '[]'::jsonb END) as tag_name FROM contacts WHERE company_id = $1",
+        [companyId]
       );
 
       const employeeNames = employeeList.map((emp) =>
-      emp.name ? emp.name.trim().toLowerCase() : ""
+        emp.name ? emp.name.trim().toLowerCase() : ""
       );
       tags = contactsResult
-      .map((row) => ({ id: row.tag_name, name: row.tag_name }))
-      .filter(
-        (tag) =>
-        typeof tag.name === "string" &&
-        tag.name.trim() !== "" &&
-        tag.name !== "{}" &&
-        !employeeNames.includes(tag.name.toLowerCase())
-      );
+        .map((row) => ({ id: row.tag_name, name: row.tag_name }))
+        .filter(
+          (tag) =>
+            typeof tag.name === "string" &&
+            tag.name.trim() !== "" &&
+            tag.name !== "{}" &&
+            !employeeNames.includes(tag.name.toLowerCase())
+        );
     }
 
     // Prepare response - added assistant_id to companyData
@@ -19281,23 +21707,65 @@ app.get("/api/user-config", async (req, res) => {
       role: emp.role,
     }));
 
-    // Get message usage for enterprise plan
-    let messageUsage = 0;
-    if (companyData.plan === "enterprise") {
-      const currentDate = new Date();
-      const monthKey = `${currentDate.getFullYear()}-${String(
-        currentDate.getMonth() + 1
-      ).padStart(2, "0")}`;
+    // Get message usage
+    let messageUsage = {};
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = (now.getMonth() + 1).toString().padStart(2, "0");
+    const monthlyKey = `${year}-${month}`;
 
-      const usageResult = await sqlDb.getRow(
-        "SELECT total_messages FROM message_usage WHERE company_id = $1 AND month = $2",
-        [companyId, monthKey]
+    // Get message usage for all features
+    const usageFeatures = ["aiMessages", "blastedMessages"];
+    for (const feature of usageFeatures) {
+      const featureResult = await sqlDb.query(
+        `SELECT SUM(usage_count) AS total_usage
+         FROM usage_logs
+         WHERE company_id = $1 AND feature = $2
+         AND to_char(date, 'YYYY-MM') = $3`,
+        [companyId, feature, monthlyKey]
       );
+      messageUsage[feature] = featureResult.rows[0]?.total_usage || 0;
+    }
 
-      if (usageResult) {
-        messageUsage = usageResult.total_messages;
+    let usageQuota = {};
+    const defaultQuota = 500;
+    const settingKey = "quotaAIMessage";
+
+    const quotaResult = await sqlDb.query(
+      `SELECT setting_value FROM settings
+      WHERE company_id = $1 AND setting_type = 'messaging' AND setting_key = $2`,
+      [companyId, settingKey]
+    );
+
+    let quotaObj = {};
+    if (quotaResult.rows.length > 0) {
+      try {
+        quotaObj =
+          typeof quotaResult.rows[0].setting_value === "string"
+            ? JSON.parse(quotaResult.rows[0].setting_value)
+            : quotaResult.rows[0].setting_value || {};
+      } catch {
+        quotaObj = {};
       }
     }
+
+    if (!quotaObj[monthlyKey]) {
+      quotaObj[monthlyKey] = defaultQuota;
+      if (quotaResult.rows.length > 0) {
+        await sqlDb.query(
+          `UPDATE settings SET setting_value = $1, last_updated = CURRENT_TIMESTAMP
+        WHERE company_id = $2 AND setting_type = 'messaging' AND setting_key = $3`,
+          [JSON.stringify(quotaObj), companyId, settingKey]
+        );
+      } else {
+        await sqlDb.query(
+          `INSERT INTO settings (company_id, setting_type, setting_key, setting_value, created_at, last_updated)
+        VALUES ($1, 'messaging', $2, $3, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+          [companyId, settingKey, JSON.stringify(quotaObj)]
+        );
+      }
+    }
+    usageQuota.aiMessages = quotaObj[monthlyKey] || defaultQuota;
 
     // Get tags if company is using v2
     let tags = [];
@@ -19312,15 +21780,21 @@ app.get("/api/user-config", async (req, res) => {
       );
       tags = contactsResult
         .map((row) => ({ id: row.tag_name, name: row.tag_name }))
-        .filter((tag) => tag.name && !employeeNames.includes(tag.name.toLowerCase()));
+        .filter(
+          (tag) =>
+            typeof tag.name === "string" &&
+            tag.name &&
+            !employeeNames.includes(tag.name.toLowerCase())
+        );
     }
 
     let viewEmployeesArr = [];
     try {
       if (userData.view_employees) {
-      viewEmployeesArr = typeof userData.view_employees === 'string'
-        ? JSON.parse(userData.view_employees)
-        : userData.view_employees;
+        viewEmployeesArr =
+          typeof userData.view_employees === "string"
+            ? JSON.parse(userData.view_employees)
+            : userData.view_employees;
       }
     } catch (error) {
       console.error("Error parsing view_employees:", error);
@@ -19346,6 +21820,7 @@ app.get("/api/user-config", async (req, res) => {
       },
       employeeList,
       messageUsage,
+      usageQuota,
       tags,
     };
 
@@ -19356,14 +21831,41 @@ app.get("/api/user-config", async (req, res) => {
   }
 });
 
-// ... existing code ...
+app.get("/api/daily-usage/:companyId", async (req, res) => {
+  try {
+    const { companyId } = req.params;
 
-// Get contacts for a company with authentication
-// ... existing code ...
+    const now = new Date();
+    const monthlyKey = `${now.getFullYear()}-${String(
+      now.getMonth() + 1
+    ).padStart(2, "0")}`;
+
+    const usageFeatures = ["aiMessages", "blastedMessages"];
+    const dailyUsage = {};
+
+    for (const feature of usageFeatures) {
+      const rowsResult = await sqlDb.query(
+        `SELECT usage_count, to_char(date, 'YYYY-MM-DD') as date
+         FROM usage_logs
+         WHERE company_id = $1 AND feature = $2
+         AND to_char(date, 'YYYY-MM') = $3
+         ORDER BY date ASC`,
+        [companyId, feature, monthlyKey]
+      );
+      dailyUsage[feature] = rowsResult.rows.map((row) => ({
+        usage_count: row.usage_count,
+        date: row.date,
+      }));
+    }
+    res.json(dailyUsage);
+  } catch (error) {
+    console.error("Error fetching daily usage:", error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
 app.get("/api/companies/:companyId/contacts", async (req, res) => {
   try {
-
-
     const { email } = req.query;
     const { companyId } = req.params;
     if (!email) {
@@ -19380,7 +21882,7 @@ app.get("/api/companies/:companyId/contacts", async (req, res) => {
       "SELECT role, name FROM users WHERE email = $1 AND company_id = $2 AND active = true",
       [userEmail, companyId]
     );
-   // console.log("User data from DB:", userData);
+    // console.log("User data from DB:", userData);
 
     if (!userData) {
       console.log("User not authorized for this company");
@@ -19390,9 +21892,9 @@ app.get("/api/companies/:companyId/contacts", async (req, res) => {
     }
 
     // Fetch all contacts for the company
- // Fetch all contacts for the company
-const contacts = await sqlDb.getRows(
-  `
+    // Fetch all contacts for the company
+    const contacts = await sqlDb.getRows(
+      `
   SELECT 
     c.id,
     c.contact_id,
@@ -19454,9 +21956,8 @@ const contacts = await sqlDb.getRows(
   WHERE c.company_id = $1
   ORDER BY c.last_updated DESC
 `,
-  [companyId]
-);
-
+      [companyId]
+    );
 
     // Process contacts to match frontend expectations
     const processedContacts = contacts.map((contact, idx) => {
@@ -19469,7 +21970,12 @@ const contacts = await sqlDb.getRows(
         // Ensure tags is an array and filter out empty values
         tags = Array.isArray(tags) ? tags.filter((tag) => tag) : [];
       } catch (error) {
-        console.error(`Error parsing tags for contact[${idx}]:`, error, "Raw tags:", contact.tags);
+        console.error(
+          `Error parsing tags for contact[${idx}]:`,
+          error,
+          "Raw tags:",
+          contact.tags
+        );
         tags = [];
       }
 
@@ -19479,9 +21985,16 @@ const contacts = await sqlDb.getRows(
         if (typeof phoneIndexes === "string") {
           phoneIndexes = JSON.parse(phoneIndexes);
         }
-        phoneIndexes = Array.isArray(phoneIndexes) ? phoneIndexes.filter((v) => v !== undefined && v !== null) : [];
+        phoneIndexes = Array.isArray(phoneIndexes)
+          ? phoneIndexes.filter((v) => v !== undefined && v !== null)
+          : [];
       } catch (error) {
-        console.error(`Error parsing phone_indexes for contact[${idx}]:`, error, "Raw phone_indexes:", contact.phone_indexes);
+        console.error(
+          `Error parsing phone_indexes for contact[${idx}]:`,
+          error,
+          "Raw phone_indexes:",
+          contact.phone_indexes
+        );
         phoneIndexes = [];
       }
 
@@ -19494,7 +22007,12 @@ const contacts = await sqlDb.getRows(
         // Ensure assignedTo is an array
         assignedTo = Array.isArray(assignedTo) ? assignedTo : [];
       } catch (error) {
-        console.error(`Error parsing assigned_to for contact[${idx}]:`, error, "Raw assigned_to:", contact.assigned_to);
+        console.error(
+          `Error parsing assigned_to for contact[${idx}]:`,
+          error,
+          "Raw assigned_to:",
+          contact.assigned_to
+        );
         assignedTo = [];
       }
 
@@ -19515,7 +22033,7 @@ const contacts = await sqlDb.getRows(
         lastUpdated: contact.last_updated,
         isIndividual: contact.is_individual,
         last_message: contact.last_message || null,
-        unreadCount: contact.unread_count || 0, 
+        unreadCount: contact.unread_count || 0,
         customFields: contact.custom_fields || {},
         // Add the missing fields
         branch: contact.branch || null,
@@ -19528,14 +22046,18 @@ const contacts = await sqlDb.getRows(
         lastName: contact.last_name || null,
         points: contact.points || 0,
       };
-    //  console.log(`Processed contact[${idx}]:`, processed);
+      //  console.log(`Processed contact[${idx}]:`, processed);
       return processed;
     });
 
     // Filter contacts based on user role
-   
-    const filteredContacts = filterContactsByUserRole(processedContacts, userData.role, userData.name);
-   
+
+    const filteredContacts = filterContactsByUserRole(
+      processedContacts,
+      userData.role,
+      userData.name
+    );
+
     res.json({
       success: true,
       total: processedContacts.length,
@@ -19635,7 +22157,12 @@ app.get("/api/company-data", async (req, res) => {
 app.get("/api/messages", async (req, res) => {
   try {
     const { chatId, companyId } = req.query;
-    console.log("Fetching messages for chatId:", chatId, "companyId:", companyId);
+    console.log(
+      "Fetching messages for chatId:",
+      chatId,
+      "companyId:",
+      companyId
+    );
     const result = await sqlDb.query(
       `SELECT m.*, c.name as contact_name 
        FROM messages m
@@ -19656,7 +22183,16 @@ app.get("/api/messages", async (req, res) => {
 app.get("/api/message-pages", async (req, res) => {
   try {
     const { chatId, companyId, limit = 50, offset = 0 } = req.query;
-    console.log("Fetching paginated messages for chatId:", chatId, "companyId:", companyId, "limit:", limit, "offset:", offset);
+    console.log(
+      "Fetching paginated messages for chatId:",
+      chatId,
+      "companyId:",
+      companyId,
+      "limit:",
+      limit,
+      "offset:",
+      offset
+    );
     if (!chatId || !companyId) {
       return res.status(400).json({ error: "Missing chatId or companyId" });
     }
@@ -19669,7 +22205,12 @@ app.get("/api/message-pages", async (req, res) => {
       ORDER BY m.timestamp DESC
       LIMIT $3 OFFSET $4
     `;
-    const params = [chatId, companyId, parseInt(limit, 10), parseInt(offset, 10)];
+    const params = [
+      chatId,
+      companyId,
+      parseInt(limit, 10),
+      parseInt(offset, 10),
+    ];
 
     const result = await sqlDb.query(sql, params);
 
@@ -19718,7 +22259,7 @@ app.get("/api/user-context", async (req, res) => {
 
     // 1. Get user data
     const userResult = await sqlDb.query(
-      `SELECT * FROM users WHERE email = $1`, 
+      `SELECT * FROM users WHERE email = $1`,
       [email]
     );
 
@@ -19734,27 +22275,27 @@ app.get("/api/user-context", async (req, res) => {
       `SELECT * FROM companies WHERE company_id = $1`,
       [companyId]
     );
-    
+
     const companyData = companyResult.rows[0] || {};
-    
+
     // Process phone names
     const phoneCount = companyData.phone_count || 0;
     const apiUrl = companyData.api_url || process.env.URL;
     const stopBot = companyData.stopbot || false;
     const stopBots = companyData.stopbots || {};
-    
+
     let phoneNamesData = {};
     let phoneNames = [];
     if (companyData.phone_numbers) {
       try {
-      // Accept both stringified array and array
-      if (typeof companyData.phone_numbers === "string") {
-        phoneNames = JSON.parse(companyData.phone_numbers);
-      } else if (Array.isArray(companyData.phone_numbers)) {
-        phoneNames = companyData.phone_numbers;
-      }
+        // Accept both stringified array and array
+        if (typeof companyData.phone_numbers === "string") {
+          phoneNames = JSON.parse(companyData.phone_numbers);
+        } else if (Array.isArray(companyData.phone_numbers)) {
+          phoneNames = companyData.phone_numbers;
+        }
       } catch (e) {
-      phoneNames = [];
+        phoneNames = [];
       }
     }
     // Always fallback to default names if empty
@@ -19829,7 +22370,7 @@ app.get("/api/user-page-context", async (req, res) => {
               e.notes, e.quota_leads, e.view_employees, e.invoice_number, e.emp_group
        FROM users u
        LEFT JOIN employees e ON u.email = e.email AND u.company_id = e.company_id
-       WHERE u.email = $1 AND u.active = true`, 
+       WHERE u.email = $1 AND u.active = true`,
       [email]
     );
 
@@ -19845,21 +22386,21 @@ app.get("/api/user-page-context", async (req, res) => {
       `SELECT * FROM companies WHERE company_id = $1`,
       [companyId]
     );
-    
+
     const companyData = companyResult.rows[0] || {};
-    
+
     let phoneNamesData = {};
     let phoneNames = [];
     if (companyData.phone_numbers) {
       try {
-      // Accept both stringified array and array
-      if (typeof companyData.phone_numbers === "string") {
-        phoneNames = JSON.parse(companyData.phone_numbers);
-      } else if (Array.isArray(companyData.phone_numbers)) {
-        phoneNames = companyData.phone_numbers;
-      }
+        // Accept both stringified array and array
+        if (typeof companyData.phone_numbers === "string") {
+          phoneNames = JSON.parse(companyData.phone_numbers);
+        } else if (Array.isArray(companyData.phone_numbers)) {
+          phoneNames = companyData.phone_numbers;
+        }
       } catch (e) {
-      phoneNames = [];
+        phoneNames = [];
       }
     }
     // Always fallback to default names if empty
@@ -19879,45 +22420,60 @@ app.get("/api/user-page-context", async (req, res) => {
     );
 
     // Format employees data
-    const employeeListData = employeesResult.rows.map(employee => {
+    const employeeListData = employeesResult.rows.map((employee) => {
       let phoneAccess = {};
       let weightages = {};
       let viewEmployees = [];
-      
+
       // Parse JSON fields safely
       try {
         if (employee.phone_access) {
-          phoneAccess = typeof employee.phone_access === 'string' 
-            ? JSON.parse(employee.phone_access) 
-            : employee.phone_access;
+          phoneAccess =
+            typeof employee.phone_access === "string"
+              ? JSON.parse(employee.phone_access)
+              : employee.phone_access;
         }
       } catch (error) {
-        console.error("Error parsing phone_access for employee:", employee.email, error);
+        console.error(
+          "Error parsing phone_access for employee:",
+          employee.email,
+          error
+        );
         phoneAccess = {};
       }
-      
+
       try {
         if (employee.weightages) {
-          weightages = typeof employee.weightages === 'string' 
-            ? JSON.parse(employee.weightages) 
-            : employee.weightages;
+          weightages =
+            typeof employee.weightages === "string"
+              ? JSON.parse(employee.weightages)
+              : employee.weightages;
         }
       } catch (error) {
-        console.error("Error parsing weightages for employee:", employee.email, error);
+        console.error(
+          "Error parsing weightages for employee:",
+          employee.email,
+          error
+        );
         weightages = {};
       }
-      
+
       try {
         if (employee.view_employees) {
-          viewEmployees = typeof employee.view_employees === 'string' 
-            ? JSON.parse(employee.view_employees) 
-            : employee.view_employees;
+          viewEmployees =
+            typeof employee.view_employees === "string"
+              ? JSON.parse(employee.view_employees)
+              : employee.view_employees;
         }
       } catch (error) {
-        console.error("Error parsing view_employees for employee:", employee.email, error);
+        console.error(
+          "Error parsing view_employees for employee:",
+          employee.email,
+          error
+        );
         viewEmployees = [];
       }
-      
+
       return {
         id: employee.id,
         name: employee.name,
@@ -19930,7 +22486,7 @@ app.get("/api/user-page-context", async (req, res) => {
         viewEmployees: viewEmployees,
         empGroup: employee.emp_group || "",
         phoneAccess: phoneAccess,
-        weightages: weightages
+        weightages: weightages,
       };
     });
 
@@ -19938,34 +22494,37 @@ app.get("/api/user-page-context", async (req, res) => {
     let currentUserPhoneAccess = {};
     let currentUserWeightages = {};
     let currentUserViewEmployees = [];
-    
+
     try {
       if (userData.phone_access) {
-        currentUserPhoneAccess = typeof userData.phone_access === 'string' 
-          ? JSON.parse(userData.phone_access) 
-          : userData.phone_access;
+        currentUserPhoneAccess =
+          typeof userData.phone_access === "string"
+            ? JSON.parse(userData.phone_access)
+            : userData.phone_access;
       }
     } catch (error) {
       console.error("Error parsing current user phone_access:", error);
       currentUserPhoneAccess = {};
     }
-    
+
     try {
       if (userData.weightages) {
-        currentUserWeightages = typeof userData.weightages === 'string' 
-          ? JSON.parse(userData.weightages) 
-          : userData.weightages;
+        currentUserWeightages =
+          typeof userData.weightages === "string"
+            ? JSON.parse(userData.weightages)
+            : userData.weightages;
       }
     } catch (error) {
       console.error("Error parsing current user weightages:", error);
       currentUserWeightages = {};
     }
-    
+
     try {
       if (userData.view_employees) {
-        currentUserViewEmployees = typeof userData.view_employees === 'string' 
-          ? JSON.parse(userData.view_employees) 
-          : userData.view_employees;
+        currentUserViewEmployees =
+          typeof userData.view_employees === "string"
+            ? JSON.parse(userData.view_employees)
+            : userData.view_employees;
       }
     } catch (error) {
       console.error("Error parsing current user view_employees:", error);
@@ -19990,8 +22549,8 @@ app.get("/api/user-page-context", async (req, res) => {
         v2: companyData.v2,
         whapiToken: companyData.whapi_token,
         stopBot: companyData.stopbot || false,
-        stopBots: companyData.stopbots || {}
-      }
+        stopBots: companyData.stopbots || {},
+      },
     });
   } catch (error) {
     console.error("Error fetching user context:", error);
@@ -20024,45 +22583,48 @@ app.get("/api/user-page-details", async (req, res) => {
     }
 
     const userData = result.rows[0];
-    
+
     // Parse JSON fields safely
     let phoneAccess = {};
     let weightages = {};
     let viewEmployees = [];
-    
+
     try {
       if (userData.phone_access) {
-        phoneAccess = typeof userData.phone_access === 'string' 
-          ? JSON.parse(userData.phone_access) 
-          : userData.phone_access;
+        phoneAccess =
+          typeof userData.phone_access === "string"
+            ? JSON.parse(userData.phone_access)
+            : userData.phone_access;
       }
     } catch (error) {
       console.error("Error parsing phone_access:", error);
       phoneAccess = {};
     }
-    
+
     try {
       if (userData.weightages) {
-        weightages = typeof userData.weightages === 'string' 
-          ? JSON.parse(userData.weightages) 
-          : userData.weightages;
+        weightages =
+          typeof userData.weightages === "string"
+            ? JSON.parse(userData.weightages)
+            : userData.weightages;
       }
     } catch (error) {
       console.error("Error parsing weightages:", error);
       weightages = {};
     }
-    
+
     try {
       if (userData.view_employees) {
-        viewEmployees = typeof userData.view_employees === 'string' 
-          ? JSON.parse(userData.view_employees) 
-          : userData.view_employees;
+        viewEmployees =
+          typeof userData.view_employees === "string"
+            ? JSON.parse(userData.view_employees)
+            : userData.view_employees;
       }
     } catch (error) {
       console.error("Error parsing view_employees:", error);
       viewEmployees = [];
     }
-    
+
     // Format the response to match the frontend expectations
     const response = {
       name: userData.name,
@@ -20078,7 +22640,7 @@ app.get("/api/user-page-details", async (req, res) => {
       quotaLeads: userData.quota_leads || 0,
       viewEmployees: viewEmployees,
       invoiceNumber: userData.invoice_number,
-      group: userData.emp_group
+      group: userData.emp_group,
     };
 
     res.json(response);
@@ -20306,7 +22868,9 @@ app.post("/api/quick-reply-categories", async (req, res) => {
   try {
     const { companyId, category } = req.body;
     if (!companyId || !category) {
-      return res.status(400).json({ error: "companyId and category are required" });
+      return res
+        .status(400)
+        .json({ error: "companyId and category are required" });
     }
     // Get current categories
     const result = await sqlDb.query(
@@ -20346,7 +22910,9 @@ app.put("/api/quick-reply-categories", async (req, res) => {
   try {
     const { companyId, oldCategory, newCategory } = req.body;
     if (!companyId || !oldCategory || !newCategory) {
-      return res.status(400).json({ error: "companyId, oldCategory, newCategory are required" });
+      return res
+        .status(400)
+        .json({ error: "companyId, oldCategory, newCategory are required" });
     }
     const result = await sqlDb.query(
       `SELECT id, setting_value FROM settings WHERE company_id = $1 AND setting_type = 'quick_reply' AND setting_key = 'categories'`,
@@ -20377,7 +22943,9 @@ app.delete("/api/quick-reply-categories", async (req, res) => {
   try {
     const { companyId, category } = req.body;
     if (!companyId || !category) {
-      return res.status(400).json({ error: "companyId and category are required" });
+      return res
+        .status(400)
+        .json({ error: "companyId and category are required" });
     }
     const result = await sqlDb.query(
       `SELECT id, setting_value FROM settings WHERE company_id = $1 AND setting_type = 'quick_reply' AND setting_key = 'categories'`,
@@ -20413,11 +22981,12 @@ app.get("/api/ai-settings", async (req, res) => {
       [companyId]
     );
     const settings = {};
-    result.rows.forEach(row => {
+    result.rows.forEach((row) => {
       try {
-        const parsed = typeof row.setting_value === "string"
-          ? JSON.parse(row.setting_value)
-          : row.setting_value;
+        const parsed =
+          typeof row.setting_value === "string"
+            ? JSON.parse(row.setting_value)
+            : row.setting_value;
         settings[row.setting_key] = parsed.value;
       } catch {
         settings[row.setting_key] = row.setting_value;
@@ -20435,7 +23004,9 @@ app.put("/api/ai-settings", async (req, res) => {
   try {
     const { companyId, settings } = req.body;
     if (!companyId || typeof settings !== "object" || !settings) {
-      return res.status(400).json({ error: "companyId and settings object are required" });
+      return res
+        .status(400)
+        .json({ error: "companyId and settings object are required" });
     }
     const allowedKeys = ["aiDelay", "autoResponse"];
     const updates = [];
@@ -20448,32 +23019,37 @@ app.put("/api/ai-settings", async (req, res) => {
         );
         if (checkResult.rows.length > 0) {
           // Exists, update
-          updates.push(sqlDb.query(
-            `UPDATE settings SET setting_value = $1, last_updated = CURRENT_TIMESTAMP
+          updates.push(
+            sqlDb.query(
+              `UPDATE settings SET setting_value = $1, last_updated = CURRENT_TIMESTAMP
              WHERE company_id = $2 AND setting_type = 'messaging' AND setting_key = $3
              RETURNING setting_key, setting_value`,
-            [JSON.stringify({ value: settings[key] }), companyId, key]
-          ));
+              [JSON.stringify({ value: settings[key] }), companyId, key]
+            )
+          );
         } else {
           // Doesn't exist, insert
-          updates.push(sqlDb.query(
-            `INSERT INTO settings (company_id, setting_type, setting_key, setting_value, last_updated, created_at)
+          updates.push(
+            sqlDb.query(
+              `INSERT INTO settings (company_id, setting_type, setting_key, setting_value, last_updated, created_at)
              VALUES ($1, 'messaging', $2, $3, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
              RETURNING setting_key, setting_value`,
-            [companyId, key, JSON.stringify({ value: settings[key] })]
-          ));
+              [companyId, key, JSON.stringify({ value: settings[key] })]
+            )
+          );
         }
       }
     }
     const results = await Promise.all(updates);
     const responseSettings = {};
-    results.forEach(r => {
+    results.forEach((r) => {
       if (r.rows.length > 0) {
         const row = r.rows[0];
         try {
-          const parsed = typeof row.setting_value === "string"
-            ? JSON.parse(row.setting_value)
-            : row.setting_value;
+          const parsed =
+            typeof row.setting_value === "string"
+              ? JSON.parse(row.setting_value)
+              : row.setting_value;
           responseSettings[row.setting_key] = parsed.value;
         } catch {
           responseSettings[row.setting_key] = row.setting_value;
@@ -20499,7 +23075,7 @@ app.get("/api/company-groups", async (req, res) => {
       [companyId]
     );
 
-    const groups = result.rows.map(row => row.group_name);
+    const groups = result.rows.map((row) => row.group_name);
     res.json(groups);
   } catch (error) {
     console.error("Error fetching company groups:", error);
@@ -20514,11 +23090,11 @@ app.post("/api/private-note", async (req, res) => {
       return res.status(400).json({ error: "Missing required fields" });
     }
 
-    const numericChatId =
-      chatId.startsWith("+") ? chatId : "+" + chatId.replace(/\D/g, "");
+    const numericChatId = chatId.startsWith("+")
+      ? chatId
+      : "+" + chatId.replace(/\D/g, "");
 
-    const contactId =
-      companyId + "-" + numericChatId.replace(/^\+/, "");
+    const contactId = companyId + "-" + numericChatId.replace(/^\+/, "");
 
     const noteId = uuidv4();
     const timestamp = new Date();
@@ -20589,7 +23165,9 @@ app.post("/api/company/update-stopbot", async (req, res) => {
       return res.status(400).json({ error: "companyId is required" });
     }
     if (typeof stopbot === "undefined" || typeof phoneIndex === "undefined") {
-      return res.status(400).json({ error: "stopbot and phoneIndex are required" });
+      return res
+        .status(400)
+        .json({ error: "stopbot and phoneIndex are required" });
     }
 
     // Fetch current stopbots object
@@ -20634,10 +23212,11 @@ app.post("/api/company/update-stopbot", async (req, res) => {
     });
   } catch (error) {
     console.error("Error updating stopbot:", error);
-    res.status(500).json({ error: "Failed to update stopbot", details: error.message });
+    res
+      .status(500)
+      .json({ error: "Failed to update stopbot", details: error.message });
   }
 });
-
 
 // Get reminder settings
 app.get("/api/reminder-settings", async (req, res) => {
@@ -20647,7 +23226,10 @@ app.get("/api/reminder-settings", async (req, res) => {
       return res.status(400).json({ error: "Email is required" });
     }
 
-    const user = await sqlDb.getRow("SELECT company_id FROM users WHERE email = $1", [email]);
+    const user = await sqlDb.getRow(
+      "SELECT company_id FROM users WHERE email = $1",
+      [email]
+    );
     if (!user) {
       return res.status(404).json({ error: "User not found" });
     }
@@ -20660,23 +23242,26 @@ app.get("/api/reminder-settings", async (req, res) => {
 
     let reminderSettings = [];
     if (settingsResult && settingsResult.setting_value) {
-      reminderSettings = Array.isArray(settingsResult.setting_value) 
-        ? settingsResult.setting_value 
+      reminderSettings = Array.isArray(settingsResult.setting_value)
+        ? settingsResult.setting_value
         : [settingsResult.setting_value];
     } else {
       // Return default reminder settings
-      reminderSettings = [{
-        enabled: true,
-        hours_before: 24,
-        message_template: "Reminder: You have an appointment scheduled for {datetime}",
-        selected_employees: [],
-        recipient_type: "contacts"
-      }];
+      reminderSettings = [
+        {
+          enabled: true,
+          hours_before: 24,
+          message_template:
+            "Reminder: You have an appointment scheduled for {datetime}",
+          selected_employees: [],
+          recipient_type: "contacts",
+        },
+      ];
     }
 
     res.json({
       company_id: user.company_id,
-      reminders: reminderSettings
+      reminders: reminderSettings,
     });
   } catch (error) {
     console.error("Error fetching reminder settings:", error);
@@ -20696,7 +23281,10 @@ app.put("/api/reminder-settings", async (req, res) => {
       return res.status(400).json({ error: "Reminders must be an array" });
     }
 
-    const user = await sqlDb.getRow("SELECT company_id FROM users WHERE email = $1", [email]);
+    const user = await sqlDb.getRow(
+      "SELECT company_id FROM users WHERE email = $1",
+      [email]
+    );
     if (!user) {
       return res.status(404).json({ error: "User not found" });
     }
@@ -20717,13 +23305,13 @@ app.put("/api/reminder-settings", async (req, res) => {
       // Insert new setting
       await sqlDb.query(
         "INSERT INTO settings (company_id, setting_type, setting_key, setting_value, created_at, last_updated) VALUES ($1, $2, $3, $4, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
-        [user.company_id, 'config', 'reminder', JSON.stringify(reminders)]
+        [user.company_id, "config", "reminder", JSON.stringify(reminders)]
       );
     }
 
     res.json({
       company_id: user.company_id,
-      reminders: reminders
+      reminders: reminders,
     });
   } catch (error) {
     console.error("Error updating reminder settings:", error);
@@ -20739,7 +23327,10 @@ app.get("/api/appointments", async (req, res) => {
       return res.status(400).json({ error: "Email is required" });
     }
 
-    const user = await sqlDb.getRow("SELECT company_id FROM users WHERE email = $1", [email]);
+    const user = await sqlDb.getRow(
+      "SELECT company_id FROM users WHERE email = $1",
+      [email]
+    );
     if (!user) {
       return res.status(404).json({ error: "User not found" });
     }
@@ -20767,38 +23358,42 @@ app.get("/api/appointments", async (req, res) => {
       LEFT JOIN contacts c ON a.contact_id = c.contact_id AND a.company_id = c.company_id
       WHERE a.company_id = $1
     `;
-    
+
     const params = [user.company_id];
-    
+
     if (employeeId) {
       query += ` AND (a.staff_assigned ? $2 OR a.metadata->'userEmail' = $2)`;
       params.push(employeeId);
     }
-    
+
     query += ` ORDER BY a.scheduled_time DESC`;
 
     const result = await sqlDb.query(query, params);
-    
+
     // Transform the data to match the calendar component's expected format
-    const appointments = result.rows.map(appointment => ({
+    const appointments = result.rows.map((appointment) => ({
       id: appointment.id,
-      title: appointment.title || 'Untitled Appointment',
+      title: appointment.title || "Untitled Appointment",
       startTime: appointment.startTime,
       endTime: appointment.endTime,
-      address: appointment.address || '',
-      appointmentStatus: appointment.appointmentStatus || 'scheduled',
+      address: appointment.address || "",
+      appointmentStatus: appointment.appointmentStatus || "scheduled",
       staff: appointment.staff || [],
       tags: [],
       color: appointment.color,
       dateAdded: appointment.dateAdded,
-      contacts: appointment.contact_id ? [{
-        id: appointment.contact_id,
-        name: appointment.contact_name || 'Unknown',
-        phone: appointment.contact_phone || '',
-        email: appointment.contact_email || ''
-      }] : [],
-      details: appointment.details || '',
-      meetLink: ''
+      contacts: appointment.contact_id
+        ? [
+            {
+              id: appointment.contact_id,
+              name: appointment.contact_name || "Unknown",
+              phone: appointment.contact_phone || "",
+              email: appointment.contact_email || "",
+            },
+          ]
+        : [],
+      details: appointment.details || "",
+      meetLink: "",
     }));
 
     res.json({ appointments });
@@ -20816,13 +23411,20 @@ app.get("/api/appointment-tags", async (req, res) => {
       return res.status(400).json({ error: "Email is required" });
     }
 
-    const user = await sqlDb.getRow("SELECT company_id FROM users WHERE email = $1", [email]);
+    const user = await sqlDb.getRow(
+      "SELECT company_id FROM users WHERE email = $1",
+      [email]
+    );
     if (!user) {
       return res.status(404).json({ error: "User not found" });
     }
 
     // Redirect to the existing company tags endpoint
-    const response = await fetch(`${req.protocol}://${req.get('host')}/api/companies/${user.company_id}/tags`);
+    const response = await fetch(
+      `${req.protocol}://${req.get("host")}/api/companies/${
+        user.company_id
+      }/tags`
+    );
     const data = await response.json();
     res.json(data);
   } catch (error) {
@@ -20838,7 +23440,10 @@ app.get("/api/company-data-user", async (req, res) => {
       return res.status(400).json({ error: "Email is required" });
     }
 
-    const user = await sqlDb.getRow("SELECT company_id FROM users WHERE email = $1", [email]);
+    const user = await sqlDb.getRow(
+      "SELECT company_id FROM users WHERE email = $1",
+      [email]
+    );
     if (!user) {
       return res.status(404).json({ error: "User not found" });
     }
@@ -20867,14 +23472,18 @@ app.get("/api/employees", async (req, res) => {
     }
 
     // Redirect to the existing user-context endpoint which includes employee data
-    const response = await fetch(`${req.protocol}://${req.get('host')}/api/user-context?email=${encodeURIComponent(email)}`);
+    const response = await fetch(
+      `${req.protocol}://${req.get(
+        "host"
+      )}/api/user-context?email=${encodeURIComponent(email)}`
+    );
     const data = await response.json();
-    
+
     // Extract and return employee information
     res.json({
       employees: data.employees || [],
       userRole: data.userRole,
-      companyId: data.companyId
+      companyId: data.companyId,
     });
   } catch (error) {
     console.error("Error fetching employees:", error);
@@ -20885,76 +23494,91 @@ app.get("/api/employees", async (req, res) => {
 app.post("/api/send-whatsapp-notification", async (req, res) => {
   try {
     const { email, contacts, message, appointmentDetails } = req.body;
-    
+
     if (!email || !contacts || !message) {
-      return res.status(400).json({ error: "Email, contacts, and message are required" });
+      return res
+        .status(400)
+        .json({ error: "Email, contacts, and message are required" });
     }
 
-    const user = await sqlDb.getRow("SELECT company_id FROM users WHERE email = $1", [email]);
+    const user = await sqlDb.getRow(
+      "SELECT company_id FROM users WHERE email = $1",
+      [email]
+    );
     if (!user) {
       return res.status(404).json({ error: "User not found" });
     }
 
     const results = [];
-    
+
     // Send notification to each contact
     for (const contact of contacts) {
       if (contact.phone) {
         try {
           // Clean phone number (remove any non-digit characters except +)
-          const cleanPhone = contact.phone.replace(/[^\d+]/g, '');
-          const chatId = cleanPhone.startsWith('+') ? cleanPhone : `+${cleanPhone}`;
-          
+          const cleanPhone = contact.phone.replace(/[^\d+]/g, "");
+          const chatId = cleanPhone.startsWith("+")
+            ? cleanPhone
+            : `+${cleanPhone}`;
+
           // Use the existing v2 messages API
-          const response = await fetch(`${req.protocol}://${req.get('host')}/api/v2/messages/text/${user.company_id}/${encodeURIComponent(chatId)}`, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-              message: message,
-              phoneIndex: 0 // Default to first phone
-            })
-          });
+          const response = await fetch(
+            `${req.protocol}://${req.get("host")}/api/v2/messages/text/${
+              user.company_id
+            }/${encodeURIComponent(chatId)}`,
+            {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify({
+                message: message,
+                phoneIndex: 0, // Default to first phone
+              }),
+            }
+          );
 
           if (response.ok) {
             results.push({
               contact: contact.name || contact.phone,
               phone: contact.phone,
-              status: 'sent',
-              message: 'Notification sent successfully'
+              status: "sent",
+              message: "Notification sent successfully",
             });
           } else {
             results.push({
               contact: contact.name || contact.phone,
               phone: contact.phone,
-              status: 'failed',
-              message: 'Failed to send notification'
+              status: "failed",
+              message: "Failed to send notification",
             });
           }
         } catch (error) {
-          console.error(`Error sending notification to ${contact.phone}:`, error);
+          console.error(
+            `Error sending notification to ${contact.phone}:`,
+            error
+          );
           results.push({
             contact: contact.name || contact.phone,
             phone: contact.phone,
-            status: 'error',
-            message: error.message
+            status: "error",
+            message: error.message,
           });
         }
       } else {
         results.push({
-          contact: contact.name || 'Unknown',
-          phone: 'N/A',
-          status: 'skipped',
-          message: 'No phone number available'
+          contact: contact.name || "Unknown",
+          phone: "N/A",
+          status: "skipped",
+          message: "No phone number available",
         });
       }
     }
 
     res.json({
       success: true,
-      message: 'Notification process completed',
-      results: results
+      message: "Notification process completed",
+      results: results,
     });
   } catch (error) {
     console.error("Error sending WhatsApp notifications:", error);
@@ -20967,15 +23591,20 @@ app.post("/api/appointments", async (req, res) => {
   try {
     // Accept all fields from request body
     const requestData = { ...req.body };
-    console.log('Received appointment request data:', requestData);
-    
+    console.log("Received appointment request data:", requestData);
+
     // Extract userEmail for authentication
     const email = requestData.userEmail;
     if (!email) {
-      return res.status(400).json({ error: "userEmail is required for authentication" });
+      return res
+        .status(400)
+        .json({ error: "userEmail is required for authentication" });
     }
 
-    const user = await sqlDb.getRow("SELECT company_id FROM users WHERE email = $1", [email]);
+    const user = await sqlDb.getRow(
+      "SELECT company_id FROM users WHERE email = $1",
+      [email]
+    );
     if (!user) {
       return res.status(404).json({ error: "User not found" });
     }
@@ -20989,33 +23618,33 @@ app.post("/api/appointments", async (req, res) => {
       description: null,
       scheduled_time: null,
       duration_minutes: null,
-      status: 'scheduled', // default status
+      status: "scheduled", // default status
       metadata: {},
       staff_assigned: [],
-      appointment_type: 'general' // default type
+      appointment_type: "general", // default type
     };
 
     // Map common frontend field names to schema fields
     const fieldMappings = {
       // Frontend field -> Schema field
-      startTime: 'scheduled_time',
-      start_time: 'scheduled_time',
+      startTime: "scheduled_time",
+      start_time: "scheduled_time",
       endTime: null, // Will be used to calculate duration_minutes
       end_time: null, // Will be used to calculate duration_minutes
-      details: 'description',
-      description: 'description',
-      appointmentStatus: 'status',
-      appointmentType: 'appointment_type',
-      staff: 'staff_assigned',
-      contacts: 'contact_id' // Special handling needed
+      details: "description",
+      description: "description",
+      appointmentStatus: "status",
+      appointmentType: "appointment_type",
+      staff: "staff_assigned",
+      contacts: "contact_id", // Special handling needed
     };
 
     // Process each field from request
     const metadataFields = {};
-    
+
     for (const [key, value] of Object.entries(requestData)) {
-      if (key === 'userEmail') continue; // Skip auth field
-      
+      if (key === "userEmail") continue; // Skip auth field
+
       // Check if field has a direct mapping
       if (fieldMappings.hasOwnProperty(key)) {
         const mappedField = fieldMappings[key];
@@ -21023,10 +23652,16 @@ app.post("/api/appointments", async (req, res) => {
           schemaFields[mappedField] = value;
         }
         // Special handling for endTime/end_time to calculate duration
-        if ((key === 'endTime' || key === 'end_time') && value && schemaFields.scheduled_time) {
+        if (
+          (key === "endTime" || key === "end_time") &&
+          value &&
+          schemaFields.scheduled_time
+        ) {
           const startDate = new Date(schemaFields.scheduled_time);
           const endDate = new Date(value);
-          schemaFields.duration_minutes = Math.round((endDate.getTime() - startDate.getTime()) / (1000 * 60));
+          schemaFields.duration_minutes = Math.round(
+            (endDate.getTime() - startDate.getTime()) / (1000 * 60)
+          );
         }
       }
       // Check if field exists directly in schema
@@ -21041,9 +23676,13 @@ app.post("/api/appointments", async (req, res) => {
 
     // Handle contacts field - extract contact_id
     if (requestData.contacts) {
-      if (Array.isArray(requestData.contacts) && requestData.contacts.length > 0) {
-        schemaFields.contact_id = requestData.contacts[0].id || requestData.contacts[0].contact_id;
-      } else if (typeof requestData.contacts === 'string') {
+      if (
+        Array.isArray(requestData.contacts) &&
+        requestData.contacts.length > 0
+      ) {
+        schemaFields.contact_id =
+          requestData.contacts[0].id || requestData.contacts[0].contact_id;
+      } else if (typeof requestData.contacts === "string") {
         schemaFields.contact_id = requestData.contacts;
       } else {
         schemaFields.contact_id = null;
@@ -21051,62 +23690,81 @@ app.post("/api/appointments", async (req, res) => {
     }
 
     // Handle staff_assigned as JSON
-    if (schemaFields.staff_assigned && !Array.isArray(schemaFields.staff_assigned)) {
+    if (
+      schemaFields.staff_assigned &&
+      !Array.isArray(schemaFields.staff_assigned)
+    ) {
       schemaFields.staff_assigned = [schemaFields.staff_assigned];
     }
 
     // Generate appointment_id if not provided
     if (!schemaFields.appointment_id) {
-      schemaFields.appointment_id = require('crypto').randomUUID();
+      schemaFields.appointment_id = require("crypto").randomUUID();
     }
 
     // Calculate duration if not set but we have start and end times
-    if (!schemaFields.duration_minutes && schemaFields.scheduled_time && (requestData.endTime || requestData.end_time)) {
+    if (
+      !schemaFields.duration_minutes &&
+      schemaFields.scheduled_time &&
+      (requestData.endTime || requestData.end_time)
+    ) {
       const startDate = new Date(schemaFields.scheduled_time);
       const endDate = new Date(requestData.endTime || requestData.end_time);
-      schemaFields.duration_minutes = Math.round((endDate.getTime() - startDate.getTime()) / (1000 * 60));
+      schemaFields.duration_minutes = Math.round(
+        (endDate.getTime() - startDate.getTime()) / (1000 * 60)
+      );
     }
 
     // Validate required fields
     if (!schemaFields.title || !schemaFields.scheduled_time) {
-      return res.status(400).json({ error: "title and scheduled_time (or startTime) are required" });
+      return res
+        .status(400)
+        .json({
+          error: "title and scheduled_time (or startTime) are required",
+        });
     }
 
     // Ensure contact_id is null if empty
-    schemaFields.contact_id = schemaFields.contact_id && String(schemaFields.contact_id).trim() !== '' ? schemaFields.contact_id : null;
+    schemaFields.contact_id =
+      schemaFields.contact_id && String(schemaFields.contact_id).trim() !== ""
+        ? schemaFields.contact_id
+        : null;
 
     // Merge additional metadata
     schemaFields.metadata = { ...metadataFields, ...schemaFields.metadata };
 
-    console.log('Creating appointment with schema fields:', {
+    console.log("Creating appointment with schema fields:", {
       appointment_id: schemaFields.appointment_id,
       company_id: schemaFields.company_id,
       contact_id: schemaFields.contact_id,
       title: schemaFields.title,
       appointment_type: schemaFields.appointment_type,
-      status: schemaFields.status
+      status: schemaFields.status,
     });
 
-    const result = await sqlDb.query(`
+    const result = await sqlDb.query(
+      `
       INSERT INTO appointments (
         appointment_id, company_id, contact_id, title, description, 
         scheduled_time, duration_minutes, status, metadata, staff_assigned, appointment_type
       )
       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
       RETURNING *
-    `, [
-      schemaFields.appointment_id,
-      schemaFields.company_id,
-      schemaFields.contact_id,
-      schemaFields.title,
-      schemaFields.description,
-      schemaFields.scheduled_time,
-      schemaFields.duration_minutes,
-      schemaFields.status,
-      JSON.stringify(schemaFields.metadata),
-      JSON.stringify(schemaFields.staff_assigned),
-      schemaFields.appointment_type
-    ]);
+    `,
+      [
+        schemaFields.appointment_id,
+        schemaFields.company_id,
+        schemaFields.contact_id,
+        schemaFields.title,
+        schemaFields.description,
+        schemaFields.scheduled_time,
+        schemaFields.duration_minutes,
+        schemaFields.status,
+        JSON.stringify(schemaFields.metadata),
+        JSON.stringify(schemaFields.staff_assigned),
+        schemaFields.appointment_type,
+      ]
+    );
 
     // Transform response to match calendar component expectations
     const appointment = result.rows[0];
@@ -21114,26 +23772,32 @@ app.post("/api/appointments", async (req, res) => {
       id: appointment.id,
       title: appointment.title,
       startTime: appointment.scheduled_time,
-      endTime: appointment.duration_minutes ? 
-        new Date(new Date(appointment.scheduled_time).getTime() + (appointment.duration_minutes * 60000)) : 
-        appointment.scheduled_time,
-      address: appointment.metadata?.location || appointment.metadata?.address || '',
+      endTime: appointment.duration_minutes
+        ? new Date(
+            new Date(appointment.scheduled_time).getTime() +
+              appointment.duration_minutes * 60000
+          )
+        : appointment.scheduled_time,
+      address:
+        appointment.metadata?.location || appointment.metadata?.address || "",
       appointmentStatus: appointment.status,
       staff: appointment.staff_assigned || [],
       tags: appointment.metadata?.tags || [],
-      color: appointment.metadata?.color || '#51484f',
+      color: appointment.metadata?.color || "#51484f",
       dateAdded: appointment.created_at,
       contacts: requestData.contacts || [],
-      details: appointment.description || '',
-      meetLink: appointment.metadata?.meetLink || '',
+      details: appointment.description || "",
+      meetLink: appointment.metadata?.meetLink || "",
       appointmentType: appointment.appointment_type,
-      ...appointment.metadata // Include all metadata fields in response
+      ...appointment.metadata, // Include all metadata fields in response
     };
 
     res.json(transformedAppointment);
   } catch (error) {
     console.error("Error creating appointment:", error);
-    res.status(500).json({ error: "Failed to create appointment", details: error.message });
+    res
+      .status(500)
+      .json({ error: "Failed to create appointment", details: error.message });
   }
 });
 
@@ -21143,15 +23807,20 @@ app.put("/api/appointments/:id", async (req, res) => {
     const { id } = req.params;
     // Accept all fields from request body
     const requestData = { ...req.body };
-    console.log('Received appointment update request data:', requestData);
+    console.log("Received appointment update request data:", requestData);
 
     // Extract userEmail for authentication
     const email = requestData.userEmail || requestData.email;
     if (!email) {
-      return res.status(400).json({ error: "userEmail or email is required for authentication" });
+      return res
+        .status(400)
+        .json({ error: "userEmail or email is required for authentication" });
     }
 
-    const user = await sqlDb.getRow("SELECT company_id FROM users WHERE email = $1", [email]);
+    const user = await sqlDb.getRow(
+      "SELECT company_id FROM users WHERE email = $1",
+      [email]
+    );
     if (!user) {
       return res.status(404).json({ error: "User not found" });
     }
@@ -21161,35 +23830,35 @@ app.put("/api/appointments/:id", async (req, res) => {
       "SELECT * FROM appointments WHERE id = $1 AND company_id = $2",
       [id, user.company_id]
     );
-    
+
     if (!existingAppointment) {
       return res.status(404).json({ error: "Appointment not found" });
     }
 
     // Define schema fields that map directly to database columns
     const updateFields = {};
-    
+
     // Map common frontend field names to schema fields
     const fieldMappings = {
-      startTime: 'scheduled_time',
-      start_time: 'scheduled_time',
+      startTime: "scheduled_time",
+      start_time: "scheduled_time",
       endTime: null, // Will be used to calculate duration_minutes
       end_time: null, // Will be used to calculate duration_minutes
-      details: 'description',
-      description: 'description',
-      appointmentStatus: 'status',
-      appointmentType: 'appointment_type',
-      staff: 'staff_assigned',
-      contacts: 'contact_id' // Special handling needed
+      details: "description",
+      description: "description",
+      appointmentStatus: "status",
+      appointmentType: "appointment_type",
+      staff: "staff_assigned",
+      contacts: "contact_id", // Special handling needed
     };
 
     // Process each field from request
     const metadataFields = { ...(existingAppointment.metadata || {}) };
     let endTime = null;
-    
+
     for (const [key, value] of Object.entries(requestData)) {
-      if (key === 'userEmail' || key === 'email') continue; // Skip auth fields
-      
+      if (key === "userEmail" || key === "email") continue; // Skip auth fields
+
       // Check if field has a direct mapping
       if (fieldMappings.hasOwnProperty(key)) {
         const mappedField = fieldMappings[key];
@@ -21197,12 +23866,24 @@ app.put("/api/appointments/:id", async (req, res) => {
           updateFields[mappedField] = value;
         }
         // Store endTime for duration calculation
-        if (key === 'endTime' || key === 'end_time') {
+        if (key === "endTime" || key === "end_time") {
           endTime = value;
         }
       }
       // Check if field exists directly in schema
-      else if (['appointment_id', 'contact_id', 'title', 'description', 'scheduled_time', 'duration_minutes', 'status', 'staff_assigned', 'appointment_type'].includes(key)) {
+      else if (
+        [
+          "appointment_id",
+          "contact_id",
+          "title",
+          "description",
+          "scheduled_time",
+          "duration_minutes",
+          "status",
+          "staff_assigned",
+          "appointment_type",
+        ].includes(key)
+      ) {
         updateFields[key] = value;
       }
       // Everything else goes to metadata
@@ -21213,9 +23894,13 @@ app.put("/api/appointments/:id", async (req, res) => {
 
     // Handle contacts field - extract contact_id
     if (requestData.contacts) {
-      if (Array.isArray(requestData.contacts) && requestData.contacts.length > 0) {
-        updateFields.contact_id = requestData.contacts[0].id || requestData.contacts[0].contact_id;
-      } else if (typeof requestData.contacts === 'string') {
+      if (
+        Array.isArray(requestData.contacts) &&
+        requestData.contacts.length > 0
+      ) {
+        updateFields.contact_id =
+          requestData.contacts[0].id || requestData.contacts[0].contact_id;
+      } else if (typeof requestData.contacts === "string") {
         updateFields.contact_id = requestData.contacts;
       } else {
         updateFields.contact_id = null;
@@ -21223,20 +23908,33 @@ app.put("/api/appointments/:id", async (req, res) => {
     }
 
     // Calculate duration if we have start time and end time
-    if ((updateFields.scheduled_time || existingAppointment.scheduled_time) && endTime) {
-      const startDate = new Date(updateFields.scheduled_time || existingAppointment.scheduled_time);
+    if (
+      (updateFields.scheduled_time || existingAppointment.scheduled_time) &&
+      endTime
+    ) {
+      const startDate = new Date(
+        updateFields.scheduled_time || existingAppointment.scheduled_time
+      );
       const endDate = new Date(endTime);
-      updateFields.duration_minutes = Math.round((endDate.getTime() - startDate.getTime()) / (1000 * 60));
+      updateFields.duration_minutes = Math.round(
+        (endDate.getTime() - startDate.getTime()) / (1000 * 60)
+      );
     }
 
     // Handle staff_assigned as JSON
-    if (updateFields.staff_assigned && !Array.isArray(updateFields.staff_assigned)) {
+    if (
+      updateFields.staff_assigned &&
+      !Array.isArray(updateFields.staff_assigned)
+    ) {
       updateFields.staff_assigned = [updateFields.staff_assigned];
     }
 
     // Ensure contact_id is null if empty
     if (updateFields.contact_id !== undefined) {
-      updateFields.contact_id = updateFields.contact_id && String(updateFields.contact_id).trim() !== '' ? updateFields.contact_id : null;
+      updateFields.contact_id =
+        updateFields.contact_id && String(updateFields.contact_id).trim() !== ""
+          ? updateFields.contact_id
+          : null;
     }
 
     // Always update metadata with merged fields
@@ -21249,7 +23947,7 @@ app.put("/api/appointments/:id", async (req, res) => {
 
     for (const [field, value] of Object.entries(updateFields)) {
       updateFieldsArray.push(`${field} = $${paramIndex++}`);
-      if (field === 'metadata' || field === 'staff_assigned') {
+      if (field === "metadata" || field === "staff_assigned") {
         updateValues.push(JSON.stringify(value));
       } else {
         updateValues.push(value);
@@ -21262,14 +23960,17 @@ app.put("/api/appointments/:id", async (req, res) => {
 
     updateValues.push(id, user.company_id);
 
-    console.log('Updating appointment with fields:', Object.keys(updateFields));
+    console.log("Updating appointment with fields:", Object.keys(updateFields));
 
-    const result = await sqlDb.query(`
+    const result = await sqlDb.query(
+      `
       UPDATE appointments SET
-        ${updateFieldsArray.join(', ')}
+        ${updateFieldsArray.join(", ")}
       WHERE id = $${paramIndex++} AND company_id = $${paramIndex++}
       RETURNING *
-    `, updateValues);
+    `,
+      updateValues
+    );
 
     if (result.rows.length === 0) {
       return res.status(404).json({ error: "Appointment not found" });
@@ -21281,26 +23982,32 @@ app.put("/api/appointments/:id", async (req, res) => {
       id: appointment.id,
       title: appointment.title,
       startTime: appointment.scheduled_time,
-      endTime: appointment.duration_minutes ? 
-        new Date(new Date(appointment.scheduled_time).getTime() + (appointment.duration_minutes * 60000)) : 
-        appointment.scheduled_time,
-      address: appointment.metadata?.location || appointment.metadata?.address || '',
+      endTime: appointment.duration_minutes
+        ? new Date(
+            new Date(appointment.scheduled_time).getTime() +
+              appointment.duration_minutes * 60000
+          )
+        : appointment.scheduled_time,
+      address:
+        appointment.metadata?.location || appointment.metadata?.address || "",
       appointmentStatus: appointment.status,
       staff: appointment.staff_assigned || [],
       tags: appointment.metadata?.tags || [],
-      color: appointment.metadata?.color || '#51484f',
+      color: appointment.metadata?.color || "#51484f",
       dateAdded: appointment.created_at,
       contacts: requestData.contacts || [],
-      details: appointment.description || '',
-      meetLink: appointment.metadata?.meetLink || '',
+      details: appointment.description || "",
+      meetLink: appointment.metadata?.meetLink || "",
       appointmentType: appointment.appointment_type,
-      ...appointment.metadata // Include all metadata fields in response
+      ...appointment.metadata, // Include all metadata fields in response
     };
 
     res.json(transformedAppointment);
   } catch (error) {
     console.error("Error updating appointment:", error);
-    res.status(500).json({ error: "Failed to update appointment", details: error.message });
+    res
+      .status(500)
+      .json({ error: "Failed to update appointment", details: error.message });
   }
 });
 
@@ -21314,12 +24021,16 @@ app.get("/api/appointments/:id", async (req, res) => {
       return res.status(400).json({ error: "Email is required" });
     }
 
-    const user = await sqlDb.getRow("SELECT company_id FROM users WHERE email = $1", [email]);
+    const user = await sqlDb.getRow(
+      "SELECT company_id FROM users WHERE email = $1",
+      [email]
+    );
     if (!user) {
       return res.status(404).json({ error: "User not found" });
     }
 
-    const appointment = await sqlDb.getRow(`
+    const appointment = await sqlDb.getRow(
+      `
       SELECT 
         a.*,
         c.name as contact_name, 
@@ -21329,7 +24040,9 @@ app.get("/api/appointments/:id", async (req, res) => {
       FROM appointments a
       LEFT JOIN contacts c ON a.contact_id = c.contact_id AND a.company_id = c.company_id
       WHERE a.id = $1 AND a.company_id = $2
-    `, [id, user.company_id]);
+    `,
+      [id, user.company_id]
+    );
 
     if (!appointment) {
       return res.status(404).json({ error: "Appointment not found" });
@@ -21340,21 +24053,28 @@ app.get("/api/appointments/:id", async (req, res) => {
       id: appointment.id,
       title: appointment.title,
       startTime: appointment.scheduled_time,
-      endTime: new Date(new Date(appointment.scheduled_time).getTime() + (appointment.duration_minutes * 60000)),
-      address: appointment.metadata?.location || '',
+      endTime: new Date(
+        new Date(appointment.scheduled_time).getTime() +
+          appointment.duration_minutes * 60000
+      ),
+      address: appointment.metadata?.location || "",
       appointmentStatus: appointment.status,
       staff: appointment.staff_assigned || [],
       tags: appointment.metadata?.tags || [],
-      color: '#51484f',
+      color: "#51484f",
       dateAdded: appointment.created_at,
-      contacts: appointment.contact_id ? [{
-        id: appointment.contact_id,
-        name: appointment.contact_name || 'Unknown',
-        phone: appointment.contact_phone || '',
-        email: appointment.contact_email || ''
-      }] : [],
-      details: appointment.description || '',
-      meetLink: ''
+      contacts: appointment.contact_id
+        ? [
+            {
+              id: appointment.contact_id,
+              name: appointment.contact_name || "Unknown",
+              phone: appointment.contact_phone || "",
+              email: appointment.contact_email || "",
+            },
+          ]
+        : [],
+      details: appointment.description || "",
+      meetLink: "",
     };
 
     res.json(transformedAppointment);
@@ -21374,7 +24094,10 @@ app.delete("/api/appointments/:id", async (req, res) => {
       return res.status(400).json({ error: "Email is required" });
     }
 
-    const user = await sqlDb.getRow("SELECT company_id FROM users WHERE email = $1", [email]);
+    const user = await sqlDb.getRow(
+      "SELECT company_id FROM users WHERE email = $1",
+      [email]
+    );
     if (!user) {
       return res.status(404).json({ error: "User not found" });
     }
@@ -21403,7 +24126,10 @@ app.get("/api/calendar-config", async (req, res) => {
       return res.status(400).json({ error: "Email is required" });
     }
 
-    const user = await sqlDb.getRow("SELECT company_id FROM users WHERE email = $1", [email]);
+    const user = await sqlDb.getRow(
+      "SELECT company_id FROM users WHERE email = $1",
+      [email]
+    );
     if (!user) {
       return res.status(404).json({ error: "User not found" });
     }
@@ -21420,21 +24146,22 @@ app.get("/api/calendar-config", async (req, res) => {
       startHour: 11,
       endHour: 21,
       slotDuration: 30,
-      daysAhead: 3
+      daysAhead: 3,
     };
 
     if (settingsResult && settingsResult.setting_value) {
       // Parse the existing config or use defaults
-      const existingConfig = typeof settingsResult.setting_value === 'string' 
-        ? JSON.parse(settingsResult.setting_value) 
-        : settingsResult.setting_value;
-      
+      const existingConfig =
+        typeof settingsResult.setting_value === "string"
+          ? JSON.parse(settingsResult.setting_value)
+          : settingsResult.setting_value;
+
       calendarConfig = { ...calendarConfig, ...existingConfig };
     }
 
     res.json({
       company_id: user.company_id,
-      ...calendarConfig
+      ...calendarConfig,
     });
   } catch (error) {
     console.error("Error fetching calendar config:", error);
@@ -21445,13 +24172,26 @@ app.get("/api/calendar-config", async (req, res) => {
 // Update calendar configuration
 app.put("/api/calendar-config", async (req, res) => {
   try {
-    const { email, config: { calendarId, additionalCalendarIds, startHour, endHour, slotDuration, daysAhead } } = req.body;
+    const {
+      email,
+      config: {
+        calendarId,
+        additionalCalendarIds,
+        startHour,
+        endHour,
+        slotDuration,
+        daysAhead,
+      },
+    } = req.body;
     console.log("Updating calendar config with:", req.body);
     if (!email) {
       return res.status(400).json({ error: "Email is required" });
     }
 
-    const user = await sqlDb.getRow("SELECT company_id FROM users WHERE email = $1", [email]);
+    const user = await sqlDb.getRow(
+      "SELECT company_id FROM users WHERE email = $1",
+      [email]
+    );
     if (!user) {
       return res.status(404).json({ error: "User not found" });
     }
@@ -21462,7 +24202,7 @@ app.put("/api/calendar-config", async (req, res) => {
       startHour: startHour || 11,
       endHour: endHour || 21,
       slotDuration: slotDuration || 30,
-      daysAhead: daysAhead || 3
+      daysAhead: daysAhead || 3,
     };
     console.log("Updating calendar config with:", calendarConfig);
 
@@ -21482,13 +24222,13 @@ app.put("/api/calendar-config", async (req, res) => {
       // Insert new setting
       await sqlDb.query(
         "INSERT INTO settings (company_id, setting_type, setting_key, setting_value, created_at, last_updated) VALUES ($1, $2, $3, $4, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
-        [user.company_id, 'config', 'calendar', JSON.stringify(calendarConfig)]
+        [user.company_id, "config", "calendar", JSON.stringify(calendarConfig)]
       );
     }
 
     res.json({
       company_id: user.company_id,
-      ...calendarConfig
+      ...calendarConfig,
     });
   } catch (error) {
     console.error("Error updating calendar config:", error);
@@ -21499,31 +24239,33 @@ app.put("/api/calendar-config", async (req, res) => {
 // Create expense
 app.post("/api/expenses", async (req, res) => {
   try {
-    const {
-      email,
-      appointment_id,
-      amount,
-      description,
-      category,
-      date
-    } = req.body;
+    const { email, appointment_id, amount, description, category, date } =
+      req.body;
 
     if (!email || !appointment_id || !amount) {
-      return res.status(400).json({ error: "Email, appointment_id, and amount are required" });
+      return res
+        .status(400)
+        .json({ error: "Email, appointment_id, and amount are required" });
     }
 
-    const user = await sqlDb.getRow("SELECT company_id FROM users WHERE email = $1", [email]);
+    const user = await sqlDb.getRow(
+      "SELECT company_id FROM users WHERE email = $1",
+      [email]
+    );
     if (!user) {
       return res.status(404).json({ error: "User not found" });
     }
 
-    const result = await sqlDb.query(`
+    const result = await sqlDb.query(
+      `
       INSERT INTO expenses (
         company_id, appointment_id, amount, description, category, date, created_at
       )
       VALUES ($1, $2, $3, $4, $5, $6, CURRENT_TIMESTAMP)
       RETURNING *
-    `, [user.company_id, appointment_id, amount, description, category, date]);
+    `,
+      [user.company_id, appointment_id, amount, description, category, date]
+    );
 
     res.json(result.rows[0]);
   } catch (error) {
@@ -21543,25 +24285,27 @@ let googleCalendarAuth = null;
 async function initializeGoogleCalendarAuth() {
   try {
     // Check if service_account.json exists (same pattern as existing code)
-    const fs = require('fs');
-    if (!fs.existsSync('./service_account.json')) {
-      console.warn('Google Calendar credentials not configured - service_account.json not found');
+    const fs = require("fs");
+    if (!fs.existsSync("./service_account.json")) {
+      console.warn(
+        "Google Calendar credentials not configured - service_account.json not found"
+      );
       return null;
     }
 
     const auth = new google.auth.GoogleAuth({
-      keyFile: './service_account.json',
+      keyFile: "./service_account.json",
       scopes: [
-        'https://www.googleapis.com/auth/calendar.readonly',
-        'https://www.googleapis.com/auth/calendar'
-      ]
+        "https://www.googleapis.com/auth/calendar.readonly",
+        "https://www.googleapis.com/auth/calendar",
+      ],
     });
 
     googleCalendarAuth = await auth.getClient();
-    console.log('Google Calendar authentication initialized successfully');
+    console.log("Google Calendar authentication initialized successfully");
     return googleCalendarAuth;
   } catch (error) {
-    console.error('Failed to initialize Google Calendar auth:', error);
+    console.error("Failed to initialize Google Calendar auth:", error);
     return null;
   }
 }
@@ -21581,10 +24325,13 @@ function getCacheKey(email, timeMin, timeMax, calendarId) {
 // Helper function to validate and get user
 async function validateUserForCalendar(email) {
   try {
-    const user = await sqlDb.getRow("SELECT company_id FROM users WHERE email = $1", [email]);
+    const user = await sqlDb.getRow(
+      "SELECT company_id FROM users WHERE email = $1",
+      [email]
+    );
     return user;
   } catch (error) {
-    console.error('Error validating user:', error);
+    console.error("Error validating user:", error);
     return null;
   }
 }
@@ -21592,14 +24339,14 @@ async function validateUserForCalendar(email) {
 // GET /api/google-calendar/events - Fetch events from Google Calendar
 app.get("/api/google-calendar/events", async (req, res) => {
   try {
-    const { email, timeMin, timeMax, calendarId = 'primary' } = req.query;
+    const { email, timeMin, timeMax, calendarId = "primary" } = req.query;
 
     // Validate required parameters
     if (!email || !timeMin || !timeMax) {
       return res.status(400).json({
         success: false,
         events: [],
-        error: 'email, timeMin, and timeMax are required parameters'
+        error: "email, timeMin, and timeMax are required parameters",
       });
     }
 
@@ -21609,19 +24356,21 @@ app.get("/api/google-calendar/events", async (req, res) => {
       return res.status(401).json({
         success: false,
         events: [],
-        error: 'Unauthorized: User not found'
+        error: "Unauthorized: User not found",
       });
     }
 
     // Check if Google Calendar auth is available
     if (!googleCalendarAuth) {
-      console.warn('Google Calendar not configured, attempting to initialize...');
+      console.warn(
+        "Google Calendar not configured, attempting to initialize..."
+      );
       const auth = await initializeGoogleCalendarAuth();
       if (!auth) {
         return res.status(503).json({
           success: false,
           events: [],
-          error: 'Google Calendar integration not configured'
+          error: "Google Calendar integration not configured",
         });
       }
     }
@@ -21629,23 +24378,25 @@ app.get("/api/google-calendar/events", async (req, res) => {
     // Check cache first
     const cacheKey = getCacheKey(email, timeMin, timeMax, calendarId);
     const cachedData = calendarCache.get(cacheKey);
-    
-    if (cachedData && (Date.now() - cachedData.timestamp) < CACHE_DURATION) {
-      console.log('Returning cached calendar events for:', email);
+
+    if (cachedData && Date.now() - cachedData.timestamp < CACHE_DURATION) {
+      console.log("Returning cached calendar events for:", email);
       return res.json({
         success: true,
         events: cachedData.events,
-        cached: true
+        cached: true,
       });
     }
 
     // Initialize Google Calendar API
     const calendar = google.calendar({
-      version: 'v3',
-      auth: googleCalendarAuth
+      version: "v3",
+      auth: googleCalendarAuth,
     });
 
-    console.log(`Fetching Google Calendar events for ${email} from ${timeMin} to ${timeMax}`);
+    console.log(
+      `Fetching Google Calendar events for ${email} from ${timeMin} to ${timeMax}`
+    );
 
     // Fetch events from Google Calendar
     const response = await calendar.events.list({
@@ -21653,58 +24404,59 @@ app.get("/api/google-calendar/events", async (req, res) => {
       timeMin: timeMin,
       timeMax: timeMax,
       singleEvents: true,
-      orderBy: 'startTime',
-      timeZone: 'Asia/Kuala_Lumpur',
-      maxResults: 250 // Reasonable limit to prevent huge responses
+      orderBy: "startTime",
+      timeZone: "Asia/Kuala_Lumpur",
+      maxResults: 250, // Reasonable limit to prevent huge responses
     });
 
     // Transform events to match expected format
-    const events = response.data.items?.map(event => {
-      // Handle all-day events vs timed events
-      const isAllDay = !event.start?.dateTime && event.start?.date;
-      
-      let startDateTime, endDateTime;
-      
-      if (isAllDay) {
-        // For all-day events, convert date to dateTime at start of day in Malaysia timezone
-        const startDate = new Date(event.start.date + 'T00:00:00+08:00');
-        const endDate = new Date(event.end.date + 'T00:00:00+08:00');
-        
-        startDateTime = startDate.toISOString();
-        endDateTime = endDate.toISOString();
-      } else {
-        // For timed events, use the existing dateTime
-        startDateTime = event.start?.dateTime || null;
-        endDateTime = event.end?.dateTime || null;
-      }
-      
-      return {
-        summary: event.summary || 'Busy',
-        start: {
-          dateTime: startDateTime,
-          date: event.start?.date || null
-        },
-        end: {
-          dateTime: endDateTime,
-          date: event.end?.date || null
-        },
-        id: event.id,
-        status: event.status,
-        transparency: event.transparency, // 'transparent' means the event doesn't block time
-        isAllDay: isAllDay // Add flag to indicate if this is an all-day event
-      };
-    }) || [];
+    const events =
+      response.data.items?.map((event) => {
+        // Handle all-day events vs timed events
+        const isAllDay = !event.start?.dateTime && event.start?.date;
+
+        let startDateTime, endDateTime;
+
+        if (isAllDay) {
+          // For all-day events, convert date to dateTime at start of day in Malaysia timezone
+          const startDate = new Date(event.start.date + "T00:00:00+08:00");
+          const endDate = new Date(event.end.date + "T00:00:00+08:00");
+
+          startDateTime = startDate.toISOString();
+          endDateTime = endDate.toISOString();
+        } else {
+          // For timed events, use the existing dateTime
+          startDateTime = event.start?.dateTime || null;
+          endDateTime = event.end?.dateTime || null;
+        }
+
+        return {
+          summary: event.summary || "Busy",
+          start: {
+            dateTime: startDateTime,
+            date: event.start?.date || null,
+          },
+          end: {
+            dateTime: endDateTime,
+            date: event.end?.date || null,
+          },
+          id: event.id,
+          status: event.status,
+          transparency: event.transparency, // 'transparent' means the event doesn't block time
+          isAllDay: isAllDay, // Add flag to indicate if this is an all-day event
+        };
+      }) || [];
 
     // Filter out cancelled events and transparent events (they don't block time)
-    const filteredEvents = events.filter(event => 
-      event.status !== 'cancelled' && 
-      event.transparency !== 'transparent'
+    const filteredEvents = events.filter(
+      (event) =>
+        event.status !== "cancelled" && event.transparency !== "transparent"
     );
 
     // Cache the results
     calendarCache.set(cacheKey, {
       events: filteredEvents,
-      timestamp: Date.now()
+      timestamp: Date.now(),
     });
 
     // Clean up old cache entries (optional - prevents memory leaks)
@@ -21721,34 +24473,33 @@ app.get("/api/google-calendar/events", async (req, res) => {
 
     res.json({
       success: true,
-      events: filteredEvents
+      events: filteredEvents,
     });
-
   } catch (error) {
-    console.error('Google Calendar API error:', error);
-    
+    console.error("Google Calendar API error:", error);
+
     // Determine error type and provide appropriate response
-    let errorMessage = 'Failed to fetch calendar events';
+    let errorMessage = "Failed to fetch calendar events";
     let statusCode = 500;
 
     if (error.code === 404) {
-      errorMessage = 'Calendar not found or access denied';
+      errorMessage = "Calendar not found or access denied";
       statusCode = 404;
     } else if (error.code === 403) {
-      errorMessage = 'Insufficient permissions to access calendar';
+      errorMessage = "Insufficient permissions to access calendar";
       statusCode = 403;
     } else if (error.code === 429) {
-      errorMessage = 'Rate limit exceeded, please try again later';
+      errorMessage = "Rate limit exceeded, please try again later";
       statusCode = 429;
-    } else if (error.message?.includes('invalid_grant')) {
-      errorMessage = 'Google Calendar authentication failed';
+    } else if (error.message?.includes("invalid_grant")) {
+      errorMessage = "Google Calendar authentication failed";
       statusCode = 401;
     }
 
     res.status(statusCode).json({
       success: false,
       events: [],
-      error: errorMessage
+      error: errorMessage,
     });
   }
 });
@@ -21756,16 +24507,16 @@ app.get("/api/google-calendar/events", async (req, res) => {
 // POST /api/google-calendar/create-event - Create a new event in Google Calendar
 app.post("/api/google-calendar/create-event", async (req, res) => {
   try {
-    const { event, calendarId = 'primary', userEmail } = req.body;
-    
+    const { event, calendarId = "primary", userEmail } = req.body;
+
     // Use the provided calendarId or default to the specific calendar
-    const actualCalendarId = 'thealistmalaysia@gmail.com';
+    const actualCalendarId = "thealistmalaysia@gmail.com";
 
     // Validate required parameters
     if (!event || !event.summary || !event.start || !event.end) {
       return res.status(400).json({
         success: false,
-        error: 'event with summary, start, and end times are required'
+        error: "event with summary, start, and end times are required",
       });
     }
 
@@ -21775,74 +24526,93 @@ app.post("/api/google-calendar/create-event", async (req, res) => {
       if (!user) {
         return res.status(401).json({
           success: false,
-          error: 'Unauthorized: User not found'
+          error: "Unauthorized: User not found",
         });
       }
     }
 
     // Check if Google Calendar auth is available
     if (!googleCalendarAuth) {
-      console.warn('Google Calendar not configured, attempting to initialize...');
+      console.warn(
+        "Google Calendar not configured, attempting to initialize..."
+      );
       const auth = await initializeGoogleCalendarAuth();
       if (!auth) {
         return res.status(503).json({
           success: false,
-          error: 'Google Calendar integration not configured'
+          error: "Google Calendar integration not configured",
         });
       }
     }
 
     // Initialize Google Calendar API with write permissions and conference data creation
     const auth = new google.auth.GoogleAuth({
-      keyFile: './service_account.json',
+      keyFile: "./service_account.json",
       scopes: [
-        'https://www.googleapis.com/auth/calendar',
-        'https://www.googleapis.com/auth/calendar.events'
-      ]
-    });
-    
-    const calendar = google.calendar({
-      version: 'v3',
-      auth: auth
+        "https://www.googleapis.com/auth/calendar",
+        "https://www.googleapis.com/auth/calendar.events",
+      ],
     });
 
-    console.log(`Creating Google Calendar event: ${event.summary} on ${actualCalendarId}`);
-    console.log('Service account email:', 'crm-643@onboarding-a5fcb.iam.gserviceaccount.com');
-    console.log('Event details:', JSON.stringify(event, null, 2));
+    const calendar = google.calendar({
+      version: "v3",
+      auth: auth,
+    });
+
+    console.log(
+      `Creating Google Calendar event: ${event.summary} on ${actualCalendarId}`
+    );
+    console.log(
+      "Service account email:",
+      "crm-643@onboarding-a5fcb.iam.gserviceaccount.com"
+    );
+    console.log("Event details:", JSON.stringify(event, null, 2));
 
     // Check calendar conference settings first
     try {
       const calendarInfo = await calendar.calendars.get({
-        calendarId: actualCalendarId
+        calendarId: actualCalendarId,
       });
-      console.log('Calendar conference properties:', calendarInfo.data.conferenceProperties);
-      
-      const allowedTypes = calendarInfo.data.conferenceProperties?.allowedConferenceSolutionTypes || [];
-      console.log('Allowed conference solution types:', allowedTypes);
-      
-      if (!allowedTypes.includes('hangoutsMeet')) {
-        console.warn('WARNING: hangoutsMeet is not in allowed conference solution types for this calendar');
-        console.log('Available types:', allowedTypes);
+      console.log(
+        "Calendar conference properties:",
+        calendarInfo.data.conferenceProperties
+      );
+
+      const allowedTypes =
+        calendarInfo.data.conferenceProperties
+          ?.allowedConferenceSolutionTypes || [];
+      console.log("Allowed conference solution types:", allowedTypes);
+
+      if (!allowedTypes.includes("hangoutsMeet")) {
+        console.warn(
+          "WARNING: hangoutsMeet is not in allowed conference solution types for this calendar"
+        );
+        console.log("Available types:", allowedTypes);
       }
     } catch (calError) {
-      console.warn('Could not check calendar conference properties:', calError.message);
+      console.warn(
+        "Could not check calendar conference properties:",
+        calError.message
+      );
     }
 
     // Process event data - title comes pre-formatted from frontend
     const eventForCalendar = { ...event };
-    
+
     console.log(`Event title: "${event.summary}"`);
-    
+
     // Service accounts cannot invite attendees without Domain-Wide Delegation
     // So we'll add attendee info to the description instead
     if (event.attendees && event.attendees.length > 0) {
       const attendeeInfo = event.attendees
-        .map(attendee => `${attendee.displayName || ''} (${attendee.email})`)
-        .join(', ');
-      
-      eventForCalendar.description = `${event.description || ''}\n\nGuest: ${attendeeInfo}`.trim();
-      console.log('Adding attendee info to description:', attendeeInfo);
-      
+        .map((attendee) => `${attendee.displayName || ""} (${attendee.email})`)
+        .join(", ");
+
+      eventForCalendar.description = `${
+        event.description || ""
+      }\n\nGuest: ${attendeeInfo}`.trim();
+      console.log("Adding attendee info to description:", attendeeInfo);
+
       // Remove attendees from the event to avoid permission errors
       delete eventForCalendar.attendees;
     }
@@ -21859,80 +24629,91 @@ app.post("/api/google-calendar/create-event", async (req, res) => {
         eventForCalendar.conferenceData = {
           createRequest: {
             requestId: `booking-${Date.now()}`,
-            conferenceSolutionKey: { 
-              type: 'hangoutsMeet' 
-            }
-          }
+            conferenceSolutionKey: {
+              type: "hangoutsMeet",
+            },
+          },
         };
 
-        console.log('Attempting to create event with Google Meet...');
-        console.log('Conference data:', JSON.stringify(eventForCalendar.conferenceData, null, 2));
-        
+        console.log("Attempting to create event with Google Meet...");
+        console.log(
+          "Conference data:",
+          JSON.stringify(eventForCalendar.conferenceData, null, 2)
+        );
+
         const insertParamsWithMeet = {
           calendarId: actualCalendarId,
           resource: eventForCalendar,
           conferenceDataVersion: 1,
-          sendUpdates: 'all'
+          sendUpdates: "all",
         };
 
         response = await calendar.events.insert(insertParamsWithMeet);
         meetLinkCreated = true;
-        console.log('Successfully created event with Google Meet');
-        
+        console.log("Successfully created event with Google Meet");
       } catch (meetError) {
-        console.log('Google Meet creation failed:', meetError);
-        console.log('Error details:', meetError.message);
-        console.log('Error code:', meetError.code);
-        
+        console.log("Google Meet creation failed:", meetError);
+        console.log("Error details:", meetError.message);
+        console.log("Error code:", meetError.code);
+
         // Try alternative conference solution approach
         try {
-          console.log('Trying alternative Google Meet creation method...');
-          
+          console.log("Trying alternative Google Meet creation method...");
+
           // Reset conference data with different approach
           eventForCalendar.conferenceData = {
             createRequest: {
               requestId: `booking-alt-${Date.now()}`,
-              conferenceSolutionKey: { 
-                type: 'hangoutsMeet' 
-              }
-            }
+              conferenceSolutionKey: {
+                type: "hangoutsMeet",
+              },
+            },
           };
-          
+
           const insertParamsAlt = {
             calendarId: actualCalendarId,
             resource: eventForCalendar,
-            conferenceDataVersion: 1
+            conferenceDataVersion: 1,
           };
 
           response = await calendar.events.insert(insertParamsAlt);
           meetLinkCreated = true;
-          console.log('Successfully created event with Google Meet (alternative method)');
-          
+          console.log(
+            "Successfully created event with Google Meet (alternative method)"
+          );
         } catch (altError) {
-          console.log('Alternative Google Meet creation also failed, falling back to event without Meet:', altError.message);
-          
+          console.log(
+            "Alternative Google Meet creation also failed, falling back to event without Meet:",
+            altError.message
+          );
+
           // Remove conference data and try again
           delete eventForCalendar.conferenceData;
-          
+
           const insertParamsWithoutMeet = {
             calendarId: actualCalendarId,
-            resource: eventForCalendar
+            resource: eventForCalendar,
           };
 
           // Add manual Google Meet link to description as fallback
           manualMeetLink = `https://meet.google.com/new`;
-          eventForCalendar.description = `${eventForCalendar.description || ''}\n\n🎥 Google Meet: ${manualMeetLink}\n(Click to create a new meeting room)`.trim();
-          
+          eventForCalendar.description = `${
+            eventForCalendar.description || ""
+          }\n\n🎥 Google Meet: ${manualMeetLink}\n(Click to create a new meeting room)`.trim();
+
           response = await calendar.events.insert(insertParamsWithoutMeet);
-          console.log('Successfully created event without Google Meet');
-          console.log('Added manual Google Meet link to description:', manualMeetLink);
+          console.log("Successfully created event without Google Meet");
+          console.log(
+            "Added manual Google Meet link to description:",
+            manualMeetLink
+          );
         }
       }
     } else {
       // No conference data requested, create simple event
       const insertParams = {
         calendarId: actualCalendarId,
-        resource: eventForCalendar
+        resource: eventForCalendar,
       };
 
       response = await calendar.events.insert(insertParams);
@@ -21940,7 +24721,9 @@ app.post("/api/google-calendar/create-event", async (req, res) => {
 
     const createdEvent = response.data;
 
-    console.log(`Successfully created Google Calendar event with ID: ${createdEvent.id}`);
+    console.log(
+      `Successfully created Google Calendar event with ID: ${createdEvent.id}`
+    );
     console.log(`Event created in calendar: ${actualCalendarId}`);
     console.log(`Event HTML Link: ${createdEvent.htmlLink}`);
     console.log(`Google Meet link created: ${meetLinkCreated}`);
@@ -21962,37 +24745,36 @@ app.post("/api/google-calendar/create-event", async (req, res) => {
         start: createdEvent.start,
         end: createdEvent.end,
         attendees: createdEvent.attendees,
-        conferenceData: createdEvent.conferenceData
-      }
+        conferenceData: createdEvent.conferenceData,
+      },
     });
-
   } catch (error) {
-    console.error('Google Calendar create event error:', error);
-    
+    console.error("Google Calendar create event error:", error);
+
     // Determine error type and provide appropriate response
-    let errorMessage = 'Failed to create calendar event';
+    let errorMessage = "Failed to create calendar event";
     let statusCode = 500;
 
     if (error.code === 404) {
-      errorMessage = 'Calendar not found or access denied';
+      errorMessage = "Calendar not found or access denied";
       statusCode = 404;
     } else if (error.code === 403) {
-      errorMessage = 'Insufficient permissions to create events in calendar';
+      errorMessage = "Insufficient permissions to create events in calendar";
       statusCode = 403;
     } else if (error.code === 429) {
-      errorMessage = 'Rate limit exceeded, please try again later';
+      errorMessage = "Rate limit exceeded, please try again later";
       statusCode = 429;
-    } else if (error.message?.includes('invalid_grant')) {
-      errorMessage = 'Google Calendar authentication failed';
+    } else if (error.message?.includes("invalid_grant")) {
+      errorMessage = "Google Calendar authentication failed";
       statusCode = 401;
-    } else if (error.message?.includes('Invalid conference type')) {
-      errorMessage = 'Failed to create Google Meet conference';
+    } else if (error.message?.includes("Invalid conference type")) {
+      errorMessage = "Failed to create Google Meet conference";
       statusCode = 400;
     }
 
     res.status(statusCode).json({
       success: false,
-      error: errorMessage
+      error: errorMessage,
     });
   }
 });
@@ -22005,12 +24787,15 @@ app.post("/api/google-calendar/create-event", async (req, res) => {
 app.get("/api/booking-slots", async (req, res) => {
   try {
     const { email } = req.query;
-    
+
     if (!email) {
       return res.status(400).json({ error: "Email is required" });
     }
 
-    const user = await sqlDb.getRow("SELECT company_id FROM users WHERE email = $1", [email]);
+    const user = await sqlDb.getRow(
+      "SELECT company_id FROM users WHERE email = $1",
+      [email]
+    );
     if (!user) {
       return res.status(404).json({ error: "User not found" });
     }
@@ -22020,18 +24805,18 @@ app.get("/api/booking-slots", async (req, res) => {
       WHERE company_id = $1 
       ORDER BY created_at DESC
     `;
-    
+
     const result = await sqlDb.query(query, [user.company_id]);
-    
+
     res.json({
       success: true,
-      bookingSlots: result.rows
+      bookingSlots: result.rows,
     });
   } catch (error) {
     console.error("Error fetching booking slots:", error);
-    res.status(500).json({ 
+    res.status(500).json({
       success: false,
-      error: "Failed to fetch booking slots" 
+      error: "Failed to fetch booking slots",
     });
   }
 });
@@ -22040,30 +24825,30 @@ app.get("/api/booking-slots", async (req, res) => {
 app.get("/api/booking-slots/:slug", async (req, res) => {
   try {
     const { slug } = req.params;
-    
+
     const query = `
       SELECT * FROM booking_slots 
       WHERE slug = $1 AND is_active = true
     `;
-    
+
     const result = await sqlDb.getRow(query, [slug]);
-    
+
     if (!result) {
       return res.status(404).json({
         success: false,
-        error: "Booking slot not found"
+        error: "Booking slot not found",
       });
     }
-    
+
     res.json({
       success: true,
-      bookingSlot: result
+      bookingSlot: result,
     });
   } catch (error) {
     console.error("Error fetching booking slot:", error);
-    res.status(500).json({ 
+    res.status(500).json({
       success: false,
-      error: "Failed to fetch booking slot" 
+      error: "Failed to fetch booking slot",
     });
   }
 });
@@ -22072,60 +24857,71 @@ app.get("/api/booking-slots/:slug", async (req, res) => {
 app.post("/api/booking-slots", async (req, res) => {
   try {
     const {
-      title, slug, description, location, duration, staffName,
-      staff_phone, is_active, created_by, company_id
+      title,
+      slug,
+      description,
+      location,
+      duration,
+      staffName,
+      staff_phone,
+      is_active,
+      created_by,
+      company_id,
     } = req.body;
-    
+
     // Validation
     if (!title || !slug || !staffName || !created_by || !company_id) {
       return res.status(422).json({
         success: false,
-        error: 'title, slug, staffName, created_by, and company_id are required'
+        error:
+          "title, slug, staffName, created_by, and company_id are required",
       });
     }
-    
+
     // Check if slug already exists and handle gracefully
     let finalSlug = slug;
     let existingSlot = await sqlDb.getRow(
-      "SELECT * FROM booking_slots WHERE slug = $1", 
+      "SELECT * FROM booking_slots WHERE slug = $1",
       [finalSlug]
     );
-    
+
     if (existingSlot) {
       // If it's the exact same booking slot (same title, staff, company), return the existing one
-      if (existingSlot.title === title && 
-          existingSlot.staff_name === staffName && 
-          existingSlot.company_id === company_id) {
+      if (
+        existingSlot.title === title &&
+        existingSlot.staff_name === staffName &&
+        existingSlot.company_id === company_id
+      ) {
         return res.status(200).json({
           success: true,
           bookingSlot: existingSlot,
-          message: 'Booking slot already exists'
+          message: "Booking slot already exists",
         });
       }
-      
+
       // Otherwise, generate a unique slug with timestamp
       const timestamp = Date.now();
       finalSlug = `${slug}-${timestamp}`;
-      
+
       // Double-check the new slug doesn't exist
       const newSlugCheck = await sqlDb.getRow(
-        "SELECT id FROM booking_slots WHERE slug = $1", 
+        "SELECT id FROM booking_slots WHERE slug = $1",
         [finalSlug]
       );
-      
+
       if (newSlugCheck) {
         return res.status(409).json({
           success: false,
-          error: 'Unable to generate unique slug. Please try again.'
+          error: "Unable to generate unique slug. Please try again.",
         });
       }
     }
-    
-    const bookingSlotId = require('uuid').v4();
-    
-      // ... existing code ...
-    
-      const query = `
+
+    const bookingSlotId = require("uuid").v4();
+
+    // ... existing code ...
+
+    const query = `
       INSERT INTO booking_slots (
         id, title, slug, description, location, duration_minutes, 
         staff_name, staff_phone, is_active, created_by, company_id, created_at, updated_at
@@ -22133,30 +24929,40 @@ app.post("/api/booking-slots", async (req, res) => {
       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW(), NOW())
       RETURNING *
     `;
-    
+
     const result = await sqlDb.getRow(query, [
-      bookingSlotId, title, finalSlug, description, location, duration || 30,
-      staffName, staff_phone, is_active !== false, created_by, company_id
+      bookingSlotId,
+      title,
+      finalSlug,
+      description,
+      location,
+      duration || 30,
+      staffName,
+      staff_phone,
+      is_active !== false,
+      created_by,
+      company_id,
     ]);
-    
+
     res.status(201).json({
       success: true,
-      bookingSlot: result
+      bookingSlot: result,
     });
   } catch (error) {
     console.error("Error creating booking slot:", error);
-    
+
     // Handle specific database errors
-    if (error.code === '23505') { // Unique constraint violation
+    if (error.code === "23505") {
+      // Unique constraint violation
       return res.status(409).json({
         success: false,
-        error: 'A booking slot with this slug already exists'
+        error: "A booking slot with this slug already exists",
       });
     }
-    
+
     res.status(500).json({
       success: false,
-      error: "Failed to create booking slot"
+      error: "Failed to create booking slot",
     });
   }
 });
@@ -22166,27 +24972,33 @@ app.put("/api/booking-slots/:id", async (req, res) => {
   try {
     const { id } = req.params;
     const {
-      title, slug, description, location, duration, staffName, is_active
+      title,
+      slug,
+      description,
+      location,
+      duration,
+      staffName,
+      is_active,
     } = req.body;
-    
+
     // Check if booking slot exists
     const existingSlot = await sqlDb.getRow(
-      "SELECT id FROM booking_slots WHERE id = $1", 
+      "SELECT id FROM booking_slots WHERE id = $1",
       [id]
     );
-    
+
     if (!existingSlot) {
       return res.status(404).json({
         success: false,
-        error: 'Booking slot not found'
+        error: "Booking slot not found",
       });
     }
-    
+
     // Build update query dynamically
     const updateFields = [];
     const values = [];
     let paramCount = 1;
-    
+
     if (title !== undefined) {
       updateFields.push(`title = $${paramCount++}`);
       values.push(title);
@@ -22215,35 +25027,35 @@ app.put("/api/booking-slots/:id", async (req, res) => {
       updateFields.push(`is_active = $${paramCount++}`);
       values.push(is_active);
     }
-    
+
     if (updateFields.length === 0) {
       return res.status(422).json({
         success: false,
-        error: 'No fields to update'
+        error: "No fields to update",
       });
     }
-    
+
     updateFields.push(`updated_at = NOW()`);
     values.push(id);
-    
+
     const query = `
       UPDATE booking_slots 
-      SET ${updateFields.join(', ')}
+      SET ${updateFields.join(", ")}
       WHERE id = $${paramCount}
       RETURNING *
     `;
-    
+
     const result = await sqlDb.getRow(query, values);
-    
+
     res.json({
       success: true,
-      bookingSlot: result
+      bookingSlot: result,
     });
   } catch (error) {
     console.error("Error updating booking slot:", error);
     res.status(500).json({
       success: false,
-      error: "Failed to update booking slot"
+      error: "Failed to update booking slot",
     });
   }
 });
@@ -22253,40 +25065,43 @@ app.delete("/api/booking-slots/:id", async (req, res) => {
   try {
     const { id } = req.params;
     const { email } = req.body;
-    
+
     if (!email) {
       return res.status(400).json({ error: "Email is required" });
     }
 
-    const user = await sqlDb.getRow("SELECT company_id FROM users WHERE email = $1", [email]);
+    const user = await sqlDb.getRow(
+      "SELECT company_id FROM users WHERE email = $1",
+      [email]
+    );
     if (!user) {
       return res.status(404).json({ error: "User not found" });
     }
-    
+
     // Check if booking slot exists and belongs to user's company
     const existingSlot = await sqlDb.getRow(
-      "SELECT id FROM booking_slots WHERE id = $1 AND company_id = $2", 
+      "SELECT id FROM booking_slots WHERE id = $1 AND company_id = $2",
       [id, user.company_id]
     );
-    
+
     if (!existingSlot) {
       return res.status(404).json({
         success: false,
-        error: 'Booking slot not found'
+        error: "Booking slot not found",
       });
     }
-    
+
     await sqlDb.query("DELETE FROM booking_slots WHERE id = $1", [id]);
-    
+
     res.json({
       success: true,
-      message: "Booking slot deleted successfully"
+      message: "Booking slot deleted successfully",
     });
   } catch (error) {
     console.error("Error deleting booking slot:", error);
     res.status(500).json({
       success: false,
-      error: "Failed to delete booking slot"
+      error: "Failed to delete booking slot",
     });
   }
 });
@@ -22295,107 +25110,132 @@ app.delete("/api/booking-slots/:id", async (req, res) => {
 app.post("/api/booking-slots/book", async (req, res) => {
   try {
     // Log the full request body for debugging
-    console.log('Booking request received:', JSON.stringify(req.body, null, 2));
-    
+    console.log("Booking request received:", JSON.stringify(req.body, null, 2));
+
     const {
-      bookingSlotId, firstName, lastName, email, phone, 
-      selectedDate, selectedTime, message, staffName,
-      title, duration, startDateTime, endDateTime,
+      bookingSlotId,
+      firstName,
+      lastName,
+      email,
+      phone,
+      selectedDate,
+      selectedTime,
+      message,
+      staffName,
+      title,
+      duration,
+      startDateTime,
+      endDateTime,
       // Frontend also sends these fields
-      slotId, slotSlug, phoneNumber, name, bookedAt
+      slotId,
+      slotSlug,
+      phoneNumber,
+      name,
+      bookedAt,
     } = req.body;
-    
+
     // Map frontend field names to backend expected names
     const actualFirstName = firstName || name;
     const actualPhone = phone || phoneNumber;
-    
+
     // Validation - flexible to support different frontend formats
     if (!actualFirstName || !email || !actualPhone) {
       return res.status(422).json({
         success: false,
-        error: 'name/firstName, email, and phone/phoneNumber are required'
+        error: "name/firstName, email, and phone/phoneNumber are required",
       });
     }
-    
+
     // Check if we have any date/time information
     if (!selectedDate && !startDateTime) {
       return res.status(422).json({
         success: false,
-        error: 'Either selectedDate or startDateTime is required'
+        error: "Either selectedDate or startDateTime is required",
       });
     }
-    
+
     // Handle different date/time formats from frontend
     let appointmentDateTime, endTime;
-    
+
     if (startDateTime) {
       // Direct datetime format
       appointmentDateTime = new Date(startDateTime);
-      endTime = endDateTime ? new Date(endDateTime) : new Date(appointmentDateTime.getTime() + ((duration || 30) * 60000));
-          } else if (selectedDate && selectedTime) {
-        // Separate date and time - handle both 12-hour and 24-hour formats
-        let timeString = selectedTime;
-        
-        // Convert 12-hour format to 24-hour format
-        if (selectedTime.includes('am') || selectedTime.includes('pm')) {
-          const time = selectedTime.toLowerCase().replace(/\s/g, '');
-          const [timePart, meridiem] = [time.slice(0, -2), time.slice(-2)];
-          let [hours, minutes] = timePart.split(':');
-          
-          hours = parseInt(hours);
-          minutes = minutes || '00';
-          
-          if (meridiem === 'pm' && hours !== 12) {
-            hours += 12;
-          } else if (meridiem === 'am' && hours === 12) {
-            hours = 0;
-          }
-          
-          timeString = `${hours.toString().padStart(2, '0')}:${minutes}`;
+      endTime = endDateTime
+        ? new Date(endDateTime)
+        : new Date(appointmentDateTime.getTime() + (duration || 30) * 60000);
+    } else if (selectedDate && selectedTime) {
+      // Separate date and time - handle both 12-hour and 24-hour formats
+      let timeString = selectedTime;
+
+      // Convert 12-hour format to 24-hour format
+      if (selectedTime.includes("am") || selectedTime.includes("pm")) {
+        const time = selectedTime.toLowerCase().replace(/\s/g, "");
+        const [timePart, meridiem] = [time.slice(0, -2), time.slice(-2)];
+        let [hours, minutes] = timePart.split(":");
+
+        hours = parseInt(hours);
+        minutes = minutes || "00";
+
+        if (meridiem === "pm" && hours !== 12) {
+          hours += 12;
+        } else if (meridiem === "am" && hours === 12) {
+          hours = 0;
         }
-        
-        appointmentDateTime = new Date(`${selectedDate}T${timeString}`);
-        endTime = new Date(appointmentDateTime.getTime() + ((duration || 30) * 60000));
+
+        timeString = `${hours.toString().padStart(2, "0")}:${minutes}`;
       }
-    
+
+      appointmentDateTime = new Date(`${selectedDate}T${timeString}`);
+      endTime = new Date(
+        appointmentDateTime.getTime() + (duration || 30) * 60000
+      );
+    }
+
     if (!appointmentDateTime || isNaN(appointmentDateTime.getTime())) {
-      console.error('Invalid date/time:', { selectedDate, selectedTime, startDateTime, endDateTime });
+      console.error("Invalid date/time:", {
+        selectedDate,
+        selectedTime,
+        startDateTime,
+        endDateTime,
+      });
       return res.status(422).json({
         success: false,
-        error: 'Invalid date/time format. Please check date and time values.'
+        error: "Invalid date/time format. Please check date and time values.",
       });
     }
-    
+
     // Get company_id - try from bookingSlotId first, fallback to default
     let company_id = null;
-    
+
     if (bookingSlotId) {
       const bookingSlot = await sqlDb.getRow(
-        "SELECT company_id FROM booking_slots WHERE id = $1", 
+        "SELECT company_id FROM booking_slots WHERE id = $1",
         [bookingSlotId]
       );
       company_id = bookingSlot?.company_id;
     }
-    
+
     // Fallback: get company_id from a user email if available in metadata
     if (!company_id) {
       // For calendar bookings, we might need to get company_id differently
       // This is a fallback - you may need to adjust based on your data structure
-      const defaultUser = await sqlDb.getRow("SELECT company_id FROM users LIMIT 1");
+      const defaultUser = await sqlDb.getRow(
+        "SELECT company_id FROM users LIMIT 1"
+      );
       company_id = defaultUser?.company_id;
     }
-    
+
     if (!company_id) {
       return res.status(422).json({
         success: false,
-        error: 'Unable to determine company_id for booking'
+        error: "Unable to determine company_id for booking",
       });
     }
-    
+
     // Create appointment
-    const appointmentId = require('uuid').v4();
-    const contactName = `${actualFirstName} ${lastName || ''}`.trim();
-    
+    const appointmentId = require("uuid").v4();
+    const contactName = `${actualFirstName} ${lastName || ""}`.trim();
+
     const appointmentData = {
       appointment_id: appointmentId,
       company_id: company_id,
@@ -22403,53 +25243,60 @@ app.post("/api/booking-slots/book", async (req, res) => {
       title: title || `Appointment - ${contactName}`,
       description: message || `Calendar booking for ${contactName}`,
       scheduled_time: appointmentDateTime.toISOString(),
-      duration_minutes: duration || Math.round((endTime.getTime() - appointmentDateTime.getTime()) / (1000 * 60)),
-      status: 'scheduled',
+      duration_minutes:
+        duration ||
+        Math.round(
+          (endTime.getTime() - appointmentDateTime.getTime()) / (1000 * 60)
+        ),
+      status: "scheduled",
       metadata: JSON.stringify({
         bookingSlotId: bookingSlotId || slotId || null,
         bookingSlotSlug: slotSlug || null,
         calendarBooking: true,
         customerEmail: email,
         customerPhone: actualPhone,
-        staffName: staffName || 'Staff',
-        source: 'calendar',
-        bookedAt: bookedAt || new Date().toISOString()
+        staffName: staffName || "Staff",
+        source: "calendar",
+        bookedAt: bookedAt || new Date().toISOString(),
       }),
-      staff_assigned: JSON.stringify([staffName || 'Staff']),
-      appointment_type: 'booking'
+      staff_assigned: JSON.stringify([staffName || "Staff"]),
+      appointment_type: "booking",
     };
-    
-    const result = await sqlDb.query(`
+
+    const result = await sqlDb.query(
+      `
       INSERT INTO appointments (
         appointment_id, company_id, contact_id, title, description, 
         scheduled_time, duration_minutes, status, metadata, staff_assigned, appointment_type
       )
       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
       RETURNING *
-    `, [
-      appointmentData.appointment_id,
-      appointmentData.company_id,
-      appointmentData.contact_id,
-      appointmentData.title,
-      appointmentData.description,
-      appointmentData.scheduled_time,
-      appointmentData.duration_minutes,
-      appointmentData.status,
-      appointmentData.metadata,
-      appointmentData.staff_assigned,
-      appointmentData.appointment_type
-    ]);
-    
+    `,
+      [
+        appointmentData.appointment_id,
+        appointmentData.company_id,
+        appointmentData.contact_id,
+        appointmentData.title,
+        appointmentData.description,
+        appointmentData.scheduled_time,
+        appointmentData.duration_minutes,
+        appointmentData.status,
+        appointmentData.metadata,
+        appointmentData.staff_assigned,
+        appointmentData.appointment_type,
+      ]
+    );
+
     res.status(201).json({
       success: true,
       appointment: result.rows[0],
-      message: "Booking created successfully"
+      message: "Booking created successfully",
     });
   } catch (error) {
     console.error("Error creating booking:", error);
     res.status(500).json({
       success: false,
-      error: "Failed to create booking"
+      error: "Failed to create booking",
     });
   }
 });
@@ -22458,7 +25305,7 @@ app.post("/api/booking-slots/book", async (req, res) => {
 app.get("/api/booking-slots/public/:slug", async (req, res) => {
   try {
     const { slug } = req.params;
-    
+
     const query = `
       SELECT 
         id, title, slug, description, location, duration_minutes, 
@@ -22466,25 +25313,25 @@ app.get("/api/booking-slots/public/:slug", async (req, res) => {
       FROM booking_slots 
       WHERE slug = $1 AND is_active = true
     `;
-    
+
     const result = await sqlDb.getRow(query, [slug]);
-    
+
     if (!result) {
       return res.status(404).json({
         success: false,
-        error: "Booking slot not found or inactive"
+        error: "Booking slot not found or inactive",
       });
     }
-    
+
     res.json({
       success: true,
-      bookingSlot: result
+      bookingSlot: result,
     });
   } catch (error) {
     console.error("Error fetching public booking slot:", error);
-    res.status(500).json({ 
+    res.status(500).json({
       success: false,
-      error: "Failed to fetch booking slot" 
+      error: "Failed to fetch booking slot",
     });
   }
 });
@@ -22493,48 +25340,66 @@ app.get("/api/booking-slots/public/:slug", async (req, res) => {
 app.post("/api/booking-slots/public/book", async (req, res) => {
   try {
     const {
-      bookingSlotId, firstName, lastName, email, phone, 
-      selectedDate, selectedTime, message, staffName
+      bookingSlotId,
+      firstName,
+      lastName,
+      email,
+      phone,
+      selectedDate,
+      selectedTime,
+      message,
+      staffName,
     } = req.body;
-    
+
     // Validation
-    if (!bookingSlotId || !firstName || !email || !phone || !selectedDate || !selectedTime) {
+    if (
+      !bookingSlotId ||
+      !firstName ||
+      !email ||
+      !phone ||
+      !selectedDate ||
+      !selectedTime
+    ) {
       return res.status(422).json({
         success: false,
-        error: 'bookingSlotId, firstName, email, phone, selectedDate, and selectedTime are required'
+        error:
+          "bookingSlotId, firstName, email, phone, selectedDate, and selectedTime are required",
       });
     }
-    
+
     // Get booking slot details
     const bookingSlot = await sqlDb.getRow(
-      "SELECT * FROM booking_slots WHERE id = $1 AND is_active = true", 
+      "SELECT * FROM booking_slots WHERE id = $1 AND is_active = true",
       [bookingSlotId]
     );
-    
+
     if (!bookingSlot) {
       return res.status(404).json({
         success: false,
-        error: 'Booking slot not found or inactive'
+        error: "Booking slot not found or inactive",
       });
     }
-    
+
     // Create appointment
-    const appointmentId = require('uuid').v4();
+    const appointmentId = require("uuid").v4();
     const contactName = `${firstName} ${lastName}`.trim();
-    
+
     // Parse date and time
     const appointmentDateTime = new Date(`${selectedDate}T${selectedTime}`);
-    const endDateTime = new Date(appointmentDateTime.getTime() + (bookingSlot.duration_minutes * 60000));
-    
+    const endDateTime = new Date(
+      appointmentDateTime.getTime() + bookingSlot.duration_minutes * 60000
+    );
+
     const appointmentData = {
       appointment_id: appointmentId,
       company_id: bookingSlot.company_id,
       contact_id: null, // Public bookings don't require existing contacts
       title: `${bookingSlot.title} - ${contactName}`,
-      description: message || `Booking via public link for ${bookingSlot.title}`,
+      description:
+        message || `Booking via public link for ${bookingSlot.title}`,
       scheduled_time: appointmentDateTime.toISOString(),
       duration_minutes: bookingSlot.duration_minutes,
-      status: 'scheduled',
+      status: "scheduled",
       metadata: JSON.stringify({
         bookingSlotId: bookingSlotId,
         bookingSlotSlug: bookingSlot.slug,
@@ -22542,43 +25407,46 @@ app.post("/api/booking-slots/public/book", async (req, res) => {
         customerEmail: email,
         customerPhone: phone,
         staffName: staffName || bookingSlot.staff_name,
-        location: bookingSlot.location
+        location: bookingSlot.location,
       }),
       staff_assigned: JSON.stringify([staffName || bookingSlot.staff_name]),
-      appointment_type: 'booking'
+      appointment_type: "booking",
     };
-    
-    const result = await sqlDb.query(`
+
+    const result = await sqlDb.query(
+      `
       INSERT INTO appointments (
         appointment_id, company_id, contact_id, title, description, 
         scheduled_time, duration_minutes, status, metadata, staff_assigned, appointment_type
       )
       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
       RETURNING *
-    `, [
-      appointmentData.appointment_id,
-      appointmentData.company_id,
-      appointmentData.contact_id,
-      appointmentData.title,
-      appointmentData.description,
-      appointmentData.scheduled_time,
-      appointmentData.duration_minutes,
-      appointmentData.status,
-      appointmentData.metadata,
-      appointmentData.staff_assigned,
-      appointmentData.appointment_type
-    ]);
-    
+    `,
+      [
+        appointmentData.appointment_id,
+        appointmentData.company_id,
+        appointmentData.contact_id,
+        appointmentData.title,
+        appointmentData.description,
+        appointmentData.scheduled_time,
+        appointmentData.duration_minutes,
+        appointmentData.status,
+        appointmentData.metadata,
+        appointmentData.staff_assigned,
+        appointmentData.appointment_type,
+      ]
+    );
+
     res.status(201).json({
       success: true,
       appointment: result.rows[0],
-      message: "Booking created successfully"
+      message: "Booking created successfully",
     });
   } catch (error) {
     console.error("Error creating public booking:", error);
     res.status(500).json({
       success: false,
-      error: "Failed to create booking"
+      error: "Failed to create booking",
     });
   }
 });

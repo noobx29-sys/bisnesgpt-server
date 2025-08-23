@@ -23,10 +23,13 @@ const pdf = require("pdf-parse");
 const { fromPath } = require("pdf2pic");
 const SKCSpreadsheet = require("../spreadsheet/SKCSpreadsheet");
 const CarCareSpreadsheet = require("../blast/bookingCarCareGroup");
-const ConvertAPI = require('convertapi');
-const convertapi = new ConvertAPI('q6yVdAo4GolFlTyMLcM8pyqtuAbRN60y');
+const ConvertAPI = require("convertapi");
+const convertapi = new ConvertAPI("3TGd7Fmc11To3kGVxyvDFQ4s9xhFdoOk");
 const { neon, neonConfig } = require("@neondatabase/serverless");
 const { Pool } = require("pg");
+const mime = require("mime-types");
+const FormData = require("form-data");
+const { ids } = require("googleapis/build/src/apis/ids/index.js");
 
 // Configure Neon for WebSocket pooling
 neonConfig.webSocketConstructor = require("ws");
@@ -36,7 +39,6 @@ const sql = neon(process.env.DATABASE_URL);
 
 // For connection pooling
 const pool = new Pool({
-  // Connection pooling
   connectionString: process.env.DATABASE_URL,
   max: 500,
   min: 5,
@@ -47,10 +49,16 @@ const pool = new Pool({
   destroyTimeoutMillis: 5000,
   reapIntervalMillis: 1000,
   createRetryIntervalMillis: 100,
+  allowExitOnIdle: false,
+  connectionRetryInterval: 500,
+  maxConnectionRetries: 5,
+  statement_timeout: 15000,
+  query_timeout: 15000,
+  idle_in_transaction_session_timeout: 15000,
 });
 
 async function safeRollback(sqlClient) {
-  if (sqlClient && typeof sqlClient.query === 'function') {
+  if (sqlClient && typeof sqlClient.query === "function") {
     try {
       await sqlClient.query("ROLLBACK");
     } catch (rollbackError) {
@@ -60,7 +68,7 @@ async function safeRollback(sqlClient) {
 }
 
 async function safeRelease(sqlClient) {
-  if (sqlClient && typeof sqlClient.release === 'function') {
+  if (sqlClient && typeof sqlClient.release === "function") {
     try {
       await sqlClient.release();
     } catch (releaseError) {
@@ -69,9 +77,59 @@ async function safeRelease(sqlClient) {
   }
 }
 
-let companyConfig = {};
+// Add pool error handling to prevent crashes
+pool.on("error", (err) => {
+  console.error("=== DATABASE POOL ERROR ===");
+  console.error("Error:", err);
+  console.error("Time:", new Date().toISOString());
+
+  // Handle specific connection errors
+  if (
+    err.message &&
+    err.message.includes("Connection terminated unexpectedly")
+  ) {
+    console.error(
+      "Database connection terminated - attempting to reconnect..."
+    );
+    // Log to file for debugging
+    if (typeof logger !== "undefined" && logger.logToFile) {
+      logger.logToFile(
+        "db_connection_errors",
+        `Connection terminated: ${err.message}`
+      );
+    }
+  }
+
+  // Don't exit the process, just log the error
+  console.log("Continuing operation despite database pool error...");
+});
+
+pool.on("connect", (client) => {
+  console.log("New database connection established");
+
+  // Set connection-specific error handlers
+  client.on("error", (err) => {
+    console.error("=== DATABASE CLIENT ERROR ===");
+    console.error("Error:", err);
+    console.error("Time:", new Date().toISOString());
+
+    if (
+      err.message &&
+      err.message.includes("Connection terminated unexpectedly")
+    ) {
+      console.error("Client connection terminated - will be replaced by pool");
+      // Log to file for debugging
+      if (typeof logger !== "undefined" && logger.logToFile) {
+        logger.logToFile(
+          "db_connection_errors",
+          `Client connection terminated: ${err.message}`
+        );
+      }
+    }
+  });
+});
+
 const MEDIA_DIR = path.join(__dirname, "public", "media");
-// Schedule the task to run every 12 hours
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAIKEY,
@@ -561,7 +619,6 @@ async function addNotificationToUser(companyId, message, contactName) {
       });
 
       await Promise.all(promises);
-   
     } finally {
       await safeRelease(client);
     }
@@ -822,17 +879,16 @@ async function insertSpreadsheetMTDC(reportMessage) {
       programs: [],
       programDates: [],
     };
-    
-   
+
     console.log("Processing lines:");
     lines.forEach((line, index) => {
       console.log(`Line ${index}:`, JSON.stringify(line));
-      
+
       if (line.includes(":")) {
         const colonIndex = line.indexOf(":");
         const key = line.substring(0, colonIndex).trim();
         const value = line.substring(colonIndex + 1).trim();
-        
+
         console.log(`Key: "${key}", Value: "${value}"`);
 
         if (key.match(/^Program of Interest(\s+\d+)?$/)) {
@@ -865,9 +921,8 @@ async function insertSpreadsheetMTDC(reportMessage) {
     });
 
     console.log("Final extracted data:", data);
- 
+
     console.log("Report Message From MTDC:", reportMessage);
-    
 
     const timestamp = moment()
       .tz("Asia/Kuala_Lumpur")
@@ -877,7 +932,8 @@ async function insertSpreadsheetMTDC(reportMessage) {
       if (!dateTimeString || dateTimeString === "Unspecified")
         return "Unspecified";
 
-      const correctFormatRegex = /^\d{1,2}\/\d{1,2}\/\d{4} \d{1,2}:\d{2}:\d{2}$/;
+      const correctFormatRegex =
+        /^\d{1,2}\/\d{1,2}\/\d{4} \d{1,2}:\d{2}:\d{2}$/;
       if (correctFormatRegex.test(dateTimeString)) {
         return dateTimeString;
       }
@@ -895,12 +951,18 @@ async function insertSpreadsheetMTDC(reportMessage) {
 
     const getCategoryFromProgram = (programName) => {
       if (!programName) return "Unspecified";
-      
+
       // Check if the program name contains any of the FUTUREX.AI 2025 programs
-      if (programName.includes("Business Automation & AI Chatbot Experience") ||
-          programName.includes("Digitalpreneur - Create an Online Course with AI") ||
-          programName.includes("AI Immersion - Automate It. Analyse It. Storytell It") ||
-          programName.includes("AI Agent & Agentic AI Day 2025")) {
+      if (
+        programName.includes("Business Automation & AI Chatbot Experience") ||
+        programName.includes(
+          "Digitalpreneur - Create an Online Course with AI"
+        ) ||
+        programName.includes(
+          "AI Immersion - Automate It. Analyse It. Storytell It"
+        ) ||
+        programName.includes("AI Agent & Agentic AI Day 2025")
+      ) {
         return "FUTUREX.AI 2025: Adapt. Advance. Achieve.";
       } else {
         return "Other";
@@ -908,21 +970,20 @@ async function insertSpreadsheetMTDC(reportMessage) {
     };
 
     const rowData = data.programs
-    .map((program, index) => [
-      timestamp,
-      data["Name"] || "Unspecified",
-      data["Company"] || "Unspecified", 
-      data["Phone"].split("+")[1] || "Unspecified",
-      data["Email"] || "Unspecified",
-      program || "Unspecified",
-      formatDateTimeString(data.programDates[index] || "Unspecified"),
-      "Pending", // RSVP status
-      "Pending", // Attendance status
-      "No", // Certification Sent
-      getCategoryFromProgram(program), // Category
-    ])
-    .filter(row => row[5] !== "Unspecified"); // Filter out rows with unspecified programs
-  
+      .map((program, index) => [
+        timestamp,
+        data["Name"] || "Unspecified",
+        data["Company"] || "Unspecified",
+        data["Phone"].split("+")[1] || "Unspecified",
+        data["Email"] || "Unspecified",
+        program || "Unspecified",
+        formatDateTimeString(data.programDates[index] || "Unspecified"),
+        "Pending", // RSVP status
+        "Pending", // Attendance status
+        "No", // Certification Sent
+        getCategoryFromProgram(program), // Category
+      ])
+      .filter((row) => row[5] !== "Unspecified"); // Filter out rows with unspecified programs
 
     const getRowsResponse = await sheets.spreadsheets.values.get({
       spreadsheetId,
@@ -1386,7 +1447,9 @@ async function createCalendarEvent(
 
       const event = {
         summary: summary + " - " + contact.name,
-        description: `${description}\n\nContact: ${contact.name} (${phoneNumber})${
+        description: `${description}\n\nContact: ${
+          contact.name
+        } (${phoneNumber})${
           assignedStaff.length > 0
             ? "\nAssigned Staff: " + assignedStaff.join(", ")
             : ""
@@ -2009,17 +2072,26 @@ async function cancelCalendarEvent(
 
     if (appointmentDateandTime) {
       // Parse the appointment date and time
-      const appointmentMoment = moment(appointmentDateandTime).tz("Asia/Kuala_Lumpur");
-      
+      const appointmentMoment = moment(appointmentDateandTime).tz(
+        "Asia/Kuala_Lumpur"
+      );
+
       if (!appointmentMoment.isValid()) {
         return {
-          error: "Invalid date and time format. Please provide date and time in a valid format."
+          error:
+            "Invalid date and time format. Please provide date and time in a valid format.",
         };
       }
 
       // Create a time window around the specified time (±30 minutes)
-      const startWindow = appointmentMoment.clone().subtract(30, 'minutes').toISOString();
-      const endWindow = appointmentMoment.clone().add(30, 'minutes').toISOString();
+      const startWindow = appointmentMoment
+        .clone()
+        .subtract(30, "minutes")
+        .toISOString();
+      const endWindow = appointmentMoment
+        .clone()
+        .add(30, "minutes")
+        .toISOString();
 
       phoneQuery = await sqlClient.query(
         `SELECT * FROM public.appointments 
@@ -2027,12 +2099,20 @@ async function cancelCalendarEvent(
           AND status IN ('scheduled', 'confirmed')
           AND scheduled_time >= $3 AND scheduled_time <= $4
           ORDER BY ABS(EXTRACT(EPOCH FROM (scheduled_time - $5::timestamp)))`,
-        [contactID, idSubstring, startWindow, endWindow, appointmentMoment.toISOString()]
+        [
+          contactID,
+          idSubstring,
+          startWindow,
+          endWindow,
+          appointmentMoment.toISOString(),
+        ]
       );
 
       if (phoneQuery.rows.length === 0) {
         return {
-          error: `No appointment found for this contact around ${appointmentMoment.format("DD/MM/YYYY HH:mm")}`,
+          error: `No appointment found for this contact around ${appointmentMoment.format(
+            "DD/MM/YYYY HH:mm"
+          )}`,
         };
       } else if (phoneQuery.rows.length > 1) {
         // Multiple appointments found - return list for user to choose
@@ -2048,7 +2128,9 @@ async function cancelCalendarEvent(
         return {
           error: "Multiple appointments found around this time",
           multipleAppointments: appointmentsList,
-          message: `Found ${appointmentsList.length} appointments around ${appointmentMoment.format(
+          message: `Found ${
+            appointmentsList.length
+          } appointments around ${appointmentMoment.format(
             "DD/MM/YYYY HH:mm"
           )}. Please specify which appointment to cancel by providing more specific details.`,
         };
@@ -2165,11 +2247,13 @@ async function cancelCalendarEvent(
         contact: `${contactName || "Unknown"} (${
           phoneNumber || "No phone number found"
         })`,
-        type: existingAppointment.description?.toLowerCase().includes("servis") ||
-               existingAppointment.description?.toLowerCase().includes("service") ||
-               existingAppointment.title?.toLowerCase().includes("servis") ||
-               existingAppointment.title?.toLowerCase().includes("service") 
-               ? "Service" : "Installation",
+        type:
+          existingAppointment.description?.toLowerCase().includes("servis") ||
+          existingAppointment.description?.toLowerCase().includes("service") ||
+          existingAppointment.title?.toLowerCase().includes("servis") ||
+          existingAppointment.title?.toLowerCase().includes("service")
+            ? "Service"
+            : "Installation",
         calendarDeleted: calendarEventDeleted,
         reason: reason || "No reason provided",
       },
@@ -2177,140 +2261,6 @@ async function cancelCalendarEvent(
   } catch (error) {
     console.error("Error in cancelCalendarEvent:", error);
     return { error: `Failed to cancel appointment: ${error.message}` };
-  }
-}
-
-async function searchUpcomingAppointments(
-  phoneNumber,
-  idSubstring,
-  limit = 10
-) {
-  try {
-    console.log("Searching for upcoming appointments for contact:", phoneNumber);
-
-    const sqlClient = await pool.connect();
-
-    try {
-      // Format contact ID
-      const contactID =
-        idSubstring +
-        "-" +
-        (phoneNumber.startsWith("+") ? phoneNumber.slice(1) : phoneNumber);
-
-      // Get current date and time in KL timezone for comparison
-      const now = moment().tz("Asia/Kuala_Lumpur").toISOString();
-
-      console.log("Searching for appointments after:", now);
-      console.log("Contact ID:", contactID);
-
-      // Query to find upcoming appointments (future appointments only)
-      const appointmentsQuery = await sqlClient.query(
-        `SELECT 
-           appointment_id,
-           title,
-           description,
-           scheduled_time,
-           duration_minutes,
-           status,
-           metadata,
-           staff_assigned,
-           created_at
-         FROM public.appointments 
-         WHERE contact_id = $1 
-           AND company_id = $2 
-           AND status IN ('scheduled', 'confirmed')
-           AND scheduled_time > $3
-         ORDER BY scheduled_time ASC
-         LIMIT $4`,
-        [contactID, idSubstring, now, limit]
-      );
-
-      console.log(`Found ${appointmentsQuery.rows.length} upcoming appointments`);
-
-      if (appointmentsQuery.rows.length === 0) {
-        return JSON.stringify({
-          success: true,
-          message: "No upcoming appointments found",
-          appointments: [],
-          totalCount: 0,
-        });
-      }
-
-      // Format appointments for response
-      const appointments = appointmentsQuery.rows.map((apt) => {
-        const startTime = moment(apt.scheduled_time).tz("Asia/Kuala_Lumpur");
-        const endTime = startTime.clone().add(apt.duration_minutes, "minutes");
-        
-        // Determine appointment type
-        const description = apt.description || "";
-        const title = apt.title || "";
-        const isService =
-          description.toLowerCase().includes("servis") ||
-          description.toLowerCase().includes("service") ||
-          title.toLowerCase().includes("servis") ||
-          title.toLowerCase().includes("service");
-
-        // Get staff information from metadata or staff_assigned
-        let assignedStaff = [];
-        if (apt.staff_assigned && Array.isArray(apt.staff_assigned)) {
-          assignedStaff = apt.staff_assigned;
-        } else if (apt.metadata && apt.metadata.staff && Array.isArray(apt.metadata.staff)) {
-          assignedStaff = apt.metadata.staff;
-        }
-
-        return {
-          appointmentId: apt.appointment_id,
-          title: apt.title || "Appointment",
-          description: apt.description || "",
-          date: startTime.format("DD/MM/YYYY"),
-          time: `${startTime.format("HH:mm")} - ${endTime.format("HH:mm")}`,
-          startDateTime: startTime.format("YYYY-MM-DD HH:mm:ss"),
-          endDateTime: endTime.format("YYYY-MM-DD HH:mm:ss"),
-          duration: apt.duration_minutes,
-          status: apt.status,
-          type: isService ? "Service" : "Installation",
-          assignedStaff: assignedStaff,
-          dayOfWeek: startTime.format("dddd"),
-          createdAt: moment(apt.created_at).format("DD/MM/YYYY HH:mm"),
-          // Calculate time until appointment
-          timeUntilAppointment: startTime.fromNow(),
-          isToday: startTime.isSame(moment().tz("Asia/Kuala_Lumpur"), "day"),
-          isTomorrow: startTime.isSame(moment().tz("Asia/Kuala_Lumpur").add(1, "day"), "day"),
-        };
-      });
-
-      // Separate today's and future appointments
-      const todayAppointments = appointments.filter(apt => apt.isToday);
-      const tomorrowAppointments = appointments.filter(apt => apt.isTomorrow);
-      const futureAppointments = appointments.filter(apt => !apt.isToday && !apt.isTomorrow);
-
-      return JSON.stringify({
-        success: true,
-        message: `Found ${appointments.length} upcoming appointment${appointments.length === 1 ? '' : 's'}`,
-        appointments: appointments,
-        summary: {
-          total: appointments.length,
-          today: todayAppointments.length,
-          tomorrow: tomorrowAppointments.length,
-          future: futureAppointments.length,
-        },
-        breakdown: {
-          today: todayAppointments,
-          tomorrow: tomorrowAppointments,
-          future: futureAppointments.slice(0, 5), // Limit future appointments to 5 for summary
-        },
-      });
-
-    } finally {
-      await safeRelease(sqlClient);
-    }
-  } catch (error) {
-    console.error("Error searching upcoming appointments:", error);
-    return JSON.stringify({
-      success: false,
-      error: "Failed to search upcoming appointments",
-      details: error.message,
-    });
   }
 }
 
@@ -2353,6 +2303,155 @@ async function deleteTask(idSubstring, taskIndex) {
     );
     return JSON.stringify({
       message: `Error deleting task ${taskIndex} for company ${idSubstring}.`,
+    });
+  }
+}
+
+async function searchUpcomingAppointments(
+  phoneNumber,
+  idSubstring,
+  limit = 10
+) {
+  try {
+    console.log(
+      "Searching for upcoming appointments for contact:",
+      phoneNumber
+    );
+
+    const sqlClient = await pool.connect();
+
+    try {
+      // Format contact ID
+      const contactID =
+        idSubstring +
+        "-" +
+        (phoneNumber.startsWith("+") ? phoneNumber.slice(1) : phoneNumber);
+
+      // Get current date and time in KL timezone for comparison
+      const now = moment().tz("Asia/Kuala_Lumpur").toISOString();
+
+      console.log("Searching for appointments after:", now);
+      console.log("Contact ID:", contactID);
+
+      // Query to find upcoming appointments (future appointments only)
+      const appointmentsQuery = await sqlClient.query(
+        `SELECT 
+           appointment_id,
+           title,
+           description,
+           scheduled_time,
+           duration_minutes,
+           status,
+           metadata,
+           staff_assigned,
+           created_at
+         FROM public.appointments 
+         WHERE contact_id = $1 
+           AND company_id = $2 
+           AND status IN ('scheduled', 'confirmed')
+           AND scheduled_time > $3
+         ORDER BY scheduled_time ASC
+         LIMIT $4`,
+        [contactID, idSubstring, now, limit]
+      );
+
+      console.log(
+        `Found ${appointmentsQuery.rows.length} upcoming appointments`
+      );
+
+      if (appointmentsQuery.rows.length === 0) {
+        return JSON.stringify({
+          success: true,
+          message: "No upcoming appointments found",
+          appointments: [],
+          totalCount: 0,
+        });
+      }
+
+      // Format appointments for response
+      const appointments = appointmentsQuery.rows.map((apt) => {
+        const startTime = moment(apt.scheduled_time).tz("Asia/Kuala_Lumpur");
+        const endTime = startTime.clone().add(apt.duration_minutes, "minutes");
+
+        // Determine appointment type
+        const description = apt.description || "";
+        const title = apt.title || "";
+        const isService =
+          description.toLowerCase().includes("servis") ||
+          description.toLowerCase().includes("service") ||
+          title.toLowerCase().includes("servis") ||
+          title.toLowerCase().includes("service");
+
+        // Get staff information from metadata or staff_assigned
+        let assignedStaff = [];
+        if (apt.staff_assigned && Array.isArray(apt.staff_assigned)) {
+          assignedStaff = apt.staff_assigned;
+        } else if (
+          apt.metadata &&
+          apt.metadata.staff &&
+          Array.isArray(apt.metadata.staff)
+        ) {
+          assignedStaff = apt.metadata.staff;
+        }
+
+        return {
+          appointmentId: apt.appointment_id,
+          title: apt.title || "Appointment",
+          description: apt.description || "",
+          date: startTime.format("DD/MM/YYYY"),
+          time: `${startTime.format("HH:mm")} - ${endTime.format("HH:mm")}`,
+          startDateTime: startTime.format("YYYY-MM-DD HH:mm:ss"),
+          endDateTime: endTime.format("YYYY-MM-DD HH:mm:ss"),
+          duration: apt.duration_minutes,
+          status: apt.status,
+          type: isService ? "Service" : "Installation",
+          assignedStaff: assignedStaff,
+          dayOfWeek: startTime.format("dddd"),
+          createdAt: moment(apt.created_at).format("DD/MM/YYYY HH:mm"),
+          // Calculate time until appointment
+          timeUntilAppointment: startTime.fromNow(),
+          isToday: startTime.isSame(moment().tz("Asia/Kuala_Lumpur"), "day"),
+          isTomorrow: startTime.isSame(
+            moment().tz("Asia/Kuala_Lumpur").add(1, "day"),
+            "day"
+          ),
+        };
+      });
+
+      // Separate today's and future appointments
+      const todayAppointments = appointments.filter((apt) => apt.isToday);
+      const tomorrowAppointments = appointments.filter((apt) => apt.isTomorrow);
+      const futureAppointments = appointments.filter(
+        (apt) => !apt.isToday && !apt.isTomorrow
+      );
+
+      return JSON.stringify({
+        success: true,
+        message: `Found ${appointments.length} upcoming appointment${
+          appointments.length === 1 ? "" : "s"
+        }`,
+        appointments: appointments,
+        summary: {
+          total: appointments.length,
+          today: todayAppointments.length,
+          tomorrow: tomorrowAppointments.length,
+          future: futureAppointments.length,
+        },
+        breakdown: {
+          today: todayAppointments,
+          tomorrow: tomorrowAppointments,
+          future: futureAppointments.slice(0, 5), // Limit future appointments to 5 for summary
+        },
+      });
+    } finally {
+      await safeRelease(sqlClient);
+    }
+  } catch (error) {
+    console.error("Error searching upcoming appointments:", error);
+    return JSON.stringify({
+      success: false,
+      error: "Failed to search upcoming appointments",
+      details: error.message,
     });
   }
 }
@@ -2472,41 +2571,45 @@ async function fetchContactData(phoneNumber, idSubstring) {
 
 async function storeMediaData(mediaData, filename, mimeType) {
   try {
-    const buffer = Buffer.from(mediaData, 'base64');
+    const buffer = Buffer.from(mediaData, "base64");
     const stream = Readable.from(buffer);
 
     // Try to determine mimeType and extension if not provided
     if (!mimeType) {
       // Try to guess from filename
       if (filename) {
-        mimeType = mime.lookup(filename) || 'application/octet-stream';
+        mimeType = mime.lookup(filename) || "application/octet-stream";
       } else {
-        mimeType = 'application/octet-stream';
+        mimeType = "application/octet-stream";
       }
     }
 
     // If filename is missing or has no extension, generate one from mimeType
-    if (!filename || !filename.includes('.')) {
-      const ext = mime.extension(mimeType) || 'bin';
+    if (!filename || !filename.includes(".")) {
+      const ext = mime.extension(mimeType) || "bin";
       filename = `document-${Date.now()}.${ext}`;
     }
 
     const formData = new FormData();
-    formData.append('file', stream, {
+    formData.append("file", stream, {
       filename: filename,
       contentType: mimeType,
-      knownLength: buffer.length
+      knownLength: buffer.length,
     });
 
-    const response = await axios.post(`${process.env.URL}/api/upload-media`, formData, {
-      headers: formData.getHeaders(),
-      maxContentLength: Infinity,
-      maxBodyLength: Infinity
-    });
+    const response = await axios.post(
+      `${process.env.URL}/api/upload-media`,
+      formData,
+      {
+        headers: formData.getHeaders(),
+        maxContentLength: Infinity,
+        maxBodyLength: Infinity,
+      }
+    );
 
     return response.data.url;
   } catch (error) {
-    console.error('Error uploading document:', error);
+    console.error("Error uploading document:", error);
     throw error;
   }
 }
@@ -3095,15 +3198,18 @@ async function handleNewMessagesTemplateWweb(client, msg, botName, phoneIndex) {
     console.error("Error fetching buffer time from PostgreSQL:", error);
   }
 
-  if (!messageBuffers.has(chatId)) {
-    messageBuffers.set(chatId, {
+  // Create a unique buffer key that includes both chatId and botName to prevent cross-bot interference
+  const bufferKey = `${chatId}_${botName}`;
+
+  if (!messageBuffers.has(bufferKey)) {
+    messageBuffers.set(bufferKey, {
       messages: [],
       timer: null,
     });
   }
 
   const finalBufferTime = botName === "0144" ? 5000 : bufferTime;
-  const buffer = messageBuffers.get(chatId);
+  const buffer = messageBuffers.get(bufferKey);
 
   if (buffer.timer) {
     clearTimeout(buffer.timer);
@@ -3120,7 +3226,7 @@ async function handleNewMessagesTemplateWweb(client, msg, botName, phoneIndex) {
   }
 
   buffer.timer = setTimeout(
-    () => processBufferedMessages(client, chatId, botName, phoneIndex),
+    () => processBufferedMessages(client, bufferKey, botName, phoneIndex),
     finalBufferTime
   );
 }
@@ -3242,7 +3348,7 @@ async function prepareContactData(
       },
     },
     chat_id: msg.from,
-    is_group: msg.from.includes('@g.us'),
+    is_group: msg.from.includes("@g.us"),
     city: null,
     company: companyName || null,
     name: displayName,
@@ -3280,12 +3386,15 @@ async function checkKeywordMatch(response, message, keywordSource) {
   );
 }
 
-async function checkKeywordMatchTemplate(keywords, message, tempKeywordSource, keywordSource) {
+async function checkKeywordMatchTemplate(
+  keywords,
+  message,
+  tempKeywordSource,
+  keywordSource
+) {
   return (
     keywordSource === tempKeywordSource &&
-    keywords.some((kw) =>
-      message.toLowerCase().includes(kw.toLowerCase())
-    )
+    keywords.some((kw) => message.toLowerCase().includes(kw.toLowerCase()))
   );
 }
 
@@ -3298,12 +3407,8 @@ async function handleAIVideoResponses({
   idSubstring,
   contactName,
   keywordSource,
-  phoneIndex
+  phoneIndex,
 }) {
-  if (!companyConfig.status_ai_responses?.ai_video) {
-    return false;
-  }
-
   const aiVideoResponses = await getAIVideoResponses(idSubstring);
 
   for (const response of aiVideoResponses) {
@@ -3348,12 +3453,8 @@ async function handleAIVoiceResponses({
   idSubstring,
   contactName,
   keywordSource,
-  phoneIndex
+  phoneIndex,
 }) {
-  if (!companyConfig.status_ai_responses?.ai_voice) {
-    return false;
-  }
-
   const aiVoiceResponses = await getAIVoiceResponses(idSubstring);
 
   for (const response of aiVoiceResponses) {
@@ -3374,7 +3475,7 @@ async function handleAIVoiceResponses({
             idSubstring,
             extractedNumber,
             contactName,
-            phoneIndex,
+            phoneIndex
           );
 
           if (i < response.voiceUrls.length - 1) {
@@ -3397,12 +3498,8 @@ async function handleAIImageResponses({
   idSubstring,
   contactName,
   keywordSource,
-  phoneIndex
+  phoneIndex,
 }) {
-  if (!companyConfig.status_ai_responses?.ai_image) {
-    return false;
-  }
-
   const aiImageResponses = await getAIImageResponses(idSubstring);
 
   for (const response of aiImageResponses) {
@@ -3437,12 +3534,8 @@ async function handleAIDocumentResponses({
   idSubstring,
   contactName,
   keywordSource,
-  phoneIndex
+  phoneIndex,
 }) {
-  if (!companyConfig.status_ai_responses?.ai_document) {
-    return false;
-  }
-
   const aiDocumentResponses = await getAIDocumentResponses(idSubstring);
 
   for (const response of aiDocumentResponses) {
@@ -3492,10 +3585,6 @@ async function handleAITagResponses({
   keywordSource,
   followUpTemplates,
 }) {
-  if (!companyConfig.status_ai_responses?.ai_tag) {
-    return false;
-  }
-
   const aiTagResponses = await getAITagResponses(idSubstring);
 
   for (const response of aiTagResponses) {
@@ -3508,7 +3597,7 @@ async function handleAITagResponses({
             response,
             extractedNumber,
             idSubstring,
-            followUpTemplates,
+            followUpTemplates
           );
         } else {
           await handleTagAddition(
@@ -3517,7 +3606,7 @@ async function handleAITagResponses({
             idSubstring,
             followUpTemplates,
             contactName,
-            phoneIndex,
+            phoneIndex
           );
         }
       } catch (error) {
@@ -3535,52 +3624,59 @@ async function handleAIAssignResponses({
   idSubstring,
   contactName,
   keywordSource,
-  phoneIndex
+  phoneIndex,
 }) {
-  console.log(`[ASSIGNMENT DEBUG] Starting handleAIAssignResponses for Company ${idSubstring}`);
+  console.log(
+    `[ASSIGNMENT DEBUG] Starting handleAIAssignResponses for Company ${idSubstring}`
+  );
   console.log(`[ASSIGNMENT DEBUG] Message: "${message}"`);
   console.log(`[ASSIGNMENT DEBUG] Phone: ${extractedNumber}`);
   console.log(`[ASSIGNMENT DEBUG] Contact Name: ${contactName}`);
   console.log(`[ASSIGNMENT DEBUG] Keyword Source: ${keywordSource}`);
   console.log(`[ASSIGNMENT DEBUG] Phone Index: ${phoneIndex}`);
-  
-  if (!companyConfig.status_ai_responses?.ai_assign) {
-    console.log(`[ASSIGNMENT DEBUG] AI assign responses disabled for Company ${idSubstring}`);
-    return false;
-  }
 
-  console.log(`[ASSIGNMENT DEBUG] Fetching AI assign responses for Company ${idSubstring}`);
+  console.log(
+    `[ASSIGNMENT DEBUG] Fetching AI assign responses for Company ${idSubstring}`
+  );
   const aiAssignResponses = await getAIAssignResponses(idSubstring);
-  console.log(`[ASSIGNMENT DEBUG] Found ${aiAssignResponses.length} AI assign responses`);
+  console.log(
+    `[ASSIGNMENT DEBUG] Found ${aiAssignResponses.length} AI assign responses`
+  );
 
   for (const response of aiAssignResponses) {
     console.log(`[ASSIGNMENT DEBUG] Checking response:`, {
       keywords: response.keywords,
       assignedEmployees: response.assignedEmployees, // Updated to match the actual property name
-      assigned_employees: response.assigned_employees // Keep this for backward compatibility
+      assigned_employees: response.assigned_employees, // Keep this for backward compatibility
     });
-    
+
     if (await checkKeywordMatch(response, message, keywordSource)) {
-      console.log(`[ASSIGNMENT DEBUG] Assignment found for keywords:`, response.keywords);
+      console.log(
+        `[ASSIGNMENT DEBUG] Assignment found for keywords:`,
+        response.keywords
+      );
 
       // Move matchedKeyword declaration outside try block
       let matchedKeyword = null;
-      
+
       try {
         matchedKeyword = response.keywords.find((kw) =>
           message.toLowerCase().includes(kw.toLowerCase())
         );
         console.log(`[ASSIGNMENT DEBUG] Matched keyword: ${matchedKeyword}`);
 
-        console.log(`[ASSIGNMENT DEBUG] Calling handleEmployeeAssignment with params:`, {
-          response: response,
-          idSubstring: idSubstring,
-          extractedNumber: extractedNumber,
-          contactName: contactName,
-          client: '[Client Object]', // Just log a placeholder instead of the actual client
-          matchedKeyword: matchedKeyword,
-          phoneIndex: phoneIndex
-        });
+        console.log(
+          `[ASSIGNMENT DEBUG] Calling handleEmployeeAssignment with params:`,
+          {
+            response: response,
+            idSubstring: idSubstring,
+            extractedNumber: extractedNumber,
+            contactName: contactName,
+            client: "[Client Object]", // Just log a placeholder instead of the actual client
+            matchedKeyword: matchedKeyword,
+            phoneIndex: phoneIndex,
+          }
+        );
 
         await handleEmployeeAssignment(
           response,
@@ -3591,8 +3687,10 @@ async function handleAIAssignResponses({
           matchedKeyword,
           phoneIndex
         );
-        
-        console.log(`[ASSIGNMENT DEBUG] handleEmployeeAssignment completed successfully`);
+
+        console.log(
+          `[ASSIGNMENT DEBUG] handleEmployeeAssignment completed successfully`
+        );
       } catch (error) {
         console.error(`[ASSIGNMENT DEBUG] Error handling assignment:`, {
           error: error.message,
@@ -3602,12 +3700,15 @@ async function handleAIAssignResponses({
           extractedNumber: extractedNumber,
           contactName: contactName,
           matchedKeyword: matchedKeyword,
-          phoneIndex: phoneIndex
+          phoneIndex: phoneIndex,
           // Removed client from error logging to avoid circular reference
         });
       }
     } else {
-      console.log(`[ASSIGNMENT DEBUG] No keyword match for response:`, response.keywords);
+      console.log(
+        `[ASSIGNMENT DEBUG] No keyword match for response:`,
+        response.keywords
+      );
     }
   }
 }
@@ -3642,7 +3743,14 @@ async function handleAIFollowUpResponses({
   followUpTemplates,
 }) {
   for (const template of followUpTemplates) {
-    if (await checkKeywordMatchTemplate(template.triggerKeywords, message, template.keywordSource, keywordSource)) {
+    if (
+      await checkKeywordMatchTemplate(
+        template.triggerKeywords,
+        message,
+        template.keywordSource,
+        keywordSource
+      )
+    ) {
       console.log("Follow-up trigger found for template:", template.name);
 
       try {
@@ -3737,44 +3845,58 @@ async function handleEmployeeAssignment(
       "SELECT current_index FROM bot_state WHERE company_id = $1 AND bot_name = $2",
       [idSubstring, "assignmentState"]
     );
-    console.log(`[EMPLOYEE_ASSIGNMENT DEBUG] State query result:`, stateResult.rows);
-    
+    console.log(
+      `[EMPLOYEE_ASSIGNMENT DEBUG] State query result:`,
+      stateResult.rows
+    );
+
     let currentIndex = stateResult.rows[0]?.current_index || 0;
     console.log(`[EMPLOYEE_ASSIGNMENT DEBUG] Current index: ${currentIndex}`);
 
     // Fix: Use the correct property name - assignedEmployees instead of assigned_employees
-    const employeeIds = response.assignedEmployees || response.assigned_employees || [];
+    const employeeIds =
+      response.assignedEmployees || response.assigned_employees || [];
     console.log(`[EMPLOYEE_ASSIGNMENT DEBUG] Employee IDs:`, employeeIds);
-    
+
     if (employeeIds.length === 0) {
-      console.log(`[EMPLOYEE_ASSIGNMENT DEBUG] No employees available for assignment`);
+      console.log(
+        `[EMPLOYEE_ASSIGNMENT DEBUG] No employees available for assignment`
+      );
       return;
     }
 
     const nextEmployeeId = employeeIds[currentIndex % employeeIds.length];
-    console.log(`[EMPLOYEE_ASSIGNMENT DEBUG] Next employee ID to assign: ${nextEmployeeId}`);
+    console.log(
+      `[EMPLOYEE_ASSIGNMENT DEBUG] Next employee ID to assign: ${nextEmployeeId}`
+    );
 
     // Fix: Query by employee ID instead of email
     const employeeResult = await pool.query(
       "SELECT * FROM employees WHERE company_id = $1 AND id = $2",
       [idSubstring, nextEmployeeId]
     );
-    console.log(`[EMPLOYEE_ASSIGNMENT DEBUG] Employee query result:`, employeeResult.rows);
+    console.log(
+      `[EMPLOYEE_ASSIGNMENT DEBUG] Employee query result:`,
+      employeeResult.rows
+    );
 
     if (employeeResult.rows.length > 0) {
       const employeeData = employeeResult.rows[0];
       console.log(`[EMPLOYEE_ASSIGNMENT DEBUG] Employee data:`, employeeData);
 
-      console.log(`[EMPLOYEE_ASSIGNMENT DEBUG] Calling assignToEmployee with params:`, {
-        employeeData: employeeData,
-        role: "Sales",
-        extractedNumber: extractedNumber,
-        contactName: contactName,
-        client: '[Client Object]', // Just log a placeholder instead of the actual client
-        idSubstring: idSubstring,
-        matchedKeyword: matchedKeyword,
-        phoneIndex: phoneIndex
-      });
+      console.log(
+        `[EMPLOYEE_ASSIGNMENT DEBUG] Calling assignToEmployee with params:`,
+        {
+          employeeData: employeeData,
+          role: "Sales",
+          extractedNumber: extractedNumber,
+          contactName: contactName,
+          client: "[Client Object]", // Just log a placeholder instead of the actual client
+          idSubstring: idSubstring,
+          matchedKeyword: matchedKeyword,
+          phoneIndex: phoneIndex,
+        }
+      );
 
       await assignToEmployee(
         employeeData,
@@ -3804,20 +3926,25 @@ async function handleEmployeeAssignment(
       );
       console.log(`[EMPLOYEE_ASSIGNMENT DEBUG] State updated successfully`);
     } else {
-      console.log(`[EMPLOYEE_ASSIGNMENT DEBUG] No employee found with ID: ${nextEmployeeId}`);
+      console.log(
+        `[EMPLOYEE_ASSIGNMENT DEBUG] No employee found with ID: ${nextEmployeeId}`
+      );
     }
   } catch (error) {
-    console.error(`[EMPLOYEE_ASSIGNMENT DEBUG] Error in handleEmployeeAssignment:`, {
-      error: error.message,
-      stack: error.stack,
-      response: response,
-      idSubstring: idSubstring,
-      extractedNumber: extractedNumber,
-      contactName: contactName,
-      matchedKeyword: matchedKeyword,
-      phoneIndex: phoneIndex
-      // Removed client from error logging to avoid circular reference
-    });
+    console.error(
+      `[EMPLOYEE_ASSIGNMENT DEBUG] Error in handleEmployeeAssignment:`,
+      {
+        error: error.message,
+        stack: error.stack,
+        response: response,
+        idSubstring: idSubstring,
+        extractedNumber: extractedNumber,
+        contactName: contactName,
+        matchedKeyword: matchedKeyword,
+        phoneIndex: phoneIndex,
+        // Removed client from error logging to avoid circular reference
+      }
+    );
     throw error; // Re-throw to be caught by the calling function
   }
 }
@@ -3852,13 +3979,12 @@ async function processFollowUpTemplate(
     }
   }
 
-  if (Array.isArray(template.trigger_tags) && template.trigger_tags.length > 0) {
+  if (
+    Array.isArray(template.trigger_tags) &&
+    template.trigger_tags.length > 0
+  ) {
     for (const tag of template.trigger_tags) {
-      await addTagToPostgres(
-        extractedNumber,
-        tag,
-        idSubstring
-      );
+      await addTagToPostgres(extractedNumber, tag, idSubstring);
     }
   }
 
@@ -3923,7 +4049,7 @@ async function callFollowUpAPI(
   idSubstring
 ) {
   try {
-    const response = await fetch("https://juta.ngrok.app/api/tag/followup", {
+    const response = await fetch(`${process.env.URL}/api/tag/followup`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -4101,9 +4227,16 @@ async function createContactInDatabase(idSubstring, contactData) {
   }
 }
 // Add this after the imports at the top of the file (around line 50-100)
-async function logContactCreationAttempt(contactID, companyID, name, phone, source, stackTrace = null) {
+async function logContactCreationAttempt(
+  contactID,
+  companyID,
+  name,
+  phone,
+  source,
+  stackTrace = null
+) {
   const timestamp = new Date().toISOString();
-  
+
   console.log(`🔍 [CONTACT_CREATION_TRACKING] Attempt to create contact:`, {
     contact_id: contactID,
     company_id: companyID,
@@ -4111,17 +4244,35 @@ async function logContactCreationAttempt(contactID, companyID, name, phone, sour
     phone: phone,
     source: source,
     timestamp: timestamp,
-    is_duplicate_format: contactID === phone || contactID === `+${phone}` || contactID === phone.replace('+', ''),
-    is_phone_as_name: name === phone || name === `+${phone}` || name === phone.replace('+', ''),
-    stack_trace: stackTrace ? stackTrace.split('\n').slice(0, 3).join('\n') : null
+    is_duplicate_format:
+      contactID === phone ||
+      contactID === `+${phone}` ||
+      contactID === phone.replace("+", ""),
+    is_phone_as_name:
+      name === phone || name === `+${phone}` || name === phone.replace("+", ""),
+    stack_trace: stackTrace
+      ? stackTrace.split("\n").slice(0, 3).join("\n")
+      : null,
   });
-  
-  if (contactID === phone || contactID === `+${phone}` || contactID === phone.replace('+', '')) {
-    console.log(`⚠️ [CONTACT_CREATION_TRACKING] WARNING: Contact ID is just phone number! This will cause duplicates!`);
+
+  if (
+    contactID === phone ||
+    contactID === `+${phone}` ||
+    contactID === phone.replace("+", "")
+  ) {
+    console.log(
+      `⚠️ [CONTACT_CREATION_TRACKING] WARNING: Contact ID is just phone number! This will cause duplicates!`
+    );
   }
-  
-  if (name === phone || name === `+${phone}` || name === phone.replace('+', '')) {
-    console.log(`⚠️ [CONTACT_CREATION_TRACKING] WARNING: Name is just phone number! This indicates a problem!`);
+
+  if (
+    name === phone ||
+    name === `+${phone}` ||
+    name === phone.replace("+", "")
+  ) {
+    console.log(
+      `⚠️ [CONTACT_CREATION_TRACKING] WARNING: Name is just phone number! This indicates a problem!`
+    );
   }
 }
 async function processImmediateActions(client, msg, botName, phoneIndex) {
@@ -4139,8 +4290,13 @@ async function processImmediateActions(client, msg, botName, phoneIndex) {
   const messageBody = msg.body;
   const extractedNumber = "+" + msg.from.split("@")[0];
   console.log(`�� [IMMEDIATE_ACTIONS] Extracted number: ${extractedNumber}`);
-  const contactID = idSubstring + "-" + (extractedNumber.startsWith("+") ? extractedNumber.slice(1) : extractedNumber);
-  
+  const contactID =
+    idSubstring +
+    "-" +
+    (extractedNumber.startsWith("+")
+      ? extractedNumber.slice(1)
+      : extractedNumber);
+
   // Handle special cases first
   if (
     messageBody.includes("<Confirmed Appointment>") &&
@@ -4182,52 +4338,66 @@ async function processImmediateActions(client, msg, botName, phoneIndex) {
   }
 
   try {
-    await fetchConfigFromDatabase(idSubstring, phoneIndex);
+    const companyConfig = await fetchConfigFromDatabase(
+      idSubstring,
+      phoneIndex
+    );
 
     // Prepare contact and message data using utility functions
-   
-    const myNumber = '+' + client.info.wid.user;
+
+    const myNumber = "+" + client.info.wid.user;
     if (extractedNumber === myNumber) {
       // Don't process messages to yourself
-      console.log(`�� [IMMEDIATE_ACTIONS] Skipping message to self: ${extractedNumber}`);
+      console.log(
+        `�� [IMMEDIATE_ACTIONS] Skipping message to self: ${extractedNumber}`
+      );
       return;
     }
-    
-    console.log(`�� [IMMEDIATE_ACTIONS] Fetching contact data for phone: ${extractedNumber}, company: ${idSubstring}`);
+
+    console.log(
+      `�� [IMMEDIATE_ACTIONS] Fetching contact data for phone: ${extractedNumber}, company: ${idSubstring}`
+    );
     const contactData = await getContactDataFromDatabaseByPhone(
       extractedNumber,
       idSubstring
     );
-    
+
     if (contactData) {
       console.log(`�� [IMMEDIATE_ACTIONS] Found existing contact:`, {
         contact_id: contactData.contact_id,
         contact_name: contactData.name,
         name: contactData.name,
         phone: contactData.phone,
-        company_id: contactData.company_id
+        company_id: contactData.company_id,
       });
     } else {
-      console.log(`�� [IMMEDIATE_ACTIONS] No existing contact found for phone: ${extractedNumber}, company: ${idSubstring}`);
+      console.log(
+        `�� [IMMEDIATE_ACTIONS] No existing contact found for phone: ${extractedNumber}, company: ${idSubstring}`
+      );
     }
-    
+
     const chat = await msg.getChat();
     const companyName = contactData?.company || null;
 
     // Handle thread creation/retrieval
     let threadID = contactData?.thread_id;
     if (!threadID) {
-      console.log(`�� [IMMEDIATE_ACTIONS] Creating new thread for contact: ${extractedNumber}`);
+      console.log(
+        `�� [IMMEDIATE_ACTIONS] Creating new thread for contact: ${extractedNumber}`
+      );
       const thread = await createThread();
       threadID = thread.id;
-      console.log(`�� [IMMEDIATE_ACTIONS] Saving thread ID: ${threadID} for contact: ${extractedNumber}`);
+      console.log(
+        `�� [IMMEDIATE_ACTIONS] Saving thread ID: ${threadID} for contact: ${extractedNumber}`
+      );
       if (contactData) {
         await saveThreadIDPostgres(extractedNumber, threadID, idSubstring);
       }
     } else {
-      console.log(`�� [IMMEDIATE_ACTIONS] Using existing thread ID: ${threadID}`);
+      console.log(
+        `�� [IMMEDIATE_ACTIONS] Using existing thread ID: ${threadID}`
+      );
     }
-        
 
     // Handle messages from me
     if (msg.fromMe) {
@@ -4242,7 +4412,9 @@ async function processImmediateActions(client, msg, botName, phoneIndex) {
 
     // Prepare contact and message data
     const contactTags = contactData?.tags || [];
-    console.log(`�� [IMMEDIATE_ACTIONS] Preparing contact data for: ${extractedNumber}`);
+    console.log(
+      `�� [IMMEDIATE_ACTIONS] Preparing contact data for: ${extractedNumber}`
+    );
     const contactDataForDB = await prepareContactData(
       msg,
       idSubstring,
@@ -4252,17 +4424,19 @@ async function processImmediateActions(client, msg, botName, phoneIndex) {
       phoneIndex,
       client
     );
-    
+
     console.log(`�� [IMMEDIATE_ACTIONS] Contact data prepared:`, {
       contact_id: contactDataForDB.contact_id,
       name: contactDataForDB.name,
       contact_name: contactDataForDB.contact_name,
-      phone: contactDataForDB.phone
+      phone: contactDataForDB.phone,
     });
 
     // Save to database
     if (contactData) {
-      console.log(`�� [IMMEDIATE_ACTIONS] Updating existing contact in database`);
+      console.log(
+        `�� [IMMEDIATE_ACTIONS] Updating existing contact in database`
+      );
       await logContactCreationAttempt(
         contactDataForDB.contact_id || extractedNumber,
         idSubstring,
@@ -4299,7 +4473,10 @@ async function processImmediateActions(client, msg, botName, phoneIndex) {
     );
 
     if (idSubstring === "0123") {
-      const needsAssignment = await checkIfContactNeedsAssignment(contactData, phoneIndex);
+      const needsAssignment = await checkIfContactNeedsAssignment(
+        contactData,
+        phoneIndex
+      );
       if (needsAssignment) {
         await assignNewContactToEmployeeRevotrend(
           extractedNumber,
@@ -4309,6 +4486,35 @@ async function processImmediateActions(client, msg, botName, phoneIndex) {
         );
       }
     }
+
+    const handlerParams = {
+      client: client,
+      msg: messageBody,
+      idSubstring: idSubstring,
+      extractedNumber: extractedNumber,
+      contactName:
+        contactData?.contact_name ||
+        contactData?.name ||
+        contact.pushname ||
+        extractedNumber,
+      phoneIndex: phoneIndex,
+    };
+
+    // Handle user-triggered responses
+    await processAIResponses({
+      ...handlerParams,
+      keywordSource: "user",
+      companyConfig: companyConfig,
+      handlers: {
+        assign: true,
+        tag: true,
+        followUp: true,
+        document: false,
+        image: false,
+        video: false,
+        voice: false,
+      },
+    });
 
     // Reset bot command
     if (msg.body.includes("/resetbot")) {
@@ -4351,37 +4557,15 @@ async function processImmediateActions(client, msg, botName, phoneIndex) {
       return;
     }
 
-    const handlerParams = {
-      client: client,
-      msg: messageBody,
-      idSubstring: idSubstring,
-      extractedNumber: extractedNumber,
-      contactName:
-        contactData?.contact_name ||
-        contactData?.name ||
-        contact.pushname ||
-        extractedNumber,
-      phoneIndex: phoneIndex,
-    };
-
-    // Handle user-triggered responses
-    await processAIResponses({
-      ...handlerParams,
-      keywordSource: "user",
-      handlers: {
-        assign: true,
-        tag: true,
-        followUp: true,
-        document: false,
-        image: false,
-        video: false,
-        voice: false,
-      },
-    });
-
-    console.log("�� [IMMEDIATE_ACTIONS] Message processed immediately:", msg.id._serialized);
+    console.log(
+      "�� [IMMEDIATE_ACTIONS] Message processed immediately:",
+      msg.id._serialized
+    );
   } catch (error) {
-    console.error("❌ [IMMEDIATE_ACTIONS] Error in immediate processing:", error);
+    console.error(
+      "❌ [IMMEDIATE_ACTIONS] Error in immediate processing:",
+      error
+    );
     console.error("❌ [IMMEDIATE_ACTIONS] Full error stack:", error.stack);
   }
 }
@@ -4436,7 +4620,7 @@ async function mtdcAttendance(extractedNumber, msg, idSubstring, client) {
     ) {
       attendanceStatus = "Declined";
     } else {
-      return false;
+      // Removed return
     }
 
     const auth = new google.auth.GoogleAuth({
@@ -4456,10 +4640,16 @@ async function mtdcAttendance(extractedNumber, msg, idSubstring, client) {
     const rows = response.data.values;
     if (!rows || rows.length === 0) {
       console.log("No data found in MTDC spreadsheet.");
-      return false;
+      // Removed return
     }
 
-    let rowIndex = -1;
+    // Get current date and calculate 4 days from now
+    const now = moment();
+    const fourDaysFromNow = moment().add(4, "days");
+
+    let eligibleRows = [];
+
+    // Find all rows matching the phone number
     for (let i = 0; i < rows.length; i++) {
       if (
         rows[i][3] &&
@@ -4467,15 +4657,44 @@ async function mtdcAttendance(extractedNumber, msg, idSubstring, client) {
           .replace(/\D/g, "")
           .includes(extractedNumber.replace(/\D/g, ""))
       ) {
-        rowIndex = i;
-        break;
+        // Check if program date exists and is within 4 days
+        const programDateTime = rows[i][6]; // Column G: Program DateTime
+        if (programDateTime) {
+          const programDate = moment(programDateTime, "DD/MM/YYYY HH:mm");
+
+          if (programDate.isValid()) {
+            const daysUntilProgram = programDate.diff(now, "days");
+
+            // Check if program is within 4 days (0-4 days from now)
+            if (daysUntilProgram >= 0 && daysUntilProgram <= 4) {
+              eligibleRows.push({
+                index: i,
+                programDate: programDate,
+                daysUntil: daysUntilProgram,
+                programName: rows[i][5] || "Unknown Program", // Column F: Program Name
+                programDateTime: programDateTime,
+              });
+            }
+          }
+        }
       }
     }
 
-    if (rowIndex === -1) {
-      console.log(`No registration found for phone number: ${extractedNumber}`);
-      return false;
+    if (eligibleRows.length === 0) {
+      console.log(
+        `No registration found for phone number: ${extractedNumber} within 4 days`
+      );
+      // Removed return
     }
+
+    // Sort by closest date and take the first one
+    eligibleRows.sort((a, b) => a.daysUntil - b.daysUntil);
+    const targetRow = eligibleRows[0];
+    const rowIndex = targetRow.index;
+
+    console.log(
+      `Found eligible program: ${targetRow.programName} on ${targetRow.programDateTime}, ${targetRow.daysUntil} days away`
+    );
 
     // Update the attendance status in column H
     const updateRange = `Submissions!H${rowIndex + 1}`;
@@ -4491,7 +4710,7 @@ async function mtdcAttendance(extractedNumber, msg, idSubstring, client) {
     console.log(
       `Updated attendance status to "${attendanceStatus}" for ${extractedNumber} at row ${
         rowIndex + 1
-      }`
+      } for program: ${targetRow.programName} on ${targetRow.programDateTime}`
     );
 
     // Send confirmation message to the user
@@ -4537,7 +4756,7 @@ async function mtdcConfirmAttendance(
     const rows = response.data.values;
     if (!rows || rows.length === 0) {
       console.log("No data found in MTDC spreadsheet.");
-      return false;
+      // Removed return
     }
 
     let rowIndex = -1;
@@ -4555,7 +4774,7 @@ async function mtdcConfirmAttendance(
 
     if (rowIndex === -1) {
       console.log(`No registration found for phone number: ${extractedNumber}`);
-      return false;
+      // Removed return
     }
 
     const updateRange = `Submissions!I${rowIndex + 1}`;
@@ -4588,12 +4807,12 @@ async function mtdcConfirmAttendance(
   }
 }
 
-async function processBufferedMessages(client, chatId, botName, phoneIndex) {
-  const buffer = messageBuffers.get(chatId);
+async function processBufferedMessages(client, bufferKey, botName, phoneIndex) {
+  const buffer = messageBuffers.get(bufferKey);
   if (!buffer || buffer.messages.length === 0) return;
 
   const messages = buffer.messages;
-  messageBuffers.delete(chatId); // Clear the buffer
+  messageBuffers.delete(bufferKey); // Clear the buffer
 
   // Combine all message bodies
   const combinedMessage = messages.map((m) => m.body).join(" ");
@@ -4624,9 +4843,14 @@ async function processMessage(
 
   try {
     // Initial fetch of config
-    await fetchConfigFromDatabase(idSubstring, phoneIndex);
-
-
+    const companyConfig = await fetchConfigFromDatabase(
+      idSubstring,
+      phoneIndex
+    );
+    if (!companyConfig) {
+      console.log(`No config found for company ${idSubstring}`);
+      return;
+    }
 
     const sender = {
       to: msg.from,
@@ -4649,25 +4873,29 @@ async function processMessage(
     let threadID;
     let query = combinedMessage;
     const chat = await msg.getChat();
-    
-    console.log(`�� [CONTACT_TRACKING] Fetching contact data for phone: ${extractedNumber}, company: ${idSubstring}`);
+
+    console.log(
+      `�� [CONTACT_TRACKING] Fetching contact data for phone: ${extractedNumber}, company: ${idSubstring}`
+    );
     const contactData = await getContactDataFromDatabaseByPhone(
       extractedNumber,
       idSubstring
     );
-    
+
     if (contactData) {
       console.log(`�� [CONTACT_TRACKING] Found existing contact:`, {
         contact_id: contactData.contact_id,
         contact_name: contactData.name,
         name: contactData.name,
         phone: contactData.phone,
-        company_id: contactData.company_id
+        company_id: contactData.company_id,
       });
     } else {
-      console.log(`�� [CONTACT_TRACKING] No existing contact found for phone: ${extractedNumber}, company: ${idSubstring}`);
+      console.log(
+        `�� [CONTACT_TRACKING] No existing contact found for phone: ${extractedNumber}, company: ${idSubstring}`
+      );
     }
-    
+
     let stopTag = contactData?.tags || [];
     let contact;
     try {
@@ -4689,7 +4917,9 @@ async function processMessage(
 
     if (
       Array.isArray(stopTag) &&
-      stopTag.some((tag) => typeof tag === "string" && tag.toLowerCase() === "stop bot")
+      stopTag.some(
+        (tag) => typeof tag === "string" && tag.toLowerCase() === "stop bot"
+      )
     ) {
       console.log(
         `Bot stopped for this message from ${sender.to} for Company ${idSubstring}`
@@ -4700,30 +4930,30 @@ async function processMessage(
     // Get or create thread ID
     if (contactData?.thread_id) {
       threadID = contactData.thread_id;
-      console.log(`�� [CONTACT_TRACKING] Using existing thread ID: ${threadID}`);
+      console.log(
+        `�� [CONTACT_TRACKING] Using existing thread ID: ${threadID}`
+      );
     } else {
       const thread = await createThread();
       threadID = thread.id;
       console.log(`�� [CONTACT_TRACKING] Created new thread ID: ${threadID}`);
-      
+
       const contactIDForThread = contactData?.phone || extractedNumber;
-      console.log(`�� [CONTACT_TRACKING] Saving thread ID for contact: ${contactIDForThread}`);
-      await saveThreadIDPostgres(
-        contactIDForThread,
-        threadID,
-        idSubstring
+      console.log(
+        `�� [CONTACT_TRACKING] Saving thread ID for contact: ${contactIDForThread}`
       );
+      await saveThreadIDPostgres(contactIDForThread, threadID, idSubstring);
     }
 
     // Handle special cases like attendance
     if (
-      msg.body.toLowerCase().includes("attending".toLowerCase()) &&
+      query.toLowerCase().includes("attending".toLowerCase()) &&
       idSubstring === "0380"
     ) {
       try {
         const status = await mtdcAttendance(
           extractedNumber,
-          msg.body,
+          query,
           idSubstring,
           client
         );
@@ -4739,7 +4969,7 @@ async function processMessage(
     }
 
     if (
-      msg.body
+      query
         .toLowerCase()
         .includes("have attended the program at mtdc".toLowerCase()) &&
       idSubstring === "0380"
@@ -4747,7 +4977,7 @@ async function processMessage(
       try {
         const status = await mtdcConfirmAttendance(
           extractedNumber,
-          msg.body,
+          query,
           idSubstring,
           client
         );
@@ -4769,7 +4999,7 @@ async function processMessage(
     chat.sendStateTyping();
 
     // Message Body
-    const messageBody = msg.body;
+    const messageBody = query;
 
     const handlerParams = {
       client: client,
@@ -4784,20 +5014,6 @@ async function processMessage(
       phoneIndex: phoneIndex,
     };
 
-    // Process AI responses for 'user'
-    await processAIResponses({
-      ...handlerParams,
-      keywordSource: "user",
-      handlers: {
-        assign: false,
-        tag: false,
-        followUp: false,
-        document: true,
-        image: true,
-        video: true,
-        voice: true,
-      },
-    });
     // Check if bot is stopped
     let isMainBotStopped = false;
     if (companyConfig.stopbot) {
@@ -4816,57 +5032,111 @@ async function processMessage(
       );
       isMainBotStopped = true;
     }
-  
+
+    const quotaLimit = await checkMessageQuotaLimit(idSubstring);
+    if (quotaLimit) {
+      console.log(`AI Messages quota limit reached for Company ${idSubstring}`);
+      // isMainBotStopped = true;
+    }
+
     // Only process full bot responses if bot is not stopped
     if (!isMainBotStopped) {
       if (
         !sender.to.includes("@g.us") ||
-        (combinedMessage.toLowerCase().startsWith("@juta") && phoneIndex == 0) ||
+        (combinedMessage.toLowerCase().startsWith("@juta") &&
+          phoneIndex == 0) ||
         (sender.to.includes("@g.us") &&
           idSubstring === "0385" &&
           !stopTag.includes("stop bot"))
       ) {
-        // --- Special message type handling for PDF, image, location ---
-        if (msg.type === 'document' && msg._data.mimetype === 'application/pdf') {
-          const pdfAnalysis = await handlePDFMessage(msg, sender, threadID, client, idSubstring, extractedNumber, phoneIndex);
-          const query = `${combinedMessage} The user PDF content analysis is: ${pdfAnalysis}`;
-          const answer = await handleOpenAIAssistant(query, threadID, stopTag, extractedNumber, idSubstring, client, contactData?.contact_name || contactData?.name || contact.pushname || extractedNumber, phoneIndex);
-          const parts = answer.split(/\s*\|\|\s*/);
-          for (let part of parts) {
-            part = part.trim();
-            if (part) {
-              const sentMessage = await client.sendMessage(msg.from, part);
-              await addMessageToPostgres(sentMessage, idSubstring, extractedNumber, contactData?.contact_name || contactData?.name || contact.pushname || extractedNumber, phoneIndex);
-            }
-          }
-          return;
-        } else if (msg.type === 'location') {
-          const query = `${combinedMessage} The user sent a location message`;
-          const answer = await handleOpenAIAssistant(query, threadID, stopTag, extractedNumber, idSubstring, client, contactData?.contact_name || contactData?.name || contact.pushname || extractedNumber, phoneIndex);
-          const parts = answer.split(/\s*\|\|\s*/);
-          for (let part of parts) {
-            part = part.trim();
-            if (part) {
-              const sentMessage = await client.sendMessage(msg.from, part);
-              await addMessageToPostgres(sentMessage, idSubstring, extractedNumber, contactData?.contact_name || contactData?.name || contact.pushname || extractedNumber, phoneIndex);
-            }
-          }
-          return;
-        } else if (msg.type === 'image') {
-          const imageAnalysis = await handleImageMessage(msg, sender, threadID, client, idSubstring, extractedNumber, phoneIndex);
-          const query = `${combinedMessage} The user image analysis is: ${imageAnalysis}`;
-          const answer = await handleOpenAIAssistant(query, threadID, stopTag, extractedNumber, idSubstring, client, contactData?.contact_name || contactData?.name || contact.pushname || extractedNumber, phoneIndex);
-          const parts = answer.split(/\s*\|\|\s*/);
-          for (let part of parts) {
-            part = part.trim();
-            if (part) {
-              const sentMessage = await client.sendMessage(msg.from, part);
-              await addMessageToPostgres(sentMessage, idSubstring, extractedNumber, contactData?.contact_name || contactData?.name || contact.pushname || extractedNumber, phoneIndex);
-            }
-          }
-          return;
-        }else{
+        // Process AI responses for 'user'
+        await processAIResponses({
+          ...handlerParams,
+          keywordSource: "user",
+          companyConfig: companyConfig,
+          handlers: {
+            assign: false,
+            tag: false,
+            followUp: false,
+            document: true,
+            image: true,
+            video: true,
+            voice: true,
+          },
+        });
 
+        let answer;
+
+        if (
+          msg.type === "document" &&
+          msg._data.mimetype === "application/pdf"
+        ) {
+          const pdfAnalysis = await handlePDFMessage(
+            msg,
+            sender,
+            threadID,
+            client,
+            idSubstring,
+            extractedNumber,
+            phoneIndex
+          );
+          const query = `${combinedMessage} The user PDF content analysis is: ${pdfAnalysis}`;
+          answer = await handleOpenAIAssistant(
+            query,
+            threadID,
+            stopTag,
+            extractedNumber,
+            idSubstring,
+            client,
+            contactData?.contact_name ||
+              contactData?.name ||
+              contact.pushname ||
+              extractedNumber,
+            phoneIndex,
+            companyConfig
+          );
+        } else if (msg.type === "location") {
+          const query = `${combinedMessage} The user sent a location message`;
+          answer = await handleOpenAIAssistant(
+            query,
+            threadID,
+            stopTag,
+            extractedNumber,
+            idSubstring,
+            client,
+            contactData?.contact_name ||
+              contactData?.name ||
+              contact.pushname ||
+              extractedNumber,
+            phoneIndex,
+            companyConfig
+          );
+        } else if (msg.type === "image") {
+          const imageAnalysis = await handleImageMessage(
+            msg,
+            sender,
+            threadID,
+            client,
+            idSubstring,
+            extractedNumber,
+            phoneIndex
+          );
+          const query = `${combinedMessage} The user image analysis is: ${imageAnalysis}`;
+          answer = await handleOpenAIAssistant(
+            query,
+            threadID,
+            stopTag,
+            extractedNumber,
+            idSubstring,
+            client,
+            contactData?.contact_name ||
+              contactData?.name ||
+              contact.pushname ||
+              extractedNumber,
+            phoneIndex,
+            companyConfig
+          );
+        } else {
           const typeAnalysis = await handleMessageByType({
             client,
             msg,
@@ -4880,13 +5150,12 @@ async function processMessage(
             contactData,
             phoneIndex,
           });
-  
-          query = typeAnalysis
+
+          const query = typeAnalysis
             ? `${combinedMessage} ${typeAnalysis}`
             : combinedMessage;
-  
-          // Send Message to OpenAI for Processing
-          const answer = await handleOpenAIAssistant(
+
+          answer = await handleOpenAIAssistant(
             query,
             threadID,
             stopTag,
@@ -4897,41 +5166,48 @@ async function processMessage(
               contactData?.name ||
               contact.pushname ||
               extractedNumber,
-            phoneIndex
+            phoneIndex,
+            companyConfig
           );
-  
-          if (answer) {
-            await processBotResponse({
-              client,
-              msg,
-              answer,
-              idSubstring,
-              extractedNumber,
-              contactName: contactData?.contact_name || contactData?.name || contact.pushname || extractedNumber,
-              phoneIndex,
-              threadID,
-              contactData,
-            });
-          }
         }
-        // --- End special message type handling ---
 
+        if (answer) {
+          await processBotResponse({
+            client,
+            msg,
+            answer,
+            idSubstring,
+            extractedNumber,
+            contactName:
+              contactData?.contact_name ||
+              contactData?.name ||
+              contact.pushname ||
+              extractedNumber,
+            phoneIndex,
+            threadID,
+            contactData,
+            companyConfig,
+          });
+        }
       }
     } else {
       await processNonAIResponses({
         ...handlerParams,
         keywordSource: "user",
+        companyConfig: companyConfig,
         handlers: {
-          assign: true,
-          tag: true,
-          followUp: true,
+          assign: false,
+          tag: false,
+          followUp: false,
           document: true,
           image: true,
           video: true,
           voice: true,
         },
       });
-      console.log(`Main bot is stopped for Company ${botName}, but lead assignment processing is still active`);
+      console.log(
+        `Main bot is stopped for Company ${botName}, but lead assignment processing is still active`
+      );
     }
     await chat.markUnread();
     console.log("Response sent.");
@@ -4941,13 +5217,80 @@ async function processMessage(
   }
 }
 
+async function checkMessageQuotaLimit(companyID) {
+  let messageUsage = {};
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = (now.getMonth() + 1).toString().padStart(2, "0");
+  const monthlyKey = `${year}-${month}`;
+
+  const feature = "aiMessages";
+  const featureResult = await pool.query(
+    `SELECT SUM(usage_count) AS total_usage
+     FROM usage_logs
+     WHERE company_id = $1 AND feature = $2
+     AND to_char(date, 'YYYY-MM') = $3`,
+    [companyID, feature, monthlyKey]
+  );
+  messageUsage[feature] = featureResult.rows[0]?.total_usage || 0;
+  console.log("AI message usage data:", messageUsage);
+
+  let usageQuota = {};
+  const defaultQuota = 500;
+  const settingKey = "quotaAIMessage";
+
+  const quotaResult = await pool.query(
+    `SELECT setting_value FROM settings
+    WHERE company_id = $1 AND setting_type = 'messaging' AND setting_key = $2`,
+    [companyID, settingKey]
+  );
+
+  let quotaObj = {};
+  if (quotaResult.rows.length > 0) {
+    try {
+      quotaObj =
+        typeof quotaResult.rows[0].setting_value === "string"
+          ? JSON.parse(quotaResult.rows[0].setting_value)
+          : quotaResult.rows[0].setting_value || {};
+    } catch {
+      quotaObj = {};
+    }
+  }
+
+  if (!quotaObj[monthlyKey]) {
+    quotaObj[monthlyKey] = defaultQuota;
+    if (quotaResult.rows.length > 0) {
+      await pool.query(
+        `UPDATE settings SET setting_value = $1, last_updated = CURRENT_TIMESTAMP
+        WHERE company_id = $2 AND setting_type = 'messaging' AND setting_key = $3`,
+        [JSON.stringify(quotaObj), companyID, settingKey]
+      );
+    } else {
+      await pool.query(
+        `INSERT INTO settings (company_id, setting_type, setting_key, setting_value, created_at, last_updated)
+        VALUES ($1, 'messaging', $2, $3, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+        [companyID, settingKey, JSON.stringify(quotaObj)]
+      );
+    }
+  }
+
+  usageQuota[feature] = quotaObj[monthlyKey] || defaultQuota;
+  console.log("AI usage quota data:", usageQuota);
+
+  // Check if usage exceeds quota
+  const exceeded = messageUsage[feature] >= usageQuota[feature];
+  return exceeded;
+}
+
 async function getContactDataFromDatabaseByPhone(phoneNumber, idSubstring) {
   try {
     if (!phoneNumber) {
       throw new Error("Phone number is undefined or null");
     }
 
-    console.log(`�� [CONTACT_TRACKING] Searching for contact - Phone: ${phoneNumber}, Company: ${idSubstring}`);
+    console.log(
+      `�� [CONTACT_TRACKING] Searching for contact - Phone: ${phoneNumber}, Company: ${idSubstring}`
+    );
 
     // Use direct SQL query instead of pool connection
     const result = await sql`
@@ -4957,7 +5300,9 @@ async function getContactDataFromDatabaseByPhone(phoneNumber, idSubstring) {
     `;
 
     if (result.length === 0) {
-      console.log(`�� [CONTACT_TRACKING] No contact found for phone: ${phoneNumber}, company: ${idSubstring}`);
+      console.log(
+        `�� [CONTACT_TRACKING] No contact found for phone: ${phoneNumber}, company: ${idSubstring}`
+      );
       return null;
     } else {
       const contactData = result[0];
@@ -4970,7 +5315,7 @@ async function getContactDataFromDatabaseByPhone(phoneNumber, idSubstring) {
         name: contactData.name,
         phone: contactData.phone,
         company_id: contactData.company_id,
-        thread_id: threadID
+        thread_id: threadID,
       });
 
       return {
@@ -4986,15 +5331,21 @@ async function getContactDataFromDatabaseByPhone(phoneNumber, idSubstring) {
 }
 
 setInterval(() => {
-  console.log('Pool status:', {
+  console.log("Pool status:", {
     total: pool.totalCount,
     idle: pool.idleCount,
-    waiting: pool.waitingCount
+    waiting: pool.waitingCount,
   });
 }, 30000);
 
 // Enhanced addMessageToPostgres function
-async function addMessageToPostgres(msg, idSubstring, extractedNumber, contactName, phoneIndex = 0) {
+async function addMessageToPostgres(
+  msg,
+  idSubstring,
+  extractedNumber,
+  contactName,
+  phoneIndex = 0
+) {
   console.log(`�� [CONTACT_TRACKING] Adding message to PostgreSQL`);
   console.log(`�� [CONTACT_TRACKING] idSubstring: ${idSubstring}`);
   console.log(`�� [CONTACT_TRACKING] extractedNumber: ${extractedNumber}`);
@@ -5011,7 +5362,12 @@ async function addMessageToPostgres(msg, idSubstring, extractedNumber, contactNa
     return;
   }
 
-  const contactID = idSubstring + "-" + (extractedNumber.startsWith("+") ? extractedNumber.slice(1) : extractedNumber);
+  const contactID =
+    idSubstring +
+    "-" +
+    (extractedNumber.startsWith("+")
+      ? extractedNumber.slice(1)
+      : extractedNumber);
   console.log(`�� [CONTACT_TRACKING] Generated contactID: ${contactID}`);
 
   const basicInfo = await extractBasicMessageInfo(msg);
@@ -5024,10 +5380,14 @@ async function addMessageToPostgres(msg, idSubstring, extractedNumber, contactNa
     const media = await msg.downloadMedia();
     const transcription = await transcribeAudio(media.data);
 
-    if (transcription && transcription !== "Audio transcription failed. Please try again.") {
+    if (
+      transcription &&
+      transcription !== "Audio transcription failed. Please try again."
+    ) {
       messageBody += transcription;
     } else {
-      messageBody += "I couldn't transcribe the audio. Could you please type your message instead?";
+      messageBody +=
+        "I couldn't transcribe the audio. Could you please type your message instead?";
     }
   }
 
@@ -5063,7 +5423,10 @@ async function addMessageToPostgres(msg, idSubstring, extractedNumber, contactNa
 
   let author = null;
   if (msg.from.includes("@g.us") && basicInfo.author) {
-    const authorData = await getContactDataFromDatabaseByPhone(basicInfo.author, idSubstring);
+    const authorData = await getContactDataFromDatabaseByPhone(
+      basicInfo.author,
+      idSubstring
+    );
     author = authorData ? authorData.contactName : basicInfo.author;
     console.log(`�� [CONTACT_TRACKING] Author found: ${author}`);
     console.log(`�� [CONTACT_TRACKING] Author contact data:`, authorData);
@@ -5080,19 +5443,26 @@ async function addMessageToPostgres(msg, idSubstring, extractedNumber, contactNa
         SELECT id, contact_id, phone, company_id, name, contact_name FROM public.contacts 
         WHERE contact_id = $1 AND company_id = $2
       `;
-      console.log(`�� [CONTACT_TRACKING] Checking for existing contact with contact_id: ${contactID}, company_id: ${idSubstring}`);
-      const contactResult = await client.query(contactCheckQuery, [contactID, idSubstring]);
+      console.log(
+        `�� [CONTACT_TRACKING] Checking for existing contact with contact_id: ${contactID}, company_id: ${idSubstring}`
+      );
+      const contactResult = await client.query(contactCheckQuery, [
+        contactID,
+        idSubstring,
+      ]);
 
       if (contactResult.rows.length === 0) {
-        console.log(`�� [CONTACT_TRACKING] ⚠️ CREATING NEW CONTACT: ${contactID} for company: ${idSubstring}`);
+        console.log(
+          `�� [CONTACT_TRACKING] ⚠️ CREATING NEW CONTACT: ${contactID} for company: ${idSubstring}`
+        );
         console.log(`�� [CONTACT_TRACKING] Contact details:`, {
           contact_id: contactID,
           company_id: idSubstring,
           name: contactName || extractedNumber,
           contact_name: contactName || extractedNumber,
-          phone: extractedNumber
+          phone: extractedNumber,
         });
-        
+
         const contactQuery = `
           INSERT INTO public.contacts (
             contact_id, company_id, name, contact_name, phone, email,
@@ -5124,7 +5494,9 @@ async function addMessageToPostgres(msg, idSubstring, extractedNumber, contactNa
           null,
           new Date(),
         ]);
-        console.log(`�� [CONTACT_TRACKING] ✅ Contact created successfully: ${contactID}`);
+        console.log(
+          `�� [CONTACT_TRACKING] ✅ Contact created successfully: ${contactID}`
+        );
       } else {
         const existingContact = contactResult.rows[0];
         console.log(`�� [CONTACT_TRACKING] ✅ Contact already exists:`, {
@@ -5133,16 +5505,22 @@ async function addMessageToPostgres(msg, idSubstring, extractedNumber, contactNa
           name: existingContact.name,
           contact_name: existingContact.contact_name,
           phone: existingContact.phone,
-          company_id: existingContact.company_id
+          company_id: existingContact.company_id,
         });
-        
+
         // Check if name is just the phone number (potential duplicate indicator)
-        if (existingContact.name === extractedNumber || existingContact.name === extractedNumber.slice(1)) {
-          console.log(`�� [CONTACT_TRACKING] ⚠️ WARNING: Contact name is phone number - potential duplicate:`, {
-            contact_id: existingContact.contact_id,
-            name: existingContact.name,
-            phone: existingContact.phone
-          });
+        if (
+          existingContact.name === extractedNumber ||
+          existingContact.name === extractedNumber.slice(1)
+        ) {
+          console.log(
+            `�� [CONTACT_TRACKING] ⚠️ WARNING: Contact name is phone number - potential duplicate:`,
+            {
+              contact_id: existingContact.contact_id,
+              name: existingContact.name,
+              phone: existingContact.phone,
+            }
+          );
         }
       }
 
@@ -5173,8 +5551,10 @@ async function addMessageToPostgres(msg, idSubstring, extractedNumber, contactNa
         author || contactID,
         quotedMessage ? JSON.stringify(quotedMessage) : null,
         mediaData || null,
-        Object.keys(mediaMetadata).length > 0 ? JSON.stringify(mediaMetadata) : null,
-        phoneIndex
+        Object.keys(mediaMetadata).length > 0
+          ? JSON.stringify(mediaMetadata)
+          : null,
+        phoneIndex,
       ];
 
       const messageResult = await client.query(messageQuery, messageValues);
@@ -5195,7 +5575,7 @@ async function addMessageToPostgres(msg, idSubstring, extractedNumber, contactNa
             text: { body: messageBody },
             timestamp: Math.floor(Date.now() / 1000),
             type: basicInfo.type,
-            phoneIndex: phoneIndex
+            phoneIndex: phoneIndex,
           }),
           contactID,
           idSubstring,
@@ -5203,7 +5583,9 @@ async function addMessageToPostgres(msg, idSubstring, extractedNumber, contactNa
       );
 
       await client.query("COMMIT");
-      console.log(`�� [CONTACT_TRACKING] Message successfully added to PostgreSQL with ID: ${messageDbId}`);
+      console.log(
+        `�� [CONTACT_TRACKING] Message successfully added to PostgreSQL with ID: ${messageDbId}`
+      );
     } catch (error) {
       await safeRollback(client);
       console.error("Error in PostgreSQL transaction:", error);
@@ -5227,6 +5609,7 @@ async function processAIResponses({
   contactName,
   phoneIndex,
   keywordSource,
+  companyConfig,
   handlers = {
     assign: true,
     tag: true,
@@ -5250,6 +5633,7 @@ async function processAIResponses({
     contactName: contactName,
     phoneIndex: phoneIndex,
     keywordSource: keywordSource,
+    companyConfig: companyConfig,
   };
 
   // Handle user-triggered responses
@@ -5336,6 +5720,7 @@ async function handleMessageByType({
   }
   return null;
 }
+
 async function processNonAIResponses({
   client,
   msg,
@@ -5344,6 +5729,7 @@ async function processNonAIResponses({
   contactName,
   phoneIndex,
   keywordSource,
+  companyConfig,
   handlers = {
     assign: true,
     tag: true,
@@ -5367,20 +5753,27 @@ async function processNonAIResponses({
     contactName: contactName,
     phoneIndex: phoneIndex,
     keywordSource: keywordSource,
+    companyConfig: companyConfig,
   };
 
-  console.log(`[NON-AI PROCESSING] Processing responses for Company ${idSubstring} without AI assistance`);
+  console.log(
+    `[NON-AI PROCESSING] Processing responses for Company ${idSubstring} without AI assistance`
+  );
 
   // Handle user-triggered responses without AI
   if (handlers.assign) {
-    console.log(`[NON-AI PROCESSING] Processing lead assignment for ${extractedNumber}`);
+    console.log(
+      `[NON-AI PROCESSING] Processing lead assignment for ${extractedNumber}`
+    );
     await handleAIAssignResponses({
       ...handlerParams,
     });
   }
 
   if (handlers.tag) {
-    console.log(`[NON-AI PROCESSING] Processing tag responses for ${extractedNumber}`);
+    console.log(
+      `[NON-AI PROCESSING] Processing tag responses for ${extractedNumber}`
+    );
     await handleAITagResponses({
       ...handlerParams,
       followUpTemplates: followUpTemplates,
@@ -5388,7 +5781,9 @@ async function processNonAIResponses({
   }
 
   if (handlers.followUp) {
-    console.log(`[NON-AI PROCESSING] Processing follow-up responses for ${extractedNumber}`);
+    console.log(
+      `[NON-AI PROCESSING] Processing follow-up responses for ${extractedNumber}`
+    );
     await handleAIFollowUpResponses({
       ...handlerParams,
       followUpTemplates: followUpTemplates,
@@ -5396,35 +5791,46 @@ async function processNonAIResponses({
   }
 
   if (handlers.document) {
-    console.log(`[NON-AI PROCESSING] Processing document responses for ${extractedNumber}`);
+    console.log(
+      `[NON-AI PROCESSING] Processing document responses for ${extractedNumber}`
+    );
     await handleAIDocumentResponses({
       ...handlerParams,
     });
   }
 
   if (handlers.image) {
-    console.log(`[NON-AI PROCESSING] Processing image responses for ${extractedNumber}`);
+    console.log(
+      `[NON-AI PROCESSING] Processing image responses for ${extractedNumber}`
+    );
     await handleAIImageResponses({
       ...handlerParams,
     });
   }
 
   if (handlers.video) {
-    console.log(`[NON-AI PROCESSING] Processing video responses for ${extractedNumber}`);
+    console.log(
+      `[NON-AI PROCESSING] Processing video responses for ${extractedNumber}`
+    );
     await handleAIVideoResponses({
       ...handlerParams,
     });
   }
 
   if (handlers.voice) {
-    console.log(`[NON-AI PROCESSING] Processing voice responses for ${extractedNumber}`);
+    console.log(
+      `[NON-AI PROCESSING] Processing voice responses for ${extractedNumber}`
+    );
     await handleAIVoiceResponses({
       ...handlerParams,
     });
   }
 
-  console.log(`[NON-AI PROCESSING] Completed processing for Company ${idSubstring}`);
+  console.log(
+    `[NON-AI PROCESSING] Completed processing for Company ${idSubstring}`
+  );
 }
+
 // Modular function to process bot response
 async function processBotResponse({
   client,
@@ -5436,6 +5842,7 @@ async function processBotResponse({
   phoneIndex,
   threadID,
   contactData,
+  companyConfig,
 }) {
   const parts = answer.split(/\s*\|\|\s*/);
   const followUpTemplates = await getFollowUpTemplates(idSubstring);
@@ -5462,7 +5869,7 @@ async function processBotResponse({
         idSubstring,
         extractedNumber,
         contactName,
-        phoneIndex
+        phoneIndex,
       });
       continue;
     }
@@ -5488,7 +5895,9 @@ async function processBotResponse({
       followUpTemplates,
       contactName,
       threadID,
-      phoneIndex
+      phoneIndex,
+      msg,
+      companyConfig,
     });
 
     const handlerParams = {
@@ -5505,6 +5914,7 @@ async function processBotResponse({
     await processAIResponses({
       ...handlerParams,
       keywordSource: "bot",
+      companyConfig: companyConfig,
       handlers: {
         assign: true,
         tag: true,
@@ -5526,7 +5936,7 @@ async function handleProductResponse({
   idSubstring,
   extractedNumber,
   contactName,
-  phoneIndex
+  phoneIndex,
 }) {
   const lines = part.split("\n");
   for (const line of lines) {
@@ -5575,10 +5985,17 @@ async function handleSpecialCases({
   contactName,
   threadID,
   phoneIndex,
+  msg,
+  companyConfig,
 }) {
   // Handle general team notification
   if (part.includes("notified the team")) {
-    const {empName, empPhone} = await assignNewContactToEmployee(extractedNumber, idSubstring, client, phoneIndex = phoneIndex);
+    const { empName, empPhone } = await assignNewContactToEmployee(
+      extractedNumber,
+      idSubstring,
+      client,
+      (phoneIndex = phoneIndex)
+    );
     await addTagToPostgres(extractedNumber, empName, idSubstring);
   }
 
@@ -5588,13 +6005,23 @@ async function handleSpecialCases({
       part.toLowerCase().includes("i will notify the team") ||
       part.toLowerCase().includes("i have notified the team")
     ) {
-      const {empName, empPhone} = await assignNewContactToEmployee(extractedNumber, idSubstring, client, phoneIndex = phoneIndex);
+      const { empName, empPhone } = await assignNewContactToEmployee(
+        extractedNumber,
+        idSubstring,
+        client,
+        (phoneIndex = phoneIndex)
+      );
       await addTagToPostgres(extractedNumber, empName, idSubstring);
     }
 
     if (part.toLowerCase().includes("get back to you")) {
       await addTagToPostgres(extractedNumber, "stop bot", idSubstring);
-      const {empName, empPhone} = await assignNewContactToEmployee(extractedNumber, idSubstring, client, phoneIndex = phoneIndex);
+      const { empName, empPhone } = await assignNewContactToEmployee(
+        extractedNumber,
+        idSubstring,
+        client,
+        (phoneIndex = phoneIndex)
+      );
       await addTagToPostgres(extractedNumber, empName, idSubstring);
     }
 
@@ -5620,7 +6047,20 @@ async function handleSpecialCases({
       await addTagToPostgres(extractedNumber, "ordered", idSubstring);
     }
   }
+  if (part.includes("Click to Register") && idSubstring == "0380") {
+    const sentMessage = await client.sendMessage(
+      msg.from,
+      "http://web.jutateknologi.com/register/registration-form-for-co9p-programs/" +
+        extractedNumber
+    );
 
+    await addMessageToPostgres(
+      sentMessage,
+      idSubstring,
+      msg.from,
+      "Register Link"
+    );
+  }
   // Handle MTDC case (0380)
   if (part.includes("Your details are registered") && idSubstring == "0380") {
     const { reportMessage, contactInfoMTDC } = await generateSpecialReportMTDC(
@@ -5631,9 +6071,9 @@ async function handleSpecialCases({
     );
 
     console.log("=== handleSpecialCases DEBUG ===");
-   console.log(contactInfoMTDC);
-   console.log(reportMessage);
-/*    const sentMessage = await client.sendMessage(
+    console.log(contactInfoMTDC);
+    console.log(reportMessage);
+    /*    const sentMessage = await client.sendMessage(
       "120363386875697540@g.us",
       reportMessage
     );
@@ -5645,8 +6085,14 @@ async function handleSpecialCases({
       "Group Chat"
     );
 */
-await insertSpreadsheetMTDC(reportMessage);
-  await saveSpecialCaseMTDC(contactInfoMTDC, extractedNumber, contactName, threadID, idSubstring);
+    await insertSpreadsheetMTDC(reportMessage);
+    await saveSpecialCaseMTDC(
+      contactInfoMTDC,
+      extractedNumber,
+      contactName,
+      threadID,
+      idSubstring
+    );
   }
 
   // Handle SKC case (0161)
@@ -6213,29 +6659,40 @@ await insertSpreadsheetMTDC(reportMessage);
       await safeRelease(sqlClient);
     }
   }
-  async function saveSpecialCaseMTDC(contactInfoMTDC, extractedNumber, contactName, threadID, idSubstring) {
+  async function saveSpecialCaseMTDC(
+    contactInfoMTDC,
+    extractedNumber,
+    contactName,
+    threadID,
+    idSubstring
+  ) {
     const sqlClient = await pool.connect();
     try {
       await sqlClient.query("BEGIN");
-  
+
       // Get the first program and date from the arrays
-      const program = contactInfoMTDC.programs && contactInfoMTDC.programs.length > 0 
-        ? contactInfoMTDC.programs[0] 
-        : "[Not specified]";
-      const programDateTime = contactInfoMTDC.programDates && contactInfoMTDC.programDates.length > 0 
-        ? contactInfoMTDC.programDates[0] 
-        : "[Not specified]";
-  
+      const program =
+        contactInfoMTDC.programs && contactInfoMTDC.programs.length > 0
+          ? contactInfoMTDC.programs[0]
+          : "[Not specified]";
+      const programDateTime =
+        contactInfoMTDC.programDates && contactInfoMTDC.programDates.length > 0
+          ? contactInfoMTDC.programDates[0]
+          : "[Not specified]";
+
       // ADD LOGGING HERE
       console.log("=== saveSpecialCaseMTDC DEBUG ===");
-      console.log("Input contactInfoMTDC:", JSON.stringify(contactInfoMTDC, null, 2));
+      console.log(
+        "Input contactInfoMTDC:",
+        JSON.stringify(contactInfoMTDC, null, 2)
+      );
       console.log("Extracted program:", program);
       console.log("Extracted programDateTime:", programDateTime);
       console.log("extractedNumber:", extractedNumber);
       console.log("contactName:", contactName);
       console.log("threadID:", threadID);
       console.log("idSubstring:", idSubstring);
-  
+
       const contactData = {
         phone: extractedNumber,
         contact_name: (contactInfoMTDC.contactName || contactName || "").trim(),
@@ -6249,22 +6706,26 @@ await insertSpreadsheetMTDC(reportMessage);
           "Program Date & Time": programDateTime,
         },
       };
-  
+
       console.log("Final contactData:", JSON.stringify(contactData, null, 2));
-  
+
       Object.keys(contactData.custom_fields).forEach((key) => {
         if (contactData.custom_fields[key] === undefined) {
           delete contactData.custom_fields[key];
         }
       });
-  
+
       const checkResult = await sqlClient.query(
         "SELECT contact_id FROM public.contacts WHERE phone = $1 AND company_id = $2",
         [extractedNumber, idSubstring]
       );
-  
-      console.log("Database check result:", checkResult.rows.length, "existing records found");
-  
+
+      console.log(
+        "Database check result:",
+        checkResult.rows.length,
+        "existing records found"
+      );
+
       if (checkResult.rows.length > 0) {
         console.log("UPDATING existing contact");
         await sqlClient.query(
@@ -6290,7 +6751,7 @@ await insertSpreadsheetMTDC(reportMessage);
           (extractedNumber.startsWith("+")
             ? extractedNumber.slice(1)
             : extractedNumber);
-  
+
         await sqlClient.query(
           `INSERT INTO public.contacts 
           (contact_id, company_id, name, contact_name, phone, thread_id, custom_fields)
@@ -6306,7 +6767,7 @@ await insertSpreadsheetMTDC(reportMessage);
           ]
         );
       }
-  
+
       await sqlClient.query("COMMIT");
       console.log("=== saveSpecialCaseMTDC SUCCESS ===");
     } catch (error) {
@@ -6499,7 +6960,7 @@ function extractContactInfoSKC(report) {
 function extractContactInfoMTDC(report) {
   console.log("=== extractContactInfoMTDC DEBUG ===");
   console.log("Input report:", report);
-  
+
   var lines = report.split("\n");
   var contactInfoMTDC = {
     programs: [],
@@ -6508,11 +6969,11 @@ function extractContactInfoMTDC(report) {
 
   for (var line of lines) {
     console.log("Processing line:", JSON.stringify(line));
-    
+
     // Remove leading dash and space if present
-    var cleanLine = line.replace(/^-\s*/, '').trim();
+    var cleanLine = line.replace(/^-\s*/, "").trim();
     console.log("Clean line:", JSON.stringify(cleanLine));
-    
+
     if (cleanLine.startsWith("Name")) {
       const parts = cleanLine.split(":");
       console.log("Name parts:", parts);
@@ -6546,9 +7007,12 @@ function extractContactInfoMTDC(report) {
     }
   }
 
-  console.log("Final extracted data:", JSON.stringify(contactInfoMTDC, null, 2));
+  console.log(
+    "Final extracted data:",
+    JSON.stringify(contactInfoMTDC, null, 2)
+  );
   console.log("=== extractContactInfoMTDC END ===");
-  
+
   return contactInfoMTDC;
 }
 
@@ -6674,8 +7138,14 @@ async function handleImageMessage(
   }
 }
 
-
-async function handlePDFMessage(msg, sender, threadID, client, idSubstring, extractedNumber) {
+async function handlePDFMessage(
+  msg,
+  sender,
+  threadID,
+  client,
+  idSubstring,
+  extractedNumber
+) {
   const tempDir = path.join(os.tmpdir(), `pdf_process_${uuidv4()}`);
   console.log(`[PDF] Creating temp directory: ${tempDir}`);
   await fs.promises.mkdir(tempDir, { recursive: true });
@@ -6684,15 +7154,17 @@ async function handlePDFMessage(msg, sender, threadID, client, idSubstring, extr
   console.log(`[PDF] Temp PDF path: ${tempPdfPath}`);
 
   try {
-    console.log('[PDF] Downloading media...');
+    console.log("[PDF] Downloading media...");
     const media = await msg.downloadMedia();
-    console.log('[PDF] Media downloaded.');
+    console.log("[PDF] Media downloaded.");
 
-    const buffer = Buffer.from(media.data, 'base64');
-    console.log(`[PDF] Converted media to buffer. Buffer length: ${buffer.length}`);
+    const buffer = Buffer.from(media.data, "base64");
+    console.log(
+      `[PDF] Converted media to buffer. Buffer length: ${buffer.length}`
+    );
 
     await fs.promises.writeFile(tempPdfPath, buffer);
-    console.log('[PDF] Buffer written to temp PDF file.');
+    console.log("[PDF] Buffer written to temp PDF file.");
 
     // Convert first 3 pages to PNG using ConvertAPI SDK
     let allPagesAnalysis = [];
@@ -6700,34 +7172,46 @@ async function handlePDFMessage(msg, sender, threadID, client, idSubstring, extr
     for (let i = 0; i < pagesToProcess.length; i++) {
       const pageNum = pagesToProcess[i];
       console.log(`[PDF] Converting page ${pageNum} to PNG with ConvertAPI...`);
-    
+
       try {
-        const result = await convertapi.convert('png', {
-          File: tempPdfPath,
-          PageRange: `${pageNum}-${pageNum}`
-        }, 'pdf');
-    
+        const result = await convertapi.convert(
+          "png",
+          {
+            File: tempPdfPath,
+            PageRange: `${pageNum}-${pageNum}`,
+          },
+          "pdf"
+        );
+
         if (result && result.files && result.files.length > 0) {
           const imageUrl = result.files[0].url;
           console.log(`[PDF] Got PNG URL for page ${pageNum}: ${imageUrl}`);
-    
+
           // Download the image as buffer
-          const imageResp = await axios.get(imageUrl, { responseType: 'arraybuffer' });
+          const imageResp = await axios.get(imageUrl, {
+            responseType: "arraybuffer",
+          });
           const imageBuffer = Buffer.from(imageResp.data);
-    
+
           // Check if buffer is a valid PNG
-          if (imageBuffer.slice(0, 8).toString('hex') !== '89504e470d0a1a0a') {
-            console.error(`[PDF] Page ${pageNum} is not a valid PNG. Skipping.`);
-            allPagesAnalysis.push(`Page ${pageNum}: [Error: Could not convert to valid PNG image]`);
+          if (imageBuffer.slice(0, 8).toString("hex") !== "89504e470d0a1a0a") {
+            console.error(
+              `[PDF] Page ${pageNum} is not a valid PNG. Skipping.`
+            );
+            allPagesAnalysis.push(
+              `Page ${pageNum}: [Error: Could not convert to valid PNG image]`
+            );
             continue;
           }
-    
-          const base64Image = imageBuffer.toString('base64');
+
+          const base64Image = imageBuffer.toString("base64");
           console.log(`[PDF] Converted page ${pageNum} image to base64.`);
-    
+
           // Analyze image using OpenAI
           try {
-            console.log(`[PDF] Sending page ${pageNum} image to OpenAI for analysis...`);
+            console.log(
+              `[PDF] Sending page ${pageNum} image to OpenAI for analysis...`
+            );
             const aiResponse = await openai.chat.completions.create({
               model: "gpt-4o-mini",
               messages: [
@@ -6741,52 +7225,64 @@ async function handlePDFMessage(msg, sender, threadID, client, idSubstring, extr
                     {
                       type: "image_url",
                       image_url: {
-                        url: `data:image/png;base64,${base64Image}`
+                        url: `data:image/png;base64,${base64Image}`,
                       },
                     },
                   ],
-                }
+                },
               ],
               max_tokens: 300,
             });
-    
+
             const pageAnalysis = aiResponse.choices[0].message.content;
             console.log(`[PDF] Analysis for page ${pageNum}: ${pageAnalysis}`);
             allPagesAnalysis.push(`Page ${pageNum}: ${pageAnalysis}`);
           } catch (err) {
-            console.error(`[PDF] OpenAI error for page ${pageNum}: ${err.message}\n${err.stack}`);
-            allPagesAnalysis.push(`Page ${pageNum}: [Error: OpenAI could not process image]`);
+            console.error(
+              `[PDF] OpenAI error for page ${pageNum}: ${err.message}\n${err.stack}`
+            );
+            allPagesAnalysis.push(
+              `Page ${pageNum}: [Error: OpenAI could not process image]`
+            );
           }
         } else {
           console.error(`[PDF] No PNG returned for page ${pageNum}.`);
-          allPagesAnalysis.push(`Page ${pageNum}: [Error: No PNG returned from ConvertAPI]`);
+          allPagesAnalysis.push(
+            `Page ${pageNum}: [Error: No PNG returned from ConvertAPI]`
+          );
         }
       } catch (err) {
         // FIX: Avoid circular structure error
         if (err.response) {
-          console.error(`[PDF] ConvertAPI error for page ${pageNum}: ${err.message} - Response:`, err.response.data);
+          console.error(
+            `[PDF] ConvertAPI error for page ${pageNum}: ${err.message} - Response:`,
+            err.response.data
+          );
         } else {
-          console.error(`[PDF] ConvertAPI error for page ${pageNum}: ${err.message}\n${err.stack}`);
+          console.error(
+            `[PDF] ConvertAPI error for page ${pageNum}: ${err.message}\n${err.stack}`
+          );
         }
-        allPagesAnalysis.push(`Page ${pageNum}: [Error: ConvertAPI failed for this page]`);
+        allPagesAnalysis.push(
+          `Page ${pageNum}: [Error: ConvertAPI failed for this page]`
+        );
       }
     }
 
-    const combinedAnalysis = allPagesAnalysis.join('\n\n');
-    console.log('[PDF] Combined PDF analysis:', combinedAnalysis);
+    const combinedAnalysis = allPagesAnalysis.join("\n\n");
+    console.log("[PDF] Combined PDF analysis:", combinedAnalysis);
 
     return `[PDF Content Analysis: ${combinedAnalysis}]`;
-
   } catch (error) {
-    console.error('[PDF] Error processing PDF:', error);
-    return '[Error: Unable to process PDF document]';
+    console.error("[PDF] Error processing PDF:", error);
+    return "[Error: Unable to process PDF document]";
   } finally {
     try {
       console.log(`[PDF] Cleaning up temp directory: ${tempDir}`);
       await fs.promises.rm(tempDir, { recursive: true, force: true });
-      console.log('[PDF] Temp directory cleaned up.');
+      console.log("[PDF] Temp directory cleaned up.");
     } catch (error) {
-      console.error('[PDF] Error cleaning up temporary files:', error);
+      console.error("[PDF] Error cleaning up temporary files:", error);
     }
   }
 }
@@ -6883,7 +7379,7 @@ async function getAIAssignResponses(companyId) {
     }
 
     await sqlClient.query("COMMIT");
-      return responses;
+    return responses;
   } catch (error) {
     await safeRollback(sqlClient);
     console.error("Error in getAIAssignResponses:", error);
@@ -7634,7 +8130,12 @@ async function addContactToPostgres(groupId, groupTitle, idSubstring) {
       `;
 
       const chatData = {
-        contact_id: idSubstring + "-" + (extractedNumber.startsWith("+") ? extractedNumber.slice(1) : extractedNumber),
+        contact_id:
+          idSubstring +
+          "-" +
+          (extractedNumber.startsWith("+")
+            ? extractedNumber.slice(1)
+            : extractedNumber),
         id: groupId,
         name: groupTitle,
         not_spam: true,
@@ -7688,7 +8189,12 @@ async function addContactToPostgres(groupId, groupTitle, idSubstring) {
       `;
 
       const chatData = {
-        contact_id: idSubstring + "-" + (extractedNumber.startsWith("+") ? extractedNumber.slice(1) : extractedNumber),
+        contact_id:
+          idSubstring +
+          "-" +
+          (extractedNumber.startsWith("+")
+            ? extractedNumber.slice(1)
+            : extractedNumber),
         id: groupId,
         name: groupTitle,
         not_spam: true,
@@ -7743,24 +8249,25 @@ async function listContactsWithTag(idSubstring, tag, limit = 10) {
 
     const query = `
       SELECT 
-        contact_id AS "phoneNumber",
-        contact_name AS "contactName",
+      phone AS "phoneNumber",
+      name AS "contactName",
         tags
       FROM 
         public.contacts
       WHERE 
         company_id = $1 AND
-        jsonb_path_exists(
-          tags, 
-          '$[*] ? (@ like_regex $lowercaseTag flag "i")', 
-          jsonb_build_object('lowercaseTag', $2)
+      EXISTS (
+        SELECT 1 FROM jsonb_array_elements(tags) AS tag
+        WHERE (
+        (jsonb_typeof(tag) = 'string' AND lower(tag::text) LIKE '%' || $2 || '%')
+        )
         )
       LIMIT $3
     `;
 
     const result = await sqlClient.query(query, [
       idSubstring,
-      `.*${lowercaseSearchTag}.*`,
+      lowercaseSearchTag,
       limit,
     ]);
 
@@ -7782,12 +8289,10 @@ async function listContactsWithTag(idSubstring, tag, limit = 10) {
   }
 }
 
-
-
 async function extractBasicMessageInfo(msg) {
   return {
     id: msg.id ?? "",
-    idSerialized: msg.id._serialized?? "",
+    idSerialized: msg.id._serialized ?? "",
     from: msg.from ?? "",
     fromMe: msg.fromMe ?? false,
     body: msg.body ?? "",
@@ -7830,7 +8335,11 @@ async function processMessageMedia(msg) {
         mediaData.width = msg._data.width;
         mediaData.height = msg._data.height;
         if (fileSizeMB > FILE_SIZE_LIMIT_MB) {
-          mediaData.link = await storeMediaData(media.data, mediaData.filename, media.mimetype);
+          mediaData.link = await storeMediaData(
+            media.data,
+            mediaData.filename,
+            media.mimetype
+          );
           delete mediaData.data;
         }
         break;
@@ -7838,17 +8347,29 @@ async function processMessageMedia(msg) {
         mediaData.page_count = msg._data.pageCount;
         mediaData.file_size = msg._data.size;
         if (fileSizeMB > FILE_SIZE_LIMIT_MB) {
-          mediaData.link = await storeMediaData(media.data, mediaData.filename, media.mimetype);
+          mediaData.link = await storeMediaData(
+            media.data,
+            mediaData.filename,
+            media.mimetype
+          );
           delete mediaData.data;
         }
         break;
       case "video":
-        mediaData.link = await storeMediaData(media.data, mediaData.filename, media.mimetype);
+        mediaData.link = await storeMediaData(
+          media.data,
+          mediaData.filename,
+          media.mimetype
+        );
         delete mediaData.data;
         break;
       default:
         if (fileSizeMB > FILE_SIZE_LIMIT_MB) {
-          mediaData.link = await storeMediaData(media.data, mediaData.filename, media.mimetype);
+          mediaData.link = await storeMediaData(
+            media.data,
+            mediaData.filename,
+            media.mimetype
+          );
           delete mediaData.data;
         } else {
           mediaData.link = null;
@@ -8482,7 +9003,7 @@ async function assignNewContactToEmployee(
 ) {
   // Load current month's assignment counts
   await loadAssignmentCounts(idSubstring, phoneIndex);
-  
+
   const employees = await fetchEmployeesFromDatabase(idSubstring);
   console.log("Available employees:", employees);
 
@@ -8496,22 +9017,25 @@ async function assignNewContactToEmployee(
     extractedNumber,
     idSubstring
   );
-  const updatedContactName = contactData?.contactName || contactName || "Not provided";
+  const updatedContactName =
+    contactData?.contactName || contactName || "Not provided";
 
   // Helper function to filter and sort available employees
   const getAvailableEmployees = (role) => {
-    return employees
-      .filter(emp => 
-        emp.role === role && 
+    return employees.filter(
+      (emp) =>
+        emp.role === role &&
         emp.phone_access?.[phoneIndex] &&
         (!emp.quota_leads || (assignmentCounts[emp.id] || 0) < emp.quota_leads)
-      .map(emp => ({
-        ...emp,
-        currentAssignments: assignmentCounts[emp.id] || 0,
-        effectiveWeight: (emp.weightages?.[phoneIndex] || 1) / 
-                        ((assignmentCounts[emp.id] || 0) + 1)
-      }))
-      .sort((a, b) => b.effectiveWeight - a.effectiveWeight));
+          .map((emp) => ({
+            ...emp,
+            currentAssignments: assignmentCounts[emp.id] || 0,
+            effectiveWeight:
+              (emp.weightages?.[phoneIndex] || 1) /
+              ((assignmentCounts[emp.id] || 0) + 1),
+          }))
+          .sort((a, b) => b.effectiveWeight - a.effectiveWeight)
+    );
   };
 
   // Get available employees by role
@@ -8524,7 +9048,10 @@ async function assignNewContactToEmployee(
 
   // Try to assign to sales first
   if (availableSales.length > 0) {
-    const totalWeight = availableSales.reduce((sum, emp) => sum + emp.effectiveWeight, 0);
+    const totalWeight = availableSales.reduce(
+      (sum, emp) => sum + emp.effectiveWeight,
+      0
+    );
     const randomValue = Math.random() * totalWeight;
     let cumulativeWeight = 0;
 
@@ -8540,7 +9067,10 @@ async function assignNewContactToEmployee(
 
   // Fall back to managers if no sales available
   if (!assignedEmployee && availableManagers.length > 0) {
-    const totalWeight = availableManagers.reduce((sum, emp) => sum + emp.effectiveWeight, 0);
+    const totalWeight = availableManagers.reduce(
+      (sum, emp) => sum + emp.effectiveWeight,
+      0
+    );
     const randomValue = Math.random() * totalWeight;
     let cumulativeWeight = 0;
 
@@ -8556,7 +9086,10 @@ async function assignNewContactToEmployee(
 
   // Fall back to admins if no others available
   if (!assignedEmployee && availableAdmins.length > 0) {
-    const totalWeight = availableAdmins.reduce((sum, emp) => sum + emp.effectiveWeight, 0);
+    const totalWeight = availableAdmins.reduce(
+      (sum, emp) => sum + emp.effectiveWeight,
+      0
+    );
     const randomValue = Math.random() * totalWeight;
     let cumulativeWeight = 0;
 
@@ -8573,7 +9106,7 @@ async function assignNewContactToEmployee(
   // If we found someone to assign to
   if (assignedEmployee) {
     console.log(`Assigning to ${assignedRole}: ${assignedEmployee.name}`);
-    
+
     await assignToEmployee(
       assignedEmployee,
       assignedRole,
@@ -8585,8 +9118,8 @@ async function assignNewContactToEmployee(
       phoneIndex
     );
 
-    const contactId = `${idSubstring}-${extractedNumber.replace('+', '')}`;
-    
+    const contactId = `${idSubstring}-${extractedNumber.replace("+", "")}`;
+
     // Record the assignment
     await recordAssignment({
       company_id: idSubstring,
@@ -8595,17 +9128,18 @@ async function assignNewContactToEmployee(
       phone_index: phoneIndex,
       employee_role: assignedEmployee.role,
       weightage_used: assignedEmployee.weightages?.[phoneIndex] || 1,
-      assignment_type: 'general',
-      notes: `Assigned via ${triggerKeyword || 'automatic'} assignment`,
+      assignment_type: "general",
+      notes: `Assigned via ${triggerKeyword || "automatic"} assignment`,
       metadata: {
         contactName: updatedContactName,
         triggerKeyword,
-        originalPhone: extractedNumber
-      }
+        originalPhone: extractedNumber,
+      },
     });
 
     // Update our local counts
-    assignmentCounts[assignedEmployee.id] = (assignmentCounts[assignedEmployee.id] || 0) + 1;
+    assignmentCounts[assignedEmployee.id] =
+      (assignmentCounts[assignedEmployee.id] || 0) + 1;
     totalAssignments++;
     tags.push(assignedEmployee.name, assignedEmployee.phone_number);
 
@@ -8628,14 +9162,23 @@ function normalizeWeightage(weightage) {
 
 async function getAssignmentDocName(phoneIndex) {
   switch (phoneIndex) {
-    case 0: return 'Revotrend';
-    case 1: return 'StoreGuru';
-    case 2: return 'ShipGuru';
-    default: return 'Unknown';
+    case 0:
+      return "Revotrend";
+    case 1:
+      return "StoreGuru";
+    case 2:
+      return "ShipGuru";
+    default:
+      return "Unknown";
   }
 }
 
-async function assignNewContactToEmployeeRevotrend(contactID, idSubstring, client, phoneIndex) {
+async function assignNewContactToEmployeeRevotrend(
+  contactID,
+  idSubstring,
+  client,
+  phoneIndex
+) {
   const logs = [];
   const normalizedPhoneIndex = normalizePhoneIndex(phoneIndex);
   let sqlClient;
@@ -8674,9 +9217,12 @@ async function assignNewContactToEmployeeRevotrend(contactID, idSubstring, clien
     const employeeResult = await sqlClient.query(employeeQuery, [idSubstring]);
     const employees = [];
 
-    const contactData = await getContactDataFromDatabaseByPhone(contactID, idSubstring);
+    const contactData = await getContactDataFromDatabaseByPhone(
+      contactID,
+      idSubstring
+    );
     const contactTags = contactData?.tags || [];
-    log(`Contact tags: ${contactTags.join(', ')}`);
+    log(`Contact tags: ${contactTags.join(", ")}`);
 
     employeeResult.rows.forEach((employeeData) => {
       if (employeeData.email) {
@@ -8685,7 +9231,9 @@ async function assignNewContactToEmployeeRevotrend(contactID, idSubstring, clien
 
         // Check if the current phoneIndex exists in the weightages object
         if (weightages.hasOwnProperty(normalizedPhoneIndex.toString())) {
-          weightage = normalizeWeightage(weightages[normalizedPhoneIndex.toString()]);
+          weightage = normalizeWeightage(
+            weightages[normalizedPhoneIndex.toString()]
+          );
         }
 
         if (weightage > 0) {
@@ -8704,36 +9252,50 @@ async function assignNewContactToEmployeeRevotrend(contactID, idSubstring, clien
     });
 
     if (employees.length === 0) {
-      logError(`No employees found with valid weightage for phoneIndex ${normalizedPhoneIndex}`);
-      await sqlClient.query("ROLLBACK");
+      logError(
+        `No employees found with valid weightage for phoneIndex ${normalizedPhoneIndex}`
+      );
+      await safeRollback(sqlClient);
       return null;
     }
 
-    let assignedEmployee = employees.find(emp => contactTags.includes(emp.name));
+    let assignedEmployee = employees.find((emp) =>
+      contactTags.includes(emp.name)
+    );
 
     if (assignedEmployee) {
-      log(`Reassigning to previously assigned employee: ${assignedEmployee.name}`);
+      log(
+        `Reassigning to previously assigned employee: ${assignedEmployee.name}`
+      );
     } else {
-      log('No previously assigned employee found for this phoneIndex. Assigning a new one.');
+      log(
+        "No previously assigned employee found for this phoneIndex. Assigning a new one."
+      );
 
       await loadAssignmentCounts(idSubstring, normalizedPhoneIndex);
 
-      const totalWeightage = employees.reduce((sum, emp) => sum + emp.weightage, 0);
+      const totalWeightage = employees.reduce(
+        (sum, emp) => sum + emp.weightage,
+        0
+      );
 
-      const employeeAllocations = employees.map(emp => ({
+      const employeeAllocations = employees.map((emp) => ({
         ...emp,
         normalizedWeight: (emp.weightage / totalWeightage) * 100,
-        allocated: assignmentCounts[emp.email] || 0
+        allocated: assignmentCounts[emp.email] || 0,
       }));
 
       assignedEmployee = employeeAllocations.reduce((prev, curr) => {
         const prevBehind = prev.allocated / prev.normalizedWeight;
         const currBehind = curr.allocated / curr.normalizedWeight;
-        log(`Comparing ${prev.name} (${prevBehind}) with ${curr.name} (${currBehind})`);
+        log(
+          `Comparing ${prev.name} (${prevBehind}) with ${curr.name} (${currBehind})`
+        );
         return currBehind < prevBehind ? curr : prev;
       });
 
-      assignmentCounts[assignedEmployee.email] = (assignmentCounts[assignedEmployee.email] || 0) + 1;
+      assignmentCounts[assignedEmployee.email] =
+        (assignmentCounts[assignedEmployee.email] || 0) + 1;
       totalAssignments++;
       await storeAssignmentCounts(idSubstring, normalizedPhoneIndex);
     }
@@ -8742,24 +9304,42 @@ async function assignNewContactToEmployeeRevotrend(contactID, idSubstring, clien
     await addTagToPostgres(contactID, assignedEmployee.name, idSubstring);
 
     // Update assignment fields in PostgreSQL contacts table using custom_fields
-    const assignmentFields = ['assigned_revotrend', 'assigned_store_guru', 'assigned_ship_guru'];
+    const assignmentFields = [
+      "assigned_revotrend",
+      "assigned_store_guru",
+      "assigned_ship_guru",
+    ];
     const assignmentField = assignmentFields[normalizedPhoneIndex];
-    
+
     const contactUpdateQuery = `
             UPDATE public.contacts 
             SET custom_fields = COALESCE(custom_fields, '{}'::jsonb) || $1::jsonb,
                 last_updated = CURRENT_TIMESTAMP
             WHERE phone = $2 AND company_id = $3
         `;
-    const updateData = JSON.stringify({ [assignmentField]: assignedEmployee.name });
-    await sqlClient.query(contactUpdateQuery, [updateData, contactID, idSubstring]);
-    log(`Updated ${assignmentField} to ${assignedEmployee.name} for contact ${contactID}`);
+    const updateData = JSON.stringify({
+      [assignmentField]: assignedEmployee.name,
+    });
+    await sqlClient.query(contactUpdateQuery, [
+      updateData,
+      contactID,
+      idSubstring,
+    ]);
+    log(
+      `Updated ${assignmentField} to ${assignedEmployee.name} for contact ${contactID}`
+    );
 
     // Create assignment record
     const currentDate = new Date();
-    const currentMonthKey = `${currentDate.getFullYear()}-${(currentDate.getMonth() + 1).toString().padStart(2, "0")}`;
-    const assignmentId = `${idSubstring}-${contactID.replace('+', '')}-${assignedEmployee.employee_id}-${Date.now()}`;
-    
+    const currentMonthKey = `${currentDate.getFullYear()}-${(
+      currentDate.getMonth() + 1
+    )
+      .toString()
+      .padStart(2, "0")}`;
+    const assignmentId = `${idSubstring}-${contactID.replace("+", "")}-${
+      assignedEmployee.employee_id
+    }-${Date.now()}`;
+
     const assignmentInsertQuery = `
             INSERT INTO assignments (
                 assignment_id, company_id, employee_id, contact_id, 
@@ -8767,8 +9347,8 @@ async function assignNewContactToEmployeeRevotrend(contactID, idSubstring, clien
                 phone_index, weightage_used, employee_role, notes
             ) VALUES ($1, $2, $3, $4, CURRENT_TIMESTAMP, 'active', $5, 'auto_revotrend', $6, $7, $8, $9)
         `;
-    
-    const contactIdFormatted = `${idSubstring}-${contactID.replace('+', '')}`;
+
+    const contactIdFormatted = `${idSubstring}-${contactID.replace("+", "")}`;
     await sqlClient.query(assignmentInsertQuery, [
       assignmentId,
       idSubstring,
@@ -8777,8 +9357,8 @@ async function assignNewContactToEmployeeRevotrend(contactID, idSubstring, clien
       currentMonthKey,
       normalizedPhoneIndex,
       assignedEmployee.weightage,
-      assignedEmployee.role || 'employee',
-      `Auto-assigned via Revotrend logic for phone index ${normalizedPhoneIndex}`
+      assignedEmployee.role || "employee",
+      `Auto-assigned via Revotrend logic for phone index ${normalizedPhoneIndex}`,
     ]);
 
     // Update employee's assigned_contacts count
@@ -8787,7 +9367,10 @@ async function assignNewContactToEmployeeRevotrend(contactID, idSubstring, clien
             SET assigned_contacts = assigned_contacts + 1, last_updated = CURRENT_TIMESTAMP
             WHERE company_id = $1 AND employee_id = $2
         `;
-    await sqlClient.query(employeeUpdateQuery, [idSubstring, assignedEmployee.employee_id]);
+    await sqlClient.query(employeeUpdateQuery, [
+      idSubstring,
+      assignedEmployee.employee_id,
+    ]);
 
     // Update monthly assignments (increase) - to match your addTagToPostgres function
     const monthlyAssignmentUpsertQuery = `
@@ -8797,26 +9380,34 @@ async function assignNewContactToEmployeeRevotrend(contactID, idSubstring, clien
         SET assignments_count = employee_monthly_assignments.assignments_count + 1,
             last_updated = CURRENT_TIMESTAMP
     `;
-    
+
     // Get employee.id for monthly assignment tracking
     const employeeIdQuery = `SELECT id FROM employees WHERE company_id = $1 AND employee_id = $2`;
-    const employeeIdResult = await sqlClient.query(employeeIdQuery, [idSubstring, assignedEmployee.employee_id]);
+    const employeeIdResult = await sqlClient.query(employeeIdQuery, [
+      idSubstring,
+      assignedEmployee.employee_id,
+    ]);
     const employeeDbId = employeeIdResult.rows[0]?.id;
-    
+
     if (employeeDbId) {
       await sqlClient.query(monthlyAssignmentUpsertQuery, [
         employeeDbId,
         idSubstring,
-        currentMonthKey
+        currentMonthKey,
       ]);
     }
 
     await sqlClient.query("COMMIT");
 
-    const employeeID = assignedEmployee.phone_number?.replace(/\s+/g, '').replace(/^\+/, '') + '@c.us';
-    const contactName = contactData?.contactName || contactData?.contact_name || 'New Contact';
+    const employeeID =
+      assignedEmployee.phone_number?.replace(/\s+/g, "").replace(/^\+/, "") +
+      "@c.us";
+    const contactName =
+      contactData?.contactName || contactData?.contact_name || "New Contact";
 
-    await client.sendMessage(employeeID, `Hello ${assignedEmployee.name}, a contact has been assigned to you:
+    await client.sendMessage(
+      employeeID,
+      `Hello ${assignedEmployee.name}, a contact has been assigned to you:
 
 Name: ${contactName}
 Phone: ${contactID}
@@ -8825,9 +9416,12 @@ Kindly login to https://web.jutasoftware.co/login
 
 Thank you.
 
-Juta Teknologi`);
+Juta Teknologi`
+    );
 
-    log(`Contact ${contactID} has been assigned to ${assignedEmployee.name} using phone index ${normalizedPhoneIndex}`);
+    log(
+      `Contact ${contactID} has been assigned to ${assignedEmployee.name} using phone index ${normalizedPhoneIndex}`
+    );
 
     // Store logs in PostgreSQL instead of Firebase
     const logInsertQuery = `
@@ -8835,12 +9429,17 @@ Juta Teknologi`);
                 company_id, contact_id, phone_index, logs, "timestamp"
             ) VALUES ($1, $2, $3, $4::text[], CURRENT_TIMESTAMP)
         `;
-    await pool.query(logInsertQuery, [idSubstring, contactID, normalizedPhoneIndex, logs]);
+    await pool.query(logInsertQuery, [
+      idSubstring,
+      contactID,
+      normalizedPhoneIndex,
+      logs,
+    ]);
 
     return {
       assigned: assignedEmployee.name,
       email: assignedEmployee.email,
-      phoneNumber: assignedEmployee.phone_number
+      phoneNumber: assignedEmployee.phone_number,
     };
   } catch (error) {
     logError(`Error in assignNewContactToEmployee: ${error}`);
@@ -8856,9 +9455,14 @@ Juta Teknologi`);
                     company_id, contact_id, phone_index, logs, "timestamp"
                 ) VALUES ($1, $2, $3, $4::text[], CURRENT_TIMESTAMP)
             `;
-      await pool.query(logInsertQuery, [idSubstring, contactID, normalizedPhoneIndex, logs]);
+      await pool.query(logInsertQuery, [
+        idSubstring,
+        contactID,
+        normalizedPhoneIndex,
+        logs,
+      ]);
     } catch (logError) {
-      console.error('Failed to store error logs:', logError);
+      console.error("Failed to store error logs:", logError);
     }
 
     return null;
@@ -8878,16 +9482,16 @@ async function checkIfContactNeedsAssignment(contactData, phoneIndex) {
 
   const assignmentFields = {
     0: "assigned_revotrend",
-    1: "assigned_store_guru", 
-    2: "assigned_ship_guru"
+    1: "assigned_store_guru",
+    2: "assigned_ship_guru",
   };
 
   const assignmentField = assignmentFields[phoneIndex];
-  
+
   // Check in custom_fields JSONB column
   const customFields = contactData.custom_fields || {};
   const hasAssignment = customFields[assignmentField];
-  
+
   console.log(`🔍 Checking assignment for phoneIndex ${phoneIndex}:`);
   console.log(`   - Assignment field: ${assignmentField}`);
   console.log(`   - Custom fields:`, customFields);
@@ -8914,7 +9518,7 @@ async function assignToEmployee(
     contactName: contactName,
     idSubstring: idSubstring,
     triggerKeyword: triggerKeyword,
-    phoneIndex: phoneIndex
+    phoneIndex: phoneIndex,
   });
 
   try {
@@ -8923,17 +9527,25 @@ async function assignToEmployee(
       SELECT phone_number FROM employees 
       WHERE company_id = $1 AND id = $2
     `;
-    const employeePhoneResult = await pool.query(employeePhoneQuery, [idSubstring, employee.id]);
-    
+    const employeePhoneResult = await pool.query(employeePhoneQuery, [
+      idSubstring,
+      employee.id,
+    ]);
+
     if (employeePhoneResult.rows.length === 0) {
-      console.error(`[ASSIGN_TO_EMPLOYEE DEBUG] Employee not found in database:`, employee.id);
+      console.error(
+        `[ASSIGN_TO_EMPLOYEE DEBUG] Employee not found in database:`,
+        employee.id
+      );
       return;
     }
 
     const employeePhone = employeePhoneResult.rows[0].phone_number;
-    const employeeID = employeePhone?.replace(/\D/g, '') + "@c.us";
-    
-    console.log(`[ASSIGN_TO_EMPLOYEE DEBUG] Employee phone: ${employeePhone}, Employee ID: ${employeeID}`);
+    const employeeID = employeePhone?.replace(/\D/g, "") + "@c.us";
+
+    console.log(
+      `[ASSIGN_TO_EMPLOYEE DEBUG] Employee phone: ${employeePhone}, Employee ID: ${employeeID}`
+    );
 
     // Get current date and time in Malaysia timezone
     const currentDateTime = new Date().toLocaleString("en-MY", {
@@ -8950,8 +9562,10 @@ Name: ${contactName}
 Phone: ${contactID}
      
 Triggered keyword: ${
-              triggerKeyword ? `*${triggerKeyword}*` : "[No keyword trigger found]"
-            }
+            triggerKeyword
+              ? `*${triggerKeyword}*`
+              : "[No keyword trigger found]"
+          }
      
 Date & Time: ${currentDateTime}`
         : idSubstring === "0335"
@@ -8970,19 +9584,21 @@ Kindly login to the CRM software to continue.
 
 Thank you.`;
 
-    console.log(`[ASSIGN_TO_EMPLOYEE DEBUG] Sending message to employee: ${employeeID}`);
+    console.log(
+      `[ASSIGN_TO_EMPLOYEE DEBUG] Sending message to employee: ${employeeID}`
+    );
     console.log(`[ASSIGN_TO_EMPLOYEE DEBUG] Message content:`, message);
 
     // Send WhatsApp message to employee
     await client.sendMessage(employeeID, message);
-    
+
     console.log(`[ASSIGN_TO_EMPLOYEE DEBUG] Message sent successfully`);
-    
+
     // Add employee name as tag to contact
     await addTagToPostgres(contactID, employee.name, idSubstring);
-    
+
     console.log(`[ASSIGN_TO_EMPLOYEE DEBUG] Tag added to contact`);
-    
+
     // Create assignment record in assignments table
     const sqlClient = await pool.connect();
     try {
@@ -8993,20 +9609,32 @@ Thank you.`;
         SELECT contact_id FROM contacts 
         WHERE phone = $1 AND company_id = $2
       `;
-      const contactResult = await sqlClient.query(contactQuery, [contactID, idSubstring]);
-      
-      console.log(`[ASSIGN_TO_EMPLOYEE DEBUG] Contact query result:`, contactResult.rows);
-      
+      const contactResult = await sqlClient.query(contactQuery, [
+        contactID,
+        idSubstring,
+      ]);
+
+      console.log(
+        `[ASSIGN_TO_EMPLOYEE DEBUG] Contact query result:`,
+        contactResult.rows
+      );
+
       if (contactResult.rows.length > 0) {
         const currentDate = new Date();
         const currentMonthKey = `${currentDate.getFullYear()}-${(
           currentDate.getMonth() + 1
-        ).toString().padStart(2, "0")}`;
+        )
+          .toString()
+          .padStart(2, "0")}`;
 
-        const assignmentId = `${idSubstring}-${contactResult.rows[0].contact_id}-${employee.id}-${Date.now()}`;
-        
-        console.log(`[ASSIGN_TO_EMPLOYEE DEBUG] Assignment ID: ${assignmentId}`);
-        
+        const assignmentId = `${idSubstring}-${
+          contactResult.rows[0].contact_id
+        }-${employee.id}-${Date.now()}`;
+
+        console.log(
+          `[ASSIGN_TO_EMPLOYEE DEBUG] Assignment ID: ${assignmentId}`
+        );
+
         // Check if assignment already exists to avoid duplicates
         const existingAssignmentQuery = `
           SELECT id FROM assignments 
@@ -9015,10 +9643,13 @@ Thank you.`;
         const existingResult = await sqlClient.query(existingAssignmentQuery, [
           idSubstring,
           employee.id,
-          contactResult.rows[0].contact_id
+          contactResult.rows[0].contact_id,
         ]);
 
-        console.log(`[ASSIGN_TO_EMPLOYEE DEBUG] Existing assignment check:`, existingResult.rows);
+        console.log(
+          `[ASSIGN_TO_EMPLOYEE DEBUG] Existing assignment check:`,
+          existingResult.rows
+        );
 
         if (existingResult.rows.length === 0) {
           const assignmentInsertQuery = `
@@ -9028,7 +9659,7 @@ Thank you.`;
               phone_index, weightage_used, employee_role
             ) VALUES ($1, $2, $3, $4, CURRENT_TIMESTAMP, 'active', $5, 'auto_bot', $6, 1, $7)
           `;
-          
+
           await sqlClient.query(assignmentInsertQuery, [
             assignmentId,
             idSubstring,
@@ -9036,7 +9667,7 @@ Thank you.`;
             contactResult.rows[0].contact_id,
             currentMonthKey,
             phoneIndex,
-            role
+            role,
           ]);
 
           console.log(`[ASSIGN_TO_EMPLOYEE DEBUG] Assignment record created`);
@@ -9047,10 +9678,15 @@ Thank you.`;
             SET assigned_contacts = COALESCE(assigned_contacts, 0) + 1
             WHERE company_id = $1 AND id = $2
           `;
-          
-          await sqlClient.query(employeeUpdateQuery, [idSubstring, employee.id]);
 
-          console.log(`[ASSIGN_TO_EMPLOYEE DEBUG] Employee assigned_contacts updated`);
+          await sqlClient.query(employeeUpdateQuery, [
+            idSubstring,
+            employee.id,
+          ]);
+
+          console.log(
+            `[ASSIGN_TO_EMPLOYEE DEBUG] Employee assigned_contacts updated`
+          );
 
           // Update monthly assignments
           const monthlyAssignmentUpsertQuery = `
@@ -9060,36 +9696,50 @@ Thank you.`;
             SET assignments_count = employee_monthly_assignments.assignments_count + 1,
                 last_updated = CURRENT_TIMESTAMP
           `;
-          
+
           await sqlClient.query(monthlyAssignmentUpsertQuery, [
             employee.id,
             idSubstring,
-            currentMonthKey
+            currentMonthKey,
           ]);
 
           console.log(`[ASSIGN_TO_EMPLOYEE DEBUG] Monthly assignment updated`);
         } else {
-          console.log(`[ASSIGN_TO_EMPLOYEE DEBUG] Assignment already exists, skipping duplicate`);
+          console.log(
+            `[ASSIGN_TO_EMPLOYEE DEBUG] Assignment already exists, skipping duplicate`
+          );
         }
       } else {
-        console.log(`[ASSIGN_TO_EMPLOYEE DEBUG] Contact not found in database: ${contactID}`);
+        console.log(
+          `[ASSIGN_TO_EMPLOYEE DEBUG] Contact not found in database: ${contactID}`
+        );
       }
 
       await sqlClient.query("COMMIT");
-      console.log(`[ASSIGN_TO_EMPLOYEE DEBUG] Database transaction committed successfully`);
+      console.log(
+        `[ASSIGN_TO_EMPLOYEE DEBUG] Database transaction committed successfully`
+      );
     } catch (error) {
       await safeRollback(sqlClient);
-      console.error(`[ASSIGN_TO_EMPLOYEE DEBUG] Error creating assignment record:`, error);
+      console.error(
+        `[ASSIGN_TO_EMPLOYEE DEBUG] Error creating assignment record:`,
+        error
+      );
       throw error;
     } finally {
       await safeRelease(sqlClient);
     }
   } catch (error) {
-    console.error(`[ASSIGN_TO_EMPLOYEE DEBUG] Error in assignToEmployee:`, error);
+    console.error(
+      `[ASSIGN_TO_EMPLOYEE DEBUG] Error in assignToEmployee:`,
+      error
+    );
     throw error;
   }
-  
-  console.log(`[ASSIGN_TO_EMPLOYEE DEBUG] Successfully assigned ${role}: ${employee.name}`);
+
+  console.log(
+    `[ASSIGN_TO_EMPLOYEE DEBUG] Successfully assigned ${role}: ${employee.name}`
+  );
 }
 
 async function fetchEmployeesFromDatabase(idSubstring) {
@@ -9113,7 +9763,7 @@ async function fetchEmployeesFromDatabase(idSubstring) {
 
 function getCurrentMonthKey() {
   const date = new Date();
-  const month = date.toLocaleString('default', { month: 'short' });
+  const month = date.toLocaleString("default", { month: "short" });
   const year = date.getFullYear();
   return `${month}-${year}`;
 }
@@ -9122,44 +9772,49 @@ let assignmentCounts = {};
 let totalAssignments = 0;
 
 async function loadAssignmentCounts(idSubstring, phoneIndex) {
-    const assignmentType = idSubstring === '0123'
-      ? await getAssignmentDocName(phoneIndex)
-      : 'general';
-    const monthKey = getCurrentMonthKey();
-    
-    const query = `
+  const assignmentType =
+    idSubstring === "0123" ? await getAssignmentDocName(phoneIndex) : "general";
+  const monthKey = getCurrentMonthKey();
+
+  const query = `
         SELECT counts, total 
         FROM assignment_counts 
         WHERE company_id = $1 
           AND assignment_type = $2
           AND month_key = $3
     `;
-    
-    try {
-        const result = await pool.query(query, [idSubstring, assignmentType, monthKey]);
-        if (result.rows.length > 0) {
-            assignmentCounts = result.rows[0].counts || {};
-            totalAssignments = result.rows[0].total || 0;
-            console.log(`${assignmentType} counts for ${monthKey} loaded:`, result.rows[0]);
-        } else {
-            console.log(`No previous ${assignmentType} counts found for ${monthKey}`);
-            assignmentCounts = {};
-            totalAssignments = 0;
-        }
-    } catch (error) {
-        console.error(`Error loading assignment counts: ${error}`);
-        assignmentCounts = {};
-        totalAssignments = 0;
+
+  try {
+    const result = await pool.query(query, [
+      idSubstring,
+      assignmentType,
+      monthKey,
+    ]);
+    if (result.rows.length > 0) {
+      assignmentCounts = result.rows[0].counts || {};
+      totalAssignments = result.rows[0].total || 0;
+      console.log(
+        `${assignmentType} counts for ${monthKey} loaded:`,
+        result.rows[0]
+      );
+    } else {
+      console.log(`No previous ${assignmentType} counts found for ${monthKey}`);
+      assignmentCounts = {};
+      totalAssignments = 0;
     }
+  } catch (error) {
+    console.error(`Error loading assignment counts: ${error}`);
+    assignmentCounts = {};
+    totalAssignments = 0;
+  }
 }
 
 async function storeAssignmentCounts(idSubstring, phoneIndex) {
-    const assignmentType = idSubstring === '0123'
-      ? await getAssignmentDocName(phoneIndex)
-      : 'general';
-    const monthKey = getCurrentMonthKey();
-    
-    const query = `
+  const assignmentType =
+    idSubstring === "0123" ? await getAssignmentDocName(phoneIndex) : "general";
+  const monthKey = getCurrentMonthKey();
+
+  const query = `
         INSERT INTO assignment_counts (company_id, assignment_type, month_key, counts, total)
         VALUES ($1, $2, $3, $4, $5)
         ON CONFLICT (company_id, assignment_type, month_key) 
@@ -9168,19 +9823,19 @@ async function storeAssignmentCounts(idSubstring, phoneIndex) {
             total = EXCLUDED.total,
             last_updated = CURRENT_TIMESTAMP
     `;
-    
-    try {
-        await pool.query(query, [
-            idSubstring,
-            assignmentType,
-            monthKey,
-            assignmentCounts,
-            totalAssignments
-        ]);
-        console.log(`${assignmentType} counts for ${monthKey} stored`);
-    } catch (error) {
-        console.error(`Error storing assignment counts: ${error}`);
-    }
+
+  try {
+    await pool.query(query, [
+      idSubstring,
+      assignmentType,
+      monthKey,
+      assignmentCounts,
+      totalAssignments,
+    ]);
+    console.log(`${assignmentType} counts for ${monthKey} stored`);
+  } catch (error) {
+    console.error(`Error storing assignment counts: ${error}`);
+  }
 }
 
 async function recordAssignment(assignmentData) {
@@ -9205,25 +9860,25 @@ async function recordAssignment(assignmentData) {
       $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12
     )
   `;
-  
+
   try {
     await pool.query(query, [
       assignmentData.company_id,
       assignmentData.employee_id,
       assignmentData.contact_id,
       new Date(),
-      'active',
+      "active",
       assignmentData.notes,
       assignmentData.metadata,
       monthKey,
       assignmentData.phone_index,
       assignmentData.assignment_type,
       assignmentData.employee_role,
-      assignmentData.weightage_used
+      assignmentData.weightage_used,
     ]);
-    console.log('Assignment recorded successfully');
+    console.log("Assignment recorded successfully");
   } catch (error) {
-    console.error('Error recording assignment:', error);
+    console.error("Error recording assignment:", error);
   }
 }
 
@@ -9286,8 +9941,6 @@ async function sendDailyContactReport(client, idSubstring) {
   }
 }
 
-
-
 async function waitForCompletion(
   threadId,
   runId,
@@ -9297,7 +9950,8 @@ async function waitForCompletion(
   phoneNumber,
   name,
   companyName,
-  contact
+  contact,
+  companyConfig
 ) {
   const maxDepth = 5; // Maximum recursion depth
   const maxAttempts = 30;
@@ -9334,14 +9988,21 @@ async function waitForCompletion(
           name,
           companyName,
           contact,
-          threadId
+          threadId,
+          companyConfig
         );
-        
+
         // Use safe tool output submission
-        const result = await submitToolOutputsSafely(threadId, runId, toolOutputs);
-        
+        const result = await submitToolOutputsSafely(
+          threadId,
+          runId,
+          toolOutputs
+        );
+
         if (result.success && result.status === "submitted") {
-          console.log("Tool outputs submitted, restarting wait for completion...");
+          console.log(
+            "Tool outputs submitted, restarting wait for completion..."
+          );
           return await waitForCompletion(
             threadId,
             runId,
@@ -9355,7 +10016,9 @@ async function waitForCompletion(
           );
         } else if (result.status === "completed") {
           // Run completed while we were processing tool calls
-          const messagesList = await openai.beta.threads.messages.list(threadId);
+          const messagesList = await openai.beta.threads.messages.list(
+            threadId
+          );
           const latestMessage = messagesList.data[0].content[0].text.value;
           return latestMessage;
         } else {
@@ -9383,45 +10046,63 @@ async function waitForCompletion(
   );
   return "I'm sorry, but it's taking longer than expected to process your request. Please try again or rephrase your question.";
 }
-async function submitToolOutputsSafely(threadId, runId, toolOutputs, maxRetries = 3) {
+async function submitToolOutputsSafely(
+  threadId,
+  runId,
+  toolOutputs,
+  maxRetries = 3
+) {
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
-      const currentRun = await openai.beta.threads.runs.retrieve(threadId, runId);
-      
+      const currentRun = await openai.beta.threads.runs.retrieve(
+        threadId,
+        runId
+      );
+
       if (currentRun.status === "completed") {
-        console.log(`Run ${runId} already completed, skipping tool output submission`);
+        console.log(
+          `Run ${runId} already completed, skipping tool output submission`
+        );
         return { success: true, status: "completed" };
       }
-      
+
       if (currentRun.status === "requires_action") {
-        await openai.beta.threads.runs.submitToolOutputs(
-          threadId,
-          runId,
-          { tool_outputs: toolOutputs }
+        await openai.beta.threads.runs.submitToolOutputs(threadId, runId, {
+          tool_outputs: toolOutputs,
+        });
+        console.log(
+          `Tool outputs submitted successfully on attempt ${attempt}`
         );
-        console.log(`Tool outputs submitted successfully on attempt ${attempt}`);
         return { success: true, status: "submitted" };
       }
-      
-      if (currentRun.status === "failed" || currentRun.status === "cancelled" || currentRun.status === "expired") {
+
+      if (
+        currentRun.status === "failed" ||
+        currentRun.status === "cancelled" ||
+        currentRun.status === "expired"
+      ) {
         console.log(`Run ${runId} ended with status: ${currentRun.status}`);
         return { success: false, status: currentRun.status };
       }
-      
+
       // Wait before retrying
       if (attempt < maxRetries) {
-        console.log(`Attempt ${attempt} failed, retrying in ${1000 * attempt}ms...`);
-        await new Promise(resolve => setTimeout(resolve, 1000 * attempt));
+        console.log(
+          `Attempt ${attempt} failed, retrying in ${1000 * attempt}ms...`
+        );
+        await new Promise((resolve) => setTimeout(resolve, 1000 * attempt));
       }
-      
     } catch (error) {
-      console.error(`Error submitting tool outputs (attempt ${attempt}):`, error);
+      console.error(
+        `Error submitting tool outputs (attempt ${attempt}):`,
+        error
+      );
       if (attempt === maxRetries) {
         throw error;
       }
     }
   }
-  
+
   throw new Error(`Failed to submit tool outputs after ${maxRetries} attempts`);
 }
 // Modify the runAssistant function to handle tool calls
@@ -9435,7 +10116,8 @@ async function runAssistant(
   name,
   companyName,
   contact,
-  phoneIndex = 0
+  phoneIndex = 0,
+  companyConfig
 ) {
   try {
     const run = await openai.beta.threads.runs.create(threadId, {
@@ -9453,7 +10135,8 @@ async function runAssistant(
       phoneNumber,
       name,
       companyName,
-      contact
+      contact,
+      companyConfig
     );
   } catch (error) {
     console.error("Error running assistant:", error);
@@ -9490,8 +10173,8 @@ async function getCompanyAssistantId(idSubstring, phoneIndex = 0) {
         try {
           const parsed = JSON.parse(assistantIds);
           assistantId = Array.isArray(parsed)
-        ? parsed[phoneIndex] || parsed[0]
-        : parsed;
+            ? parsed[phoneIndex] || parsed[0]
+            : parsed;
         } catch {
           assistantId = assistantIds;
         }
@@ -9988,6 +10671,179 @@ async function getCustomFieldsFromDatabase(idSubstring, phoneNumber) {
   }
 }
 
+async function getAvailableEvents(idSubstring) {
+  try {
+    console.log(`Fetching available events for company: ${idSubstring}`);
+    
+    const eventsResult = await sql`
+      SELECT name, slug, start_date, end_date, location, description
+      FROM public.events 
+      WHERE company_id = ${idSubstring}
+      AND is_active = true
+      ORDER BY start_date ASC
+    `;
+
+    if (eventsResult.length === 0) {
+      return JSON.stringify({
+        success: false,
+        message: "No active events found for this company"
+      });
+    }
+
+    const events = eventsResult.map(event => ({
+      name: event.name,
+      slug: event.slug,
+      startDate: event.start_date,
+      endDate: event.end_date,
+      location: event.location,
+      description: event.description
+    }));
+
+    return JSON.stringify({
+      success: true,
+      events: events,
+      totalEvents: events.length
+    });
+
+  } catch (error) {
+    console.error("Error fetching available events:", error);
+    return JSON.stringify({
+      success: false,
+      error: "Failed to fetch available events",
+      details: error.message
+    });
+  }
+}
+
+async function setAttendance(idSubstring, eventName, phoneNumber) {
+  try {
+    console.log(`Setting attendance for event: ${eventName}, participant: ${phoneNumber}`);
+    
+    // First, try exact match (case-insensitive)
+    let eventResult = await sql`
+      SELECT id, slug, name
+      FROM public.events 
+      WHERE LOWER(name) = LOWER(${eventName}) 
+      AND company_id = ${idSubstring}
+      AND is_active = true
+      LIMIT 1
+    `;
+
+    // If no exact match, try fuzzy matching with LIKE/includes
+    if (eventResult.length === 0) {
+      console.log(`No exact match found for "${eventName}", trying fuzzy matching...`);
+      
+      eventResult = await sql`
+        SELECT id, slug, name
+        FROM public.events 
+        WHERE LOWER(name) LIKE LOWER(${'%' + eventName + '%'})
+        AND company_id = ${idSubstring}
+        AND is_active = true
+        ORDER BY LENGTH(name) ASC
+        LIMIT 5
+      `;
+
+      // If still no match, get all available events to show user
+      if (eventResult.length === 0) {
+        console.log(`No fuzzy match found for "${eventName}", fetching all available events...`);
+        
+        const allEventsResult = await sql`
+          SELECT name, slug, start_date, end_date, location
+          FROM public.events 
+          WHERE company_id = ${idSubstring}
+          AND is_active = true
+          ORDER BY start_date ASC
+        `;
+
+        const availableEvents = allEventsResult.map(event => ({
+          name: event.name,
+          startDate: event.start_date,
+          endDate: event.end_date,
+          location: event.location
+        }));
+
+        return JSON.stringify({
+          success: false,
+          error: `No event found matching "${eventName}"`,
+          message: "Please specify the exact event name from the list below:",
+          availableEvents: availableEvents
+        });
+      }
+
+      // If multiple fuzzy matches found, ask user to be more specific
+      if (eventResult.length > 1) {
+        const matchedEvents = eventResult.map(event => ({
+          name: event.name,
+          id: event.id
+        }));
+
+        return JSON.stringify({
+          success: false,
+          error: `Multiple events found matching "${eventName}"`,
+          message: "Please specify which event you mean:",
+          matchedEvents: matchedEvents
+        });
+      }
+    }
+
+    const event = eventResult[0];
+    console.log(`Found event: ${event.name} (ID: ${event.id})`);
+    
+    // Check if attendance record already exists
+    const existingAttendance = await sql`
+      SELECT id 
+      FROM public.attendance_records 
+      WHERE event_id = ${event.id} 
+      AND phone_number = ${phoneNumber}
+      AND company_id = ${idSubstring}
+      LIMIT 1
+    `;
+
+    if (existingAttendance.length > 0) {
+      return JSON.stringify({
+        success: false,
+        message: `Attendance already recorded for ${phoneNumber} at event "${event.name}"`
+      });
+    }
+
+    // Insert new attendance record
+    const attendanceResult = await sql`
+      INSERT INTO public.attendance_records (
+        event_id, 
+        event_slug, 
+        phone_number, 
+        company_id,
+        confirmed_at
+      ) VALUES (
+        ${event.id},
+        ${event.slug},
+        ${phoneNumber},
+        ${idSubstring},
+        NOW()
+      )
+      RETURNING id, confirmed_at
+    `;
+
+    console.log(`Successfully recorded attendance for ${phoneNumber} at event "${event.name}"`);
+    
+    return JSON.stringify({
+      success: true,
+      message: `Attendance confirmed for ${phoneNumber} at event "${event.name}"`,
+      attendanceId: attendanceResult[0].id,
+      confirmedAt: attendanceResult[0].confirmed_at,
+      eventName: event.name
+    });
+
+  } catch (error) {
+    console.error("Error setting attendance:", error);
+    return JSON.stringify({
+      success: false,
+      error: "Failed to record attendance",
+      details: error.message
+    });
+  }
+}
+
 async function handleToolCalls(
   toolCalls,
   idSubstring,
@@ -9996,10 +10852,11 @@ async function handleToolCalls(
   name,
   companyName,
   contact,
-  threadID
+  threadID,
+  companyConfig
 ) {
   console.log("Handling tool calls...");
-  console.log(idSubstring)
+  console.log(idSubstring);
   const toolOutputs = [];
   for (const toolCall of toolCalls) {
     console.log(`Processing tool call: ${toolCall.function.name}`);
@@ -10540,9 +11397,7 @@ async function handleToolCalls(
           );
 
           if (result.error) {
-            if (
-              result.error === "Multiple appointments found on this date"
-            ) {
+            if (result.error === "Multiple appointments found on this date") {
               console.log(
                 "Multiple appointments found, sending list to user..."
               );
@@ -10571,9 +11426,7 @@ async function handleToolCalls(
             });
           }
         } catch (error) {
-          console.error(
-            "Error in handleToolCalls for cancelCalendarEvent:"
-          );
+          console.error("Error in handleToolCalls for cancelCalendarEvent:");
           console.error(error);
           toolOutputs.push({
             tool_call_id: toolCall.id,
@@ -10589,7 +11442,7 @@ async function handleToolCalls(
           console.log(
             "Phone Number in searchUpcomingAppointments...  " + phoneNumber
           );
-          
+
           const result = await searchUpcomingAppointments(
             phoneNumber,
             idSubstring,
@@ -11019,6 +11872,57 @@ async function handleToolCalls(
           });
         }
         break;
+      case "getAvailableEvents":
+        try {
+          console.log("Getting available events...");
+          const result = await getAvailableEvents(idSubstring);
+          
+          toolOutputs.push({
+            tool_call_id: toolCall.id,
+            output: result,
+          });
+        } catch (error) {
+          console.error("Error in handleToolCalls for getAvailableEvents:", error);
+          toolOutputs.push({
+            tool_call_id: toolCall.id,
+            output: JSON.stringify({ 
+              success: false,
+              error: error.message 
+            }),
+          });
+        }
+        break;
+      case "setAttendance":
+        try {
+          console.log("Setting attendance...");
+          const args = JSON.parse(toolCall.function.arguments);
+          
+          // Ensure all required fields are provided
+          if (!args.eventName) {
+            throw new Error("Event name is required for setting attendance");
+          }
+
+          const result = await setAttendance(
+            idSubstring,
+            args.eventName,
+            phoneNumber
+          );
+          
+          toolOutputs.push({
+            tool_call_id: toolCall.id,
+            output: result,
+          });
+        } catch (error) {
+          console.error("Error in handleToolCalls for setAttendance:", error);
+          toolOutputs.push({
+            tool_call_id: toolCall.id,
+            output: JSON.stringify({ 
+              success: false,
+              error: error.message 
+            }),
+          });
+        }
+        break;  
       default:
         console.warn(`Unknown function called: ${toolCall.function.name}`);
     }
@@ -11339,10 +12243,14 @@ async function addTagToPostgres(contactID, tag, companyID, remove = false) {
       remove ? "from" : "to"
     } PostgreSQL for contact ${contactID}`
   );
-  contactID =
-    companyID +
-    "-" +
-    (contactID.startsWith("+") ? contactID.slice(1) : contactID);
+  // Ensure contactID is in the correct format
+  if (!contactID.startsWith(companyID)) {
+    if (contactID.startsWith("+")) {
+      contactID = companyID + "-" + contactID.slice(1);
+    } else {
+      contactID = companyID + "-" + contactID;
+    }
+  }
 
   const sqlClient = await pool.connect();
 
@@ -11368,7 +12276,11 @@ async function addTagToPostgres(contactID, tag, companyID, remove = false) {
     if (remove) {
       // First check if the tag exists before removing
       const tagExistsQuery = `SELECT (tags ? $1) as tag_exists FROM public.contacts WHERE contact_id = $2 AND company_id = $3`;
-      const tagExistsResult = await sqlClient.query(tagExistsQuery, [tag, contactID, companyID]);
+      const tagExistsResult = await sqlClient.query(tagExistsQuery, [
+        tag,
+        contactID,
+        companyID,
+      ]);
       const tagExisted = tagExistsResult.rows[0]?.tag_exists || false;
 
       if (tagExisted) {
@@ -11388,7 +12300,7 @@ async function addTagToPostgres(contactID, tag, companyID, remove = false) {
         // If removing an employee tag, handle assignment deactivation
         if (employeeData) {
           console.log(`Deactivating assignment for employee: ${tag}`);
-          
+
           // Deactivate assignment records (removed last_updated since column doesn't exist)
           const deactivateAssignmentQuery = `
             UPDATE assignments 
@@ -11398,7 +12310,7 @@ async function addTagToPostgres(contactID, tag, companyID, remove = false) {
           await sqlClient.query(deactivateAssignmentQuery, [
             companyID,
             employeeData.employee_id,
-            contactID
+            contactID,
           ]);
 
           // Decrease employee's assigned_contacts count
@@ -11407,13 +12319,18 @@ async function addTagToPostgres(contactID, tag, companyID, remove = false) {
             SET assigned_contacts = GREATEST(assigned_contacts - 1, 0)
             WHERE company_id = $1 AND employee_id = $2
           `;
-          await sqlClient.query(decreaseEmployeeCountQuery, [companyID, employeeData.employee_id]);
+          await sqlClient.query(decreaseEmployeeCountQuery, [
+            companyID,
+            employeeData.employee_id,
+          ]);
 
           // Update monthly assignments (decrease)
           const currentDate = new Date();
           const currentMonthKey = `${currentDate.getFullYear()}-${(
             currentDate.getMonth() + 1
-          ).toString().padStart(2, "0")}`;
+          )
+            .toString()
+            .padStart(2, "0")}`;
 
           const monthlyAssignmentUpdateQuery = `
             UPDATE employee_monthly_assignments
@@ -11423,7 +12340,7 @@ async function addTagToPostgres(contactID, tag, companyID, remove = false) {
           `;
           await sqlClient.query(monthlyAssignmentUpdateQuery, [
             employeeData.id,
-            currentMonthKey
+            currentMonthKey,
           ]);
         }
       } else {
@@ -11432,7 +12349,11 @@ async function addTagToPostgres(contactID, tag, companyID, remove = false) {
     } else {
       // First check if the tag already exists before adding
       const tagExistsQuery = `SELECT (tags ? $1) as tag_exists FROM public.contacts WHERE contact_id = $2 AND company_id = $3`;
-      const tagExistsResult = await sqlClient.query(tagExistsQuery, [tag, contactID, companyID]);
+      const tagExistsResult = await sqlClient.query(tagExistsQuery, [
+        tag,
+        contactID,
+        companyID,
+      ]);
       const tagAlreadyExists = tagExistsResult.rows[0]?.tag_exists || false;
 
       if (!tagAlreadyExists) {
@@ -11453,14 +12374,18 @@ async function addTagToPostgres(contactID, tag, companyID, remove = false) {
         // If adding an employee tag, handle assignment creation
         if (employeeData) {
           console.log(`Creating assignment for employee: ${tag}`);
-          
+
           const currentDate = new Date();
           const currentMonthKey = `${currentDate.getFullYear()}-${(
             currentDate.getMonth() + 1
-          ).toString().padStart(2, "0")}`;
+          )
+            .toString()
+            .padStart(2, "0")}`;
 
-          const assignmentId = `${companyID}-${contactID}-${employeeData.employee_id}-${Date.now()}`;
-          
+          const assignmentId = `${companyID}-${contactID}-${
+            employeeData.employee_id
+          }-${Date.now()}`;
+
           // Create assignment record
           const assignmentInsertQuery = `
             INSERT INTO assignments (
@@ -11469,13 +12394,13 @@ async function addTagToPostgres(contactID, tag, companyID, remove = false) {
               phone_index, weightage_used
             ) VALUES ($1, $2, $3, $4, CURRENT_TIMESTAMP, 'active', $5, 'tag_add', 0, 1)
           `;
-          
+
           await sqlClient.query(assignmentInsertQuery, [
             assignmentId,
             companyID,
             employeeData.employee_id,
             contactID,
-            currentMonthKey
+            currentMonthKey,
           ]);
 
           // Increase employee's assigned_contacts count
@@ -11484,7 +12409,10 @@ async function addTagToPostgres(contactID, tag, companyID, remove = false) {
             SET assigned_contacts = assigned_contacts + 1
             WHERE company_id = $1 AND employee_id = $2
           `;
-          await sqlClient.query(increaseEmployeeCountQuery, [companyID, employeeData.employee_id]);
+          await sqlClient.query(increaseEmployeeCountQuery, [
+            companyID,
+            employeeData.employee_id,
+          ]);
 
           // Update monthly assignments (increase)
           const monthlyAssignmentUpsertQuery = `
@@ -11494,11 +12422,11 @@ async function addTagToPostgres(contactID, tag, companyID, remove = false) {
             SET assignments_count = employee_monthly_assignments.assignments_count + 1,
                 last_updated = CURRENT_TIMESTAMP
           `;
-          
+
           await sqlClient.query(monthlyAssignmentUpsertQuery, [
             employeeData.id,
             companyID,
-            currentMonthKey
+            currentMonthKey,
           ]);
         }
       } else {
@@ -11508,11 +12436,11 @@ async function addTagToPostgres(contactID, tag, companyID, remove = false) {
 
     await sqlClient.query("COMMIT");
   } catch (error) {
-    await sqlClient.query("ROLLBACK");
+    await safeRollback(sqlClient);
     console.error("Error managing tags in PostgreSQL:", error);
     throw error;
   } finally {
-    sqlClient.release();
+    await safeRelease(sqlClient);
   }
 }
 
@@ -11527,7 +12455,9 @@ async function setLeadTemperature(idSubstring, phoneNumber, temperature) {
     await sqlClient.query("BEGIN");
 
     const leadTemperatureTags = ["cold", "medium", "hot"];
-    const contactID = `${idSubstring}-${phoneNumber.startsWith("+") ? phoneNumber.slice(1) : phoneNumber}`;
+    const contactID = `${idSubstring}-${
+      phoneNumber.startsWith("+") ? phoneNumber.slice(1) : phoneNumber
+    }`;
 
     const checkQuery = `
       SELECT tags FROM public.contacts 
@@ -11581,7 +12511,7 @@ async function updateMessageUsage(idSubstring) {
     const year = now.getFullYear();
     const month = (now.getMonth() + 1).toString().padStart(2, "0");
     const date = now.toISOString().split("T")[0];
-    const feature = "messages";
+    const feature = "aiMessages";
 
     const client = await pool.connect();
 
@@ -11633,9 +12563,9 @@ async function handleOpenAIAssistant(
   idSubstring,
   client,
   name,
-  phoneIndex
+  phoneIndex,
+  companyConfig
 ) {
-  console.log(companyConfig.assistantId);
   let assistantId = companyConfig.assistantId;
   const contactData = await getContactDataFromDatabaseByPhone(
     phoneNumber,
@@ -12075,7 +13005,8 @@ async function handleOpenAIAssistant(
           properties: {
             limit: {
               type: "number",
-              description: "Maximum number of appointments to return (default: 10, max: 50)",
+              description:
+                "Maximum number of appointments to return (default: 10, max: 50)",
             },
           },
           required: [],
@@ -12353,6 +13284,35 @@ async function handleOpenAIAssistant(
         },
       },
     },
+    {
+      type: "function",
+      function: {
+        name: "getAvailableEvents",
+        description: "Get a list of all available events for the company. Use this when you need to show available events or when the user asks about events.",
+        parameters: {
+          type: "object",
+          properties: {},
+          required: [],
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "setAttendance",
+        description: "Set attendance for a participant in an event. Only use this when the participant confirms their attendance. Do not use this if the participant is not coming. If the event name is not exact, the function will try to find similar events or show available options.",
+        parameters: {
+          type: "object",
+          properties: {
+            eventName: {
+              type: "string",
+              description: "The name of the event",
+            },
+          },
+          required: ["eventName"],
+        },
+      },
+    },
     ...(idSubstring === "0128"
       ? [
           {
@@ -12434,7 +13394,8 @@ async function handleOpenAIAssistant(
     name,
     contactData.companyName,
     contactData,
-    phoneIndex
+    phoneIndex,
+    companyConfig
   );
   return answer;
 }
@@ -12476,7 +13437,10 @@ async function saveThreadIDPostgres(contactID, threadID, idSubstring) {
     await sqlClient.query("BEGIN");
 
     // ✅ FIX: Generate proper contact_id format
-    const properContactID = idSubstring + "-" + (contactID.startsWith("+") ? contactID.slice(1) : contactID);
+    const properContactID =
+      idSubstring +
+      "-" +
+      (contactID.startsWith("+") ? contactID.slice(1) : contactID);
 
     const checkQuery = `
       SELECT id FROM public.contacts
@@ -12484,7 +13448,7 @@ async function saveThreadIDPostgres(contactID, threadID, idSubstring) {
     `;
 
     const checkResult = await sqlClient.query(checkQuery, [
-      properContactID,  // ✅ Use proper format
+      properContactID, // ✅ Use proper format
       idSubstring,
     ]);
 
@@ -12498,11 +13462,11 @@ async function saveThreadIDPostgres(contactID, threadID, idSubstring) {
       `;
 
       await sqlClient.query(insertQuery, [
-        properContactID,  // ✅ Proper contact_id format
+        properContactID, // ✅ Proper contact_id format
         idSubstring,
         threadID,
-        contactID,        // ✅ Use phone number as fallback name
-        contactID,        // ✅ Phone number
+        contactID, // ✅ Use phone number as fallback name
+        contactID, // ✅ Phone number
       ]);
       console.log(
         `New contact created with Thread ID in PostgreSQL for contact ${properContactID}`
@@ -12514,7 +13478,11 @@ async function saveThreadIDPostgres(contactID, threadID, idSubstring) {
         WHERE contact_id = $2 AND company_id = $3
       `;
 
-      await sqlClient.query(updateQuery, [threadID, properContactID, idSubstring]);
+      await sqlClient.query(updateQuery, [
+        threadID,
+        properContactID,
+        idSubstring,
+      ]);
       console.log(
         `Thread ID updated in PostgreSQL for existing contact ${properContactID}`
       );
@@ -12548,12 +13516,12 @@ async function fetchConfigFromDatabase(idSubstring, phoneIndex) {
 
     if (result.rows.length === 0) {
       console.log("No such company found!");
-      return;
+      return null;
     }
 
-    companyConfig = result.rows[0];
-    
-    let assistantIds = companyConfig.assistant_ids;
+    const localCompanyConfig = result.rows[0];
+
+    let assistantIds = localCompanyConfig.assistant_ids;
     let assistantId;
     if (Array.isArray(assistantIds)) {
       assistantId = assistantIds[phoneIndex] || assistantIds[0];
@@ -12567,9 +13535,13 @@ async function fetchConfigFromDatabase(idSubstring, phoneIndex) {
         assistantId = assistantIds;
       }
     }
-    companyConfig.assistantId = assistantId;
-    
-    console.log(`CompanyConfig for company ${idSubstring}:`, companyConfig);
+    localCompanyConfig.assistantId = assistantId;
+
+    console.log(
+      `CompanyConfig for company ${idSubstring}:`,
+      localCompanyConfig
+    );
+    return localCompanyConfig;
   } catch (error) {
     console.error("Error fetching config:", error);
   } finally {
@@ -12579,8 +13551,6 @@ async function fetchConfigFromDatabase(idSubstring, phoneIndex) {
   }
 }
 
-const FormData = require("form-data");
-const { ids } = require("googleapis/build/src/apis/ids/index.js");
 async function transcribeAudio(audioData) {
   try {
     const formData = new FormData();
