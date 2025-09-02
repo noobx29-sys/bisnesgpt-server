@@ -9,7 +9,7 @@ module.exports = {
     kill_timeout: 15000,
     env: {
       NODE_ENV: 'production',
-      PORT: 8441,
+      PORT: 8443,
     },
     // Disable automatic restarts - only manual restarts allowed
     max_restarts: 0,

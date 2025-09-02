@@ -17,19 +17,43 @@ const pool = new Pool({
   createRetryIntervalMillis: 100,
 });
 
+// Add debugging for database connection
+console.log('🔌 [PARTICIPANTS] Database pool created');
+console.log('🔌 [PARTICIPANTS] DATABASE_URL set:', !!process.env.DATABASE_URL);
+if (process.env.DATABASE_URL) {
+  const url = new URL(process.env.DATABASE_URL);
+  console.log('🔌 [PARTICIPANTS] Database host:', url.hostname);
+  console.log('🔌 [PARTICIPANTS] Database name:', url.pathname.substring(1));
+}
+
+// Test database connection
+pool.query('SELECT NOW() as current_time')
+  .then(result => {
+    console.log('✅ [PARTICIPANTS] Database connection test successful:', result.rows[0]);
+  })
+  .catch(error => {
+    console.error('❌ [PARTICIPANTS] Database connection test failed:', error);
+  });
+
 // GET /api/participants - List all participants (paginated)
 router.get('/', async (req, res) => {
   try {
-    const { company_id, page = 1, limit = 20 } = req.query;
+    const { company_id, page = 1, limit, page_size } = req.query;
+    
+    // Handle both 'limit' and 'page_size' parameters for compatibility
+    const actualLimit = limit || page_size || 20;
+    
+    console.log(`🔍 [PARTICIPANTS API] Request: company_id=${company_id}, page=${page}, limit=${actualLimit}`);
     
     if (!company_id) {
+      console.log('❌ [PARTICIPANTS API] Missing company_id parameter');
       return res.status(422).json({
         success: false,
         error: 'company_id is required'
       });
     }
     
-    const offset = (page - 1) * limit;
+    const offset = (page - 1) * actualLimit;
     
     const query = `
       SELECT p.*, e.name as enrollee_name, e.email as enrollee_email, 
@@ -47,28 +71,31 @@ router.get('/', async (req, res) => {
     `;
     
     const [result, countResult] = await Promise.all([
-      pool.query(query, [company_id, limit, offset]),
+      pool.query(query, [company_id, actualLimit, offset]),
       pool.query(countQuery, [company_id])
     ]);
     
     const total = parseInt(countResult.rows[0].total);
-    const totalPages = Math.ceil(total / limit);
+    const totalPages = Math.ceil(total / actualLimit);
+    
+    console.log(`✅ [PARTICIPANTS API] Response: ${result.rows.length} participants, total: ${total}, pages: ${totalPages}`);
     
     res.json({
       success: true,
       participants: result.rows,
       pagination: {
         page: parseInt(page),
-        limit: parseInt(limit),
+        limit: parseInt(actualLimit),
         total,
         totalPages
       }
     });
   } catch (error) {
-    console.error('Error fetching participants:', error);
+    console.error('❌ [PARTICIPANTS API] Error fetching participants:', error);
     res.status(500).json({
       success: false,
-      error: 'Failed to fetch participants'
+      error: 'Failed to fetch participants',
+      details: error.message
     });
   }
 });

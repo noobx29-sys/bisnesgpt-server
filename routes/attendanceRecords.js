@@ -19,7 +19,7 @@ const pool = new Pool({
 // GET /api/attendance-records - Fetch all attendance records for a company
 router.get('/', async (req, res) => {
   try {
-    const { company_id, page = 1, limit = 100 } = req.query;
+    const { company_id, page, limit } = req.query;
     
     if (!company_id) {
       return res.status(422).json({
@@ -28,9 +28,29 @@ router.get('/', async (req, res) => {
       });
     }
     
+    // If no pagination parameters provided, return all records
+    if (!page && !limit) {
+      const query = `
+        SELECT id, event_id, event_slug, phone_number, confirmed_at, company_id
+        FROM attendance_records 
+        WHERE company_id = $1 
+        ORDER BY confirmed_at DESC
+      `;
+      
+      const result = await pool.query(query, [company_id]);
+      
+      res.json({
+        success: true,
+        attendance_records: result.rows,
+        total: result.rows.length,
+        pagination: null
+      });
+      return;
+    }
+    
     // Validate pagination parameters
-    const pageNum = parseInt(page);
-    const limitNum = parseInt(limit);
+    const pageNum = parseInt(page) || 1;
+    const limitNum = parseInt(limit) || 100;
     
     if (pageNum < 1 || limitNum < 1 || limitNum > 1000) {
       return res.status(422).json({

@@ -113,32 +113,97 @@ router.post('/', async (req, res) => {
       });
     }
     
-    const enrolleeId = uuidv4();
-    
-    const query = `
-      INSERT INTO enrollees (
-        id, email, name, designation, organisation, website, business_nature,
-        address, office_number, mobile_number, fax_number, is_vegetarian,
-        company_id, created_at, updated_at
-      )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, NOW(), NOW())
-      RETURNING id
+    // Check if enrollee already exists by email or mobile number
+    const checkQuery = `
+      SELECT * FROM enrollees 
+      WHERE (email = $1 OR mobile_number = $2) 
+      AND company_id = $3
     `;
+    const checkResult = await pool.query(checkQuery, [email, mobile_number, company_id]);
     
-    const result = await pool.query(query, [
-      enrolleeId, email, name, designation, organisation, website, business_nature,
-      address, office_number, mobile_number, fax_number, is_vegetarian, company_id
-    ]);
-    
-    res.status(201).json({
-      success: true,
-      enrolleeId: result.rows[0].id
-    });
+    if (checkResult.rows.length > 0) {
+      // Update existing enrollee
+      const existingEnrollee = checkResult.rows[0];
+      
+      // Check if we're trying to change the email to one that already exists for a different enrollee
+      if (email !== existingEnrollee.email) {
+        const emailCheckQuery = `
+          SELECT id FROM enrollees 
+          WHERE email = $1 AND company_id = $2 AND id != $3
+        `;
+        const emailCheckResult = await pool.query(emailCheckQuery, [email, company_id, existingEnrollee.id]);
+        
+        if (emailCheckResult.rows.length > 0) {
+          return res.status(409).json({
+            success: false,
+            error: 'An account with this email already exists'
+          });
+        }
+      }
+      
+      const updateQuery = `
+        UPDATE enrollees 
+        SET email = $1, name = $2, designation = $3, organisation = $4, website = $5,
+            business_nature = $6, address = $7, office_number = $8, 
+            mobile_number = $9, fax_number = $10, is_vegetarian = $11,
+            updated_at = NOW()
+        WHERE id = $12
+        RETURNING id
+      `;
+      
+      const result = await pool.query(updateQuery, [
+        email, name, designation, organisation, website, business_nature,
+        address, office_number, mobile_number, fax_number, is_vegetarian,
+        existingEnrollee.id
+      ]);
+      
+      res.json({
+        success: true,
+        enrolleeId: result.rows[0].id,
+        message: 'Enrollee updated successfully'
+      });
+    } else {
+      // Create new enrollee
+      const enrolleeId = uuidv4();
+      
+      const query = `
+        INSERT INTO enrollees (
+          id, email, name, designation, organisation, website, business_nature,
+          address, office_number, mobile_number, fax_number, is_vegetarian,
+          company_id, created_at, updated_at
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, NOW(), NOW())
+        RETURNING id
+      `;
+      
+      const result = await pool.query(query, [
+        enrolleeId, email, name, designation, organisation, website, business_nature,
+        address, office_number, mobile_number, fax_number, is_vegetarian, company_id
+      ]);
+      
+      res.status(201).json({
+        success: true,
+        enrolleeId: result.rows[0].id,
+        message: 'Enrollee created successfully'
+      });
+    }
   } catch (error) {
-    console.error('Error creating enrollee:', error);
+    console.error('Error creating/updating enrollee:', error);
+    
+    // Handle specific database errors
+    if (error.code === '23505') {
+      // Unique constraint violation
+      if (error.constraint === 'enrollees_email_key') {
+        return res.status(409).json({
+          success: false,
+          error: 'An account with this email already exists'
+        });
+      }
+    }
+    
     res.status(500).json({
       success: false,
-      error: 'Failed to create enrollee'
+      error: 'Failed to create/update enrollee'
     });
   }
 });

@@ -476,14 +476,24 @@ class MTDCReport {
       
       let reportStaffId = "120363386875697540@g.us";
       
-      const client = this.botMap.get(this.botName);
+      const botData = this.botMap.get(this.botName);
       
-      if (!client) {
-        console.error(`Whatsapp client for ${this.botName} not found`);
+      if (!botData || !Array.isArray(botData)) {
+        console.error(`Whatsapp client data for ${this.botName} not found or invalid`);
         return;
       }
       
-      await client.sendMessage(reportStaffId, reportContent);
+      // Find the first available client
+      const availableClient = botData.find(clientData => 
+        clientData && clientData.client && clientData.status === 'ready'
+      );
+      
+      if (!availableClient || !availableClient.client) {
+        console.error(`No available Whatsapp client found for ${this.botName}`);
+        return;
+      }
+      
+      await availableClient.client.sendMessage(reportStaffId, reportContent);
       
       console.log(`RSVP status report sent for ${program.programName} on ${formattedDate}`);
       

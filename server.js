@@ -340,11 +340,13 @@ const createQueueAndWorker = (botId) => {
             };
           }
 
-          if (batchData.status === "sent") {
-            console.log(`Bot ${botId} - Batch ${batchId} was already sent`);
+          if (batchData.status === "sent" || batchData.status === "completed") {
+            console.log(
+              `Bot ${botId} - Batch ${batchId} was already ${batchData.status}`
+            );
             return {
               skipped: true,
-              reason: "Already sent",
+              reason: `Already ${batchData.status}`,
             };
           }
 
@@ -404,6 +406,22 @@ const createQueueAndWorker = (botId) => {
             };
           }
 
+          // Check if we have valid chat IDs to process
+          if (chatIdsCount === 0) {
+            console.log(
+              `Bot ${botId} - Batch ${batchId} has no valid chat IDs, marking as completed`
+            );
+            await client.query(
+              "UPDATE scheduled_messages SET status = $1, skipped_reason = $2 WHERE id = $3",
+              ["completed", "No valid chat IDs to process"]
+            );
+            await client.query("COMMIT");
+            return {
+              skipped: true,
+              reason: "No valid chat IDs to process",
+            };
+          }
+
           console.log(`Bot ${botId} - Sending scheduled message batch:`, {
             batchId,
             messageId,
@@ -414,7 +432,7 @@ const createQueueAndWorker = (botId) => {
 
           const result = await sendScheduledMessage(batchData);
 
-          if (result.success) {
+          if (result && result.success) {
             console.log(
               `Bot ${botId} - Successfully sent batch ${batchId} for message ${messageId}`
             );
@@ -456,9 +474,9 @@ const createQueueAndWorker = (botId) => {
               }
             }
           } else {
-            throw new Error(
-              `Failed to send batch: ${result.error || "Unknown error"}`
-            );
+            const errorMsg =
+              result && result.error ? result.error : "Unknown error";
+            throw new Error(`Failed to send batch: ${errorMsg}`);
           }
 
           await client.query("COMMIT");
@@ -512,7 +530,8 @@ const createQueueAndWorker = (botId) => {
 
           if (
             messageData.status === "skipped" ||
-            messageData.status === "sent"
+            messageData.status === "sent" ||
+            messageData.status === "completed"
           ) {
             console.log(
               `Bot ${botId} - Message ${messageId} was already ${messageData.status}`
@@ -530,15 +549,15 @@ const createQueueAndWorker = (botId) => {
 
           const result = await sendScheduledMessage(messageData);
 
-          if (result.success) {
+          if (result && result.success) {
             await client.query(
               "UPDATE scheduled_messages SET status = $1, sent_at = NOW() WHERE id = $2",
               ["sent", messageId]
             );
           } else {
-            throw new Error(
-              `Failed to send message: ${result.error || "Unknown error"}`
-            );
+            const errorMsg =
+              result && result.error ? result.error : "Unknown error";
+            throw new Error(`Failed to send message: ${errorMsg}`);
           }
 
           await client.query("COMMIT");
@@ -875,6 +894,356 @@ app.use(express.static("public"));
 
 // Handle preflight requests
 app.options("*", cors());
+
+// Serve topup success page
+app.get("/topup-success", (req, res) => {
+  const origin = req.headers.origin;
+  if (origin) {
+    res.setHeader("Access-Control-Allow-Origin", origin);
+  } else {
+    res.setHeader("Access-Control-Allow-Origin", "*");
+  }
+  res.setHeader(
+    "Access-Control-Allow-Methods",
+    "GET, POST, PUT, DELETE, OPTIONS"
+  );
+  res.setHeader(
+    "Access-Control-Allow-Headers",
+    "Content-Type, Authorization, Origin, X-Requested-With"
+  );
+  res.setHeader("Access-Control-Allow-Credentials", "true");
+
+  // Get payment details from query parameters or try to get from recent transactions
+  const { payment_intent, reference_number, company_id } = req.query;
+
+  // If we have payment_intent, try to get the transaction details
+  let transactionDetails = null;
+  if (payment_intent) {
+    // Try to get transaction details from database
+    sqlDb
+      .query(
+        `SELECT * FROM topup_transactions WHERE payment_intent_id = $1 ORDER BY completed_at DESC LIMIT 1`,
+        [payment_intent]
+      )
+      .then((result) => {
+        if (result.rows.length > 0) {
+          transactionDetails = result.rows[0];
+        }
+      })
+      .catch((err) => {
+        console.log("Error fetching transaction details:", err);
+      });
+  }
+
+  // Build redirect URL with payment information
+
+  const webUrl = `https://web.jutateknologi.com/chat?payment_intent=${
+    payment_intent || ""
+  }&reference_number=${reference_number || ""}&company_id=${
+    company_id || ""
+  }&status=success`;
+
+  res.send(`    <!DOCTYPE html>
+    <html>
+    <head>
+      <title>Top-up Success</title>
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1">
+      <style>
+        body { font-family: Arial, sans-serif; text-align: center; padding: 50px; background: #f5f5f5; }
+        .success { background: white; padding: 40px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); max-width: 500px; margin: 0 auto; }
+        .checkmark { color: #4CAF50; font-size: 60px; margin-bottom: 20px; }
+        h1 { color: #333; margin-bottom: 20px; }
+        p { color: #666; line-height: 1.6; }
+        .btn { background: #4CAF50; color: white; padding: 12px 24px; text-decoration: none; border-radius: 5px; display: inline-block; margin-top: 20px; }
+        .btn:hover { background: #45a049; }
+        #countdown { font-size: 48px; color: #4CAF50; font-weight: bold; margin: 20px 0; }
+        .small { font-size: 14px; color: #999; }
+        .payment-info { background: #f8f9fa; padding: 15px; border-radius: 5px; margin: 20px 0; text-align: left; }
+        .payment-info h3 { margin: 0 0 10px 0; color: #333; }
+        .payment-info p { margin: 5px 0; color: #666; }
+      </style>
+    </head>
+    <body>
+      <div class="success">
+        <div class="checkmark">✓</div>
+        <h1>Payment Successful!</h1>
+        <p>Your AI message quota has been successfully topped up.</p>
+        
+        ${
+          transactionDetails
+            ? `
+        <div class="payment-info">
+          <h3>Payment Details:</h3>
+          <p><strong>Transaction ID:</strong> ${
+            transactionDetails.txn_id || "N/A"
+          }</p>
+          <p><strong>Amount:</strong> RM ${transactionDetails.amount}</p>
+          <p><strong>AI Responses:</strong> ${
+            transactionDetails.ai_responses
+          }</p>
+          <p><strong>Reference:</strong> ${
+            transactionDetails.reference_number || "N/A"
+          }</p>
+        </div>
+        `
+            : ""
+        }
+        
+        <p>Redirecting you back to your application...</p>
+        <div id="countdown">5</div>
+        <p class="small">You will be redirected automatically in <span id="timer">5</span> seconds</p>
+        <a href="${webUrl}" class="btn" id="redirectBtn">Go to Application</a>
+      </div>
+      
+      <script>
+        // Auto-redirect after 5 seconds
+        let countdown = 5;
+        const timerElement = document.getElementById('timer');
+        const countdownElement = document.getElementById('countdown');
+        const redirectBtn = document.getElementById('redirectBtn');
+        
+        const interval = setInterval(() => {
+          countdown--;
+          timerElement.textContent = countdown;
+          countdownElement.textContent = countdown;
+          
+          if (countdown <= 0) {
+            clearInterval(interval);
+            // Redirect to localhost with payment information
+            window.location.href = '${webUrl}';
+          }
+        }, 1000);
+        
+        // Also try to detect if localhost is accessible
+        fetch('https://web.jutateknologi.com', { mode: 'no-cors' })
+          .then(() => {
+            // localhost is accessible, use it
+            redirectBtn.href = '${webUrl}';
+          })
+          .catch(() => {
+            // localhost not accessible, use web.jutateknologi.com
+            redirectBtn.href = '${webUrl}';
+            // Update the auto-redirect as well
+            setTimeout(() => {
+              window.location.href = '${webUrl}';
+            }, 5000);
+          });
+      </script>
+    </body>
+    </html>`);
+});
+
+// Handle OPTIONS for topup-success (CORS preflight)
+app.options("/topup-success", (req, res) => {
+  const origin = req.headers.origin;
+  if (origin) {
+    res.setHeader("Access-Control-Allow-Origin", origin);
+  } else {
+    res.setHeader("Access-Control-Allow-Origin", "*");
+  }
+  res.setHeader(
+    "Access-Control-Allow-Methods",
+    "GET, POST, PUT, DELETE, OPTIONS"
+  );
+  res.setHeader(
+    "Access-Control-Allow-Headers",
+    "Content-Type, Authorization, Origin, X-Requested-With, Accept, Referer"
+  );
+  res.setHeader("Access-Control-Allow-Credentials", "true");
+  res.setHeader("Access-Control-Max-Age", "86400"); // 24 hours
+  res.status(204).end();
+});
+
+// Handle PayEx POST redirect to success page
+app.post("/topup-success", (req, res) => {
+  console.log("PayEx redirect received:", req.body);
+  console.log("Headers:", req.headers);
+
+  // Set comprehensive CORS headers
+  const origin = req.headers.origin;
+  if (origin) {
+    res.setHeader("Access-Control-Allow-Origin", origin);
+  } else {
+    res.setHeader("Access-Control-Allow-Origin", "*");
+  }
+  res.setHeader(
+    "Access-Control-Allow-Methods",
+    "GET, POST, PUT, DELETE, OPTIONS"
+  );
+  res.setHeader(
+    "Access-Control-Allow-Headers",
+    "Content-Type, Authorization, Origin, X-Requested-With, Accept, Referer"
+  );
+  res.setHeader("Access-Control-Allow-Credentials", "true");
+
+  // Extract payment information from PayEx redirect
+  const {
+    payment_intent,
+    reference_number,
+    txn_id,
+    amount,
+    response,
+    metadata,
+  } = req.body;
+
+  // Parse metadata if available
+  let companyId = null;
+  let aiResponses = 100;
+  try {
+    if (metadata) {
+      const metadataObj = JSON.parse(metadata);
+      companyId = metadataObj.companyId;
+      aiResponses = metadataObj.aiResponses || aiResponses;
+    }
+  } catch (e) {
+    console.log("Could not parse metadata:", e.message);
+  }
+
+  // Build redirect URL with payment information
+  const webUrl = `https://web.jutateknologi.com/chat?payment_intent=${
+    payment_intent || ""
+  }&reference_number=${reference_number || ""}&company_id=${
+    companyId || ""
+  }&txn_id=${txn_id || ""}&amount=${
+    amount || ""
+  }&ai_responses=${aiResponses}&status=success`;
+
+  // Send the same success page with payment information
+  res.send(`    <!DOCTYPE html>
+    <html>
+    <head>
+      <title>Top-up Success</title>
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1">
+      <style>
+        body { font-family: Arial, sans-serif; text-align: center; padding: 50px; background: #f5f5f5; }
+        .success { background: white; padding: 40px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); max-width: 500px; margin: 0 auto; }
+        .checkmark { color: #4CAF50; font-size: 60px; margin-bottom: 20px; }
+        h1 { color: #333; margin-bottom: 20px; }
+        p { color: #666; line-height: 1.6; }
+        .btn { background: #4CAF50; color: white; padding: 12px 24px; text-decoration: none; border-radius: 5px; display: inline-block; margin-top: 20px; }
+        .btn:hover { background: #45a049; }
+        #countdown { font-size: 48px; color: #4CAF50; font-weight: bold; margin: 20px 0; }
+        .small { font-size: 14px; color: #999; }
+        .payment-info { background: #f8f9fa; padding: 15px; border-radius: 5px; margin: 20px 0; text-align: left; }
+        .payment-info h3 { margin: 0 0 10px 0; color: #333; }
+        .payment-info p { margin: 5px 0; color: #666; }
+      </style>
+    </head>
+    <body>
+      <div class="success">
+        <div class="checkmark">✓</div>
+        <h1>Payment Successful!</h1>
+        <p>Your AI message quota has been successfully topped up.</p>
+        
+        ${
+          payment_intent
+            ? `
+        <div class="payment-info">
+          <h3>Payment Details:</h3>
+          <p><strong>Transaction ID:</strong> ${txn_id || "N/A"}</p>
+          <p><strong>Amount:</strong> RM ${
+            amount ? (parseFloat(amount) / 100).toFixed(2) : "N/A"
+          }</p>
+          <p><strong>AI Responses:</strong> ${aiResponses}</p>
+          <p><strong>Reference:</strong> ${reference_number || "N/A"}</p>
+          <p><strong>Payment Intent:</strong> ${payment_intent}</p>
+        </div>
+        `
+            : ""
+        }
+        
+        <p>Redirecting you back to your application...</p>
+        <div id="countdown">5</div>
+        <p class="small">You will be redirected automatically in <span id="timer">5</span> seconds</p>
+        <a href="${webUrl}" class="btn" id="redirectBtn">Go to Application</a>
+      </div>
+      
+      <script>
+        // Auto-redirect after 5 seconds
+        let countdown = 5;
+        const timerElement = document.getElementById('timer');
+        const countdownElement = document.getElementById('countdown');
+        const redirectBtn = document.getElementById('redirectBtn');
+        
+        const interval = setInterval(() => {
+          countdown--;
+          timerElement.textContent = countdown;
+          countdownElement.textContent = countdown;
+          
+          if (countdown <= 0) {
+            clearInterval(interval);
+            // Redirect to localhost with payment information
+            window.location.href = '${webUrl}';
+          }
+        }, 1000);
+        
+        // Also try to detect if localhost is accessible
+        fetch('https://web.jutateknologi.com', { mode: 'no-cors' })
+          .then(() => {
+            // localhost is accessible, use it
+            redirectBtn.href = '${webUrl}';
+          })
+          .catch(() => {
+            // localhost not accessible, use web.jutateknologi.com
+            redirectBtn.href = '${webUrl}';
+            // Update the auto-redirect as well
+            setTimeout(() => {
+              window.location.href = '${webUrl}';
+            }, 5000);
+          });
+      </script>
+    </body>
+    </html>`);
+});
+
+// API endpoint to verify payment status
+app.get("/api/verify-payment", async (req, res) => {
+  try {
+    const { payment_intent, reference_number, company_id } = req.query;
+
+    if (!payment_intent) {
+      return res.status(400).json({ error: "Payment intent is required" });
+    }
+
+    // Query the database for payment status
+    const result = await sqlDb.query(
+      `SELECT * FROM topup_transactions WHERE payment_intent_id = $1 ORDER BY completed_at DESC LIMIT 1`,
+      [payment_intent]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: "Payment not found" });
+    }
+
+    const transaction = result.rows[0];
+
+    // Also check if there's a pending topup
+    const pendingResult = await sqlDb.query(
+      `SELECT * FROM pending_topups WHERE payment_intent_id = $1`,
+      [payment_intent]
+    );
+
+    const response = {
+      payment_intent,
+      reference_number: transaction.reference_number || reference_number,
+      company_id: transaction.company_id,
+      amount: transaction.amount,
+      ai_responses: transaction.ai_responses,
+      status: transaction.status,
+      completed_at: transaction.completed_at,
+      metadata: transaction.metadata,
+      has_pending_topup: pendingResult.rows.length > 0,
+    };
+
+    res.json(response);
+  } catch (error) {
+    console.error("Error verifying payment:", error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
 const splitTestRouter = require("./routes/splitTest");
 app.use("/api/split-test", splitTestRouter);
 
@@ -996,6 +1365,96 @@ app.post("/api/certificates/generate-and-send", async (req, res) => {
       `[Certificates][${requestId}] Processing request for phone: ${phoneNumber}, form: ${formId}, company: ${companyId}`
     );
 
+    // Send immediate response to user
+    res.json({
+      success: true,
+      message: "Certificate generation and sending process started",
+      requestId,
+      status: "processing",
+      participantPhone: phoneNumber,
+      companyId,
+    });
+
+    // Continue processing in background (non-blocking)
+    processCertificateInBackground(
+      requestId,
+      phoneNumber,
+      formId,
+      formTitle,
+      companyId
+    );
+  } catch (error) {
+    console.error(`[Certificates][${requestId}] ❌ VALIDATION ERROR:`, error);
+    console.error(`[Certificates][${requestId}] Error details:`, {
+      message: error.message,
+      stack: error.stack,
+      name: error.name,
+      code: error.code,
+    });
+
+    res.status(500).json({
+      success: false,
+      error: "Request validation failed",
+      details: error.message,
+    });
+
+    console.log(`[Certificates][${requestId}] ===== REQUEST FAILED =====`);
+
+    // Send admin notification about the failure
+    try {
+      const adminPhone = "60127332108";
+      const adminMessage = `❌ Certificate Generation Failed
+
+Request ID: ${requestId}
+User Phone: ${phoneNumber}
+Company ID: ${companyId}
+Form ID: ${formId}
+Form Title: ${formTitle}
+
+Error: ${error.message}
+
+Please check the logs for more details.`;
+
+      // Try to get WhatsApp client for admin notification
+      const botData = botMap.get(companyId);
+      if (botData && botData[0]?.client) {
+        const formattedAdminPhone = adminPhone.startsWith("+")
+          ? adminPhone.slice(1)
+          : adminPhone;
+        await botData[0].client.sendMessage(
+          `${formattedAdminPhone}@c.us`,
+          adminMessage
+        );
+        console.log(
+          `[Certificates][${requestId}] ✅ Admin notification sent to ${adminPhone}`
+        );
+      } else {
+        console.log(
+          `[Certificates][${requestId}] ⚠️ Could not send admin notification - no WhatsApp client available`
+        );
+      }
+    } catch (notificationError) {
+      console.error(
+        `[Certificates][${requestId}] ❌ Failed to send admin notification:`,
+        notificationError
+      );
+    }
+  }
+});
+
+// Background processing function
+async function processCertificateInBackground(
+  requestId,
+  phoneNumber,
+  formId,
+  formTitle,
+  companyId
+) {
+  try {
+    console.log(
+      `[Certificates][${requestId}] 🔄 Starting background processing...`
+    );
+
     // Get WhatsApp client for the company
     console.log(
       `[Certificates][${requestId}] 🔍 Checking WhatsApp client for company: ${companyId}`
@@ -1048,18 +1507,17 @@ app.post("/api/certificates/generate-and-send", async (req, res) => {
       `[Certificates][${requestId}] 🔍 Searching for participant with phone: ${phoneNumber}`
     );
     const participant = findParticipantByPhone(participants, phoneNumber);
-      
+
     if (!participant || participant._notFound) {
       console.log(
         `[Certificates][${requestId}] ❌ Participant not found in any data source`
       );
-        
-     
+      return;
     }
-  
+
     // Extract participant information - FIXED to use the correct field names
     const participantName = participant.name || "Unknown Participant";
-    
+
     // Extract program date from event_name or use event_date
     let programDate = "Unknown Date";
     if (participant.event_name) {
@@ -1074,10 +1532,10 @@ app.post("/api/certificates/generate-and-send", async (req, res) => {
       // If event_date is available, format it nicely
       const eventDate = new Date(participant.event_date);
       if (!isNaN(eventDate.getTime())) {
-        programDate = eventDate.toLocaleDateString('en-GB', {
-          day: 'numeric',
-          month: 'long',
-          year: 'numeric'
+        programDate = eventDate.toLocaleDateString("en-GB", {
+          day: "numeric",
+          month: "long",
+          year: "numeric",
         });
       }
     }
@@ -1086,17 +1544,6 @@ app.post("/api/certificates/generate-and-send", async (req, res) => {
       `[Certificates][${requestId}] ✅ Participant found: ${participantName}`
     );
     console.log(`[Certificates][${requestId}] 📅 Program date: ${programDate}`);
-    console.log(`[Certificates][${requestId}] 📋 Participant data:`, {
-      name: participantName,
-      date: programDate,
-      allFields: Object.keys(participant),
-      phoneFields: Object.entries(participant).filter(
-        ([key, value]) =>
-          key.toLowerCase().includes("phone") ||
-          key.toLowerCase().includes("mobile") ||
-          key.toLowerCase().includes("contact")
-      ),
-    });
 
     // Generate certificate PDF
     console.log(
@@ -1153,7 +1600,6 @@ app.post("/api/certificates/generate-and-send", async (req, res) => {
       modified: fileStats.mtime,
     });
 
-    let responseMessage = "Certificate generated successfully";
     let whatsappStatus = "Not sent (no WhatsApp client)";
 
     // If WhatsApp client is available, send the message and certificate
@@ -1177,9 +1623,9 @@ app.post("/api/certificates/generate-and-send", async (req, res) => {
 
 Thank You for Attending FUTUREX.AI 2025
 
-On behalf of the organizing team, we would like to extend our heartfelt thanks for your participation in FUTUREX.AI 2025 held on 21 August 2025.
+On behalf of the organizing team, we would like to extend our heartfelt thanks for your participation in FUTUREX.AI 2025 held on 26 August 2025.
 
-Your presence and engagement in the AI Immersion - Automate It. Analyse It. Storytell It.  greatly contributed to the success of the event.
+Your presence and engagement in the AI Agent & Agentic AI Day 2025: Empowering Malaysia's Workforce with Artificial Intelligence Automation session greatly contributed to the success of the event.
 
 We hope the experience was insightful and inspiring as we continue to explore how artificial intelligence and robotics can shape the future.
 
@@ -1192,10 +1638,6 @@ Co9P AI Chatbot`;
 
         console.log(
           `[Certificates][${requestId}] 📤 Sending WhatsApp message to ${formattedPhone}`
-        );
-        console.log(
-          `[Certificates][${requestId}] 📝 Message content:`,
-          thankYouText
         );
 
         // Send WhatsApp message
@@ -1227,8 +1669,6 @@ Co9P AI Chatbot`;
           `[Certificates][${requestId}] ✅ Certificate document sent in ${documentTime}ms to ${participantName}`
         );
 
-        responseMessage =
-          "Certificate generation and WhatsApp sending completed successfully";
         whatsappStatus = "Sent successfully";
         console.log(
           `[Certificates][${requestId}] 🎉 WhatsApp sending completed successfully`
@@ -1251,13 +1691,10 @@ Co9P AI Chatbot`;
       );
     }
 
-    // Return success response
     console.log(
-      `[Certificates][${requestId}] 📤 Sending success response to client`
+      `[Certificates][${requestId}] ===== BACKGROUND PROCESSING COMPLETED =====`
     );
-    console.log(`[Certificates][${requestId}] Response data:`, {
-      success: true,
-      message: responseMessage,
+    console.log(`[Certificates][${requestId}] Final status:`, {
       participantName,
       filename,
       certificatePath,
@@ -1265,85 +1702,142 @@ Co9P AI Chatbot`;
       companyId,
       hasWhatsAppClient,
     });
-
-    res.json({
-      success: true,
-      message: responseMessage,
-      participantName,
-      filename,
-      certificatePath,
-      whatsappStatus,
-      companyId,
-      hasWhatsAppClient,
-    });
-
-    console.log(
-      `[Certificates][${requestId}] ===== REQUEST COMPLETED SUCCESSFULLY =====`
-    );
   } catch (error) {
-    console.error(`[Certificates][${requestId}] ❌ CRITICAL ERROR:`, error);
+    console.error(
+      `[Certificates][${requestId}] ❌ BACKGROUND PROCESSING ERROR:`,
+      error
+    );
     console.error(`[Certificates][${requestId}] Error details:`, {
       message: error.message,
       stack: error.stack,
       name: error.name,
       code: error.code,
     });
+    console.log(
+      `[Certificates][${requestId}] ===== BACKGROUND PROCESSING FAILED =====`
+    );
 
-    res.status(500).json({
-      success: false,
-      error: "Internal server error",
-      details: error.message,
-    });
+    // Send admin notification about the failure
+    try {
+      const adminPhone = "60127332108";
+      const adminMessage = `❌ Certificate Generation Failed
 
-    console.log(`[Certificates][${requestId}] ===== REQUEST FAILED =====`);
+Request ID: ${requestId}
+User Phone: ${phoneNumber}
+Company ID: ${companyId}
+Form ID: ${formId}
+Form Title: ${formTitle}
+
+Error: ${error.message}
+
+Please check the logs for more details.`;
+
+      // Try to get WhatsApp client for admin notification
+      const botData = botMap.get(companyId);
+      if (botData && botData[0]?.client) {
+        const formattedAdminPhone = adminPhone.startsWith("+")
+          ? adminPhone.slice(1)
+          : adminPhone;
+        await botData[0].client.sendMessage(
+          `${formattedAdminPhone}@c.us`,
+          adminMessage
+        );
+        console.log(
+          `[Certificates][${requestId}] ✅ Admin notification sent to ${adminPhone}`
+        );
+      } else {
+        console.log(
+          `[Certificates][${requestId}] ⚠️ Could not send admin notification - no WhatsApp client available`
+        );
+      }
+    } catch (notificationError) {
+      console.error(
+        `[Certificates][${requestId}] ❌ Failed to send admin notification:`,
+        notificationError
+      );
+    }
   }
-});
+}
 
 // Helper functions for certificate generation
 // Helper functions for certificate generation
 async function fetchParticipantData() {
   const allParticipants = [];
-  
+
   try {
-    console.log("[Certificates] 📊 Fetching participant data from multiple sources...");
-    
+    console.log(
+      "[Certificates] 📊 Fetching participant data from multiple sources..."
+    );
+
     // 1. Fetch from Neon database
     try {
       const baseUrl = process.env.BASE_URL || "https://juta-dev.ngrok.dev";
       const companyId = "0380";
-      
-      const [participantsResponse, enrolleesResponse, eventsResponse] = await Promise.allSettled([
-        axios.get(`${baseUrl}/api/participants?company_id=${companyId}`),
-        axios.get(`${baseUrl}/api/enrollees?company_id=${companyId}&limit=5000`), // Set high limit to get all enrollees
-        axios.get(`${baseUrl}/api/events?company_id=${companyId}`)
-      ]);
-      
-      if (participantsResponse.status === 'fulfilled' && enrolleesResponse.status === 'fulfilled' && eventsResponse.status === 'fulfilled') {
-        console.log("[Certificates] ✅ Successfully fetched from Neon database");
-        
+
+      const [participantsResponse, enrolleesResponse, eventsResponse] =
+        await Promise.allSettled([
+          axios.get(`${baseUrl}/api/participants?company_id=${companyId}`),
+          axios.get(
+            `${baseUrl}/api/enrollees?company_id=${companyId}&limit=5000`
+          ), // Set high limit to get all enrollees
+          axios.get(`${baseUrl}/api/events?company_id=${companyId}`),
+        ]);
+
+      if (
+        participantsResponse.status === "fulfilled" &&
+        enrolleesResponse.status === "fulfilled" &&
+        eventsResponse.status === "fulfilled"
+      ) {
+        console.log(
+          "[Certificates] ✅ Successfully fetched from Neon database"
+        );
+
         const participantsData = participantsResponse.value.data;
         const enrolleesData = enrolleesResponse.value.data;
         const eventsData = eventsResponse.value.data;
-        
+
         console.log("[Certificates] 🔍 Database response structure check:");
         console.log("- Participants type:", typeof participantsData);
         console.log("- Enrollees type:", typeof enrolleesData);
         console.log("- Events type:", typeof eventsData);
-        
+
         // Extract arrays from the response data
-        const participantsArray = participantsData.participants || participantsData.rows || participantsData.data || [];
-        const enrolleesArray = enrolleesData.enrollees || enrolleesData.rows || enrolleesData.data || [];
-        const eventsArray = eventsData.events || eventsData.rows || eventsData.data || [];
-        
-        console.log("[Certificates] 📊 Parsed arrays: participants=" + participantsArray.length + ", enrollees=" + enrolleesArray.length + ", events=" + eventsArray.length);
-        
+        const participantsArray =
+          participantsData.participants ||
+          participantsData.rows ||
+          participantsData.data ||
+          [];
+        const enrolleesArray =
+          enrolleesData.enrollees ||
+          enrolleesData.rows ||
+          enrolleesData.data ||
+          [];
+        const eventsArray =
+          eventsData.events || eventsData.rows || eventsData.data || [];
+
+        console.log(
+          "[Certificates] 📊 Parsed arrays: participants=" +
+            participantsArray.length +
+            ", enrollees=" +
+            enrolleesArray.length +
+            ", events=" +
+            eventsArray.length
+        );
+
         // Process participants and join with enrollee and event data
         const dbParticipants = participantsArray
-          .filter(participant => participant && participant.enrollee_id && participant.event_id)
-          .map(participant => {
-            const enrollee = enrolleesArray.find(e => e.id === participant.enrollee_id);
-            const event = eventsArray.find(ev => ev.id === participant.event_id);
-            
+          .filter(
+            (participant) =>
+              participant && participant.enrollee_id && participant.event_id
+          )
+          .map((participant) => {
+            const enrollee = enrolleesArray.find(
+              (e) => e.id === participant.enrollee_id
+            );
+            const event = eventsArray.find(
+              (ev) => ev.id === participant.event_id
+            );
+
             if (enrollee && event) {
               return {
                 name: enrollee.name || "Unknown",
@@ -1353,29 +1847,45 @@ async function fetchParticipantData() {
                 event_name: event.name || "Unknown Event",
                 event_date: event.start_date || "",
                 source: "database",
-                priority: 2
+                priority: 2,
               };
             }
             return null;
           })
-          .filter(p => p !== null && p.name && p.name !== "Unknown" && p.phone && isValidPhoneNumber(p.phone));
-        
+          .filter(
+            (p) =>
+              p !== null &&
+              p.name &&
+              p.name !== "Unknown" &&
+              p.phone &&
+              isValidPhoneNumber(p.phone)
+          );
+
         allParticipants.push(...dbParticipants);
-        console.log("[Certificates] 📊 Database: " + dbParticipants.length + " participants");
-        
+        console.log(
+          "[Certificates] 📊 Database: " +
+            dbParticipants.length +
+            " participants"
+        );
+
         // ADD THIS: Also check enrollees who might not have participant records
         const orphanedEnrollees = enrolleesArray
-          .filter(enrollee => {
+          .filter((enrollee) => {
             // Check if this enrollee has any participant record
-            const hasParticipantRecord = participantsArray.some(p => p.enrollee_id === enrollee.id);
-            return !hasParticipantRecord && enrollee.name && enrollee.mobile_number;
+            const hasParticipantRecord = participantsArray.some(
+              (p) => p.enrollee_id === enrollee.id
+            );
+            return (
+              !hasParticipantRecord && enrollee.name && enrollee.mobile_number
+            );
           })
-          .map(enrollee => {
+          .map((enrollee) => {
             // Find any event that might be relevant (you might want to adjust this logic)
-            const relevantEvent = eventsArray.find(event => 
-              event.name && event.name.includes("AI Immersion")
-            ) || eventsArray[0]; // Fallback to first event
-            
+            const relevantEvent =
+              eventsArray.find(
+                (event) => event.name && event.name.includes("AI Immersion")
+              ) || eventsArray[0]; // Fallback to first event
+
             return {
               name: enrollee.name,
               phone: enrollee.mobile_number || enrollee.phone || "",
@@ -1384,192 +1894,280 @@ async function fetchParticipantData() {
               event_name: relevantEvent ? relevantEvent.name : "Unknown Event",
               event_date: relevantEvent ? relevantEvent.start_date : "",
               source: "database_orphaned",
-              priority: 2
+              priority: 2,
             };
           })
-          .filter(p => p.phone && isValidPhoneNumber(p.phone));
-        
+          .filter((p) => p.phone && isValidPhoneNumber(p.phone));
+
         allParticipants.push(...orphanedEnrollees);
-        console.log("[Certificates] 📊 Database: " + dbParticipants.length + " participants + " + orphanedEnrollees.length + " orphaned = " + (dbParticipants.length + orphanedEnrollees.length) + " total");
-        
+        console.log(
+          "[Certificates] 📊 Database: " +
+            dbParticipants.length +
+            " participants + " +
+            orphanedEnrollees.length +
+            " orphaned = " +
+            (dbParticipants.length + orphanedEnrollees.length) +
+            " total"
+        );
+
         // Debug: Check if NOOR HASANAH is in the results
         if (orphanedEnrollees.length > 0) {
-          const targetParticipant = orphanedEnrollees.find(p => p.phone === "60173282776" || p.phone === "+60173282776");
+          const targetParticipant = orphanedEnrollees.find(
+            (p) => p.phone === "60173282776" || p.phone === "+60173282776"
+          );
           if (targetParticipant) {
-            console.log(`[Certificates] �� Found NOOR HASANAH in database:`, targetParticipant);
+            console.log(
+              `[Certificates] �� Found NOOR HASANAH in database:`,
+              targetParticipant
+            );
           } else {
-            console.log(`[Certificates] ❌ NOOR HASANAH NOT found in database results`);
-            console.log(`[Certificates] 🔍 Available phone numbers:`, allDbParticipants.map(p => p.phone));
+            console.log(
+              `[Certificates] ❌ NOOR HASANAH NOT found in database results`
+            );
+            console.log(
+              `[Certificates] 🔍 Available phone numbers:`,
+              allDbParticipants.map((p) => p.phone)
+            );
           }
         }
       }
     } catch (error) {
       console.log("[Certificates] ❌ Database fetch error:", error.message);
     }
-    
+
     // 2. Fetch from CSV URL if configured
     if (process.env.CSV_URL) {
       try {
-        console.log("[Certificates] 🔍 Fetching CSV from:", process.env.CSV_URL);
+        console.log(
+          "[Certificates] 🔍 Fetching CSV from:",
+          process.env.CSV_URL
+        );
         const csvResponse = await axios.get(process.env.CSV_URL);
         const csvData = csvResponse.data;
-        
+
         console.log("[Certificates] 🔍 CSV response type:", typeof csvData);
-        console.log("[Certificates] 🔍 CSV response length:", csvData ? csvData.length : 'null');
-        console.log("[Certificates] 🔍 CSV first 200 chars:", csvData ? csvData.substring(0, 200) : 'null');
-        
-        if (csvData && typeof csvData === 'string') {
+        console.log(
+          "[Certificates] 🔍 CSV response length:",
+          csvData ? csvData.length : "null"
+        );
+        console.log(
+          "[Certificates] 🔍 CSV first 200 chars:",
+          csvData ? csvData.substring(0, 200) : "null"
+        );
+
+        if (csvData && typeof csvData === "string") {
           // Parse CSV string into array of objects
-          const csvLines = csvData.trim().split('\n');
-          const headers = csvLines[0].split(',').map(h => h.replace(/"/g, '').trim());
-          
-          const csvParticipants = csvLines.slice(1) // Skip header row
-            .filter(line => line.trim()) // Remove empty lines
-            .map(line => {
-              const values = line.split(',').map(v => v.replace(/"/g, '').trim());
+          const csvLines = csvData.trim().split("\n");
+          const headers = csvLines[0]
+            .split(",")
+            .map((h) => h.replace(/"/g, "").trim());
+
+          const csvParticipants = csvLines
+            .slice(1) // Skip header row
+            .filter((line) => line.trim()) // Remove empty lines
+            .map((line) => {
+              const values = line
+                .split(",")
+                .map((v) => v.replace(/"/g, "").trim());
               const row = {};
               headers.forEach((header, index) => {
-                row[header] = values[index] || '';
+                row[header] = values[index] || "";
               });
-              
+
               return {
-                name: row["Full Name"] || row["Nama"] || row["Name"] || "Unknown",
-                phone: row["Phone"] || row["Mobile Number"] || row["Contact Number"] || "",
+                name:
+                  row["Full Name"] || row["Nama"] || row["Name"] || "Unknown",
+                phone:
+                  row["Phone"] ||
+                  row["Mobile Number"] ||
+                  row["Contact Number"] ||
+                  "",
                 email: row["Email"] || row["email"] || "",
-                organisation: row["Organisation"] || row["Company"] || row["organisation"] || "",
-                event_name: row["Program Date & Time"] || row["Event"] || "Unknown Event",
+                organisation:
+                  row["Organisation"] ||
+                  row["Company"] ||
+                  row["organisation"] ||
+                  "",
+                event_name:
+                  row["Program Date & Time"] || row["Event"] || "Unknown Event",
                 event_date: row["Date"] || "",
                 source: "csv",
-                priority: 3
+                priority: 3,
               };
             });
-          
+
           allParticipants.push(...csvParticipants);
-          console.log(`[Certificates] 📊 CSV: ${csvParticipants.length} participants`);
+          console.log(
+            `[Certificates] 📊 CSV: ${csvParticipants.length} participants`
+          );
         }
       } catch (error) {
         console.log("[Certificates] ❌ CSV fetch error:", error.message);
       }
     }
-    
+
     // 3. Fetch from registration form responses
     try {
       const registrationFormId = "1f666a83-9825-4d26-af03-edc2c0aeb39e";
-      const registrationUrl = `${process.env.BASE_URL || "https://juta-dev.ngrok.dev"}/api/feedback-responses/form/${registrationFormId}`;
-      
+      const registrationUrl = `${
+        process.env.BASE_URL || "https://juta-dev.ngrok.dev"
+      }/api/feedback-responses/form/${registrationFormId}`;
+
       const registrationResponse = await axios.get(registrationUrl);
-      
-      if (registrationResponse.data && registrationResponse.data.success && registrationResponse.data.feedbackResponses) {
-        const registrationParticipants = registrationResponse.data.feedbackResponses
-          .filter(response => response && response.phone_number && response.responses)
-          .map(response => {
-            try {
-              const responses = typeof response.responses === 'string' ? JSON.parse(response.responses) : response.responses;
-              
-              let name = "";
-              let eventName = "";
-              let organisation = "";
-              let email = "";
-              
-              if (Array.isArray(responses)) {
-                responses.forEach(item => {
-                  if (item.question && item.answer) {
-                    if (item.question.includes("Full Name") || item.question.includes("Nama")) {
-                      name = item.answer;
-                    } else if (item.question.includes("Programs To Register") || item.question.includes("Event")) {
-                      eventName = item.answer;
-                    } else if (item.question.includes("Organisation") || item.question.includes("Company")) {
-                      organisation = item.answer;
-                    } else if (item.question.includes("Email")) {
-                      email = item.answer;
+
+      if (
+        registrationResponse.data &&
+        registrationResponse.data.success &&
+        registrationResponse.data.feedbackResponses
+      ) {
+        const registrationParticipants =
+          registrationResponse.data.feedbackResponses
+            .filter(
+              (response) =>
+                response && response.phone_number && response.responses
+            )
+            .map((response) => {
+              try {
+                const responses =
+                  typeof response.responses === "string"
+                    ? JSON.parse(response.responses)
+                    : response.responses;
+
+                let name = "";
+                let eventName = "";
+                let organisation = "";
+                let email = "";
+
+                if (Array.isArray(responses)) {
+                  responses.forEach((item) => {
+                    if (item.question && item.answer) {
+                      if (
+                        item.question.includes("Full Name") ||
+                        item.question.includes("Nama")
+                      ) {
+                        name = item.answer;
+                      } else if (
+                        item.question.includes("Programs To Register") ||
+                        item.question.includes("Event")
+                      ) {
+                        eventName = item.answer;
+                      } else if (
+                        item.question.includes("Organisation") ||
+                        item.question.includes("Company")
+                      ) {
+                        organisation = item.answer;
+                      } else if (item.question.includes("Email")) {
+                        email = item.answer;
+                      }
                     }
-                  }
-                });
+                  });
+                }
+
+                return {
+                  name: name || "Unknown",
+                  phone: response.phone_number || "",
+                  email: email || "",
+                  organisation: organisation || "",
+                  event_name: eventName || "Unknown Event",
+                  event_date: response.submitted_at || "",
+                  source: "registration_form",
+                  priority: 1,
+                };
+              } catch (parseError) {
+                return null;
               }
-              
-              return {
-                name: name || "Unknown",
-                phone: response.phone_number || "",
-                email: email || "",
-                organisation: organisation || "",
-                event_name: eventName || "Unknown Event",
-                event_date: response.submitted_at || "",
-                source: "registration_form",
-                priority: 1
-              };
-            } catch (parseError) {
-              return null;
-            }
-          })
-          .filter(p => p !== null && p.name && p.name !== "Unknown" && p.phone && isValidPhoneNumber(p.phone));
-        
+            })
+            .filter(
+              (p) =>
+                p !== null &&
+                p.name &&
+                p.name !== "Unknown" &&
+                p.phone &&
+                isValidPhoneNumber(p.phone)
+            );
+
         allParticipants.push(...registrationParticipants);
-        console.log(`[Certificates] �� Registration form: ${registrationParticipants.length} participants`);
+        console.log(
+          `[Certificates] �� Registration form: ${registrationParticipants.length} participants`
+        );
       }
     } catch (error) {
-      console.log("[Certificates] ❌ Registration form fetch error:", error.message);
+      console.log(
+        "[Certificates] ❌ Registration form fetch error:",
+        error.message
+      );
     }
-    
+
     // 4. Deduplicate participants
-    console.log(`[Certificates] 🔄 Deduplicating ${allParticipants.length} total participants...`);
-    
+    console.log(
+      `[Certificates] 🔄 Deduplicating ${allParticipants.length} total participants...`
+    );
+
     const uniqueParticipants = [];
     const seenPhones = new Set();
     const seenNames = new Set();
-    
+
     // Sort by priority (1 = registration form, 2 = database, 3 = CSV)
     allParticipants.sort((a, b) => a.priority - b.priority);
-    
-    allParticipants.forEach(participant => {
+
+    allParticipants.forEach((participant) => {
       const phone = cleanPhoneNumber(participant.phone);
       const name = participant.name.toLowerCase().trim();
-      
+
       if (!seenPhones.has(phone) && !seenNames.has(name)) {
         seenPhones.add(phone);
         seenNames.add(name);
         uniqueParticipants.push(participant);
       }
     });
-    
-    console.log(`[Certificates] 👥 Final unique participants: ${uniqueParticipants.length}`);
-    
+
+    console.log(
+      `[Certificates] 👥 Final unique participants: ${uniqueParticipants.length}`
+    );
+
     // Log data sources used
     const sourceCounts = {};
-    uniqueParticipants.forEach(p => {
+    uniqueParticipants.forEach((p) => {
       sourceCounts[p.source] = (sourceCounts[p.source] || 0) + 1;
     });
     console.log(`[Certificates] 📊 Data sources:`, sourceCounts);
-    
+
     return uniqueParticipants;
-    
   } catch (error) {
-    console.log("[Certificates] ❌ Error in fetchParticipantData:", error.message);
+    console.log(
+      "[Certificates] ❌ Error in fetchParticipantData:",
+      error.message
+    );
     return [];
   }
 }
 // Helper function to validate phone numbers
 // Helper function to validate phone numbers
 function isValidPhoneNumber(phone) {
-  if (!phone || typeof phone !== 'string') return false;
-  
+  if (!phone || typeof phone !== "string") return false;
+
   // Remove all non-digit characters
-  const cleanPhone = phone.replace(/\D/g, '');
-  
+  const cleanPhone = phone.replace(/\D/g, "");
+
   // Check if it's a valid Malaysian phone number (10-12 digits starting with 60)
-  if (cleanPhone.startsWith('60') && cleanPhone.length >= 10 && cleanPhone.length <= 12) {
+  if (
+    cleanPhone.startsWith("60") &&
+    cleanPhone.length >= 10 &&
+    cleanPhone.length <= 12
+  ) {
     return true;
   }
-  
+
   // Check if it's a valid phone number without country code (9-10 digits)
   if (cleanPhone.length >= 9 && cleanPhone.length <= 10) {
     return true;
   }
-  
+
   // Check if it's a valid phone number with +60 prefix (11-13 characters including +)
-  if (phone.startsWith('+60') && phone.length >= 11 && phone.length <= 13) {
+  if (phone.startsWith("+60") && phone.length >= 11 && phone.length <= 13) {
     return true;
   }
-  
+
   return false;
 }
 
@@ -1579,82 +2177,106 @@ function isValidPhoneNumber(phone) {
 // Update the cleanPhoneNumber function to handle this case better
 function cleanPhoneNumber(phone) {
   if (!phone) return "";
-  
+
   // Remove all non-digit characters
-  let cleaned = phone.toString().replace(/\D/g, '');
-  
+  let cleaned = phone.toString().replace(/\D/g, "");
+
   // If it's 8-9 digits and doesn't start with 60, add 60 prefix
-  if (cleaned.length >= 8 && cleaned.length <= 9 && !cleaned.startsWith('60')) {
-    cleaned = '60' + cleaned;
+  if (cleaned.length >= 8 && cleaned.length <= 9 && !cleaned.startsWith("60")) {
+    cleaned = "60" + cleaned;
   }
-  
+
   // If it's 10-12 digits and starts with 60, keep as is
-  if (cleaned.length >= 10 && cleaned.length <= 12 && cleaned.startsWith('60')) {
+  if (
+    cleaned.length >= 10 &&
+    cleaned.length <= 12 &&
+    cleaned.startsWith("60")
+  ) {
     return cleaned;
   }
-  
+
   // If it's 11-13 characters and starts with +60, remove + and keep
-  if (phone.toString().startsWith('+60') && cleaned.length >= 11 && cleaned.length <= 13) {
+  if (
+    phone.toString().startsWith("+60") &&
+    cleaned.length >= 11 &&
+    cleaned.length <= 13
+  ) {
     return cleaned;
   }
-  
+
   return cleaned;
 }
 
 // Update the findParticipantByPhone function to be more flexible
 function findParticipantByPhone(participants, phoneNumber) {
   if (!participants || !phoneNumber) {
-    console.log("[Certificates] ❌ Invalid parameters for findParticipantByPhone");
+    console.log(
+      "[Certificates] ❌ Invalid parameters for findParticipantByPhone"
+    );
     return null;
   }
-  
+
   const targetPhone = cleanPhoneNumber(phoneNumber);
-  console.log(`[Certificates] 🔍 Searching for participant with phone: ${phoneNumber}`);
+  console.log(
+    `[Certificates] 🔍 Searching for participant with phone: ${phoneNumber}`
+  );
   console.log(`[Certificates] 🧹 Cleaned phone number: ${targetPhone}`);
-  
+
   // Try exact match first
-  let participant = participants.find(p => {
+  let participant = participants.find((p) => {
     if (!p.phone) return false;
     const cleanedPhone = cleanPhoneNumber(p.phone);
     return cleanedPhone === targetPhone;
   });
-  
+
   if (participant) {
     console.log(`[Certificates] ✅ Found exact match:`, participant);
     return participant;
   }
-  
+
   // Try partial match (remove 60 prefix if present)
-  if (targetPhone.startsWith('60') && targetPhone.length > 10) {
+  if (targetPhone.startsWith("60") && targetPhone.length > 10) {
     const withoutPrefix = targetPhone.substring(2);
-    participant = participants.find(p => {
+    participant = participants.find((p) => {
       if (!p.phone) return false;
       const cleanedPhone = cleanPhoneNumber(p.phone);
       return cleanedPhone === withoutPrefix || cleanedPhone === targetPhone;
     });
-    
+
     if (participant) {
-      console.log(`[Certificates] ✅ Found partial match (without 60 prefix):`, participant);
+      console.log(
+        `[Certificates] ✅ Found partial match (without 60 prefix):`,
+        participant
+      );
       return participant;
     }
   }
-  
+
   // Try adding 60 prefix if not present
-  if (!targetPhone.startsWith('60') && targetPhone.length >= 8 && targetPhone.length <= 9) {
-    const withPrefix = '60' + targetPhone;
-    participant = participants.find(p => {
+  if (
+    !targetPhone.startsWith("60") &&
+    targetPhone.length >= 8 &&
+    targetPhone.length <= 9
+  ) {
+    const withPrefix = "60" + targetPhone;
+    participant = participants.find((p) => {
       if (!p.phone) return false;
       const cleanedPhone = cleanPhoneNumber(p.phone);
       return cleanedPhone === withPrefix;
     });
-    
+
     if (participant) {
-      console.log(`[Certificates] ✅ Found match with added 60 prefix:`, participant);
+      console.log(
+        `[Certificates] ✅ Found match with added 60 prefix:`,
+        participant
+      );
       return participant;
     }
   }
-  
-  console.log(`[Certificates] ❌ No participant found for phone: ${phoneNumber}`);
+
+  console.log(
+    `[Certificates] ❌ No participant found for phone: ${phoneNumber}`
+  );
   return null;
 }
 
@@ -1692,7 +2314,7 @@ function formatPhoneForWhatsApp(phoneNumber) {
 
 async function generateCertificate(
   participantName,
-  programDate = "21 August 2025"
+  programDate = "26 August 2025"
 ) {
   console.log("[Certificates] 🎨 Starting certificate generation...");
   console.log("[Certificates] 📝 Participant name:", participantName);
@@ -1784,7 +2406,7 @@ async function generateCertificate(
       });
 
       page.drawText(
-        "AI Immersion - Automate It. Analyse It. Storytell It.",
+        "AI Agent & Agentic AI Day 2025: Empowering Malaysia's Workforce with Artificial Intelligence Automation",
         {
           x: 120,
           y: 530,
@@ -1795,7 +2417,7 @@ async function generateCertificate(
       );
 
       // Date
-      page.drawText(`held on 21 August 2025`, {
+      page.drawText(`held on 26 August 2025`, {
         x: 200,
         y: 500,
         size: 14,
@@ -1886,7 +2508,7 @@ async function generateCertificate(
 
     const subtitleLineHeight = 18; // Adjust for spacing between lines
     let subtitleLines = splitTextToLines(
-      "AI Immersion - Automate It. Analyse It. Storytell It.",
+      "AI Agent & Agentic AI Day 2025: Empowering Malaysia's Workforce with Artificial Intelligence Automation",
       subtitleFont,
       subtitleFontSize,
       subtitleMaxWidth
@@ -1933,7 +2555,7 @@ async function generateCertificate(
     }
 
     // Date (medium font)
-    page.drawText("21 August 2025", {
+    page.drawText("26 August 2025", {
       x: 520,
       y: subtitleY,
       size: 14,
@@ -1942,13 +2564,16 @@ async function generateCertificate(
     });
 
     // Venue (small font)
-    page.drawText("Rashid Theaterette, Ground Floor, Idea Tower 1, UPM-MTDC Technology Centre", {
-      x: 395,
-      y: 172,
-      size: 12,
-      font: helvetica,
-      color: rgb(0, 0, 0),
-    });
+    page.drawText(
+      "Rashid Theaterette, Ground Floor, Idea Tower 1, UPM-MTDC Technology Centre",
+      {
+        x: 395,
+        y: 172,
+        size: 12,
+        font: helvetica,
+        color: rgb(0, 0, 0),
+      }
+    );
 
     // Location (small font)
     page.drawText("Serdang Selangor", {
@@ -2273,15 +2898,8 @@ app.get("/api/auto-reply/unreplied/:companyId", async (req, res) => {
   }
 });
 
-// ============================================
-// END AUTO-REPLY MANAGEMENT ENDPOINTS
-// ============================================
 const port = process.env.PORT;
 server.listen(port, () => console.log(`Server is running on port ${port}`));
-
-// ======================
-// 8. LOG BROADCASTING SETUP
-// ======================
 
 // Function to broadcast logs to WebSocket clients
 function broadcastLog(logData) {
@@ -3768,6 +4386,185 @@ app.get("/api/facebook-lead-webhook", (req, res) => {
     res.sendStatus(404);
   }
 });
+
+// POST endpoint to handle Meta lead form submissions
+app.post("/api/facebook-lead-webhook", async (req, res) => {
+  try {
+    console.log('Meta lead webhook received:', JSON.stringify(req.body, null, 2));
+    
+    // Extract lead data from the webhook payload
+    const leadData = req.body.entry?.[0]?.changes?.[0]?.value;
+    
+    if (!leadData) {
+      console.log('No lead data found in webhook payload');
+      return res.status(200).json({ status: 'ok', message: 'No lead data' });
+    }
+
+    // Extract relevant lead information
+    const leadId = leadData.id;
+    const formId = leadData.form_id;
+    const pageId = leadData.page_id;
+    const createdTime = leadData.created_time;
+    
+    // Extract form data fields
+    const formData = leadData.form_data || [];
+    let leadInfo = {
+      name: '',
+      email: '',
+      phone: '',
+      company: '',
+      message: ''
+    };
+
+    // Parse form data fields
+    formData.forEach(field => {
+      if (field.name === 'full_name' || field.name === 'name') {
+        leadInfo.name = field.values?.[0] || '';
+      } else if (field.name === 'email') {
+        leadInfo.email = field.values?.[0] || '';
+      } else if (field.name === 'phone_number' || field.name === 'phone') {
+        leadInfo.phone = field.values?.[0] || '';
+      } else if (field.name === 'company' || field.name === 'company_name') {
+        leadInfo.company = field.values?.[0] || '';
+      } else if (field.name === 'message' || field.name === 'additional_info' || field.name === 'notes') {
+        leadInfo.message = field.values?.[0] || '';
+      }
+    });
+
+    // If no message field found, set a default message
+    if (!leadInfo.message) {
+      leadInfo.message = 'Lead submitted through Meta form';
+    }
+
+    console.log('Parsed lead info:', leadInfo);
+
+    // Check if this is for company 0210
+    const companyId = '0210';
+    const botData = botMap.get(companyId);
+    
+    if (!botData) {
+      console.log(`No WhatsApp client found for company ${companyId}`);
+      return res.status(200).json({ status: 'ok', message: 'Company not configured' });
+    }
+
+    // Find an active WhatsApp client
+    let activeClient = null;
+    for (let i = 0; i < botData.length; i++) {
+      if (botData[i]?.client?.info) {
+        activeClient = botData[i].client;
+        break;
+      }
+    }
+
+    if (!activeClient) {
+      console.log(`No active WhatsApp client found for company ${companyId}`);
+      return res.status(200).json({ status: 'ok', message: 'No active WhatsApp client' });
+    }
+
+    // Format phone number for WhatsApp
+    let formattedPhone = leadInfo.phone;
+    if (formattedPhone) {
+      // Remove any non-digit characters and ensure it starts with country code
+      formattedPhone = formattedPhone.replace(/\D/g, '');
+      if (!formattedPhone.startsWith('60')) {
+        formattedPhone = '60' + formattedPhone;
+      }
+      formattedPhone = formattedPhone + '@c.us';
+    }
+
+    // Create welcome message
+    const welcomeMessage = `🆕 *New Lead from Meta Lead Form!*
+
+*Name:* ${leadInfo.name || 'Not provided'}
+*Email:* ${leadInfo.email || 'Not provided'}
+*Phone:* ${leadInfo.phone || 'Not provided'}
+*Company:* ${leadInfo.company || 'Not provided'}
+*Message:* ${leadInfo.message || 'Not provided'}
+
+*Form ID:* ${formId}
+*Page ID:* ${pageId}
+*Lead ID:* ${leadId}
+*Submitted:* ${new Date(createdTime * 1000).toLocaleString('en-MY')}
+
+Thank you for your interest! We'll get back to you soon. 🚀`;
+
+    // Send message to the lead if phone number is available
+    if (formattedPhone && formattedPhone !== '60@c.us') {
+      try {
+        await activeClient.sendMessage(formattedPhone, welcomeMessage);
+        console.log(`Welcome message sent to ${formattedPhone} for company ${companyId}`);
+      } catch (sendError) {
+        console.error(`Error sending message to ${formattedPhone}:`, sendError);
+      }
+    }
+
+    // Send notification to company group or admin (you can customize this)
+    // You might want to send this to a specific group or admin number
+    try {
+      // Example: Send to a notification group (replace with actual group ID)
+      // await activeClient.sendMessage('YOUR_GROUP_ID@g.us', notificationMessage);
+      
+      // Or send to admin number (replace with actual admin number)
+      // await activeClient.sendMessage('ADMIN_NUMBER@c.us', notificationMessage);
+      
+      console.log(`Lead notification sent for company ${companyId}`);
+    } catch (notificationError) {
+      console.error('Error sending notification:', notificationError);
+    }
+
+    // Store lead in database
+    try {
+      const { saveContact } = require('./neon-contact-operations');
+      
+      const contactData = {
+        company_id: companyId,
+        contact_id: leadId,
+        phone: leadInfo.phone,
+        name: leadInfo.name,
+        email: leadInfo.email,
+        company_name: leadInfo.company,
+        message: leadInfo.message,
+        form_submission: JSON.stringify({
+          form_id: formId,
+          page_id: pageId,
+          lead_id: leadId,
+          created_time: createdTime,
+          source: 'meta_lead_form'
+        }),
+        created_at: new Date(createdTime * 1000).toISOString(),
+        last_updated: new Date().toISOString(),
+        tags: ['meta_lead', 'new_lead'],
+        profile: JSON.stringify({
+          source: 'Meta Lead Form',
+          form_id: formId,
+          page_id: pageId
+        })
+      };
+      
+      await saveContact(contactData);
+      console.log(`Lead stored in database for company ${companyId}`);
+    } catch (dbError) {
+      console.error('Error storing lead in database:', dbError);
+      // Don't fail the webhook if database storage fails
+    }
+
+    res.status(200).json({ 
+      status: 'success', 
+      message: 'Lead processed successfully',
+      companyId: companyId,
+      leadInfo: leadInfo
+    });
+
+  } catch (error) {
+    console.error('Error processing Meta lead webhook:', error);
+    res.status(500).json({ 
+      status: 'error', 
+      message: 'Internal server error',
+      error: error.message 
+    });
+  }
+});
+
 
 app.put("/api/update-user", async (req, res) => {
   try {
@@ -5434,6 +6231,21 @@ app.post("/api/schedule-message/:companyId", async (req, res) => {
         contactIds,
       });
 
+      // Validate that we have valid data to schedule
+      if (!chatIds || chatIds.length === 0) {
+        throw new Error("No valid chat IDs found to schedule messages for");
+      }
+
+      if (
+        !scheduledMessage.message &&
+        !scheduledMessage.mediaUrl &&
+        !scheduledMessage.documentUrl
+      ) {
+        throw new Error(
+          "No message content, media, or document provided to schedule"
+        );
+      }
+
       const mainMessageQuery = `
         INSERT INTO scheduled_messages (
           id, schedule_id, company_id, contact_id, contact_ids, multiple, message_content, media_url, 
@@ -5511,6 +6323,12 @@ app.post("/api/schedule-message/:companyId", async (req, res) => {
           // Get contact IDs for this batch
           const batchContactIds = contactIds.slice(startIndex, endIndex);
           const batchChatIds = chatIds.slice(startIndex, endIndex);
+
+          // Validate batch data
+          if (!batchChatIds || batchChatIds.length === 0) {
+            console.warn(`Skipping batch ${batchIndex} - no valid chat IDs`);
+            continue;
+          }
 
           // Prepare messages for this batch
           const batchMessages = batchChatIds.map((chatId) => ({
@@ -6261,12 +7079,10 @@ app.post("/api/sync-single-contact/:companyId", async (req, res) => {
         `Error during single contact sync for company ${companyId}, phone ${selectedPhoneIndex}, contact ${contactPhone}:`,
         error
       );
-      res
-        .status(500)
-        .json({
-          error: "Failed to sync single contact",
-          details: error.message,
-        });
+      res.status(500).json({
+        error: "Failed to sync single contact",
+        details: error.message,
+      });
     }
   } catch (error) {
     console.error(
@@ -6330,12 +7146,10 @@ app.post("/api/sync-single-contact-name/:companyId", async (req, res) => {
         `Error during single contact name sync for company ${companyId}, phone ${selectedPhoneIndex}, contact ${contactPhone}:`,
         error
       );
-      res
-        .status(500)
-        .json({
-          error: "Failed to sync single contact name",
-          details: error.message,
-        });
+      res.status(500).json({
+        error: "Failed to sync single contact name",
+        details: error.message,
+      });
     }
   } catch (error) {
     console.error(
@@ -7929,6 +8743,555 @@ async function syncSingleContactName(
   }
 }
 
+async function syncMessagesAndHandleAutoReplies(botName, phoneCount) {
+  console.log(
+    `=== Starting syncMessagesAndHandleAutoReplies for bot ${botName} ===`
+  );
+
+  try {
+    // Get auto-reply settings for this bot
+    const autoReplySettings = await getAutoReplySettings(botName);
+
+    if (!autoReplySettings || !autoReplySettings.enabled) {
+      console.log(
+        `[AutoReply] Auto-reply is disabled for bot ${botName}, skipping auto-reply processing`
+      );
+      return;
+    }
+
+    // Process each phone index for this bot
+    for (let phoneIndex = 0; phoneIndex < phoneCount; phoneIndex++) {
+      const botData = botMap.get(botName);
+      if (!botData || !Array.isArray(botData) || !botData[phoneIndex]) {
+        console.log(
+          `[AutoReply] Bot ${botName} phone ${phoneIndex} not found in botMap`
+        );
+        continue;
+      }
+
+      const client = botData[phoneIndex].client;
+      if (!client) {
+        console.log(
+          `[AutoReply] Client not found for bot ${botName} phone ${phoneIndex}`
+        );
+        continue;
+      }
+
+      console.log(
+        `[AutoReply] Processing phone index ${phoneIndex} for bot ${botName}`
+      );
+      await syncMessagesForBot(client, botName, phoneIndex, autoReplySettings);
+    }
+
+    console.log(
+      `=== Completed syncMessagesAndHandleAutoReplies for bot ${botName} ===`
+    );
+  } catch (error) {
+    console.error(
+      `[AutoReply] Error in syncMessagesAndHandleAutoReplies for bot ${botName}:`,
+      error
+    );
+  }
+}
+
+// Function to get auto-reply settings from database
+async function getAutoReplySettings(companyId) {
+  const sqlClient = await getDatabaseConnection();
+  if (!sqlClient) {
+    return null;
+  }
+
+  try {
+    const result = await sqlClient.query(
+      `SELECT setting_value FROM settings 
+       WHERE company_id = $1 AND setting_type = 'autoReply' AND setting_key = 'config'`,
+      [companyId]
+    );
+
+    if (result.rows.length === 0) {
+      return { enabled: false, autoReplyHours: "6" };
+    }
+
+    const settings = result.rows[0].setting_value;
+    return {
+      enabled: settings.enabled || false,
+      autoReplyHours: settings.autoReplyHours || "6",
+    };
+  } catch (error) {
+    console.error("[AutoReply] Error fetching auto-reply settings:", error);
+    return { enabled: false, autoReplyHours: "6" };
+  } finally {
+    sqlClient.release();
+  }
+}
+
+// Function to sync messages for a specific bot
+async function syncMessagesForBot(
+  client,
+  botName,
+  phoneIndex,
+  autoReplySettings
+) {
+  try {
+    console.log(
+      `[AutoReply] Syncing messages for bot ${botName}, phone ${phoneIndex}`
+    );
+
+    // Get all chats from WhatsApp
+    const chats = await client.getChats();
+    console.log(
+      `[AutoReply] Found ${chats.length} chats for bot ${botName} phone ${phoneIndex}`
+    );
+
+    let processedCount = 0;
+    const batchSize = 10; // Process chats in batches to avoid overwhelming
+
+    for (let i = 0; i < chats.length; i += batchSize) {
+      const chatBatch = chats.slice(i, i + batchSize);
+
+      await Promise.all(
+        chatBatch.map(async (chat) => {
+          try {
+            // Skip status updates and broadcast lists
+            if (
+              chat.id._serialized === "status@broadcast" ||
+              chat.isBroadcast
+            ) {
+              return;
+            }
+
+            const contact = await chat.getContact();
+            const phoneNumber = "+" + contact.id.user;
+
+            // Skip if phone number is invalid
+            if (
+              !phoneNumber ||
+              phoneNumber === "+status" ||
+              phoneNumber === "+0"
+            ) {
+              return;
+            }
+
+            await syncContactMessages(
+              client,
+              chat,
+              contact,
+              botName,
+              phoneIndex,
+              autoReplySettings
+            );
+            processedCount++;
+
+            if (processedCount % 50 === 0) {
+              console.log(
+                `[AutoReply] Processed ${processedCount}/${chats.length} chats for bot ${botName} phone ${phoneIndex}`
+              );
+            }
+          } catch (contactError) {
+            console.error(
+              `[AutoReply] Error processing contact ${chat.id._serialized}:`,
+              contactError.message
+            );
+          }
+        })
+      );
+
+      // Small delay between batches
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+
+    console.log(
+      `[AutoReply] Completed syncing ${processedCount} chats for bot ${botName} phone ${phoneIndex}`
+    );
+  } catch (error) {
+    console.error(
+      `[AutoReply] Error syncing messages for bot ${botName} phone ${phoneIndex}:`,
+      error
+    );
+  }
+}
+
+// Function to sync messages for a specific contact and handle auto-reply
+async function syncContactMessages(
+  client,
+  chat,
+  contact,
+  botName,
+  phoneIndex,
+  autoReplySettings
+) {
+  try {
+    const phoneNumber = "+" + contact.id.user;
+    const contactName =
+      contact.name || contact.pushname || contact.verifiedName || phoneNumber;
+
+    // Fetch latest 5 messages from WhatsApp
+    const messages = await chat.fetchMessages({ limit: 5 });
+
+    if (!messages || messages.length === 0) {
+      return;
+    }
+
+    // Sort messages by timestamp (oldest first)
+    const sortedMessages = messages.sort((a, b) => a.timestamp - b.timestamp);
+
+    // Check if contact needs auto-reply
+    if (autoReplySettings.enabled) {
+      await checkAndProcessAutoReply(
+        client,
+        chat,
+        contact,
+        botName,
+        phoneIndex,
+        autoReplySettings,
+        sortedMessages
+      );
+    }
+  } catch (error) {
+    console.error(
+      `[AutoReply] Error syncing contact messages for ${contact.id.user}:`,
+      error
+    );
+  }
+}
+
+// Function to check if contact needs auto-reply and process through message handler
+async function checkAndProcessAutoReply(
+  client,
+  chat,
+  contact,
+  botName,
+  phoneIndex,
+  autoReplySettings,
+  messages
+) {
+  try {
+    const phoneNumber = "+" + contact.id.user;
+    const contactName =
+      contact.name || contact.pushname || contact.verifiedName || phoneNumber;
+
+    // Check if contact has been replied to within the time limit
+    const hasBeenReplied = await checkIfContactHasBeenReplied(
+      messages,
+      botName,
+      phoneNumber,
+      autoReplySettings.autoReplyHours
+    );
+
+    if (hasBeenReplied) {
+      // Still need to check for unsaved messages and save them
+      const messagesSavedStatus = await checkMessagesInDatabase(
+        messages,
+        botName,
+        phoneNumber
+      );
+
+      for (let i = 0; i < messages.length; i++) {
+        const message = messages[i];
+        const isAlreadySaved = messagesSavedStatus[i];
+
+        // If message is fromMe and not saved, save it directly
+        if (message.fromMe && !isAlreadySaved) {
+          await saveFromMeMessageDirectly(
+            message,
+            botName,
+            phoneNumber,
+            phoneIndex
+          );
+        }
+      }
+
+      return;
+    }
+
+    // Get which messages are already saved in database
+    const messagesSavedStatus = await checkMessagesInDatabase(
+      messages,
+      botName,
+      phoneNumber
+    );
+
+    // Check if all messages are already saved
+    const allMessagesSaved = messagesSavedStatus.every(
+      (saved) => saved === true
+    );
+
+    if (allMessagesSaved) {
+      return;
+    }
+
+    // Calculate time-based cutoffs
+    const autoReplyHours = parseInt(autoReplySettings.autoReplyHours) || 6;
+    const cutoffTime = Date.now() - autoReplyHours * 60 * 60 * 1000;
+
+    // Separate messages into categories for processing
+    const messagesToProcess = []; // Recent customer messages for processing
+    const messagesToSave = []; // Older messages to save directly
+
+    for (let i = 0; i < messages.length; i++) {
+      const message = messages[i];
+      const isAlreadySaved = messagesSavedStatus[i];
+      const messageTime = message.timestamp * 1000;
+      const isRecent = messageTime > cutoffTime;
+
+      if (!isAlreadySaved) {
+        if (message.fromMe) {
+          // Always save fromMe messages directly
+          await saveFromMeMessageDirectly(
+            message,
+            botName,
+            phoneNumber,
+            phoneIndex
+          );
+        } else {
+          // Customer messages: check if recent or old
+          if (isRecent) {
+            // Recent customer messages - send to message handler for processing
+            messagesToProcess.push(message);
+          } else {
+            // Old customer messages - save directly without processing
+            messagesToSave.push(message);
+          }
+        }
+      }
+    }
+
+    // Check if there's nothing to process or save
+    if (messagesToProcess.length === 0 && messagesToSave.length === 0) {
+      return;
+    }
+
+    // First, save old customer messages directly (like messages 1,2 in your example)
+    if (messagesToSave.length > 0) {
+      for (const message of messagesToSave) {
+        await saveCustomerMessageDirectly(
+          message,
+          botName,
+          phoneNumber,
+          phoneIndex
+        );
+      }
+    }
+
+    // Then, process recent customer messages through handler (like messages 4,5 in your example)
+    if (messagesToProcess.length > 0) {
+      for (const message of messagesToProcess) {
+        // Add delay before sending to message handler (5-10 seconds)
+        const delay = Math.floor(Math.random() * 5000) + 5000; // 5-10 seconds
+
+        setTimeout(async () => {
+          try {
+            await handleNewMessagesTemplateWweb(
+              client,
+              message,
+              botName,
+              phoneIndex
+            );
+          } catch (error) {
+            console.error(
+              `[AutoReply] Error processing message ${message.id._serialized}:`,
+              error
+            );
+          }
+        }, delay);
+      }
+
+      // Only log auto-reply action if we actually processed messages
+      await recordAutoReplySent(botName, phoneNumber);
+    }
+  } catch (error) {
+    console.error(
+      `[AutoReply] Error in checkAndProcessAutoReply for ${contact.id.user}:`,
+      error
+    );
+  }
+}
+
+// Function to check if contact has been replied to
+async function checkIfContactHasBeenReplied(
+  messages,
+  botName,
+  phoneNumber,
+  autoReplyHours
+) {
+  try {
+    const autoReplyHoursInt = parseInt(autoReplyHours) || 6;
+    const cutoffTime = Date.now() - autoReplyHoursInt * 60 * 60 * 1000;
+
+    // Find the latest customer message (not fromMe) within the time limit
+    let latestCustomerMessage = null;
+    let latestCustomerMessageIndex = -1;
+
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const msg = messages[i];
+      const messageTime = msg.timestamp * 1000;
+
+      if (!msg.fromMe && messageTime > cutoffTime) {
+        latestCustomerMessage = msg;
+        latestCustomerMessageIndex = i;
+        break;
+      }
+    }
+
+    if (!latestCustomerMessage) {
+      return true; // No recent customer messages, so no need to reply
+    }
+
+    // Check if there's any message from us AFTER the latest customer message
+    for (let i = latestCustomerMessageIndex + 1; i < messages.length; i++) {
+      const msg = messages[i];
+      if (msg.fromMe) {
+        return true;
+      }
+    }
+
+    // Also check database for any messages from us to this contact AFTER the latest customer message timestamp
+    const sqlClient = await getDatabaseConnection();
+    if (!sqlClient) {
+      return false;
+    }
+
+    try {
+      const latestCustomerTimestamp = new Date(
+        latestCustomerMessage.timestamp * 1000
+      );
+
+      const result = await sqlClient.query(
+        `SELECT COUNT(*) as count FROM messages 
+         WHERE company_id = $1 AND contact_id = $2 AND from_me = true 
+         AND timestamp > $3`,
+        [
+          botName,
+          botName + "-" + phoneNumber.substring(1),
+          latestCustomerTimestamp,
+        ]
+      );
+
+      const messageCount = parseInt(result.rows[0].count);
+      if (messageCount > 0) {
+        return true;
+      }
+
+      return false;
+    } finally {
+      sqlClient.release();
+    }
+  } catch (error) {
+    console.error(
+      "[AutoReply] Error checking if contact has been replied:",
+      error
+    );
+    return false;
+  }
+}
+
+// Function to check if messages are already saved in database
+async function checkMessagesInDatabase(messages, botName, phoneNumber) {
+  const sqlClient = await getDatabaseConnection();
+  if (!sqlClient) {
+    return messages.map(() => false); // Assume none are saved if can't connect
+  }
+
+  try {
+    const messageIds = messages.map((msg) => msg.id._serialized);
+    const placeholders = messageIds
+      .map((_, index) => `$${index + 3}`)
+      .join(",");
+
+    const result = await sqlClient.query(
+      `SELECT message_id FROM messages 
+       WHERE company_id = $1 AND contact_id = $2 AND message_id IN (${placeholders})`,
+      [botName, botName + "-" + phoneNumber.substring(1), ...messageIds]
+    );
+
+    const savedMessageIds = new Set(result.rows.map((row) => row.message_id));
+
+    // Return array indicating which messages are already saved
+    return messages.map((msg) => savedMessageIds.has(msg.id._serialized));
+  } catch (error) {
+    console.error("[AutoReply] Error checking messages in database:", error);
+    return messages.map(() => false); // Assume none are saved on error
+  } finally {
+    sqlClient.release();
+  }
+}
+
+// Function to save fromMe messages directly (similar to setupMessageCreateHandler)
+async function saveFromMeMessageDirectly(
+  message,
+  botName,
+  phoneNumber,
+  phoneIndex
+) {
+  try {
+    const contactName = phoneNumber; // We might not have contact name here
+
+    // Save the message directly to database without processing
+    await addMessageToPostgres(
+      message,
+      botName,
+      phoneNumber,
+      contactName,
+      phoneIndex,
+      "Auto-Sync"
+    );
+  } catch (error) {
+    console.error(
+      `[AutoReply] Error saving fromMe message directly: ${message.id._serialized}`,
+      error
+    );
+  }
+}
+
+// Function to save customer messages directly (without processing through message handler)
+async function saveCustomerMessageDirectly(
+  message,
+  botName,
+  phoneNumber,
+  phoneIndex
+) {
+  try {
+    const contactName = phoneNumber; // We might not have contact name here
+
+    // Save the message directly to database without processing
+    await addMessageToPostgres(
+      message,
+      botName,
+      phoneNumber,
+      contactName,
+      phoneIndex,
+      "Auto-Sync"
+    );
+  } catch (error) {
+    console.error(
+      `[AutoReply] Error saving customer message directly: ${message.id._serialized}`,
+      error
+    );
+  }
+}
+
+// Function to record that auto-reply was sent
+async function recordAutoReplySent(botName, phoneNumber) {
+  const sqlClient = await getDatabaseConnection();
+  if (!sqlClient) {
+    return;
+  }
+
+  try {
+    await sqlClient.query(
+      `INSERT INTO auto_reply_log (company_id, phone, created_at) 
+       VALUES ($1, $2, NOW()) 
+       ON CONFLICT (company_id, phone) 
+       DO UPDATE SET created_at = NOW()`,
+      [botName, phoneNumber]
+    );
+  } catch (error) {
+    console.error("Error recording auto-reply sent:", error);
+  } finally {
+    sqlClient.release();
+  }
+}
+
 function getMillisecondsForUnit(unit) {
   switch (unit) {
     case "minutes":
@@ -8298,6 +9661,24 @@ async function sendScheduledMessage(message) {
           documentUrl: m.documentUrl || null,
         })),
       });
+
+      // Check if we have any messages to process
+      if (!messages || messages.length === 0) {
+        console.log(
+          `[Company ${companyId}] No messages to process - marking as completed`
+        );
+        return {
+          success: true,
+          statistics: {
+            totalTime: Date.now() - startTime,
+            totalMessages: 0,
+            totalSent: 0,
+            totalSkipped: 0,
+            totalErrors: 0,
+            dayCount: 1,
+          },
+        };
+      }
 
       const processMessage = (messageText, contact) => {
         if (!messageText) {
@@ -8798,86 +10179,47 @@ async function sendScheduledMessage(message) {
               messageItem.documentUrl || message.document_url || "";
             const fileName = messageItem.fileName || message.file_name || "";
 
-            const endpoint = mediaUrl
-              ? "image"
-              : documentUrl
-              ? "document"
-              : "text";
+            // Use direct WhatsApp client instead of HTTP API
+            const whatsappClient = botData[message.phone_index].client;
 
-            // FIXED: Properly construct the URL without double slashes
-            const baseUrl = (
-              process.env.URL || "http://localhost:8443"
-            ).replace(/\/$/, ""); // Remove trailing slash
-            const url = `${baseUrl}/api/v2/messages/${endpoint}/${companyId}/${chatId}`;
+            if (!whatsappClient || !whatsappClient.info) {
+              throw new Error("WhatsApp client not ready");
+            }
 
-            console.log(`[Company ${companyId}] URL construction:`, {
-              baseUrl: baseUrl,
-              endpoint: endpoint,
-              companyId: companyId,
-              chatId: chatId,
-              fullUrl: url,
-              envUrl: process.env.URL,
-              originalBaseUrl: process.env.URL || "http://localhost:8443",
-            });
+            let messageResult;
 
-            console.log(`[Company ${companyId}] Request details:`, {
-              endpoint: endpoint,
-              url: url,
-              phoneIndex: message.phone_index,
-              hasMedia: Boolean(mediaUrl || documentUrl),
-              mediaUrl: mediaUrl || null,
-              documentUrl: documentUrl || null,
-              fileName: fileName || null,
-              messageLength: processedMessageText?.length,
-            });
-
-            const requestBody = mediaUrl
-              ? {
-                  imageUrl: mediaUrl,
-                  caption: processedMessageText,
-                  phoneIndex: message.phone_index,
-                }
-              : documentUrl
-              ? {
-                  documentUrl: documentUrl,
-                  filename: fileName,
-                  caption: processedMessageText,
-                  phoneIndex: message.phone_index,
-                }
-              : {
-                  message: processedMessageText || message.message_content,
-                  phoneIndex: message.phone_index,
-                };
-
-            console.log(`[Company ${companyId}] Request body:`, requestBody);
-
-            const response = await fetch(url, {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify(requestBody),
-            });
-
-            console.log(`[Company ${companyId}] Send response:`, {
-              status: response.status,
-              ok: response.ok,
-              statusText: response.statusText,
-            });
-
-            if (!response.ok) {
-              const errorText = await response.text();
-              console.error(`[Company ${companyId}] Response error:`, {
-                status: response.status,
-                statusText: response.statusText,
-                errorText: errorText,
-                url: url,
+            if (mediaUrl) {
+              // Send image message
+              messageResult = await whatsappClient.sendMessage(chatId, {
+                image: { url: mediaUrl },
+                caption: processedMessageText || "",
               });
-              throw new Error(
-                `Failed to send message: ${response.status} - ${errorText}`
+            } else if (documentUrl) {
+              // Send document message
+              messageResult = await whatsappClient.sendMessage(chatId, {
+                document: { url: documentUrl },
+                fileName: fileName || "document",
+                caption: processedMessageText || "",
+              });
+            } else {
+              // Send text message
+              messageResult = await whatsappClient.sendMessage(
+                chatId,
+                processedMessageText || message.message_content || ""
               );
             }
 
-            const responseData = await response.json();
-            console.log(`[Company ${companyId}] Response data:`, responseData);
+            if (!messageResult) {
+              throw new Error(
+                "Failed to send WhatsApp message - no result returned"
+              );
+            }
+
+            console.log(`[Company ${companyId}] WhatsApp message sent:`, {
+              messageId: messageResult?.id?._serialized || "unknown",
+              chatId: chatId,
+              type: mediaUrl ? "image" : documentUrl ? "document" : "text",
+            });
 
             await client.query(
               `INSERT INTO sent_messages (
@@ -8891,7 +10233,7 @@ async function sendScheduledMessage(message) {
                 messageIdentifier,
                 currentMessageIndex,
                 processedMessageText,
-                endpoint,
+                mediaUrl ? "image" : documentUrl ? "document" : "text",
                 mediaUrl || null,
                 documentUrl || null,
               ]
@@ -9009,22 +10351,30 @@ async function sendScheduledMessage(message) {
         dayCount: dayCount,
         success: true,
       });
+
+      // FIXED: Return statement now has access to all variables
+      return {
+        success: true,
+        statistics: {
+          totalTime: Date.now() - startTime,
+          totalMessages: messages.length,
+          totalSent: totalMessagesSent,
+          totalSkipped: totalMessagesSkipped,
+          totalErrors: totalErrors,
+          dayCount: dayCount,
+        },
+      };
     } else {
       console.log(`[Company ${companyId}] Message is not V2 - skipping`);
+      return {
+        success: false,
+        error: "Message is not V2 format",
+        details: {
+          messageId: message.id,
+          companyId: companyId,
+        },
+      };
     }
-
-    // FIXED: Return statement now has access to all variables
-    return {
-      success: true,
-      statistics: {
-        totalTime: Date.now() - startTime,
-        totalMessages: messages.length,
-        totalSent: totalMessagesSent,
-        totalSkipped: totalMessagesSkipped,
-        totalErrors: totalErrors,
-        dayCount: dayCount,
-      },
-    };
   } catch (error) {
     const totalTime = Date.now() - startTime;
     console.error(
@@ -9537,7 +10887,6 @@ app.post("/api/upload-file", upload.single("file"), (req, res) => {
   }
 });
 
-// ... rest of existing code ...
 // Create a new follow-up template
 app.post("/api/followup-templates", async (req, res) => {
   console.log("=== Starting POST /api/followup-templates ===");
@@ -9828,12 +11177,10 @@ app.post("/api/followup-templates/:templateId/messages", async (req, res) => {
 
   if (!dayNumber || dayNumber < 0) {
     console.error("Invalid day number");
-    return res
-      .status(400)
-      .json({
-        success: false,
-        message: "Day number must be a positive number",
-      });
+    return res.status(400).json({
+      success: false,
+      message: "Day number must be a positive number",
+    });
   }
 
   if (!sequence || sequence < 1) {
@@ -10356,18 +11703,18 @@ app.put(
     const { templateId, messageId } = req.params;
     const {
       message,
-      dayNumber = 1,
+      day_number = 1,
       sequence = 1,
       status = "active",
       document = null,
       image = null,
       video = null,
-      delayAfter = null,
-      specificNumbers = null,
-      useScheduledTime = false,
-      scheduledTime = "",
-      addTags = [],
-      removeTags = [],
+      delay_after = null,
+      specific_numbers = null,
+      use_scheduled_time = false,
+      scheduled_time = "",
+      add_tags = [],
+      remove_tags = [],
     } = req.body;
 
     // Validation
@@ -10400,7 +11747,7 @@ app.put(
       await sqlClient.query("BEGIN");
       console.log("Database transaction started");
 
-      // Update the message
+      // Update the message - REMOVED updated_at column
       const updateMessageQuery = `
       UPDATE public.followup_messages 
       SET 
@@ -10416,27 +11763,25 @@ app.put(
         use_scheduled_time = $10,
         scheduled_time = $11,
         add_tags = $12,
-        remove_tags = $13,
-        updated_at = $14
-      WHERE id = $15 AND template_id = $16
+        remove_tags = $13
+      WHERE id = $14 AND template_id = $15
       RETURNING *
     `;
 
       const messageParams = [
         message.trim(),
-        dayNumber,
+        day_number,
         sequence,
         status,
         document,
         image,
         video,
-        delayAfter ? JSON.stringify(delayAfter) : null,
-        specificNumbers ? JSON.stringify(specificNumbers) : null,
-        useScheduledTime,
-        scheduledTime,
-        Array.isArray(addTags) ? addTags : [],
-        Array.isArray(removeTags) ? removeTags : [],
-        new Date(),
+        delay_after ? JSON.stringify(delay_after) : null,
+        specific_numbers ? JSON.stringify(specific_numbers) : null,
+        use_scheduled_time,
+        scheduled_time,
+        Array.isArray(add_tags) ? add_tags : [],
+        Array.isArray(remove_tags) ? remove_tags : [],
         messageId,
         templateId,
       ];
@@ -10508,7 +11853,6 @@ app.put(
     }
   }
 );
-
 // Delete a follow-up message
 app.delete(
   "/api/followup-templates/:templateId/messages/:messageId",
@@ -10597,20 +11941,220 @@ app.delete(
   }
 );
 
-// API 1: Follow-up Brainstorm - analyzes current AI context and suggests improvements
+let threads = [];
+
+app.post('/api/ai-followup-builder-save-thread/save', (req, res) => {
+  try {
+    const { threadId, email, messages, templateName } = req.body;
+    
+    if (!email || !threadId) {
+      return res.status(400).json({ 
+        success: false,
+        error: 'Email and threadId are required' 
+      });
+    }
+
+    const newThread = {
+      id: threadId,
+      email,
+      threadData: {
+        messages: messages || [],
+        metadata: {
+          createdAt: new Date().toISOString()
+        }
+      },
+      templateName: templateName || 'Untitled Template',
+      workflowStages: '',
+      stageTemplates: [],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+
+    // Check if thread already exists
+    const existingIndex = threads.findIndex(t => t.id === threadId && t.email === email);
+    if (existingIndex !== -1) {
+      // Update existing thread
+      threads[existingIndex] = newThread;
+    } else {
+      // Add new thread
+      threads.push(newThread);
+    }
+
+    res.status(201).json({
+      success: true,
+      message: 'Thread saved successfully',
+      threadId: newThread.id,
+      data: {
+        thread: newThread
+      }
+    });
+  } catch (error) {
+    console.error('Error saving thread:', error);
+    res.status(500).json({ 
+      success: false,
+      error: 'Internal server error',
+      message: error.message 
+    });
+  }
+});
+
+app.get('/api/ai-followup-builder-save-thread/:threadId', (req, res) => {
+  try {
+    const { threadId } = req.params;
+    const { email } = req.query;
+
+    if (!email) {
+      return res.status(400).json({ 
+        success: false,
+        error: 'Email query parameter is required' 
+      });
+    }
+
+    const thread = threads.find(t => t.id === threadId && t.email === email);
+    
+    if (!thread) {
+      return res.status(404).json({ 
+        success: false,
+        error: 'Thread not found' 
+      });
+    }
+
+    res.json({
+      success: true,
+      message: 'Thread retrieved successfully',
+      data: {
+        thread,
+        messages: thread.threadData.messages || []
+      }
+    });
+  } catch (error) {
+    console.error('Error getting thread:', error);
+    res.status(500).json({ 
+      success: false,
+      error: 'Internal server error',
+      message: error.message 
+    });
+  }
+});
+
+app.get('/api/ai-followup-builder-save-thread', (req, res) => {
+  try {
+    const { email } = req.query;
+
+    if (!email) {
+      return res.status(400).json({ 
+        success: false,
+        error: 'Email query parameter is required' 
+      });
+    }
+
+    let userThreads = threads.filter(t => t.email === email);
+    
+    // AUTO-CREATE a new thread if none exist for this user
+    if (userThreads.length === 0) {
+      const autoThreadId = Date.now().toString();
+      const autoThread = {
+        id: autoThreadId,
+        email,
+        threadData: {
+          messages: [],
+          metadata: {
+            autoCreated: true,
+            createdAt: new Date().toISOString()
+          }
+        },
+        templateName: 'New Follow-up Template',
+        workflowStages: '',
+        stageTemplates: [],
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      };
+      
+      threads.push(autoThread);
+      userThreads = [autoThread];
+      
+      console.log(`Auto-created new thread for user: ${email}`);
+    }
+    
+    // Transform threads to match frontend expectations
+    const transformedThreads = userThreads.map(t => ({
+      threadId: t.id,
+      templateName: t.templateName,
+      lastUpdated: t.updatedAt,
+      messageCount: t.threadData.messages ? t.threadData.messages.length : 0
+    }));
+    
+    res.json({
+      success: true,
+      message: 'Threads retrieved successfully',
+      data: {
+        threads: transformedThreads,
+        count: transformedThreads.length
+      }
+    });
+  } catch (error) {
+    console.error('Error getting threads:', error);
+    res.status(500).json({ 
+      success: false,
+      error: 'Internal server error',
+      message: error.message 
+    });
+  }
+});
+
+app.delete('/api/ai-followup-builder-save-thread/:threadId', (req, res) => {
+  try {
+    const { threadId } = req.params;
+    const { email } = req.query;
+
+    if (!email) {
+      return res.status(400).json({ 
+        success: false,
+        error: 'Email query parameter is required' 
+      });
+    }
+
+    const threadIndex = threads.findIndex(t => t.id === threadId && t.email === email);
+    
+    if (threadIndex === -1) {
+      return res.status(404).json({ 
+        success: false,
+        error: 'Thread not found' 
+      });
+    }
+
+    const deletedThread = threads.splice(threadIndex, 1)[0];
+
+    res.json({
+      success: true,
+      message: 'Thread deleted successfully',
+      data: {
+        deletedThread
+      }
+    });
+  } catch (error) {
+    console.error('Error deleting thread:', error);
+    res.status(500).json({ 
+      success: false,
+      error: 'Internal server error',
+      message: error.message 
+    });
+  }
+});
+
+
 app.post("/api/followup-brainstorm/", async (req, res) => {
   try {
-    const { message, email, currentPrompt, currentFollowUps } = req.body;
+    const { message, email, currentPrompt, currentFollowUps, assistantId } = req.body;
 
-    // Log request data
     console.log("Follow-up Brainstorm Request:", {
       message,
       email,
       currentPrompt: currentPrompt ? "Provided" : "Not provided",
       currentFollowUps: currentFollowUps ? "Provided" : "Not provided",
+      assistantId: assistantId || "Using default",
     });
 
-    // Validate required fields
     if (!message || !email) {
       return res.status(400).json({
         success: false,
@@ -10632,49 +12176,129 @@ app.post("/api/followup-brainstorm/", async (req, res) => {
       console.log("Saved new thread ID to database for email:", email);
     }
 
-    // Create the full prompt for the assistant
-    const fullPrompt = `You are a follow-up sequence specialist. The user wants to create or modify follow-up templates.
+    const fullPrompt = `You are a follow-up sequence specialist. The user wants to create follow-up templates for when customers don't reply to the AI's initial messages.
 
-Your task: Generate complete follow-up templates based on the user's request.
+Your task: Analyze the current AI assistant instructions and generate follow-up templates for EACH conversation stage that exists in the current prompt.
 
 IMPORTANT: Return ONLY a JSON array of templates in this exact format:
 [
   {
-    "stageName": "Stage 1: Profiling Questions",
-    "purpose": "Collect initial customer information",
-    "triggerTags": ["Stage 1", "Profiling"],
-    "triggerKeywords": ["hi", "hello", "interested"],
+    "stageName": "Stage 1: Introduction Follow-ups",
+    "purpose": "Follow-up messages when customer doesn't reply to initial introduction",
+    "triggerTags": ["Stage 1", "Introduction"],
+    "triggerKeywords": ["hello", "hi", "interested", "register"],
     "messages": [
-      "Hi! I'd love to learn more about your business needs.",
-      "What industry are you in?",
-      "How many employees do you have?"
+      {
+        "dayNumber": 0,
+        "sequence": 1,
+        "message": "Hi there! I sent you a message earlier but haven't heard back. Are you still interested in our events?",
+        "delayAfter": {
+          "value": 30,
+          "unit": "minutes",
+          "isInstantaneous": false
+        },
+        "description": "Day 0 - 30 minutes after customer hasn't replied to AI's initial message"
+      },
+      {
+        "dayNumber": 0,
+        "sequence": 2,
+        "message": "Just checking in! I'm here to help you register for our events. What questions do you have?",
+        "delayAfter": {
+          "value": 2,
+          "unit": "hours",
+          "isInstantaneous": false
+        },
+        "description": "Day 0 - 2 hours after customer hasn't replied to AI's initial message"
+      },
+      {
+        "dayNumber": 1,
+        "sequence": 3,
+        "message": "Good morning! I wanted to follow up on my earlier message. Limited spots are filling up fast!",
+        "scheduledTime": "09:00",
+        "useScheduledTime": true,
+        "description": "Day 1 - 9:00 AM scheduled follow-up"
+      },
+      {
+        "dayNumber": 3,
+        "sequence": 4,
+        "message": "Hi! I'm still here to help you register. Early bird pricing ends soon - don't miss out!",
+        "scheduledTime": "10:00",
+        "useScheduledTime": true,
+        "description": "Day 3 - 10:00 AM scheduled follow-up"
+      },
+      {
+        "dayNumber": 5,
+        "sequence": 5,
+        "message": "Just a friendly reminder - I'm here to help you get registered for our events. What's holding you back?",
+        "scheduledTime": "14:00",
+        "useScheduledTime": true,
+        "description": "Day 5 - 2:00 PM scheduled follow-up"
+      },
+      {
+        "dayNumber": 10,
+        "sequence": 6,
+        "message": "Final reminder! Our events are filling up and I want to make sure you don't miss out. Let me know if you need any help!",
+        "scheduledTime": "16:00",
+        "useScheduledTime": true,
+        "description": "Day 10 - 4:00 PM scheduled follow-up"
+      }
     ],
-    "messageCount": 3
+    "messageCount": 6
   }
 ]
 
-Rules:
-- If modifying existing templates, preserve existing data and only change what's requested
-- If creating new templates, base them on the AI assistant's conversation stages
-- Trigger keywords should be phrases the AI assistant uses to identify conversation stages
-- Messages should be natural, engaging, and aligned with the business context
-- Return ONLY the JSON array, no other text
+CRITICAL RULES:
+1. DO NOT generate the initial message - that's already handled by the AI's current prompt
+2. Generate ONLY follow-up messages for when customers don't reply to the AI's initial message
+3. Each template MUST have exactly 6 follow-up messages (not 7, since initial is separate)
+4. Messages should be engaging, friendly, and encourage responses
+5. Use urgency, FOMO, and re-engagement strategies
+6. Each message should be different from the previous ones
+7. Focus on re-engaging customers who didn't respond to the initial AI message
+8. For Day 0 messages: Use delayAfter with appropriate timing
+9. For Day 1 and beyond: Use scheduledTime with specific times (e.g., "09:00", "14:00", "16:00") and set useScheduledTime to true
+10. Trigger keywords should be words/phrases that the AI uses in its initial messages for that specific stage
+11. Analyze the current prompt to identify ALL conversation stages and create a template for EACH stage
+12. Each stage should have its own follow-up sequence with stage-specific messaging
+13. The number of templates should match the number of stages in the current prompt
+14. DO NOT add any special characters like "||" or "|" to messages regardless of the currentPrompt
 
-Current AI Assistant Instructions: ${currentPrompt || "No current AI assistant instructions provided."}
-Current Follow-up Templates: ${currentFollowUps ? JSON.stringify(currentFollowUps, null, 2) : "No current follow-up templates provided."}
+TIMING RULES:
+- Day 0 messages: Use delayAfter (minutes/hours after initial message)
+- Day 1+ messages: Use scheduledTime (specific time of day, e.g., "09:00", "14:00", "16:00")
+- Always set useScheduledTime: true for Day 1+ messages
+- Use business hours for scheduled times (8 AM - 6 PM)
+
+STAGE ANALYSIS INSTRUCTIONS:
+- Read through the current AI assistant instructions carefully
+- Identify each distinct conversation stage (e.g., "Stage 1: Introduction", "Stage 2: Event Details", "Stage 3: Registration", etc.)
+- For each stage, create a follow-up template with:
+  * Stage-specific name and purpose
+  * Trigger keywords that match what the AI says in that stage
+  * 6 follow-up messages tailored to that stage's context
+  * Messages that reference the specific stage but don't copy the original content
+
+Current AI Assistant Instructions: ${
+      currentPrompt || "No current AI assistant instructions provided."
+    }
+Current Follow-up Templates: ${
+      currentFollowUps
+        ? JSON.stringify(currentFollowUps, null, 2)
+        : "No current follow-up templates provided."
+    }
 User Request: ${message}
 
-Generate the follow-up templates as a JSON array:`;
+Analyze the current prompt, identify ALL conversation stages, and generate a follow-up template for EACH stage with exactly 6 follow-up messages per stage.`;
 
-    // Add user message to thread
     await addMessage(threadID, fullPrompt);
 
-    // Create and run the assistant
     const assistantResponse = await openai.beta.threads.runs.create(threadID, {
-      assistant_id: process.env.ASSISTANT_ID || "asst_Wt2wiCOafpCecMoxibXwYQ5P",
+      assistant_id:
+        assistantId ||
+        process.env.ASSISTANT_ID ||
+        "asst_Wt2wiCOafpCecMoxibXwYQ5P",
     });
 
-    // Wait for the assistant to complete
     let runStatus;
     do {
       await new Promise((resolve) => setTimeout(resolve, 1000));
@@ -10684,14 +12308,11 @@ Generate the follow-up templates as a JSON array:`;
       );
     } while (runStatus.status !== "completed");
 
-    // Retrieve the assistant's response
     const messages = await openai.beta.threads.messages.list(threadID);
     const answer = messages.data[0].content[0].text.value;
 
-    // Parse the structured response
     let parsedResponse;
     try {
-      // Look for JSON array in the response
       const jsonMatch = answer.match(/\[[\s\S]*\]/);
       if (jsonMatch) {
         parsedResponse = JSON.parse(jsonMatch[0]);
@@ -10700,10 +12321,12 @@ Generate the follow-up templates as a JSON array:`;
       }
     } catch (parseError) {
       console.log("Failed to parse AI response:", parseError.message);
-      parsedResponse = { error: "Failed to parse template structure", rawResponse: answer };
+      parsedResponse = {
+        error: "Failed to parse template structure",
+        rawResponse: answer,
+      };
     }
 
-    // Save the interaction to the thread for future reference
     await addMessageAssistant(
       threadID,
       `Follow-up Brainstorm Request: ${message}\nCurrent Prompt: ${
@@ -10713,16 +12336,70 @@ Generate the follow-up templates as a JSON array:`;
       }\nResponse: ${answer}`
     );
 
-    // Send structured response (ONLY ONCE)
+    // Normalization that avoids “Instant” fallback:
+    // - Day 0: delayAfter present, isInstantaneous = false
+    // - Day 1+: remove delayAfter (set null), force scheduledTime + useScheduledTime
+    const defaultTimes = ["09:00", "10:00", "14:00", "16:00"];
+    const normalizedTemplates = Array.isArray(parsedResponse)
+      ? parsedResponse.map((template) => {
+          const msgs = Array.isArray(template?.messages) ? [...template.messages] : [];
+          msgs.sort((a, b) => (a?.sequence ?? 0) - (b?.sequence ?? 0));
+
+          const normalizedMessages = msgs.map((msg, idx) => {
+            const isFirst = idx === 0;
+
+            if (isFirst) {
+              const delayAfter =
+                msg?.delayAfter && typeof msg.delayAfter.value === "number"
+                  ? {
+                      value: msg.delayAfter.value,
+                      unit: msg.delayAfter.unit || "minutes",
+                      isInstantaneous: false
+                    }
+                  : { value: 30, unit: "minutes", isInstantaneous: false };
+
+              return {
+                ...msg,
+                dayNumber: 0,
+                delayAfter,
+                useScheduledTime: false,
+                scheduledTime: ""
+              };
+            } else {
+              const time =
+                typeof msg?.scheduledTime === "string" && msg.scheduledTime.trim()
+                  ? msg.scheduledTime
+                  : defaultTimes[(idx - 1) % defaultTimes.length];
+
+              const dayNumber =
+                typeof msg?.dayNumber === "number" && msg.dayNumber >= 1 ? msg.dayNumber : 1;
+
+              return {
+                ...msg,
+                dayNumber,
+                useScheduledTime: true,
+                scheduledTime: time,
+                delayAfter: null
+              };
+            }
+          });
+
+          return {
+            ...template,
+            messages: normalizedMessages,
+            messageCount: normalizedMessages.length
+          };
+        })
+      : [];
+
     res.json({
       success: true,
       data: {
-        templates: Array.isArray(parsedResponse) ? parsedResponse : [],
-        explanation: "Templates generated successfully"
+        templates: normalizedTemplates,
+        explanation: "Templates generated successfully",
       },
       threadID: threadID,
     });
-
   } catch (error) {
     console.error("Follow-up brainstorm error:", {
       name: error.name,
@@ -10736,17 +12413,1117 @@ Generate the follow-up templates as a JSON array:`;
     });
   }
 });
+// Forgot Password API - Send reset code via WhatsApp
+app.post("/api/forgot-password", async (req, res) => {
+  const { phoneNumber } = req.body;
+
+  if (!phoneNumber) {
+    return res.status(400).json({ error: "Phone number is required" });
+  }
+
+  try {
+    // Format phone number for database search
+    let formattedPhone = phoneNumber.toString();
+    if (formattedPhone.startsWith("+")) {
+      formattedPhone = formattedPhone.substring(1);
+    }
+    if (formattedPhone.startsWith("60")) {
+      formattedPhone = formattedPhone;
+    } else if (formattedPhone.startsWith("0")) {
+      formattedPhone = "60" + formattedPhone.substring(1);
+    } else {
+      formattedPhone = "60" + formattedPhone;
+    }
+
+    console.log(
+      "🔍 Looking for user with formatted phone number:",
+      formattedPhone
+    );
+
+    // First, let's check what's in the employees table
+    const employeeCheck = await sqlDb.query(
+      "SELECT * FROM employees WHERE phone_number = $1",
+      [formattedPhone]
+    );
+    console.log("📱 Employee lookup result:", employeeCheck.rows);
+
+    // Check if user exists by phone number - simplified query first
+    const userData = await sqlDb.getRow(
+      `SELECT u.*, e.phone_number 
+       FROM users u 
+       JOIN employees e ON u.email = e.email 
+       WHERE e.phone_number = $1 AND u.active = true`,
+      [formattedPhone]
+    );
+
+    console.log("�� User lookup result:", userData);
+
+    if (!userData) {
+      // Let's also check if the user exists at all
+      const userCheck = await sqlDb.query(
+        "SELECT * FROM users WHERE email IN (SELECT email FROM employees WHERE phone_number = $1)",
+        [formattedPhone]
+      );
+      console.log("📧 Users found with this phone:", userCheck.rows);
+
+      // Check if the issue is with the JOIN
+      const directCheck = await sqlDb.query(
+        `SELECT e.email, e.phone_number, e.name, u.email as user_email, u.active
+         FROM employees e 
+         LEFT JOIN users u ON e.email = u.email 
+         WHERE e.phone_number = $1`,
+        [formattedPhone]
+      );
+      console.log("🔗 Direct check result:", directCheck.rows);
+
+      return res.status(404).json({
+        error: "User not found with this phone number",
+        debug: {
+          formattedPhone,
+          employeeCount: employeeCheck.rows.length,
+          userCount: userCheck.rows.length,
+          directCheck: directCheck.rows,
+        },
+      });
+    }
+
+    // Generate 6-digit reset code
+    const resetCode = Math.floor(100000 + Math.random() * 900000).toString();
+    const expiresAt = new Date(Date.now() + 15 * 60 * 1000); // 15 minutes
+
+    console.log(
+      "🔐 Generated reset code:",
+      resetCode,
+      "for email:",
+      userData.email
+    );
+
+    // Store reset code in database
+    await sqlDb.query(
+      `INSERT INTO password_resets (email, reset_code, expires_at, created_at) 
+       VALUES ($1, $2, $3, CURRENT_TIMESTAMP)
+       ON CONFLICT (email) 
+       DO UPDATE SET reset_code = $2, expires_at = $3, created_at = CURRENT_TIMESTAMP`,
+      [userData.email, resetCode, expiresAt]
+    );
+
+    // Send WhatsApp message with reset code using company 0210 v2 text API
+    const message = `🔐 Password Reset Request
+
+Your password reset code is: *${resetCode}*
+
+This code will expire in 15 minutes.
+
+If you didn't request this reset, please ignore this message.
+
+Best regards,
+Juta Team`;
+
+    // Use the v2 text API endpoint instead of direct WhatsApp client
+    const chatId = `${formattedPhone}@c.us`;
+    const companyId = "0210";
+
+    console.log(
+      "📤 Sending WhatsApp message to:",
+      chatId,
+      "via company:",
+      companyId
+    );
+
+    try {
+      const response = await axios.post(
+        `${req.protocol}://${req.get(
+          "host"
+        )}/api/v2/messages/text/${companyId}/${chatId}`,
+        {
+          message: message,
+          phoneIndex: 0, // Use first phone index
+        }
+      );
+
+      if (response.status === 200) {
+        console.log("✅ WhatsApp message sent successfully");
+        res.json({
+          success: true,
+          message: "Password reset code sent to your WhatsApp number",
+          phoneNumber: formattedPhone.replace("60", "+60-"), // Format for display
+          resetCode: resetCode, // For testing purposes
+        });
+      } else {
+        throw new Error(`Failed to send message: ${response.status}`);
+      }
+    } catch (sendError) {
+      console.error("❌ Error sending WhatsApp message:", sendError);
+      return res.status(500).json({ error: "Failed to send WhatsApp message" });
+    }
+  } catch (error) {
+    console.error("💥 Forgot password error:", error);
+    res.status(500).json({ error: "Failed to process password reset request" });
+  }
+});
+
+// Reset Password API - Verify code and update password
+app.post("/api/reset-password", async (req, res) => {
+  const { phoneNumber, resetCode, newPassword } = req.body;
+
+  if (!phoneNumber || !resetCode || !newPassword) {
+    return res
+      .status(400)
+      .json({
+        error: "Phone number, reset code, and new password are required",
+      });
+  }
+
+  if (newPassword.length < 6) {
+    return res
+      .status(400)
+      .json({ error: "Password must be at least 6 characters long" });
+  }
+
+  try {
+    // Format phone number
+    let formattedPhone = phoneNumber.toString();
+    if (formattedPhone.startsWith("+")) {
+      formattedPhone = formattedPhone.substring(1);
+    }
+    if (formattedPhone.startsWith("60")) {
+      formattedPhone = formattedPhone;
+    } else if (formattedPhone.startsWith("0")) {
+      formattedPhone = "60" + formattedPhone.substring(1);
+    } else {
+      formattedPhone = "60" + formattedPhone;
+    }
+
+    // Get user email from phone number
+    const userData = await sqlDb.getRow(
+      `SELECT u.email 
+       FROM users u 
+       JOIN employees e ON u.email = e.email 
+       WHERE e.phone_number = $1 AND u.active = true`,
+      [formattedPhone]
+    );
+
+    if (!userData) {
+      return res
+        .status(404)
+        .json({ error: "User not found with this phone number" });
+    }
+
+    // Verify reset code
+    const resetData = await sqlDb.getRow(
+      `SELECT * FROM password_resets 
+       WHERE email = $1 AND reset_code = $2 AND expires_at > CURRENT_TIMESTAMP`,
+      [userData.email, resetCode]
+    );
+
+    if (!resetData) {
+      return res.status(400).json({ error: "Invalid or expired reset code" });
+    }
+
+    // Update password
+    await sqlDb.query(
+      "UPDATE users SET password = $1, last_updated = CURRENT_TIMESTAMP WHERE email = $2",
+      [newPassword, userData.email]
+    );
+
+    // Delete the used reset code
+    await sqlDb.query("DELETE FROM password_resets WHERE email = $1", [
+      userData.email,
+    ]);
+
+    res.json({
+      success: true,
+      message: "Password updated successfully",
+    });
+  } catch (error) {
+    console.error("Reset password error:", error);
+    res.status(500).json({ error: "Failed to reset password" });
+  }
+});
+app.post("/api/forgot-password", async (req, res) => {
+  const { phoneNumber } = req.body;
+
+  if (!phoneNumber) {
+    return res.status(400).json({ error: "Phone number is required" });
+  }
+
+  try {
+    // Format phone number for database search
+    let formattedPhone = phoneNumber.toString();
+    if (formattedPhone.startsWith("+")) {
+      formattedPhone = formattedPhone.substring(1);
+    }
+    if (formattedPhone.startsWith("60")) {
+      formattedPhone = formattedPhone;
+    } else if (formattedPhone.startsWith("0")) {
+      formattedPhone = "60" + formattedPhone.substring(1);
+    } else {
+      formattedPhone = "60" + formattedPhone;
+    }
+
+    console.log(
+      "🔍 Looking for user with formatted phone number:",
+      formattedPhone
+    );
+
+    // First, let's check what's in the employees table
+    const employeeCheck = await sqlDb.query(
+      "SELECT * FROM employees WHERE phone_number = $1",
+      [formattedPhone]
+    );
+    console.log("📱 Employee lookup result:", employeeCheck.rows);
+
+    // Check if user exists by phone number - simplified query first
+    const userData = await sqlDb.getRow(
+      `SELECT u.*, e.phone_number 
+       FROM users u 
+       JOIN employees e ON u.email = e.email 
+       WHERE e.phone_number = $1 AND u.active = true`,
+      [formattedPhone]
+    );
+
+    console.log("�� User lookup result:", userData);
+
+    if (!userData) {
+      // Let's also check if the user exists at all
+      const userCheck = await sqlDb.query(
+        "SELECT * FROM users WHERE email IN (SELECT email FROM employees WHERE phone_number = $1)",
+        [formattedPhone]
+      );
+      console.log("📧 Users found with this phone:", userCheck.rows);
+
+      // Check if the issue is with the JOIN
+      const directCheck = await sqlDb.query(
+        `SELECT e.email, e.phone_number, e.name, u.email as user_email, u.active
+         FROM employees e 
+         LEFT JOIN users u ON e.email = u.email 
+         WHERE e.phone_number = $1`,
+        [formattedPhone]
+      );
+      console.log("🔗 Direct check result:", directCheck.rows);
+
+      return res.status(404).json({
+        error: "User not found with this phone number",
+        debug: {
+          formattedPhone,
+          employeeCount: employeeCheck.rows.length,
+          userCount: userCheck.rows.length,
+          directCheck: directCheck.rows,
+        },
+      });
+    }
+
+    // Generate 6-digit reset code
+    const resetCode = Math.floor(100000 + Math.random() * 900000).toString();
+    const expiresAt = new Date(Date.now() + 15 * 60 * 1000); // 15 minutes
+
+    console.log(
+      "🔐 Generated reset code:",
+      resetCode,
+      "for email:",
+      userData.email
+    );
+
+    // Store reset code in database
+    await sqlDb.query(
+      `INSERT INTO password_resets (email, reset_code, expires_at, created_at) 
+       VALUES ($1, $2, $3, CURRENT_TIMESTAMP)
+       ON CONFLICT (email) 
+       DO UPDATE SET reset_code = $2, expires_at = $3, created_at = CURRENT_TIMESTAMP`,
+      [userData.email, resetCode, expiresAt]
+    );
+
+    // Send WhatsApp message with reset code using company 0210 v2 text API
+    const message = `🔐 Password Reset Request
+
+Your password reset code is: *${resetCode}*
+
+This code will expire in 15 minutes.
+
+If you didn't request this reset, please ignore this message.
+
+Best regards,
+Juta Team`;
+
+    // Use the v2 text API endpoint instead of direct WhatsApp client
+    const chatId = `${formattedPhone}@c.us`;
+    const companyId = "0210";
+
+    console.log(
+      "📤 Sending WhatsApp message to:",
+      chatId,
+      "via company:",
+      companyId
+    );
+
+    try {
+      const response = await axios.post(
+        `${req.protocol}://${req.get(
+          "host"
+        )}/api/v2/messages/text/${companyId}/${chatId}`,
+        {
+          message: message,
+          phoneIndex: 0, // Use first phone index
+        }
+      );
+
+      if (response.status === 200) {
+        console.log("✅ WhatsApp message sent successfully");
+        res.json({
+          success: true,
+          message: "Password reset code sent to your WhatsApp number",
+          phoneNumber: formattedPhone.replace("60", "+60-"), // Format for display
+          resetCode: resetCode, // For testing purposes
+        });
+      } else {
+        throw new Error(`Failed to send message: ${response.status}`);
+      }
+    } catch (sendError) {
+      console.error("❌ Error sending WhatsApp message:", sendError);
+      return res.status(500).json({ error: "Failed to send WhatsApp message" });
+    }
+  } catch (error) {
+    console.error("💥 Forgot password error:", error);
+    res.status(500).json({ error: "Failed to process password reset request" });
+  }
+});
+
+// Reset Password API - Verify code and update password
+app.post("/api/reset-password", async (req, res) => {
+  const { phoneNumber, resetCode, newPassword } = req.body;
+
+  if (!phoneNumber || !resetCode || !newPassword) {
+    return res
+      .status(400)
+      .json({
+        error: "Phone number, reset code, and new password are required",
+      });
+  }
+
+  if (newPassword.length < 6) {
+    return res
+      .status(400)
+      .json({ error: "Password must be at least 6 characters long" });
+  }
+
+  try {
+    // Format phone number
+    let formattedPhone = phoneNumber.toString();
+    if (formattedPhone.startsWith("+")) {
+      formattedPhone = formattedPhone.substring(1);
+    }
+    if (formattedPhone.startsWith("60")) {
+      formattedPhone = formattedPhone;
+    } else if (formattedPhone.startsWith("0")) {
+      formattedPhone = "60" + formattedPhone.substring(1);
+    } else {
+      formattedPhone = "60" + formattedPhone;
+    }
+
+    // Get user email from phone number
+    const userData = await sqlDb.getRow(
+      `SELECT u.email 
+       FROM users u 
+       JOIN employees e ON u.email = e.email 
+       WHERE e.phone_number = $1 AND u.active = true`,
+      [formattedPhone]
+    );
+
+    if (!userData) {
+      return res
+        .status(404)
+        .json({ error: "User not found with this phone number" });
+    }
+
+    // Verify reset code
+    const resetData = await sqlDb.getRow(
+      `SELECT * FROM password_resets 
+       WHERE email = $1 AND reset_code = $2 AND expires_at > CURRENT_TIMESTAMP`,
+      [userData.email, resetCode]
+    );
+
+    if (!resetData) {
+      return res.status(400).json({ error: "Invalid or expired reset code" });
+    }
+
+    // Update password
+    await sqlDb.query(
+      "UPDATE users SET password = $1, last_updated = CURRENT_TIMESTAMP WHERE email = $2",
+      [newPassword, userData.email]
+    );
+
+    // Delete the used reset code
+    await sqlDb.query("DELETE FROM password_resets WHERE email = $1", [
+      userData.email,
+    ]);
+
+    res.json({
+      success: true,
+      message: "Password updated successfully",
+    });
+  } catch (error) {
+    console.error("Reset password error:", error);
+    res.status(500).json({ error: "Failed to reset password" });
+  }
+});
+// ======================
+// PAYEX TOP-UP API ENDPOINTS
+// ======================
+
+// Create PayEx top-up payment
+// Create PayEx top-up payment
+app.post("/api/payex/create-topup", async (req, res) => {
+  try {
+    console.log("Top-up request received:", req.body);
+
+    const { amount, aiResponses, email, companyId } = req.body;
+
+    if (!amount || amount < 10) {
+      return res.status(400).json({ error: "Minimum top-up amount is RM 10" });
+    }
+
+    if (!email || !companyId) {
+      return res
+        .status(400)
+        .json({ error: "Email and company ID are required" });
+    }
+
+    // Calculate AI responses based on amount
+    const aiResponseCount = aiResponses || Math.floor(amount / 10) * 50; // 50 AI responses per RM 10
+
+    console.log("Processing top-up:", {
+      amount,
+      aiResponseCount,
+      email,
+      companyId,
+    });
+
+    // For testing - return success without PayEx integration
+    console.log("Environment check:", {
+      PAYEX_USERNAME: !!process.env.PAYEX_USERNAME,
+      PAYEX_SECRET_KEY: !!process.env.PAYEX_SECRET_KEY,
+    });
+
+    if (!process.env.PAYEX_USERNAME || !process.env.PAYEX_SECRET_KEY) {
+      console.log("Development mode - skipping PayEx integration");
+
+      // Store pending top-up in database (skip for now)
+      try {
+        await sqlDb.query(
+          `INSERT INTO pending_topups (
+            company_id, email, amount, ai_responses, payment_intent_id, 
+            status, created_at, metadata
+          ) VALUES ($1, $2, $3, $4, $5, $6, CURRENT_TIMESTAMP, $7)`,
+          [
+            companyId,
+            email,
+            amount,
+            aiResponseCount,
+            `test_${Date.now()}`,
+            "pending",
+            JSON.stringify({
+              companyId,
+              email,
+              aiResponses: aiResponseCount,
+              type: "topup",
+            }),
+          ]
+        );
+      } catch (dbError) {
+        console.log(
+          "Database error (expected if tables don't exist):",
+          dbError.message
+        );
+        // Continue without database storage for now
+      }
+
+      return res.json({
+        success: true,
+        paymentUrl: `https://example.com/payment?amount=${amount}`,
+        paymentIntentId: `test_${Date.now()}`,
+        aiResponses: aiResponseCount,
+        message: "Development mode - payment simulation",
+      });
+    }
+
+    // PayEx API configuration - Using Production API
+    // Use environment variable to control PayEx environment
+    const payexApiUrl =
+      process.env.PAYEX_ENVIRONMENT === "production"
+        ? "https://api.payex.io"
+        : "https://sandbox-payexapi.azurewebsites.net";
+
+    console.log(
+      `Using PayEx ${
+        process.env.PAYEX_ENVIRONMENT === "production"
+          ? "Production"
+          : "Sandbox"
+      } API: ${payexApiUrl}`
+    );
+
+    // Use the registered merchant email from environment variable for PayEx authentication
+    const username = process.env.PAYEX_USERNAME;
+    const secret =
+      process.env.PAYEX_ENVIRONMENT === "production"
+        ? process.env.PAYEX_SECRET_KEY
+        : process.env.PAYEX_SECRET_KEY_DEV;
+
+    if (!username || !secret) {
+      return res.status(500).json({ error: "PayEx configuration missing" });
+    }
+
+    // First, get access token from PayEx using Basic auth with Secret
+    console.log("Getting PayEx access token...");
+    let accessToken;
+    try {
+      // Create Base64 encoded Authorization header using Secret (not Key)
+      const authHeader = Buffer.from(`${username}:${secret}`).toString(
+        "base64"
+      );
+
+      const authResponse = await axios.post(
+        `${payexApiUrl}/api/Auth/Token`,
+        "", // Empty body as required
+        {
+          headers: {
+            Authorization: `Basic ${authHeader}`,
+            "Content-Type": "application/json",
+          },
+        }
+      );
+
+      console.log("Auth response status:", authResponse.status);
+      console.log("Auth response data:", authResponse.data);
+
+      if (authResponse.data.status === "99") {
+        throw new Error(
+          `PayEx authentication failed: ${authResponse.data.message}`
+        );
+      }
+
+      if (!authResponse.data || !authResponse.data.token) {
+        throw new Error(
+          "Failed to get PayEx access token - no token in response"
+        );
+      }
+
+      accessToken = authResponse.data.token;
+      console.log("PayEx access token obtained successfully");
+    } catch (authError) {
+      console.error("PayEx authentication error:", authError.message);
+      if (authError.response) {
+        console.error("Auth response status:", authError.response.status);
+        console.error("Auth response data:", authError.response.data);
+      }
+      throw new Error(`PayEx authentication failed: ${authError.message}`);
+    }
+
+    // Create payment intent with PayEx (following their API specification)
+    // Use environment variable for base URL or default to HTTPS
+    const baseUrl = process.env.BASE_URL || `https://${req.get("host")}`;
+
+    const paymentData = [
+      {
+        amount: Math.round(amount * 100), // Convert to cents
+        currency: "MYR",
+        customer_name: email.split("@")[0], // Extract name from email
+        email: email,
+        description: `Top-up ${aiResponseCount} AI responses for ${email}`,
+        reference_number: `topup_${companyId}_${Date.now()}`,
+        callback_url: `${baseUrl}/api/payex/webhook`,
+        return_url: `${baseUrl}/topup-success`,
+        redirect_url: `${baseUrl}/topup-success`,
+        success_url: `${baseUrl}/topup-success`,
+        payment_type: "card",
+        payment_types: ["card"],
+        show_payment_types: false,
+        tokenize: false,
+        send_email: false,
+        single_attempt: false,
+        metadata: {
+          companyId,
+          email,
+          aiResponses: aiResponseCount,
+          type: "topup",
+        },
+      },
+    ];
+
+    console.log("Sending to PayEx:", paymentData);
+
+    const payexResponse = await axios.post(
+      `${payexApiUrl}/api/v1/PaymentIntents`,
+      paymentData,
+      {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "Content-Type": "application/json",
+        },
+      }
+    );
+
+    console.log("PayEx response:", payexResponse.data);
+
+    if (
+      payexResponse.data &&
+      payexResponse.data.status === "00" &&
+      payexResponse.data.result &&
+      payexResponse.data.result[0]
+    ) {
+      const paymentResult = payexResponse.data.result[0];
+
+      if (paymentResult.status === "00" && paymentResult.url) {
+        // Store pending top-up in database
+        try {
+          await sqlDb.query(
+            `INSERT INTO pending_topups (
+              company_id, email, amount, ai_responses, payment_intent_id, 
+              status, created_at, metadata
+            ) VALUES ($1, $2, $3, $4, $5, $6, CURRENT_TIMESTAMP, $7)`,
+            [
+              companyId,
+              email,
+              amount,
+              aiResponseCount,
+              paymentResult.key, // Use 'key' from PayEx response
+              "pending",
+              JSON.stringify(paymentData[0].metadata),
+            ]
+          );
+        } catch (dbError) {
+          console.error("Database error storing top-up:", dbError);
+          // Continue without database storage
+        }
+
+        res.json({
+          success: true,
+          paymentUrl: paymentResult.url, // Use 'url' from PayEx response
+          paymentIntentId: paymentResult.key, // Use 'key' as payment intent ID
+          aiResponses: aiResponseCount,
+        });
+      } else {
+        throw new Error(
+          `PayEx payment creation failed: ${
+            paymentResult.error || "Unknown error"
+          }`
+        );
+      }
+    } else {
+      throw new Error(
+        "Failed to create PayEx payment - invalid response format"
+      );
+    }
+  } catch (error) {
+    console.error("PayEx top-up creation error:", error);
+    res.status(500).json({
+      error: "Failed to create top-up payment",
+      details: error.message,
+      stack: process.env.NODE_ENV === "development" ? error.stack : undefined,
+    });
+  }
+});
+
+// PayEx webhook handler
+app.post("/api/payex/webhook", async (req, res) => {
+  try {
+    console.log("PayEx webhook received:", req.body);
+
+    // PayEx webhook fields (based on their API documentation)
+    const {
+      payment_intent, // This is the 'key' from payment creation
+      response, // Payment response status
+      amount,
+      reference_number,
+      txn_id,
+      txn_date,
+      external_txn_id,
+      auth_code,
+      auth_number,
+      signature,
+    } = req.body;
+
+    // Verify webhook signature (implement proper signature verification)
+    // const signature = req.headers['x-payex-signature'];
+    // if (!verifyPayExSignature(req.body, signature)) {
+    //   return res.status(401).json({ error: 'Invalid signature' });
+    // }
+
+    // Map PayEx response to our status
+    let paymentStatus = "pending";
+    if (response === "SUCCEEDED" || auth_code === "00") {
+      paymentStatus = "completed";
+    } else if (response === "FAILED" || auth_code === "99") {
+      paymentStatus = "failed";
+    }
+
+    if (paymentStatus === "completed") {
+      // Extract company ID from metadata if available
+      let companyId = null;
+      try {
+        if (req.body.metadata) {
+          const metadata = JSON.parse(req.body.metadata);
+          companyId = metadata.companyId;
+          console.log(`Extracted company ID from metadata: ${companyId}`);
+        }
+      } catch (e) {
+        console.log("Could not parse metadata:", e.message);
+      }
+
+      // Find pending top-up using the payment_intent (key) from PayEx
+      const topupResult = await sqlDb.query(
+        `SELECT * FROM pending_topups WHERE payment_intent_id = $1`,
+        [payment_intent]
+      );
+
+      if (topupResult.rows.length > 0) {
+        const topup = topupResult.rows[0];
+
+        // If we have company ID from metadata, use it to update the pending topup
+        let finalCompanyId = topup.company_id;
+        if (companyId && companyId !== topup.company_id) {
+          console.log(
+            `Updating company ID from ${topup.company_id} to ${companyId}`
+          );
+          await sqlDb.query(
+            `UPDATE pending_topups SET company_id = $1 WHERE id = $2`,
+            [companyId, topup.id]
+          );
+          finalCompanyId = companyId; // Use the corrected company ID
+        }
+
+        // Update top-up status
+        await sqlDb.query(
+          `UPDATE pending_topups SET status = 'completed', completed_at = CURRENT_TIMESTAMP WHERE id = $1`,
+          [topup.id]
+        );
+
+        // Increase AI message quota for the company
+        const now = new Date();
+        const year = now.getFullYear();
+        const month = (now.getMonth() + 1).toString().padStart(2, "0");
+        const monthlyKey = `${year}-${month}`;
+
+        // Get current quota
+        const quotaResult = await sqlDb.query(
+          `SELECT setting_value FROM settings 
+           WHERE company_id = $1 AND setting_type = 'messaging' AND setting_key = 'quotaAIMessage'`,
+          [finalCompanyId]
+        );
+
+        let quotaObj = {};
+        if (quotaResult.rows.length > 0) {
+          try {
+            quotaObj =
+              typeof quotaResult.rows[0].setting_value === "string"
+                ? JSON.parse(quotaResult.rows[0].setting_value)
+                : quotaResult.rows[0].setting_value || {};
+          } catch {
+            quotaObj = {};
+          }
+        }
+
+        // Add top-up amount to quota
+        if (!quotaObj[monthlyKey]) {
+          quotaObj[monthlyKey] = 500; // Default quota
+        }
+        quotaObj[monthlyKey] += topup.ai_responses;
+
+        // Update quota in settings
+        if (quotaResult.rows.length > 0) {
+          await sqlDb.query(
+            `UPDATE settings SET setting_value = $1, last_updated = CURRENT_TIMESTAMP
+             WHERE company_id = $2 AND setting_type = 'messaging' AND setting_key = 'quotaAIMessage'`,
+            [JSON.stringify(quotaObj), finalCompanyId]
+          );
+        } else {
+          await sqlDb.query(
+            `INSERT INTO settings (company_id, setting_type, setting_key, setting_value, created_at, last_updated)
+             VALUES ($1, 'messaging', 'quotaAIMessage', $2, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+            [finalCompanyId, JSON.stringify(quotaObj)]
+          );
+        }
+
+        // Log the top-up transaction
+        await sqlDb.query(
+          `INSERT INTO topup_transactions (
+            company_id, email, amount, ai_responses, payment_intent_id, 
+            status, completed_at, metadata
+          ) VALUES ($1, $2, $3, $4, $5, $6, CURRENT_TIMESTAMP, $7)`,
+          [
+            finalCompanyId, // Use the corrected company ID
+            topup.email,
+            topup.amount,
+            topup.ai_responses,
+            payment_intent,
+            "completed",
+            JSON.stringify({
+              txn_id,
+              txn_date,
+              external_txn_id,
+              auth_code,
+              auth_number,
+              reference_number,
+              original_company_id: companyId, // Store the original for reference
+              corrected_company_id: finalCompanyId,
+            }),
+          ]
+        );
+
+        console.log(
+          `Top-up completed for company ${finalCompanyId}: ${topup.ai_responses} AI responses added`
+        );
+      } else {
+        // If no pending topup found, create one from the webhook data
+        console.log("No pending topup found, creating from webhook data");
+        if (companyId) {
+          try {
+            // Parse metadata to get AI responses
+            let aiResponses = 100; // Default
+            try {
+              if (req.body.metadata) {
+                const metadata = JSON.parse(req.body.metadata);
+                aiResponses = metadata.aiResponses || aiResponses;
+              }
+            } catch (e) {
+              console.log(
+                "Could not parse metadata for AI responses:",
+                e.message
+              );
+            }
+
+            // Create the topup transaction directly
+            await sqlDb.query(
+              `INSERT INTO topup_transactions (
+                company_id, email, amount, ai_responses, payment_intent_id, 
+                status, completed_at, metadata
+              ) VALUES ($1, $2, $3, $4, $5, $6, CURRENT_TIMESTAMP, $7)`,
+              [
+                companyId, // This should be '0210' from metadata
+                req.body.customer_name || "admin@juta.com",
+                parseFloat(amount) / 100, // Convert from cents
+                aiResponses,
+                payment_intent,
+                "completed",
+                JSON.stringify({
+                  txn_id,
+                  txn_date,
+                  external_txn_id,
+                  auth_code,
+                  auth_number,
+                  reference_number,
+                  source: "webhook_fallback",
+                  company_id_from_metadata: companyId,
+                }),
+              ]
+            );
+
+            // Update quota
+            const now = new Date();
+            const year = now.getFullYear();
+            const month = (now.getMonth() + 1).toString().padStart(2, "0");
+            const monthlyKey = `${year}-${month}`;
+
+            // Get current quota
+            const quotaResult = await sqlDb.query(
+              `SELECT setting_value FROM settings 
+               WHERE company_id = $1 AND setting_type = 'messaging' AND setting_key = 'quotaAIMessage'`,
+              [companyId]
+            );
+
+            let quotaObj = {};
+            if (quotaResult.rows.length > 0) {
+              try {
+                quotaObj =
+                  typeof quotaResult.rows[0].setting_value === "string"
+                    ? JSON.parse(quotaResult.rows[0].setting_value)
+                    : quotaResult.rows[0].setting_value || {};
+              } catch {
+                quotaObj = {};
+              }
+            }
+
+            // Add top-up amount to quota
+            if (!quotaObj[monthlyKey]) {
+              quotaObj[monthlyKey] = 500; // Default quota
+            }
+            quotaObj[monthlyKey] += aiResponses;
+
+            // Update quota in settings
+            if (quotaResult.rows.length > 0) {
+              await sqlDb.query(
+                `UPDATE settings SET setting_value = $1, last_updated = CURRENT_TIMESTAMP
+                 WHERE company_id = $2 AND setting_type = 'messaging' AND setting_key = 'quotaAIMessage'`,
+                [JSON.stringify(quotaObj), companyId]
+              );
+            } else {
+              await sqlDb.query(
+                `INSERT INTO settings (company_id, setting_type, setting_key, setting_value, created_at, last_updated)
+                 VALUES ($1, 'messaging', 'quotaAIMessage', $2, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+                [companyId, JSON.stringify(quotaObj)]
+              );
+            }
+
+            console.log(
+              `Top-up completed for company ${companyId} via webhook fallback: ${aiResponses} AI responses added`
+            );
+          } catch (fallbackError) {
+            console.error(
+              "Error in webhook fallback processing:",
+              fallbackError
+            );
+          }
+        }
+      }
+    } else if (paymentStatus === "failed") {
+      // Update top-up status to failed
+      await sqlDb.query(
+        `UPDATE pending_topups SET status = $1, completed_at = CURRENT_TIMESTAMP WHERE payment_intent_id = $2`,
+        [paymentStatus, payment_intent]
+      );
+    }
+
+    res.json({ success: true });
+  } catch (error) {
+    console.error("PayEx webhook error:", error);
+    res.status(500).json({ error: "Webhook processing failed" });
+  }
+});
+
+// Test webhook endpoint (for development/testing)
+app.post("/api/payex/test-webhook", async (req, res) => {
+  try {
+    console.log("Test webhook received:", req.body);
+
+    // Simulate a successful PayEx webhook
+    const testWebhookData = {
+      payment_intent: req.body.payment_intent_id || "test_key_123",
+      response: "00", // Success
+      amount: req.body.amount || "1000",
+      reference_number: req.body.reference_number || "test_ref_123",
+      txn_id: "test_txn_123",
+      txn_date: new Date().toISOString(),
+      external_txn_id: "test_external_123",
+      auth_code: "test_auth_123",
+      auth_number: "test_auth_num_123",
+      signature: "test_signature_123",
+    };
+
+    // Process the test webhook
+    const webhookReq = { body: testWebhookData };
+    const webhookRes = {
+      json: (data) => console.log("Test webhook response:", data),
+    };
+
+    // Call the actual webhook handler
+    await app._router.handle(webhookReq, webhookRes, () => {});
+
+    res.json({
+      success: true,
+      message: "Test webhook processed",
+      testData: testWebhookData,
+    });
+  } catch (error) {
+    console.error("Test webhook error:", error);
+    res.status(500).json({ error: "Test webhook failed" });
+  }
+});
+
+// Get top-up history for a company
+app.get("/api/payex/topup-history/:companyId", async (req, res) => {
+  try {
+    const { companyId } = req.params;
+
+    const historyResult = await sqlDb.query(
+      `SELECT * FROM topup_transactions 
+       WHERE company_id = $1 
+       ORDER BY completed_at DESC 
+       LIMIT 50`,
+      [companyId]
+    );
+
+    res.json({
+      success: true,
+      history: historyResult.rows,
+    });
+  } catch (error) {
+    console.error("Top-up history error:", error);
+    res.status(500).json({ error: "Failed to fetch top-up history" });
+  }
+});
+
+// Get current quota status for a company
+app.get("/api/payex/quota-status/:companyId", async (req, res) => {
+  try {
+    const { companyId } = req.params;
+
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = (now.getMonth() + 1).toString().padStart(2, "0");
+    const monthlyKey = `${year}-${month}`;
+
+    // Get current usage
+    const usageResult = await sqlDb.query(
+      `SELECT SUM(usage_count) AS total_usage
+       FROM usage_logs
+       WHERE company_id = $1 AND feature = 'aiMessages'
+       AND to_char(date, 'YYYY-MM') = $2`,
+      [companyId, monthlyKey]
+    );
+
+    const currentUsage = usageResult.rows[0]?.total_usage || 0;
+
+    // Get current quota
+    const quotaResult = await sqlDb.query(
+      `SELECT setting_value FROM settings
+       WHERE company_id = $1 AND setting_type = 'messaging' AND setting_key = 'quotaAIMessage'`,
+      [companyId]
+    );
+
+    let quotaObj = {};
+    if (quotaResult.rows.length > 0) {
+      try {
+        quotaObj =
+          typeof quotaResult.rows[0].setting_value === "string"
+            ? JSON.parse(quotaResult.rows[0].setting_value)
+            : quotaResult.rows[0].setting_value || {};
+      } catch {
+        quotaObj = {};
+      }
+    }
+
+    const currentQuota = quotaObj[monthlyKey] || 500;
+    const remainingQuota = Math.max(0, currentQuota - currentUsage);
+
+    res.json({
+      success: true,
+      currentUsage,
+      currentQuota,
+      remainingQuota,
+      monthlyKey,
+    });
+  } catch (error) {
+    console.error("Quota status error:", error);
+    res.status(500).json({ error: "Failed to fetch quota status" });
+  }
+});
 
 app.post("/api/followup-save-templates/", async (req, res) => {
   try {
     const { companyId, email, templates } = req.body;
-    
-    console.log("Save templates request:", { companyId, email, templatesCount: templates?.length });
-    
+
+    console.log("=== SAVE API DEBUG ===");
+    console.log("Request received:", {
+      companyId,
+      email,
+      templatesCount: templates?.length,
+    });
+
+    // Validate required fields
     if (!companyId || !email || !templates || !Array.isArray(templates)) {
       return res.status(400).json({
         success: false,
-        error: "companyId, email, and templates array are required"
+        error: "MISSING_FIELDS",
+        details: "companyId, email, and templates array are required",
       });
     }
 
@@ -10756,74 +13533,153 @@ app.post("/api/followup-save-templates/", async (req, res) => {
 
     try {
       await sqlClient.query("BEGIN");
-      
+
       for (const template of templates) {
-        console.log("Processing template:", template.stageName);
-        console.log("Template ID:", template.templateId);
-        
-        // Check if template exists by name and company (more reliable than template_id)
+        console.log(
+          `Processing template: ${template.stageName} with ${
+            template.messages?.length || 0
+          } messages`
+        );
+        console.log(
+          `Template has templateId: ${template.templateId ? "YES" : "NO"}`
+        );
+
+        // Validate template structure
+        if (
+          !template.stageName ||
+          !template.messages ||
+          !Array.isArray(template.messages)
+        ) {
+          console.error(`Invalid template structure:`, template);
+          throw new Error(
+            `Invalid template structure for ${template.stageName || "unknown"}`
+          );
+        }
+
+        // Check if template exists by name and company
         const existingTemplate = await sqlClient.query(
           `SELECT id, template_id FROM public.followup_templates WHERE company_id = $1 AND name = $2`,
           [companyId, template.stageName]
         );
 
         if (existingTemplate.rows.length > 0) {
-          console.log("Updating existing template:", template.stageName);
-          
+          console.log(`Updating existing template: ${template.stageName}`);
+          console.log(
+            `Existing template ID: ${existingTemplate.rows[0].id}, Template ID: ${existingTemplate.rows[0].template_id}`
+          );
+
           // Update existing template
           await sqlClient.query(
             `UPDATE public.followup_templates SET 
-             trigger_keywords = $1, trigger_tags = $2, content = $3, updated_at = NOW() 
+             trigger_keywords = $1, trigger_tags = $2, content = $3, updated_at = CURRENT_TIMESTAMP 
              WHERE company_id = $4 AND name = $5`,
             [
               template.triggerKeywords || [],
               template.triggerTags || [],
-              template.purpose,
+              template.purpose || "",
               companyId,
-              template.stageName
+              template.stageName,
             ]
           );
 
-          // Update messages
+          // For existing templates, use the existing template_id (VARCHAR) to link messages
+          const templateId = existingTemplate.rows[0].template_id; // This is the VARCHAR template_id
+          console.log(`Using existing template_id for messages: ${templateId}`);
+
+          // Delete existing messages
           await sqlClient.query(
-            `DELETE FROM public.followup_messages WHERE template_id = (SELECT id FROM public.followup_templates WHERE company_id = $1 AND name = $2)`,
-            [companyId, template.stageName]
+            `DELETE FROM public.followup_messages WHERE template_id = $1`,
+            [templateId]
           );
 
           // Insert new messages
           for (let i = 0; i < template.messages.length; i++) {
+            const message = template.messages[i];
+            console.log(
+              `Inserting message ${i + 1}: ${message.substring(0, 50)}...`
+            );
+
             await sqlClient.query(
-              `INSERT INTO public.followup_messages (template_id, message, day_number, sequence, status, created_at) 
-               VALUES ((SELECT id FROM public.followup_templates WHERE company_id = $1 AND name = $2), $3, $4, $5, 'active', NOW())`,
-              [companyId, template.stageName, template.messages[i], i + 1, i + 1]
+              `INSERT INTO public.followup_messages (
+                template_id, message, day_number, sequence, status, created_at, 
+                delay_after, specific_numbers, use_scheduled_time, add_tags, remove_tags
+              ) VALUES ($1, $2, $3, $4, 'active', CURRENT_TIMESTAMP, $5, $6, $7, $8, $9)`,
+              [
+                templateId, // Use the existing VARCHAR template_id
+                message,
+                i + 1,
+                i + 1,
+                JSON.stringify({
+                  value: 30,
+                  unit: "minutes",
+                  isInstantaneous: false,
+                }), // delay_after
+                JSON.stringify({ enabled: false, numbers: [] }), // specific_numbers
+                false, // use_scheduled_time
+                [], // add_tags
+                [], // remove_tags
+              ]
             );
           }
           templatesUpdated++;
         } else {
-          console.log("Creating new template:", template.stageName);
-          
-          // Generate a new template_id
-          const newTemplateId = `template_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-          
+          console.log(`Creating new template: ${template.stageName}`);
+
+          // For new templates, use the templateId from the frontend if provided, otherwise generate one
+          const templateId =
+            template.templateId ||
+            `template_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+          console.log(`Creating template with templateId: ${templateId}`);
+
           const templateResult = await sqlClient.query(
-            `INSERT INTO public.followup_templates (company_id, template_id, name, trigger_keywords, trigger_tags, content, status, created_at, updated_at) 
-             VALUES ($1, $2, $3, $4, $5, $6, 'active', NOW(), NOW()) RETURNING id`,
+            `INSERT INTO public.followup_templates (
+              company_id, template_id, name, trigger_keywords, trigger_tags, content, 
+              status, created_at, updated_at, delay_hours
+            ) VALUES ($1, $2, $3, $4, $5, $6, 'active', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, $7) RETURNING id, template_id`,
             [
               companyId,
-              newTemplateId,
+              templateId,
               template.stageName,
               template.triggerKeywords || [],
               template.triggerTags || [],
-              template.purpose
+              template.purpose || "",
+              24, // default delay_hours
             ]
+          );
+
+          // For new templates, use the template_id (VARCHAR) to link messages
+          const newTemplateId = templateResult.rows[0].template_id; // This is the VARCHAR template_id
+          console.log(
+            `New template created with template_id: ${newTemplateId}`
           );
 
           // Insert messages
           for (let i = 0; i < template.messages.length; i++) {
+            const message = template.messages[i];
+            console.log(
+              `Inserting message ${i + 1}: ${message.substring(0, 50)}...`
+            );
+
             await sqlClient.query(
-              `INSERT INTO public.followup_messages (template_id, message, day_number, sequence, status, created_at) 
-               VALUES ($1, $2, $3, $4, 'active', NOW())`,
-              [templateResult.rows[0].id, template.messages[i], i + 1, i + 1]
+              `INSERT INTO public.followup_messages (
+                template_id, message, day_number, sequence, status, created_at, 
+                delay_after, specific_numbers, use_scheduled_time, add_tags, remove_tags
+              ) VALUES ($1, $2, $3, $4, 'active', CURRENT_TIMESTAMP, $5, $6, $7, $8, $9)`,
+              [
+                newTemplateId, // Use the VARCHAR template_id
+                message,
+                i + 1,
+                i + 1,
+                JSON.stringify({
+                  value: 30,
+                  unit: "minutes",
+                  isInstantaneous: false,
+                }), // delay_after
+                JSON.stringify({ enabled: false, numbers: [] }), // specific_numbers
+                false, // use_scheduled_time
+                [], // add_tags
+                [], // remove_tags
+              ]
             );
           }
           templatesCreated++;
@@ -10831,35 +13687,34 @@ app.post("/api/followup-save-templates/", async (req, res) => {
       }
 
       await sqlClient.query("COMMIT");
-      
-      console.log("Save completed:", { templatesUpdated, templatesCreated });
+      console.log(
+        `✅ Successfully processed: ${templatesUpdated} updated, ${templatesCreated} created`
+      );
 
       res.json({
         success: true,
         data: {
           templatesUpdated,
           templatesCreated,
-          totalChanges: templatesUpdated + templatesCreated
-        }
+          totalChanges: templatesUpdated + templatesCreated,
+        },
       });
-
     } catch (error) {
       await sqlClient.query("ROLLBACK");
+      console.error("Database error during save:", error);
       throw error;
     } finally {
       sqlClient.release();
     }
-
   } catch (error) {
     console.error("Follow-up save templates error:", error);
     res.status(500).json({
       success: false,
-      error: error.code,
-      details: error.message
+      error: error.code || "UNKNOWN_ERROR",
+      details: error.message,
     });
   }
 });
-
 
 async function getAIAssignResponses(companyId) {
   console.log("Starting getAIAssignResponses for companyId:", companyId);
@@ -11159,7 +14014,7 @@ async function getAIDocumentResponses(companyId) {
         company_id = $1 
         AND status = 'active'
     `;
-    
+
     const result = await sqlClient.query(query, [companyId]);
 
     for (const row of result.rows) {
@@ -12467,12 +15322,10 @@ app.get("/api/scheduled-messages/contact", async (req, res) => {
   );
 
   if (!companyId || !contactId) {
-    return res
-      .status(400)
-      .json({
-        success: false,
-        message: "Missing companyId or contactId parameter",
-      });
+    return res.status(400).json({
+      success: false,
+      message: "Missing companyId or contactId parameter",
+    });
   }
 
   const sqlClient = await getDatabaseConnection();
@@ -12481,12 +15334,10 @@ app.get("/api/scheduled-messages/contact", async (req, res) => {
     console.error(
       "Failed to get database connection - aborting scheduled messages fetch for contact"
     );
-    return res
-      .status(500)
-      .json({
-        success: false,
-        message: "Failed to fetch scheduled messages for contact",
-      });
+    return res.status(500).json({
+      success: false,
+      message: "Failed to fetch scheduled messages for contact",
+    });
   }
 
   try {
@@ -12871,7 +15722,16 @@ async function addMessageToPostgres(
       throw error;
     } finally {
       await safeRelease(client);
-      await addNotificationToUser(idSubstring, messageBody, contactName);
+      let profilePicUrl = null;
+      try {
+        const chat = await msg.getChat();
+        const contact = await chat.getContact();
+        profilePicUrl = await getProfilePicUrl(contact);
+        console.log("Profile picture URL:", profilePicUrl);
+      } catch (error) {
+        console.log("Could not get profile picture URL:", error.message);
+      }
+      await addNotificationToUser(idSubstring, messageBody, contactName, contactID, msg.from, extractedNumber, profilePicUrl);
     }
   } catch (error) {
     console.error("PostgreSQL connection error:", error);
@@ -12879,14 +15739,22 @@ async function addMessageToPostgres(
   }
 }
 
-async function addNotificationToUser(companyId, message, contactName) {
-  console.log("Adding notification and sending FCM");
+async function addNotificationToUser(companyId, message, contactName, contactId = null, chatId = null, phoneNumber = null, profilePicUrl = null) {
+  console.log("Adding notification and sending OneSignal");
+  console.log("📱 addNotificationToUser parameters:");
+  console.log("   companyId:", companyId);
+  console.log("   message:", message);
+  console.log("   contactName:", contactName);
+  console.log("   contactId:", contactId);
+  console.log("   chatId:", chatId);
+  console.log("   phoneNumber:", phoneNumber);
+  console.log("   profilePicUrl:", profilePicUrl);
   try {
     const client = await pool.connect();
 
     try {
       const usersQuery = await client.query(
-        "SELECT user_id FROM public.users WHERE company_id = $1",
+        "SELECT user_id, email FROM public.users WHERE company_id = $1",
         [companyId]
       );
 
@@ -12910,6 +15778,51 @@ async function addNotificationToUser(companyId, message, contactName) {
       let notificationText = cleanMessage.text?.body || "New message received";
       if (cleanMessage.hasMedia) {
         notificationText = `Media: ${cleanMessage.type || "attachment"}`;
+      }
+
+      // Send OneSignal notification to all users in the company
+      try {
+        // Determine notification type based on context
+        let notificationType = "company_announcement";
+        let additionalData = {
+          company_id: companyId
+        };
+
+        if (contactName && contactId && chatId) {
+          // This is an actual message from a contact
+          notificationType = "message";
+          additionalData = {
+            ...additionalData,
+            message_type: cleanMessage.type || "message",
+            has_media: cleanMessage.hasMedia || false,
+            contact_name: contactName,
+            contact_id: contactId,
+            chat_id: chatId,
+            phone: phoneNumber,
+            profile_pic_url: profilePicUrl,
+            type: notificationType
+          };
+        } else {
+          // This is a company announcement
+          additionalData = {
+            ...additionalData,
+            type: notificationType
+          };
+        }
+
+        console.log("📤 Sending to OneSignal with data:");
+        console.log("   additionalData:", JSON.stringify(additionalData, null, 2));
+        
+        await sendOneSignalNotification(
+          companyId,
+          contactName || "Company Announcement",
+          notificationText,
+          additionalData
+        );
+        console.log(`OneSignal notification sent to company: ${companyId} with type: ${notificationType}`);
+      } catch (onesignalError) {
+        console.error("Failed to send OneSignal notification:", onesignalError);
+        // Continue with database operations even if OneSignal fails
       }
 
       const promises = usersQuery.rows.map(async (user) => {
@@ -12940,7 +15853,7 @@ async function addNotificationToUser(companyId, message, contactName) {
       await safeRelease(client);
     }
   } catch (error) {
-    console.error("Error adding notification or sending FCM: ", error);
+    console.error("Error adding notification or sending OneSignal: ", error);
   }
 }
 
@@ -14140,6 +17053,12 @@ async function main(reinitialize = false) {
             if (config.botName === "0380") {
               initializeMtdcSpreadsheet();
             }
+
+            // After successful initialization, sync messages and handle auto-replies
+            return syncMessagesAndHandleAutoReplies(
+              config.botName,
+              config.phoneCount
+            );
           })
           .catch((error) => {
             console.error(
@@ -15138,12 +18057,10 @@ app.post("/api/contacts/bulk", async (req, res) => {
     }
 
     if (uniqueContacts.length === 0) {
-      return res
-        .status(400)
-        .json({
-          success: false,
-          message: "No unique contacts to import after deduplication",
-        });
+      return res.status(400).json({
+        success: false,
+        message: "No unique contacts to import after deduplication",
+      });
     }
 
     console.log(
@@ -15375,6 +18292,8 @@ app.put("/api/contacts/:contact_id/pinned", async (req, res) => {
     const { contact_id } = req.params;
     const { companyId, pinned } = req.body;
 
+    console.log("Toggle pin request:", { contact_id, companyId, pinned });
+
     if (!companyId || !contact_id || typeof pinned !== "boolean") {
       return res.status(400).json({
         success: false,
@@ -15382,24 +18301,64 @@ app.put("/api/contacts/:contact_id/pinned", async (req, res) => {
       });
     }
 
-    const query = `
+    // First check if contact exists and get current pinned status
+    const checkQuery = `
+      SELECT contact_id, pinned FROM contacts 
+      WHERE contact_id = $1 AND company_id = $2
+    `;
+    const checkResult = await sqlDb.query(checkQuery, [contact_id, companyId]);
+
+    if (checkResult.rows.length === 0) {
+      console.log("Contact not found:", { contact_id, companyId });
+      return res.status(404).json({
+        success: false,
+        message: "Contact not found",
+      });
+    }
+
+    console.log("Current pinned status:", checkResult.rows[0].pinned);
+    console.log("New pinned status:", pinned);
+
+    // Update the pinned status
+    const updateQuery = `
       UPDATE contacts
       SET pinned = $1, updated_at = CURRENT_TIMESTAMP
       WHERE contact_id = $2 AND company_id = $3
-      RETURNING contact_id, pinned
+      RETURNING contact_id, pinned, updated_at
     `;
-    const result = await sqlDb.query(query, [pinned, contact_id, companyId]);
+
+    const result = await sqlDb.query(updateQuery, [
+      pinned,
+      contact_id,
+      companyId,
+    ]);
 
     if (result.rows.length === 0) {
-      return res
-        .status(404)
-        .json({ success: false, message: "Contact not found" });
+      return res.status(404).json({
+        success: false,
+        message: "Contact not found",
+      });
     }
+
+    console.log("Update result:", result.rows[0]);
+
+    // Verify the update immediately
+    const verifyQuery = `
+      SELECT contact_id, pinned, updated_at FROM contacts 
+      WHERE contact_id = $1 AND company_id = $2
+    `;
+    const verifyResult = await sqlDb.query(verifyQuery, [
+      contact_id,
+      companyId,
+    ]);
+
+    console.log("After update verification:", verifyResult.rows[0]);
 
     res.json({
       success: true,
-      contact_id: result.rows[0].contact_id,
-      pinned: result.rows[0].pinned,
+      contact_id: verifyResult.rows[0].contact_id,
+      pinned: verifyResult.rows[0].pinned,
+      updated_at: verifyResult.rows[0].updated_at,
       message: "Pinned status updated successfully",
     });
   } catch (error) {
@@ -16219,13 +19178,14 @@ app.delete("/api/companies/:companyId", async (req, res) => {
     client = await pool.connect();
 
     // First, check if the company exists
-    const checkCompanyQuery = "SELECT company_id, name FROM companies WHERE company_id = $1";
+    const checkCompanyQuery =
+      "SELECT company_id, name FROM companies WHERE company_id = $1";
     const companyResult = await client.query(checkCompanyQuery, [companyId]);
 
     if (companyResult.rows.length === 0) {
-      return res.status(404).json({ 
+      return res.status(404).json({
         error: "Company not found",
-        companyId 
+        companyId,
       });
     }
 
@@ -16234,17 +19194,24 @@ app.delete("/api/companies/:companyId", async (req, res) => {
     // Disconnect and cleanup bot data if it exists
     const botData = botMap.get(companyId);
     if (botData && Array.isArray(botData)) {
-      console.log(`[DELETE COMPANY] Disconnecting ${botData.length} phones for company ${companyId}`);
-      
+      console.log(
+        `[DELETE COMPANY] Disconnecting ${botData.length} phones for company ${companyId}`
+      );
+
       // Disconnect all phones
       await Promise.all(
         botData.map(async (data, index) => {
           if (data?.client) {
             try {
               await logoutClient(data.client);
-              console.log(`[DELETE COMPANY] Disconnected phone ${index} for company ${companyId}`);
+              console.log(
+                `[DELETE COMPANY] Disconnected phone ${index} for company ${companyId}`
+              );
             } catch (error) {
-              console.error(`[DELETE COMPANY] Error disconnecting phone ${index} for company ${companyId}:`, error);
+              console.error(
+                `[DELETE COMPANY] Error disconnecting phone ${index} for company ${companyId}:`,
+                error
+              );
             }
           }
         })
@@ -16260,27 +19227,31 @@ app.delete("/api/companies/:companyId", async (req, res) => {
     const deleteResult = await client.query(deleteQuery, [companyId]);
 
     if (deleteResult.rowCount === 0) {
-      return res.status(404).json({ 
+      return res.status(404).json({
         error: "Company not found in database",
-        companyId 
+        companyId,
       });
     }
 
-    console.log(`[DELETE COMPANY] Successfully deleted company ${companyId} (${companyName}) and all related data`);
+    console.log(
+      `[DELETE COMPANY] Successfully deleted company ${companyId} (${companyName}) and all related data`
+    );
 
     res.json({
       success: true,
       message: `Company ${companyId} (${companyName}) and all related data deleted successfully`,
       companyId,
-      companyName
+      companyName,
     });
-
   } catch (error) {
-    console.error(`[DELETE COMPANY] Error deleting company ${req.params.companyId}:`, error);
+    console.error(
+      `[DELETE COMPANY] Error deleting company ${req.params.companyId}:`,
+      error
+    );
     res.status(500).json({
       error: "Failed to delete company",
       details: error.message,
-      companyId: req.params.companyId
+      companyId: req.params.companyId,
     });
   } finally {
     if (client) {
@@ -16529,28 +19500,92 @@ app.get("/api/assistant-test/", async (req, res) => {
   const message = req.query.message;
   const email = req.query.email;
   const assistantid = req.query.assistantid;
+  const conversationHistory = req.query.conversationHistory;
+  
   console.log(`assistant-test for ${email}`);
+  console.log(`Message: ${message}`);
+  console.log(`Assistant ID: ${assistantid}`);
+  console.log(`Conversation History: ${conversationHistory}`);
+  
   try {
-    let threadID;
-    const contactData = await getContactDataFromDatabaseByEmail(email);
-    if (contactData.threadid) {
-      threadID = contactData.threadid;
-    } else {
-      const thread = await createThread();
-      threadID = thread.id;
-      await saveThreadIDPostgres(email, threadID);
+    // Validate required parameters
+    if (!message || !email || !assistantid) {
+      return res.status(400).json({ 
+        error: "Missing required parameters", 
+        required: ["message", "email", "assistantid"] 
+      });
     }
+
+    let threadID;
+    
+    // Get contact data with better error handling
+    let contactData;
+    try {
+      contactData = await getContactDataFromDatabaseByEmail(email);
+      console.log(`Contact data retrieved for ${email}:`, contactData);
+    } catch (dbError) {
+      console.error(`Database error for ${email}:`, dbError);
+      return res.status(500).json({ 
+        error: "Database connection failed", 
+        details: dbError.message 
+      });
+    }
+
+    // Check for existing threadid (lowercase from database)
+    if (contactData && contactData.threadid) {
+      threadID = contactData.threadid; // Use lowercase from database
+      console.log(`Using existing thread ID: ${threadID}`);
+    } else {
+      try {
+        const thread = await createThread();
+        threadID = thread.id;
+        console.log(`Created new thread ID: ${threadID}`);
+        
+        await saveThreadIDPostgres(email, threadID);
+        console.log(`Thread ID saved to database for ${email}`);
+      } catch (threadError) {
+        console.error(`Thread creation error for ${email}:`, threadError);
+        return res.status(500).json({ 
+          error: "Failed to create thread", 
+          details: threadError.message 
+        });
+      }
+    }
+
     console.log(`assistant-test threadID for ${email}: ${threadID}`);
 
-    const answer = await handleOpenAIAssistant(message, threadID, assistantid);
-    console.log(`assistant-test answer for ${email}: ${answer}`);
-    // Send success response
-    res.json({ message: "Assistant replied success", answer });
-  } catch (error) {
-    // Handle errors
-    console.error("Assistant replied user:", error);
+    // Handle OpenAI Assistant with better error handling
+    let answer;
+    try {
+      answer = await handleOpenAIAssistant(message, threadID, assistantid);
+      console.log(`assistant-test answer for ${email}: ${answer}`);
+    } catch (openaiError) {
+      console.error(`OpenAI Assistant error for ${email}:`, openaiError);
+      return res.status(500).json({ 
+        error: "OpenAI Assistant failed", 
+        details: openaiError.message,
+        code: openaiError.code || 'UNKNOWN_ERROR'
+      });
+    }
 
-    res.status(500).json({ error: error.code });
+    // Send success response
+    res.json({ 
+      message: "Assistant replied success", 
+      answer,
+      threadId: threadID // Return as threadId to match frontend expectation
+    });
+    
+  } catch (error) {
+    // Handle any unexpected errors
+    console.error("Unexpected error in assistant-test:", error);
+    
+    // Return more detailed error information
+    res.status(500).json({ 
+      error: "Internal server error",
+      message: error.message,
+      code: error.code || 'UNKNOWN_ERROR',
+      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+    });
   }
 });
 
@@ -17529,6 +20564,7 @@ app.get("/api/bot-status/:companyId", async (req, res) => {
   }
 });
 
+// GET /api/ai-responses - Fetch all AI responses for a company
 app.get("/api/ai-responses", async (req, res) => {
   console.log("=== Starting GET /api/ai-responses ===");
   console.log("Query params:", req.query);
@@ -18159,6 +21195,758 @@ app.delete("/api/ai-responses/:id", async (req, res) => {
     console.log("Database client released");
   }
 });
+// AI Response Brainstorm API with file upload support - FIXED FIELD NAME
+app.post("/api/ai-response-brainstorm/", async (req, res) => {
+  try {
+    const userInput = req.query.message;
+    const email = req.query.email;
+    const { currentPrompt, currentResponses, fileUrls, companyId } = req.body;
+
+    // Log the full request to debug
+    console.log("AI Response Brainstorm Request:", {
+      userInput,
+      email,
+      currentPrompt,
+      currentResponses,
+      fileUrls: fileUrls ? fileUrls.length : 0,
+      companyId,
+    });
+
+    // Log all file URLs received
+    if (fileUrls) {
+      console.log("�� File URLs received:", fileUrls);
+    }
+
+    let threadID;
+    const contactData = await getContactDataFromDatabaseByEmail(email);
+
+    if (contactData?.thread_id) {
+      threadID = contactData.thread_id;
+      console.log("Using existing thread ID:", threadID);
+    } else {
+      const thread = await createThread();
+      threadID = thread.id;
+      console.log("Created new thread ID:", threadID);
+      await saveThreadIDPostgres(email, threadID);
+      console.log("Saved new thread ID to database for email:", email);
+    }
+
+    // Process file URLs if any
+    let fileInfo = "";
+
+    if (fileUrls && fileUrls.length > 0) {
+      console.log(`📁 Processing ${fileUrls.length} file URLs...`);
+
+      try {
+        fileInfo = fileUrls
+          .map((url, index) => `File ${index + 1}: ${url}`)
+          .join(", ");
+
+        console.log("📎 File URLs processed successfully:", fileInfo);
+      } catch (urlError) {
+        console.error("❌ Error processing file URLs:", urlError);
+        return res.status(500).json({
+          success: false,
+          error: "FILE_URL_PROCESSING_ERROR",
+          details: "Failed to process file URLs",
+        });
+      }
+    }
+
+    // Create the full prompt for the assistant
+    const fullPrompt = `You are an AI Response Builder expert. The user wants to create automated AI responses for their business.
+
+Your task: Help them create the perfect AI response by analyzing their request and any provided file URLs.
+
+${
+  fileUrls && fileUrls.length > 0
+    ? `📎 **FILE URLS AVAILABLE:**
+${fileUrls.map((url, index) => `${index + 1}. ${url}`).join("\n")}
+
+Use these file URLs to create the appropriate AI response. If they provided image URLs, create an image response with these URLs. If they provided document URLs, create a document response with these URLs, etc.`
+    : "If the user wants image/audio/document/video responses, ask them to provide the necessary file URLs first."
+}
+
+Response format:
+[RESPONSE_START]
+{
+  "type": "tag|image|voice|document|assign|video",
+  "keywords": ["keyword1", "keyword2"],
+  "description": "Description of what this response does",
+  "status": "active",
+  "keywordSource": "user",
+  "tags": ["tag1", "tag2"],
+  "tagActionMode": "add|delete",
+  "removeTags": ["tag3", "tag4"],
+  "imageUrls": ["url1", "url2"],
+  "voiceUrls": ["url1", "url2"],
+  "documentUrls": ["url1", "url2"],
+  "videoUrls": ["url1", "url2"],
+  "assignedEmployees": ["employee1", "employee2"]
+}
+[RESPONSE_END]
+
+[EXPLANATION_START]
+Brief explanation of what this AI response will do and when it will trigger.
+[EXPLANATION_END]
+
+[ALTERNATIVES_START]
+[
+  {
+    "type": "alternative_type",
+    "keywords": ["alt_keyword1", "alt_keyword2"],
+    "description": "Alternative response description"
+  }
+]
+[ALTERNATIVES_END]
+
+Rules:
+- If file URLs are provided, use them in the appropriate response fields
+- Determine the best response type based on the user's request AND provided file URLs
+- Provide realistic keywords that would trigger this response
+- Include all necessary fields for the response type
+- Be specific and actionable
+- Use the provided file URLs in the response configuration
+
+User Request: ${userInput}
+
+Help create the perfect AI response using the provided file URLs if any.`;
+
+    // Add user message to thread
+    await addMessage(threadID, fullPrompt);
+
+    // Create and run the assistant
+    const assistantResponse = await openai.beta.threads.runs.create(threadID, {
+      assistant_id: process.env.ASSISTANT_ID || "asst_QfkZ8GeCw0Rbc2zRW4B86FWD",
+    });
+
+    // Wait for completion using the enhanced function that handles tool calls
+    const answer = await waitForCompletionAIResponseBuilder(
+      threadID,
+      assistantResponse.id,
+      email
+    );
+
+    // Save the interaction to the thread for future reference
+    await addMessageAssistant(
+      threadID,
+      `AI Response Creation Request: ${userInput}\nFile URLs: ${
+        fileInfo || "None"
+      }\nCurrent Prompt: ${currentPrompt || "None"}\nResponse: ${answer}`
+    );
+
+    // Parse the AI response to extract structured data
+    const parsedResponse = parseAIResponse(answer);
+
+    // Enhance the response with file URL information
+    if (fileUrls && fileUrls.length > 0) {
+      // Update the suggested response with actual file URLs
+      const responseType = parsedResponse.suggestedResponse.type;
+
+      switch (responseType) {
+        case "image":
+          parsedResponse.suggestedResponse.imageUrls = fileUrls;
+          break;
+        case "voice":
+          parsedResponse.suggestedResponse.voiceUrls = fileUrls;
+          break;
+        case "document":
+          parsedResponse.suggestedResponse.documentUrls = fileUrls;
+          break;
+        case "video":
+          parsedResponse.suggestedResponse.videoUrls = fileUrls;
+          break;
+      }
+
+      // Update explanation to mention the files
+      parsedResponse.explanation = `${parsedResponse.explanation}\n\n📎 Using your provided file URLs: ${fileUrls.length} file(s)`;
+    }
+
+    // AUTO-SAVE: Save the AI response to database if companyId is provided
+    let savedResponseId = null;
+    if (companyId && parsedResponse.suggestedResponse) {
+      try {
+        console.log("💾 Auto-saving AI response to database...");
+
+        // Call the existing /api/ai-responses endpoint
+        const responseData = {
+          companyId: companyId,
+          type: parsedResponse.suggestedResponse.type,
+          data: {
+            keywords: parsedResponse.suggestedResponse.keywords,
+            description: parsedResponse.suggestedResponse.description,
+            status: parsedResponse.suggestedResponse.status || "active",
+            keyword_source:
+              parsedResponse.suggestedResponse.keywordSource || "user",
+            tags: parsedResponse.suggestedResponse.tags,
+            tag_action_mode: parsedResponse.suggestedResponse.tagActionMode,
+            remove_tags: parsedResponse.suggestedResponse.removeTags,
+            image_urls: parsedResponse.suggestedResponse.imageUrls,
+            voice_urls: parsedResponse.suggestedResponse.voiceUrls,
+            document_urls: parsedResponse.suggestedResponse.documentUrls,
+            video_urls: parsedResponse.suggestedResponse.videoUrls,
+            assigned_employees:
+              parsedResponse.suggestedResponse.assignedEmployees,
+          },
+        };
+
+        // Make internal request to the API endpoint
+        const axios = require("axios");
+        const apiResponse = await axios.post(
+          `${req.protocol}://${req.get("host")}/api/ai-responses`,
+          responseData
+        );
+
+        if (apiResponse.data.success) {
+          savedResponseId = apiResponse.data.data.responseId;
+          console.log(
+            "✅ AI response saved successfully with ID:",
+            savedResponseId
+          );
+        } else {
+          throw new Error("API returned error: " + apiResponse.data.error);
+        }
+      } catch (saveError) {
+        console.error("❌ Failed to auto-save AI response:", saveError);
+        // Don't fail the request, just log the error
+      }
+    }
+
+    // Send response
+    res.json({
+      success: true,
+      data: {
+        explanation:
+          parsedResponse.explanation ||
+          `I'll help you create a response for your request`,
+        suggestedResponse: parsedResponse.suggestedResponse,
+        alternatives: parsedResponse.alternatives || [],
+        threadID: threadID,
+        fileUrls: fileUrls || [],
+        savedResponseId: savedResponseId, // Include the saved response ID if available
+        message: savedResponseId
+          ? "AI response created and saved successfully!"
+          : "AI response created successfully (not saved - companyId required)",
+      },
+    });
+  } catch (error) {
+    console.error("AI Response brainstorm error:", {
+      name: error.name,
+      message: error.message,
+      code: error.code,
+    });
+    res.status(500).json({
+      success: false,
+      error: error.code,
+      details: error.message,
+    });
+  }
+});
+
+async function waitForCompletionAIResponseBuilder(
+  threadId,
+  runId,
+  email,
+  depth = 0
+) {
+  const maxDepth = 5;
+  const maxAttempts = 30;
+  const pollingInterval = 2000;
+
+  console.log(
+    `⏳ Waiting for AI Response Builder completion (depth: ${depth}, runId: ${runId})...`
+  );
+
+  if (depth >= maxDepth) {
+    console.error(`❌ Max recursion depth reached for runId: ${runId}`);
+    return "I apologize, but I'm having trouble completing this task. Could you please try rephrasing your request?";
+  }
+
+  for (let attempts = 0; attempts < maxAttempts; attempts++) {
+    try {
+      const runObject = await openai.beta.threads.runs.retrieve(
+        threadId,
+        runId
+      );
+      console.log(
+        `🔍 Run status: ${runObject.status} (attempt ${attempts + 1})`
+      );
+
+      if (runObject.status === "completed") {
+        console.log("✅ AI Response Builder run completed successfully");
+        const messagesList = await openai.beta.threads.messages.list(threadId);
+        const latestMessage = messagesList.data[0].content[0].text.value;
+        return latestMessage;
+      } else if (runObject.status === "requires_action") {
+        console.log(
+          "🛠️ AI Response Builder run requires action, handling tool calls..."
+        );
+        const toolCalls =
+          runObject.required_action.submit_tool_outputs.tool_calls;
+
+        const toolOutputs = await handleToolCallsAIResponseBuilder(
+          toolCalls,
+          email
+        );
+
+        // Submit tool outputs back to the assistant
+        await openai.beta.threads.runs.submitToolOutputs(threadId, runId, {
+          tool_outputs: toolOutputs,
+        });
+        console.log(
+          "✅ Tool outputs submitted, restarting wait for completion..."
+        );
+
+        return await waitForCompletionAIResponseBuilder(
+          threadId,
+          runId,
+          email,
+          depth + 1
+        );
+      } else if (
+        ["failed", "cancelled", "expired"].includes(runObject.status)
+      ) {
+        console.error(`❌ Run ${runId} ended with status: ${runObject.status}`);
+        return `I encountered an error (${runObject.status}). Please try your request again.`;
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, pollingInterval));
+    } catch (error) {
+      console.error(
+        `❌ Error in waitForCompletionAIResponseBuilder (depth: ${depth}, runId: ${runId}): ${error}`
+      );
+      return "I'm sorry, but I encountered an error while processing your request. Please try again.";
+    }
+  }
+
+  console.error(
+    `⏰ Timeout: AI Response Builder did not complete in time (depth: ${depth}, runId: ${runId})`
+  );
+  return "I'm sorry, but it's taking longer than expected to process your request. Please try again or rephrase your question.";
+}
+
+// Handle tool calls for AI Response Builder
+// Handle tool calls for AI Response Builder
+async function handleToolCallsAIResponseBuilder(toolCalls, email) {
+  console.log("🛠️ Handling AI Response Builder tool calls...");
+  console.log(`📋 Found ${toolCalls.length} tool calls to process`);
+
+  const toolOutputs = [];
+
+  for (const toolCall of toolCalls) {
+    console.log(`🔧 Processing tool call: ${toolCall.function.name}`);
+    console.log(`📝 Tool call arguments: ${toolCall.function.arguments}`);
+    console.log(`🆔 Tool call ID: ${toolCall.id}`);
+
+    switch (toolCall.function.name) {
+      case "createAIResponse":
+        try {
+          console.log("💾 Processing createAIResponse tool call...");
+          const args = JSON.parse(toolCall.function.arguments);
+
+          // Get company ID from email
+          const contactData = await getContactDataFromDatabaseByEmail(email);
+          if (!contactData?.company_id) {
+            throw new Error("Company ID not found for user");
+          }
+
+          console.log("🏢 Company ID found:", contactData.company_id);
+          console.log("📊 Response data:", args);
+          console.log("🎯 Response type:", args.type);
+
+          // Use the same structure as your frontend
+          const responseData = {
+            companyId: contactData.company_id,
+            type: args.type,
+            data: {
+              keywords: args.keywords || [],
+              description: args.description || "",
+              status: args.status || "active",
+              keyword_source: args.keywordSource || "user",
+              // Type-specific data based on response type
+              ...(args.type === "image" && {
+                image_urls: args.imageUrls || [],
+                analysis_result: null,
+              }),
+              ...(args.type === "voice" && {
+                voice_urls: args.voiceUrls || [],
+                audio_url: args.voiceUrls?.[0] || "",
+                captions: args.voiceUrls?.map(() => "") || [],
+                transcription: "",
+                language: "en",
+                analysis_result: null,
+              }),
+              ...(args.type === "document" && {
+                document_urls: args.documentUrls || [],
+                document_names: [],
+                document_url: args.documentUrls?.[0] || "",
+                extracted_text: "",
+                analysis_result: null,
+              }),
+              ...(args.type === "video" && {
+                video_urls: args.videoUrls || [],
+                captions: args.videoUrls?.map(() => "") || [],
+                analysis_result: null,
+              }),
+              ...(args.type === "tag" && {
+                tags: args.tags || [],
+                tag_action_mode: args.tagActionMode || "add",
+                remove_tags: args.removeTags || [],
+                confidence: 0.9,
+              }),
+              ...(args.type === "assign" && {
+                assigned_employees: args.assignedEmployees || [],
+              }),
+            },
+          };
+
+          console.log("💾 Using endpoint: /api/ai-responses");
+          console.log("💾 Response data structure:", responseData);
+
+          // Call the same endpoint your frontend uses
+          const axios = require("axios");
+          const apiResponse = await axios.post(
+            `${req.protocol}://${req.get("host")}/api/ai-responses`,
+            responseData
+          );
+
+          console.log("✅ API Response received:", apiResponse.data);
+
+          if (!apiResponse.data.success) {
+            throw new Error("API returned error: " + apiResponse.data.error);
+          }
+
+          const responseId =
+            apiResponse.data.data.id ||
+            apiResponse.data.data.response_id ||
+            apiResponse.data.data.responseId;
+          console.log("✅ AI response created successfully!");
+          console.log("📋 Table used:", tableName);
+          console.log("🆔 Response ID:", responseId);
+
+          const result = `✅ AI response created successfully! Response ID: ${responseId}
+      
+      Response Details:
+      • Type: ${args.type}
+      • Keywords: ${args.keywords?.join(", ")}
+      • Description: ${args.description}
+      • Status: ${args.status || "active"}
+      
+      The AI response is now active and will automatically trigger when the specified keywords are detected.`;
+
+          toolOutputs.push({
+            tool_call_id: toolCall.id,
+            output: result,
+          });
+          console.log("📤 Added createAIResponse result to tool outputs");
+        } catch (error) {
+          console.error("❌ Error in createAIResponse:", error);
+          toolOutputs.push({
+            tool_call_id: toolCall.id,
+            output: JSON.stringify({ error: error.message }),
+          });
+        }
+        break;
+      case "askForImage":
+        try {
+          console.log("��️ Processing askForImage tool call...");
+          const args = JSON.parse(toolCall.function.arguments);
+
+          // This tool should ask the user to upload an image
+          const result = `Please upload an image for: ${
+            args.purpose || "your AI response"
+          }. 
+          
+          Supported formats: JPG, PNG, GIF
+          Maximum size: 10MB
+          
+          Once you upload the image, I'll create the AI response configuration for you.`;
+
+          toolOutputs.push({
+            tool_call_id: toolCall.id,
+            output: result,
+          });
+          console.log("📤 Added image request to tool outputs");
+        } catch (error) {
+          console.error("❌ Error in askForImage:", error);
+          toolOutputs.push({
+            tool_call_id: toolCall.id,
+            output: JSON.stringify({ error: error.message }),
+          });
+        }
+        break;
+
+      case "askForFile":
+        try {
+          console.log("📁 Processing askForFile tool call...");
+          const args = JSON.parse(toolCall.function.arguments);
+
+          const result = `Please upload a file for: ${
+            args.purpose || "your AI response"
+          }. 
+          
+          Supported formats: PDF, DOC, DOCX, TXT
+          Maximum size: 20MB
+          
+          Once you upload the file, I'll create the AI response configuration for you.`;
+
+          toolOutputs.push({
+            tool_call_id: toolCall.id,
+            output: result,
+          });
+          console.log("�� Added file request to tool outputs");
+        } catch (error) {
+          console.error("❌ Error in askForFile:", error);
+          toolOutputs.push({
+            tool_call_id: toolCall.id,
+            output: JSON.stringify({ error: error.message }),
+          });
+        }
+        break;
+
+      case "askForAudio":
+        try {
+          console.log("🎵 Processing askForAudio tool call...");
+          const args = JSON.parse(toolCall.function.arguments);
+
+          const result = `Please upload an audio file for: ${
+            args.purpose || "your AI response"
+          }. 
+          
+          Supported formats: MP3, WAV, M4A
+          Maximum size: 15MB
+          
+          Once you upload the audio, I'll create the AI response configuration for you.`;
+
+          toolOutputs.push({
+            tool_call_id: toolCall.id,
+            output: result,
+          });
+          console.log("📤 Added audio request to tool outputs");
+        } catch (error) {
+          console.error("❌ Error in askForAudio:", error);
+          toolOutputs.push({
+            tool_call_id: toolCall.id,
+            output: JSON.stringify({ error: error.message }),
+          });
+        }
+        break;
+
+      case "askForVideo":
+        try {
+          console.log("🎬 Processing askForVideo tool call...");
+          const args = JSON.parse(toolCall.function.arguments);
+
+          const result = `Please upload a video file for: ${
+            args.purpose || "your AI response"
+          }. 
+          
+          Supported formats: MP4, MOV, AVI
+          Maximum size: 50MB
+          
+          Once you upload the video, I'll create the AI response configuration for you.`;
+
+          toolOutputs.push({
+            tool_call_id: toolCall.id,
+            output: result,
+          });
+          console.log("📤 Added video request to tool outputs");
+        } catch (error) {
+          console.error("❌ Error in askForVideo:", error);
+          toolOutputs.push({
+            tool_call_id: toolCall.id,
+            output: JSON.stringify({ error: error.message }),
+          });
+        }
+        break;
+
+      case "searchWeb":
+        try {
+          console.log("🌐 Processing searchWeb tool call...");
+          const args = JSON.parse(toolCall.function.arguments);
+          const searchResults = await searchWeb(args.query);
+          console.log("✅ Web search completed successfully");
+
+          toolOutputs.push({
+            tool_call_id: toolCall.id,
+            output: searchResults,
+          });
+          console.log("📤 Added search results to tool outputs");
+        } catch (error) {
+          console.error("❌ Error in searchWeb:", error);
+          toolOutputs.push({
+            tool_call_id: toolCall.id,
+            output: JSON.stringify({ error: error.message }),
+          });
+        }
+        break;
+
+      default:
+        console.log(`⚠️ Unknown tool function: ${toolCall.function.name}`);
+        toolOutputs.push({
+          tool_call_id: toolCall.id,
+          output: JSON.stringify({
+            error: `Unknown tool function: ${toolCall.function.name}`,
+          }),
+        });
+    }
+  }
+
+  console.log(`�� Total tool outputs prepared: ${toolOutputs.length}`);
+  return toolOutputs;
+}
+
+// Helper function to parse AI assistant response
+// Helper function to parse AI assistant response - IMPROVED VERSION
+function parseAIResponse(aiResponse) {
+  try {
+    console.log("�� Raw AI response:", aiResponse);
+
+    // Extract response data from the structured format
+    const responseMatch = aiResponse.match(
+      /\[RESPONSE_START\]([\s\S]*?)\[RESPONSE_END\]/
+    );
+    const explanationMatch = aiResponse.match(
+      /\[EXPLANATION_START\]([\s\S]*?)\[EXPLANATION_END\]/
+    );
+    const alternativesMatch = aiResponse.match(
+      /\[ALTERNATIVES_START\]([\s\S]*?)\[ALTERNATIVES_END\]/
+    );
+
+    let suggestedResponse = {
+      type: "tag",
+      keywords: [],
+      description: "",
+      status: "active",
+      keywordSource: "user",
+    };
+
+    let alternatives = [];
+    let explanation = "AI response generated successfully";
+
+    // Parse the main response
+    if (responseMatch) {
+      try {
+        // Clean the response text before parsing
+        let responseText = responseMatch[1].trim();
+
+        // Remove any markdown formatting or extra characters
+        responseText = responseText
+          .replace(/```json/g, "")
+          .replace(/```/g, "")
+          .replace(/^[\s\n]*/, "") // Remove leading whitespace and newlines
+          .replace(/[\s\n]*$/, ""); // Remove trailing whitespace and newlines
+
+        console.log("🧹 Cleaned response text:", responseText);
+
+        // Try to find valid JSON within the text
+        const jsonStart = responseText.indexOf("{");
+        const jsonEnd = responseText.lastIndexOf("}");
+
+        if (jsonStart !== -1 && jsonEnd !== -1 && jsonEnd > jsonStart) {
+          const jsonText = responseText.substring(jsonStart, jsonEnd + 1);
+          console.log("🔍 Extracted JSON text:", jsonText);
+
+          const responseData = JSON.parse(jsonText);
+          suggestedResponse = { ...suggestedResponse, ...responseData };
+          console.log("✅ Successfully parsed response data");
+        } else {
+          console.log("⚠️ No valid JSON found, using fallback parsing");
+          // Fallback: try to extract individual fields using regex
+          const typeMatch = responseText.match(/"type"\s*:\s*"([^"]+)"/);
+          const keywordsMatch = responseText.match(
+            /"keywords"\s*:\s*\[([^\]]+)\]/
+          );
+          const descMatch = responseText.match(/"description"\s*:\s*"([^"]+)"/);
+
+          if (typeMatch) suggestedResponse.type = typeMatch[1];
+          if (keywordsMatch) {
+            suggestedResponse.keywords = keywordsMatch[1]
+              .split(",")
+              .map((k) => k.trim().replace(/"/g, ""))
+              .filter((k) => k.length > 0);
+          }
+          if (descMatch) suggestedResponse.description = descMatch[1];
+        }
+      } catch (e) {
+        console.log("❌ Failed to parse JSON from response section:", e);
+        console.log("🔍 Raw response section:", responseMatch[1]);
+      }
+    }
+
+    // Parse explanation
+    if (explanationMatch) {
+      explanation = explanationMatch[1].trim();
+    }
+
+    // Parse alternatives
+    if (alternativesMatch) {
+      try {
+        // Clean the alternatives text before parsing
+        let alternativesText = alternativesMatch[1].trim();
+
+        // Remove any markdown formatting
+        alternativesText = alternativesText
+          .replace(/```json/g, "")
+          .replace(/```/g, "")
+          .replace(/^[\s\n]*/, "")
+          .replace(/[\s\n]*$/, "");
+
+        // Try to find valid JSON array
+        const arrayStart = alternativesText.indexOf("[");
+        const arrayEnd = alternativesText.lastIndexOf("]");
+
+        if (arrayStart !== -1 && arrayEnd !== -1 && arrayEnd > arrayStart) {
+          const arrayText = alternativesText.substring(
+            arrayStart,
+            arrayEnd + 1
+          );
+          alternatives = JSON.parse(arrayText);
+        }
+      } catch (e) {
+        console.log("❌ Failed to parse JSON from alternatives section:", e);
+        console.log("🔍 Raw alternatives section:", alternativesMatch[1]);
+      }
+    }
+
+    // Validate and clean the suggested response
+    if (!Array.isArray(suggestedResponse.keywords)) {
+      suggestedResponse.keywords = [];
+    }
+
+    if (!suggestedResponse.description) {
+      suggestedResponse.description = `Automated ${suggestedResponse.type} response`;
+    }
+
+    console.log("🎯 Final parsed response:", {
+      explanation,
+      suggestedResponse,
+      alternatives,
+    });
+
+    return {
+      explanation,
+      suggestedResponse,
+      alternatives,
+    };
+  } catch (error) {
+    console.error("❌ Error parsing AI response:", error);
+    console.error("�� Raw AI response:", aiResponse);
+
+    // Return a basic fallback response
+    return {
+      explanation: "AI response generated successfully",
+      suggestedResponse: {
+        type: "tag",
+        keywords: [],
+        description: "AI-generated response",
+        status: "active",
+        keywordSource: "user",
+      },
+      alternatives: [],
+    };
+  }
+}
 
 app.post("/api/v2/messages/text/:companyId/:chatId", async (req, res) => {
   console.log("\n=== New Text Message Request ===");
@@ -18267,8 +22055,15 @@ app.post("/api/v2/messages/text/:companyId/:chatId", async (req, res) => {
       );
 
       // Add author username after sending message
-      await findAndUpdateMessageAuthor(message, contactID, companyId, userName);
-
+      setTimeout(async () => {
+        await findAndUpdateMessageAuthor(
+          message,
+          contactID,
+          companyId,
+          userName
+        );
+      }, 1000); // 500ms delay to ensure automatic message insertion completes
+      // ... existing code ...
       // 5. Handle OpenAI integration for the receiver's contact
       if (contactData?.thread_id) {
         console.log("Using existing thread:", contactData.thread_id);
@@ -18456,7 +22251,7 @@ async function findAndUpdateMessageAuthor(
 // React to message
 app.post("/api/messages/react/:companyId/:messageId", async (req, res) => {
   const { companyId, messageId } = req.params;
-  const { reaction, phoneIndex = 0 } = req.body;
+  const { reaction, phoneIndex = 0, contactId, content } = req.body;
 
   try {
     // Validate the reaction
@@ -18495,8 +22290,8 @@ app.post("/api/messages/react/:companyId/:messageId", async (req, res) => {
     try {
       await dbClient.query("BEGIN");
 
-      // First update the message record
-      const messageUpdateQuery = `
+      // Try to update by message_id first, then fallback to contact_id + content
+      let messageUpdateQuery = `
         UPDATE public.messages 
         SET 
           reaction = $1,
@@ -18507,17 +22302,49 @@ app.post("/api/messages/react/:companyId/:messageId", async (req, res) => {
         RETURNING id, contact_id
       `;
 
-      const messageUpdateValues = [
+      let messageUpdateValues = [
         reaction || null,
         new Date(),
         messageId,
         companyId,
       ];
 
-      const messageResult = await dbClient.query(
+      let messageResult = await dbClient.query(
         messageUpdateQuery,
         messageUpdateValues
       );
+
+      // If message_id not found, try to find by contact_id + content
+      if (messageResult.rowCount === 0 && contactId && content) {
+        console.log(
+          `Message ${messageId} not found, trying contact_id + content lookup`
+        );
+
+        messageUpdateQuery = `
+          UPDATE public.messages 
+          SET 
+            reaction = $1,
+            reaction_timestamp = $2
+          WHERE 
+            contact_id = $3 AND 
+            company_id = $4 AND
+            content = $5
+          RETURNING id, contact_id
+        `;
+
+        messageUpdateValues = [
+          reaction || null,
+          new Date(),
+          contactId,
+          companyId,
+          content,
+        ];
+
+        messageResult = await dbClient.query(
+          messageUpdateQuery,
+          messageUpdateValues
+        );
+      }
 
       if (messageResult.rowCount === 0) {
         await dbClient.query("ROLLBACK");
@@ -18562,7 +22389,6 @@ app.post("/api/messages/react/:companyId/:messageId", async (req, res) => {
     });
   }
 });
-
 // Edit message route
 app.put("/api/v2/messages/:companyId/:chatId/:messageId", async (req, res) => {
   console.log("Edit message");
@@ -18652,40 +22478,151 @@ app.put("/api/v2/messages/:companyId/:chatId/:messageId", async (req, res) => {
 });
 
 // Delete message route
+
 app.delete(
   "/api/v2/messages/:companyId/:chatId/:messageId",
   async (req, res) => {
-    console.log("Delete message");
+    console.log("Delete message - Starting");
     const { companyId, chatId, messageId } = req.params;
     const { deleteForEveryone, phoneIndex: requestedPhoneIndex } = req.body;
+
+    console.log("Delete message - Params:", {
+      companyId,
+      chatId,
+      messageId,
+      deleteForEveryone,
+      requestedPhoneIndex,
+    });
 
     const phoneIndex =
       requestedPhoneIndex !== undefined ? parseInt(requestedPhoneIndex) : 0;
 
     try {
       // Get the client for this company from botMap
+      console.log("Delete message - Getting bot data for company:", companyId);
       const botData = botMap.get(companyId);
       if (!botData || !botData[phoneIndex] || !botData[phoneIndex].client) {
+        console.log("Delete message - Bot data not found:", {
+          companyId,
+          phoneIndex,
+          hasBotData: !!botData,
+        });
         return res
           .status(404)
           .send("WhatsApp client not found for this company");
       }
       const client = botData[phoneIndex].client;
+      console.log("Delete message - Got WhatsApp client");
+
+      // Transform chat ID to WhatsApp format
+      let whatsappChatId = chatId;
+      if (chatId.includes("-")) {
+        // Extract phone number from format like "0210-60126268707"
+        const phoneNumber = chatId.split("-")[1];
+        whatsappChatId = `${phoneNumber}@c.us`;
+        console.log("Delete message - Transformed chat ID:", {
+          original: chatId,
+          transformed: whatsappChatId,
+        });
+      }
 
       // Get the chat
-      const chat = await client.getChatById(chatId);
+      console.log("Delete message - Getting chat by ID:", whatsappChatId);
+      let chat;
+      try {
+        chat = await client.getChatById(whatsappChatId);
+        console.log("Delete message - Got chat");
+      } catch (chatError) {
+        console.error("Delete message - Error getting chat:", chatError);
+        console.error("Delete message - Chat error details:", {
+          error: chatError.message,
+          stack: chatError.stack,
+          originalChatId: chatId,
+          whatsappChatId: whatsappChatId,
+        });
+        return res.status(500).json({
+          success: false,
+          error: "Failed to get chat",
+          details: chatError.message,
+        });
+      }
 
       // Fetch the message
-      const messages = await chat.fetchMessages({ limit: 1, id: messageId });
+      console.log("Delete message - Fetching message:", messageId);
+      let messages;
+      try {
+        messages = await chat.fetchMessages({ limit: 1, id: messageId });
+        console.log(
+          "Delete message - Fetched messages, count:",
+          messages.length
+        );
+      } catch (fetchError) {
+        console.error("Delete message - Error fetching messages:", fetchError);
+        console.error("Delete message - Fetch error details:", {
+          error: fetchError.message,
+          stack: fetchError.stack,
+          messageId: messageId,
+        });
+        return res.status(500).json({
+          success: false,
+          error: "Failed to fetch message",
+          details: fetchError.message,
+        });
+      }
+
       if (messages.length === 0) {
+        console.log("Delete message - Message not found in chat");
         return res.status(404).send("Message not found");
       }
       const message = messages[0];
+      console.log("Delete message - Got message, deleting from WhatsApp");
 
       // Delete the message
-      await message.delete(true);
+      try {
+        console.log("Delete message - Message details:", {
+          fromMe: message.fromMe,
+          type: message.type,
+          timestamp: message.timestamp,
+          id: message.id,
+        });
+
+        // Check if we can delete for everyone (only if message is from us or we're admin)
+        const deleteForEveryone = message.fromMe && deleteForEveryone === true;
+        console.log("Delete message - Delete for everyone:", deleteForEveryone);
+
+        await message.delete(deleteForEveryone);
+        console.log("Delete message - Deleted from WhatsApp successfully");
+      } catch (deleteError) {
+        console.error(
+          "Delete message - Error deleting from WhatsApp:",
+          deleteError
+        );
+        console.error("Delete message - Delete error details:", {
+          error: deleteError.message,
+          stack: deleteError.stack,
+          messageId: messageId,
+          messageFromMe: message?.fromMe,
+          messageType: message?.type,
+        });
+
+        // If it's a permission error, return 403 instead of 500
+        if (deleteError.message && deleteError.message.includes("permission")) {
+          return res.status(403).json({
+            success: false,
+            error: "Permission denied to delete this message",
+            details: deleteError.message,
+          });
+        }
+
+        return res.status(500).json({
+          success: false,
+          error: "Failed to delete message from WhatsApp",
+          details: deleteError.message,
+        });
+      }
 
       // Delete the message from PostgreSQL
+      console.log("Delete message - Getting database connection");
       const dbClient = await getDatabaseConnection();
       if (!dbClient) {
         console.error(
@@ -18696,28 +22633,39 @@ app.delete(
 
       try {
         await dbClient.query("BEGIN");
+        console.log("Delete message - Database transaction started");
 
         const deleteQuery = `
-          DELETE FROM public.messages 
-          WHERE 
-            message_id = $1 AND 
-            company_id = $2 AND
-            chat_id = $3
-          RETURNING id
-        `;
+            DELETE FROM public.messages 
+            WHERE 
+              message_id = $1 AND 
+              company_id = $2 AND
+              chat_id = $3
+            RETURNING id
+          `;
 
         const deleteValues = [messageId, companyId, chatId];
+        console.log(
+          "Delete message - Executing database delete with values:",
+          deleteValues
+        );
 
         const result = await dbClient.query(deleteQuery, deleteValues);
+        console.log(
+          "Delete message - Database delete result:",
+          result.rowCount
+        );
 
         if (result.rowCount === 0) {
           await dbClient.query("ROLLBACK");
+          console.log("Delete message - No rows affected, rolling back");
           return res
             .status(404)
             .json({ success: false, error: "Message not found in database" });
         }
 
         await dbClient.query("COMMIT");
+        console.log("Delete message - Database transaction committed");
         res.json({ success: true, messageId: messageId });
       } catch (error) {
         await dbClient.query("ROLLBACK");
@@ -18728,6 +22676,7 @@ app.delete(
       }
     } catch (error) {
       console.error("Error deleting message:", error);
+      console.error("Error stack:", error.stack);
       res.status(500).send("Internal Server Error");
     }
   }
@@ -19238,78 +23187,105 @@ app.post(
 
         await client.query("COMMIT");
 
-        // 6. Send notification message to the contact
+        // ... existing code ...
+        // 6. Send notification message to the employee (not the contact)
         try {
           const botData = botMap.get(companyId);
           if (botData && botData[0]?.client) {
             const whatsappClient = botData[0].client;
-            const chatId = phoneNumber.replace("+", "") + "@c.us";
 
-            // Get the last message from this contact
-            const lastMessageQuery = `
-            SELECT content, timestamp, message_type
-            FROM messages 
-            WHERE company_id = $1 
-              AND customer_phone = $2 
-              AND from_me = false
-            ORDER BY timestamp DESC 
-            LIMIT 1
+            // Get employee's phone number for notification
+            const employeePhoneQuery = `
+            SELECT phone_number FROM employees 
+            WHERE company_id = $1 AND name = $2
           `;
+            const employeePhoneResult = await client.query(employeePhoneQuery, [
+              companyId,
+              employeeName,
+            ]);
 
-            let lastMessageInfo = "";
-            try {
-              const lastMessageResult = await client.query(lastMessageQuery, [
-                companyId,
-                phoneNumber,
-              ]);
-              if (lastMessageResult.rows.length > 0) {
-                const lastMsg = lastMessageResult.rows[0];
-                const messageType = lastMsg.message_type || "text";
-                const messageContent = lastMsg.content || "No content";
-                const messageTime = new Date(
-                  lastMsg.timestamp
-                ).toLocaleString();
+            if (
+              employeePhoneResult.rows.length > 0 &&
+              employeePhoneResult.rows[0].phone_number
+            ) {
+              const employeePhone = employeePhoneResult.rows[0].phone_number;
+              const employeeChatId = employeePhone.replace("+", "") + "@c.us";
 
-                lastMessageInfo = `\n💬 *Last Message (${messageType}):*\n"${messageContent}"\n⏰ ${messageTime}`;
+              // Get the last message from this contact for context
+              const lastMessageQuery = `
+              SELECT content, timestamp, message_type
+              FROM messages 
+              WHERE company_id = $1 
+                AND customer_phone = $2 
+                AND from_me = false
+              ORDER BY timestamp DESC 
+              LIMIT 1
+            `;
+
+              let lastMessageInfo = "";
+              try {
+                const lastMessageResult = await client.query(lastMessageQuery, [
+                  companyId,
+                  phoneNumber,
+                ]);
+                if (lastMessageResult.rows.length > 0) {
+                  const lastMsg = lastMessageResult.rows[0];
+                  const messageType = lastMsg.message_type || "text";
+                  const messageContent = lastMsg.content || "No content";
+                  const messageTime = new Date(
+                    lastMsg.timestamp
+                  ).toLocaleString();
+
+                  lastMessageInfo = `\n💬 *Last Message (${messageType}):*\n"${messageContent}"\n⏰ ${messageTime}`;
+                }
+              } catch (msgError) {
+                console.warn("Could not fetch last message:", msgError.message);
+                lastMessageInfo = "\n💬 *Last Message:* Unable to retrieve";
               }
-            } catch (msgError) {
-              console.warn("Could not fetch last message:", msgError.message);
-              lastMessageInfo = "\n💬 *Last Message:* Unable to retrieve";
-            }
 
-            const notificationMessage = `🎯 *Contact Assignment Notification*\n\nHello! This contact has been assigned to *${employeeName}*.\n\n📋 *Assignment Details:*\n• Employee: ${employeeName}\n• Contact Number: ${phoneNumber}\n• Assigned Date: ${new Date().toLocaleDateString()}\n• Time: ${new Date().toLocaleTimeString()}${lastMessageInfo}\n\n🌐 *Access Your Dashboard:*\nVisit: web.jutateknologi.com\n\nThank you for choosing our services!`;
+              const notificationMessage = `🎯 *New Contact Assignment*\n\nHello ${employeeName}! A new contact has been assigned to you.\n\n�� *Contact Details:*\n• Contact Number: ${phoneNumber}\n• Assigned Date: ${new Date().toLocaleDateString()}\n• Time: ${new Date().toLocaleTimeString()}${lastMessageInfo}\n\n🌐 *Access Your Dashboard:*\nVisit: web.jutateknologi.com\n\nPlease take action on this new assignment.`;
 
-            const sentMessage = await whatsappClient.sendMessage(
-              chatId,
-              notificationMessage
-            );
+              console.log(
+                `Attempting to send notification to employee ${employeeName} at ${employeeChatId}`
+              );
 
-            // Save the notification message to database
-            if (sentMessage) {
-              await addMessageToPostgres(
-                sentMessage,
-                companyId,
-                phoneNumber,
-                updateResult.rows[0].contact_name ||
-                  updateResult.rows[0].name ||
-                  "",
-                0, // phoneIndex
-                "System" // userName
+              const sentMessage = await whatsappClient.sendMessage(
+                employeeChatId,
+                notificationMessage
+              );
+
+              console.log(
+                `WhatsApp message sent successfully:`,
+                sentMessage ? "Yes" : "No"
+              );
+
+              // Don't try to save system messages to database - they're not real WhatsApp messages
+              // The addMessageToPostgres function expects actual WhatsApp message objects
+
+              console.log(
+                `Notification message sent to employee ${employeeName} (${employeePhone}) for contact assignment`
+              );
+            } else {
+              console.warn(
+                `Employee ${employeeName} does not have a phone number - skipping notification message`
               );
             }
-
-            console.log(
-              `Notification message sent to ${phoneNumber} for employee assignment`
-            );
           } else {
             console.warn(
               `WhatsApp client not available for company ${companyId} - skipping notification message`
             );
           }
         } catch (messageError) {
-          console.error("Error sending notification message:", messageError);
+          console.error("Error sending notification message:", {
+            error: messageError,
+            message: messageError.message,
+            stack: messageError.stack,
+            companyId,
+            employeeName,
+          });
           // Don't fail the entire operation if message sending fails
         }
+        // ... existing code ...
 
         res.json({
           success: true,
@@ -19898,11 +23874,9 @@ app.put("/api/update-phone-name", async (req, res) => {
     console.log("Updating phone name:", { companyId, phoneIndex, phoneName });
 
     if (!companyId || phoneIndex === undefined || phoneName === undefined) {
-      return res
-        .status(400)
-        .json({
-          error: "Company ID, phone index, and phone name are required",
-        });
+      return res.status(400).json({
+        error: "Company ID, phone index, and phone name are required",
+      });
     }
 
     // Fetch current phone_numbers array
@@ -20931,7 +24905,7 @@ async function sendAlertToEmployees(companyId) {
 
     const companyCategory = companies[0].category;
     let botId = "0134";
-    let alertMessage = `[ALERT] WhatsApp Connection Disconnected\n\nACTION REQUIRED:\n\n1. Navigate to web.jutasoftware.co.\n2. Log in to your account.\n3. Scan the QR code to reinitialize your WhatsApp connection.\n\nFor support, please contact +601121677672`;
+    let alertMessage = `[ALERT] WhatsApp Connection Disconnected\n\nACTION REQUIRED:\n\n1. Navigate to web.jutateknologi.com\n2. Log in to your account.\n3. Scan the QR code to reinitialize your WhatsApp connection.\n\nFor support, please contact +601121677672`;
 
     if (!companyCategory) {
       botId = "0134";
@@ -21920,6 +25894,7 @@ app.get("/api/companies/:companyId/contacts", async (req, res) => {
     c.company,
     c.notes,
     c.last_name,
+    c.pinned,
     c.points,
     CASE 
       WHEN c.chat_id LIKE '%@c.us' THEN true 
@@ -22030,6 +26005,7 @@ app.get("/api/companies/:companyId/contacts", async (req, res) => {
         phoneIndexes: phoneIndexes,
         assignedTo: assignedTo,
         createdAt: contact.created_at,
+        pinned: contact.pinned,
         lastUpdated: contact.last_updated,
         isIndividual: contact.is_individual,
         last_message: contact.last_message || null,
@@ -22164,7 +26140,12 @@ app.get("/api/messages", async (req, res) => {
       companyId
     );
     const result = await sqlDb.query(
-      `SELECT m.*, c.name as contact_name 
+      `SELECT m.id, m.message_id, m.company_id, m.contact_id, m.thread_id, 
+             m.customer_phone, m.content, m.message_type, m.media_url, m.timestamp,
+             m.logs, m.tags, m.reaction, m.reaction_timestamp, m.edited, m.edited_at,
+             m.start_time, m.end_time, m.duration, m.direction, m.status, m.created_at,
+             m.from_me, m.chat_id, m.author, m.media_data, m.media_metadata, 
+             m.phone_index, m.quoted_message, c.name as contact_name
        FROM messages m
        LEFT JOIN contacts c ON m.contact_id = c.contact_id AND m.company_id = c.company_id
        WHERE m.contact_id = $1 AND m.company_id = $2 
@@ -22178,7 +26159,6 @@ app.get("/api/messages", async (req, res) => {
     res.status(500).json({ error: "Failed to fetch messages" });
   }
 });
-
 // Get paginated messages for app
 app.get("/api/message-pages", async (req, res) => {
   try {
@@ -23717,11 +27697,9 @@ app.post("/api/appointments", async (req, res) => {
 
     // Validate required fields
     if (!schemaFields.title || !schemaFields.scheduled_time) {
-      return res
-        .status(400)
-        .json({
-          error: "title and scheduled_time (or startTime) are required",
-        });
+      return res.status(400).json({
+        error: "title and scheduled_time (or startTime) are required",
+      });
     }
 
     // Ensure contact_id is null if empty

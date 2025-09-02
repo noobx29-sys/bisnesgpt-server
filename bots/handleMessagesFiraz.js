@@ -561,15 +561,28 @@ async function updateTaskStatus(idSubstring, taskIndex, newStatus) {
 async function customWait(milliseconds) {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
-
-async function addNotificationToUser(companyId, message, contactName) {
-  console.log("Adding notification and sending FCM");
+// OneSignal Configuration
+const ONESIGNAL_CONFIG = {
+  appId: "8df2a641-209a-4a29-bca9-4bc57fe78a31",
+  apiKey: "os_v2_app_rxzkmqjatjfctpfjjpcx7z4kggtzrc4eqlpuf752c47ahfeuxpspsf34k6qxozgmvtdqgbss7fq7e7ygljhsbwxjry4k22j3v5bxtyi",
+  apiUrl: "https://api.onesignal.com/api/v1/notifications"
+};
+async function addNotificationToUser(companyId, message, contactName, contactId = null, chatId = null, phoneNumber = null, profilePicUrl = null) {
+  console.log("Adding notification and sending OneSignal");
+  console.log("📱 addNotificationToUser parameters:");
+  console.log("   companyId:", companyId);
+  console.log("   message:", message);
+  console.log("   contactName:", contactName);
+  console.log("   contactId:", contactId);
+  console.log("   chatId:", chatId);
+  console.log("   phoneNumber:", phoneNumber);
+  console.log("   profilePicUrl:", profilePicUrl);
   try {
     const client = await pool.connect();
 
     try {
       const usersQuery = await client.query(
-        "SELECT user_id FROM public.users WHERE company_id = $1",
+        "SELECT user_id, email FROM public.users WHERE company_id = $1",
         [companyId]
       );
 
@@ -593,6 +606,111 @@ async function addNotificationToUser(companyId, message, contactName) {
       let notificationText = cleanMessage.text?.body || "New message received";
       if (cleanMessage.hasMedia) {
         notificationText = `Media: ${cleanMessage.type || "attachment"}`;
+      }
+
+      // Send OneSignal notification to all users in the company
+      try {
+        // Determine notification type based on context
+        let notificationType = "company_announcement";
+        let additionalData = {
+          company_id: companyId
+        };
+
+        if (contactName && contactId && chatId) {
+          // This is an actual message from a contact
+          notificationType = "message";
+          additionalData = {
+            ...additionalData,
+            message_type: cleanMessage.type || "message",
+            has_media: cleanMessage.hasMedia || false,
+            contact_name: contactName,
+            contact_id: contactId,
+            chat_id: chatId,
+            phone: phoneNumber,
+            profile_pic_url: profilePicUrl,
+            type: notificationType
+          };
+        } else {
+          // This is a company announcement
+          additionalData = {
+            ...additionalData,
+            type: notificationType
+          };
+        }
+
+        console.log("📤 Sending to OneSignal with data:");
+        console.log("   additionalData:", JSON.stringify(additionalData, null, 2));
+        
+        // Create the main notification payload for OneSignal
+        const notificationPayload = {
+          // Core notification data
+          ...additionalData,
+          
+          // Profile picture fields - these go directly to OneSignal
+          large_icon: isValidProfilePicUrl(profilePicUrl) ? getOptimizedNotificationIcon(profilePicUrl) : null,
+          big_picture: isValidProfilePicUrl(profilePicUrl) ? getOptimizedNotificationIcon(profilePicUrl) : null,
+          small_icon: "ic_launcher",
+          
+          // Android-specific enhancements
+          android_accent_color: "FF2196F3",
+          android_led_color: "FF2196F3",
+          
+          // iOS-specific profile picture support
+          ios_attachments: isValidProfilePicUrl(profilePicUrl) ? { id1: getOptimizedNotificationIcon(profilePicUrl) } : null,
+          
+          // Additional profile picture fields for better compatibility
+          chrome_web_image: isValidProfilePicUrl(profilePicUrl) ? getOptimizedNotificationIcon(profilePicUrl) : null,
+        };
+
+        console.log("📸 Notification payload with profile picture:");
+        console.log("   Profile Pic URL:", profilePicUrl);
+        console.log("   Is Valid URL:", isValidProfilePicUrl(profilePicUrl));
+        console.log("   Large Icon:", notificationPayload.large_icon);
+        console.log("   Big Picture:", notificationPayload.big_picture);
+        console.log("   Small Icon:", notificationPayload.small_icon);
+        console.log("   iOS Attachments:", notificationPayload.ios_attachments);
+        console.log("   Chrome Web Image:", notificationPayload.chrome_web_image);
+        console.log("   Android Accent Color:", notificationPayload.android_accent_color);
+        console.log("   Android LED Color:", notificationPayload.android_led_color);
+
+        try {
+          // Try to send with profile picture first
+          await sendOneSignalNotification(
+            companyId,
+            contactName || "Company Announcement",
+            notificationText,
+            notificationPayload
+          );
+          console.log(`✅ OneSignal notification sent to company: ${companyId} with type: ${notificationType}`);
+        } catch (onesignalError) {
+          console.error("❌ Failed to send OneSignal notification with profile picture:", onesignalError.message);
+          
+          // Fallback: Try without profile picture
+          try {
+            console.log("🔄 Retrying without profile picture...");
+            const fallbackPayload = {
+              ...additionalData,
+              small_icon: "ic_launcher",
+              android_accent_color: "FF2196F3",
+              android_led_color: "FF2196F3"
+            };
+            
+            await sendOneSignalNotification(
+              companyId,
+              contactName || "Company Announcement",
+              notificationText,
+              fallbackPayload
+            );
+            console.log(`✅ OneSignal notification sent successfully without profile picture`);
+          } catch (fallbackError) {
+            console.error("❌ Failed to send OneSignal notification even without profile picture:", fallbackError.message);
+          }
+          
+          // Continue with database operations even if OneSignal fails
+        }
+      } catch (error) {
+        console.error("Error in notification sending:", error);
+        // Continue with database operations even if OneSignal fails
       }
 
       const promises = usersQuery.rows.map(async (user) => {
@@ -623,10 +741,140 @@ async function addNotificationToUser(companyId, message, contactName) {
       await safeRelease(client);
     }
   } catch (error) {
-    console.error("Error adding notification or sending FCM: ", error);
+    console.error("Error adding notification or sending OneSignal: ", error);
+  }
+}
+function getOptimizedNotificationIcon(profilePicUrl) {
+  // Check if profile picture URL is valid and accessible
+  if (profilePicUrl && profilePicUrl.startsWith('http') && profilePicUrl.includes('whatsapp.net')) {
+    // WhatsApp profile pictures are usually reliable, use them
+    console.log("📸 Using WhatsApp profile picture URL");
+    
+    // Ensure URL is properly encoded for OneSignal
+    try {
+      const encodedUrl = encodeURI(profilePicUrl);
+      console.log("📸 Encoded profile picture URL:", encodedUrl);
+      return encodedUrl;
+    } catch (error) {
+      console.log("📸 Error encoding profile picture URL:", error.message);
+      return profilePicUrl; // Return original if encoding fails
+    }
+  } else if (profilePicUrl && profilePicUrl.startsWith('http')) {
+    // Other HTTP URLs - use them but log for monitoring
+    console.log("📸 Using external profile picture URL:", profilePicUrl);
+    return profilePicUrl;
+  } else {
+    // Fallback to app icon
+    console.log("📸 No valid profile picture, using app icon");
+    return null; // Let OneSignal use default
+  }
+}
+// Helper function to validate and optimize profile picture URLs for notifications
+function isValidProfilePicUrl(url) {
+  if (!url || typeof url !== 'string') return false;
+  
+  try {
+    const urlObj = new URL(url);
+    return urlObj.protocol === 'https:' && 
+           urlObj.hostname.includes('whatsapp.net') &&
+           urlObj.pathname.includes('.jpg');
+  } catch (error) {
+    console.log("📸 Invalid profile picture URL format:", url);
+    return false;
   }
 }
 
+// OneSignal notification helper functions
+async function sendOneSignalNotification(companyId, title, message, data = {}) {
+  try {
+    console.log("📤 OneSignal request details:");
+    console.log("   URL:", ONESIGNAL_CONFIG.apiUrl);
+    console.log("   App ID:", ONESIGNAL_CONFIG.appId);
+    console.log("   Company ID:", companyId);
+    console.log("   Title:", title);
+    console.log("   Message:", message);
+    console.log("   Data:", JSON.stringify(data, null, 2));
+
+    const requestBody = {
+      app_id: ONESIGNAL_CONFIG.appId,
+      target_channel: "push",
+      name: "Company Notification",
+      headings: { "en": title },
+      contents: { "en": message },
+      include_external_user_ids: [companyId], // Target all users in the company
+      
+      // Profile picture support for rich notifications (OneSignal best practices)
+      large_icon: data.large_icon || null,  // Profile picture (right side) - OneSignal auto-scales
+      big_picture: data.big_picture || null,  // Full-size profile picture when expanded
+      small_icon: data.small_icon || "ic_launcher",  // App icon (left side, status bar)
+      
+      // Android-specific enhancements
+      android_accent_color: data.android_accent_color || "FF2196F3",
+      android_led_color: data.android_led_color || "FF2196F3",
+      
+      // iOS-specific profile picture support
+      ios_attachments: data.ios_attachments || null,
+      
+      // Additional profile picture fields for better compatibility
+      chrome_web_image: data.chrome_web_image || null,
+      
+      data: {
+        type: "company_message",
+        company_id: companyId,
+        // Only include non-profile-picture data to avoid conflicts
+        message_type: data.message_type,
+        has_media: data.has_media,
+        contact_name: data.contact_name,
+        contact_id: data.contact_id,
+        chat_id: data.chat_id,
+        phone: data.phone,
+        profile_pic_url: data.profile_pic_url,
+        type: data.type
+      }
+    };
+
+            console.log("📤 OneSignal request body:", JSON.stringify(requestBody, null, 2));
+        console.log("📸 Profile picture fields:");
+        console.log("   large_icon:", requestBody.large_icon);
+        console.log("   big_picture:", requestBody.big_picture);
+        console.log("   small_icon:", requestBody.small_icon);
+        console.log("   ios_attachments:", requestBody.ios_attachments);
+        console.log("   chrome_web_image:", requestBody.chrome_web_image);
+
+    // Use axios instead of fetch since fetch is not available in this Node.js version
+    const axios = require('axios');
+    
+    const response = await axios({
+      method: 'POST',
+      url: ONESIGNAL_CONFIG.apiUrl,
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Basic ${ONESIGNAL_CONFIG.apiKey}`
+      },
+      data: requestBody
+    });
+
+    console.log("📤 OneSignal response status:", response.status);
+    console.log("📤 OneSignal response headers:", response.headers);
+    console.log("📤 OneSignal response body:", response.data);
+    
+    if (response.status >= 200 && response.status < 300) {
+      console.log(`✅ OneSignal notification sent successfully:`, response.data);
+      return response.data;
+    } else {
+      console.error(`❌ OneSignal API error:`, response.data);
+      throw new Error(`OneSignal API error: ${response.data.errors?.join(', ') || 'Unknown error'}`);
+    }
+  } catch (error) {
+    console.error("❌ Error sending OneSignal notification:", error);
+    if (error.response) {
+      console.error("❌ OneSignal API response error:", error.response.data);
+      console.error("❌ OneSignal API status:", error.response.status);
+    }
+    console.error("❌ Error stack:", error.stack);
+    throw error;
+  }
+}
 const messageQueue = new Map();
 const processingQueue = new Map();
 const MAX_QUEUE_SIZE = 5;
@@ -4869,6 +5117,39 @@ async function processMessage(
       return;
     }
 
+    // Send OneSignal notification for incoming messages
+    try {
+      const incomingContactName = contactData?.name || extractedNumber;
+      const messageBody = msg.body || "New message received";
+      
+      // Get contact ID and chat ID for the notification
+      const contactID = contactData?.contact_id || `${idSubstring}-${extractedNumber.slice(1)}`;
+      const chatID = msg.from; // This is the WhatsApp chat ID
+      
+      // Get profile picture URL if available
+      let profilePicUrl = null;
+      try {
+        const contact = await chat.getContact();
+        profilePicUrl = await getProfilePicUrl(contact);
+      } catch (error) {
+        console.log("Could not get profile picture URL:", error.message);
+      }
+      
+      await addNotificationToUser(
+        idSubstring,           // companyId
+        messageBody,           // message
+        incomingContactName,   // contactName
+        contactID,             // contactId
+        chatID,                // chatId
+        extractedNumber,       // phoneNumber
+        profilePicUrl          // profilePicUrl
+      );
+      console.log(`OneSignal notification sent for incoming message from ${incomingContactName}`);
+    } catch (notificationError) {
+      console.error("Error sending OneSignal notification for incoming message:", notificationError);
+      // Continue processing even if notification fails
+    }
+
     let contactName;
     let threadID;
     let query = combinedMessage;
@@ -5216,6 +5497,7 @@ async function processMessage(
     return e.message;
   }
 }
+
 
 async function checkMessageQuotaLimit(companyID) {
   let messageUsage = {};
@@ -5592,7 +5874,17 @@ async function addMessageToPostgres(
       throw error;
     } finally {
       await safeRelease(client);
-      await addNotificationToUser(idSubstring, messageBody, contactName);
+            // Get profile picture URL for the contact
+            let profilePicUrl = null;
+            try {
+              const chat = await msg.getChat();
+              const contact = await chat.getContact();
+              profilePicUrl = await getProfilePicUrl(contact);
+              console.log("Profile picture URL:", profilePicUrl);
+            } catch (error) {
+              console.log("Could not get profile picture URL:", error.message);
+            }
+            await addNotificationToUser(idSubstring, messageBody, contactName, contactID, msg.from, extractedNumber, profilePicUrl);
     }
   } catch (error) {
     console.error("PostgreSQL connection error:", error);
