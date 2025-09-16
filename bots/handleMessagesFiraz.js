@@ -563,8 +563,8 @@ async function customWait(milliseconds) {
 }
 // OneSignal Configuration
 const ONESIGNAL_CONFIG = {
-  appId: "8df2a641-209a-4a29-bca9-4bc57fe78a31",
-  apiKey: "os_v2_app_rxzkmqjatjfctpfjjpcx7z4kggtzrc4eqlpuf752c47ahfeuxpspsf34k6qxozgmvtdqgbss7fq7e7ygljhsbwxjry4k22j3v5bxtyi",
+  appId: process.env.ONESIGNAL_APP_ID || "8df2a641-209a-4a29-bca9-4bc57fe78a31",
+  apiKey: process.env.ONESIGNAL_API_KEY,
   apiUrl: "https://api.onesignal.com/api/v1/notifications"
 };
 async function addNotificationToUser(companyId, message, contactName, contactId = null, chatId = null, phoneNumber = null, profilePicUrl = null) {
