@@ -18052,8 +18052,8 @@ async function main(reinitialize = false) {
 
   // WHEN WANT TO INITIALIZE ALL BOTS
   const companiesPromise = sqlDb.query(
-    "SELECT * FROM companies WHERE company_id = $1",
-    ["0385"]
+    "SELECT * FROM companies WHERE api_url = $1",
+    ["https://juta-dev.ngrok.dev"]
   );
 
   // const companiesPromise = sqlDb.query(
