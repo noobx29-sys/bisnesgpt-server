@@ -18130,7 +18130,7 @@ async function main(reinitialize = false) {
         return;
       }
   
-      const MAX_CONCURRENT = 3; // Maximum number of bots to initialize simultaneously
+      const MAX_CONCURRENT =5; // Maximum number of bots to initialize simultaneously
       const BOT_TIMEOUT = 60000; // 1 minute timeout per bot
       const RETRY_DELAY = 5000; // 5 seconds delay before retrying failed bots
       const MAX_RETRIES = 2; // Maximum retry attempts per bot
@@ -25613,9 +25613,7 @@ async function updatePhoneStatus(companyId, phoneIndex, status, metadata = {}) {
       );
     }
 
-    console.log(
-      `Phone status updated for company ${companyId}, phone ${phoneNumber}: ${status}`
-    );
+   
   } catch (error) {
     console.error(
       `Error updating phone status in SQL for ${companyId} Phone ${phoneIndex}:`,
