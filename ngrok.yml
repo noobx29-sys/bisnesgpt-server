@@ -1,0 +1,10 @@
+authtoken: 2drObp433WOvTIvTrVFQRu6FXID_38uG2YozLYWbKCGocRYC8
+tunnels:
+  whatsapp-service:
+    addr: 8443
+    proto: http
+    hostname: juta-dev.ngrok.dev
+    host_header: juta-dev.ngrok.dev
+  api-service:
+    addr: 8441
+    proto: http

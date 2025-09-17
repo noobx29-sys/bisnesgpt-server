@@ -17,5 +17,16 @@ module.exports = {
     // Add this to prevent any other restart triggers
     min_uptime: '0s',
     restart_delay: 0,
+  }, {
+    name: 'ngrok-tunnel',
+    script: 'ngrok',
+    args: 'start whatsapp-service',
+    instances: 1,
+    exec_mode: 'fork',
+    autorestart: true,
+    watch: false,
+    env: {
+      NODE_ENV: 'production'
+    }
   }]
 };
