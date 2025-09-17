@@ -16,8 +16,7 @@ node_modules/
 .session_backups
 .wwebjs_cache/
 .wwebjs_cache
-public/
-public
+
 generated_certificates/
 generated_certificates
 

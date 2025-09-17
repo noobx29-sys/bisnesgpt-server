@@ -1,0 +1,620 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Server Log Manager</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Courier New', monospace;
+            background-color: #1a1a1a;
+            color: #e0e0e0;
+            line-height: 1.6;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        .header {
+            background: #2d2d2d;
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            border-left: 4px solid #4CAF50;
+        }
+
+        .header h1 {
+            color: #4CAF50;
+            margin-bottom: 10px;
+        }
+
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+
+        .stat-card {
+            background: #2d2d2d;
+            padding: 15px;
+            border-radius: 8px;
+            text-align: center;
+            border-left: 4px solid #2196F3;
+        }
+
+        .stat-card.error {
+            border-left-color: #f44336;
+        }
+
+        .stat-card.warning {
+            border-left-color: #ff9800;
+        }
+
+        .stat-card.success {
+            border-left-color: #4CAF50;
+        }
+
+        .controls {
+            background: #2d2d2d;
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+        }
+
+        .control-group {
+            display: flex;
+            gap: 15px;
+            align-items: center;
+            margin-bottom: 15px;
+            flex-wrap: wrap;
+        }
+
+        .control-group label {
+            font-weight: bold;
+            min-width: 80px;
+        }
+
+        select, input, button {
+            background: #3d3d3d;
+            color: #e0e0e0;
+            border: 1px solid #555;
+            padding: 8px 12px;
+            border-radius: 4px;
+            font-family: 'Courier New', monospace;
+        }
+
+        button {
+            background: #4CAF50;
+            cursor: pointer;
+            transition: background 0.3s;
+        }
+
+        button:hover {
+            background: #45a049;
+        }
+
+        button.secondary {
+            background: #2196F3;
+        }
+
+        button.secondary:hover {
+            background: #1976D2;
+        }
+
+        button.danger {
+            background: #f44336;
+        }
+
+        button.danger:hover {
+            background: #d32f2f;
+        }
+
+        .log-viewer {
+            background: #1a1a1a;
+            border: 2px solid #3d3d3d;
+            border-radius: 8px;
+            height: 500px;
+            overflow-y: auto;
+            padding: 15px;
+            font-size: 13px;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+
+        .log-line {
+            margin-bottom: 5px;
+            padding: 2px 5px;
+            border-radius: 3px;
+        }
+
+        .log-line.error {
+            background: rgba(244, 67, 54, 0.1);
+            border-left: 3px solid #f44336;
+        }
+
+        .log-line.warn {
+            background: rgba(255, 152, 0, 0.1);
+            border-left: 3px solid #ff9800;
+        }
+
+        .log-line.info {
+            background: rgba(33, 150, 243, 0.1);
+            border-left: 3px solid #2196F3;
+        }
+
+        .log-line.startup {
+            background: rgba(76, 175, 80, 0.1);
+            border-left: 3px solid #4CAF50;
+        }
+
+        .timestamp {
+            color: #888;
+        }
+
+        .log-type {
+            color: #4CAF50;
+            font-weight: bold;
+        }
+
+        .search-results {
+            background: #2d2d2d;
+            border-radius: 8px;
+            margin-top: 20px;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+
+        .search-result {
+            padding: 10px;
+            border-bottom: 1px solid #3d3d3d;
+            cursor: pointer;
+            transition: background 0.3s;
+        }
+
+        .search-result:hover {
+            background: #3d3d3d;
+        }
+
+        .search-result .file-name {
+            color: #4CAF50;
+            font-weight: bold;
+        }
+
+        .search-result .line-number {
+            color: #888;
+            font-size: 12px;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 20px;
+            color: #888;
+        }
+
+        .auto-refresh {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .auto-refresh input[type="checkbox"] {
+            width: auto;
+        }
+
+        @media (max-width: 768px) {
+            .control-group {
+                flex-direction: column;
+                align-items: stretch;
+            }
+
+            .control-group label {
+                min-width: auto;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🔍 Server Log Manager</h1>
+            <p>Monitor your server logs, crashes, and system events in real-time</p>
+        </div>
+
+        <div class="stats" id="stats">
+            <div class="stat-card">
+                <h3>Current Logs</h3>
+                <div id="currentLogs">Loading...</div>
+            </div>
+            <div class="stat-card">
+                <h3>Archived Logs</h3>
+                <div id="archivedLogs">Loading...</div>
+            </div>
+            <div class="stat-card error">
+                <h3>Crashes</h3>
+                <div id="crashes">Loading...</div>
+            </div>
+            <div class="stat-card warning">
+                <h3>Restarts</h3>
+                <div id="restarts">Loading...</div>
+            </div>
+            <div class="stat-card success">
+                <h3>Total Size</h3>
+                <div id="totalSize">Loading...</div>
+            </div>
+        </div>
+
+        <div class="controls">
+            <div class="control-group">
+                <label>Log File:</label>
+                <select id="logFile">
+                    <option value="">Select a log file...</option>
+                </select>
+                <label>Lines:</label>
+                <select id="lineCount">
+                    <option value="50">50</option>
+                    <option value="100" selected>100</option>
+                    <option value="200">200</option>
+                    <option value="500">500</option>
+                    <option value="1000">1000</option>
+                    <option value="0">All</option>
+                </select>
+                <label>Type:</label>
+                <select id="logType">
+                    <option value="all">All</option>
+                    <option value="error">Errors</option>
+                    <option value="warn">Warnings</option>
+                    <option value="info">Info</option>
+                    <option value="log">Log</option>
+                </select>
+            </div>
+
+            <div class="control-group">
+                <label>Filter:</label>
+                <input type="text" id="filterText" placeholder="Filter logs...">
+                <button onclick="loadLogs()">🔄 Refresh</button>
+                <button class="secondary" onclick="downloadLog()">📥 Download</button>
+                <div class="auto-refresh">
+                    <input type="checkbox" id="autoRefresh">
+                    <label for="autoRefresh">Auto-refresh (5s)</label>
+                </div>
+            </div>
+
+            <div class="control-group">
+                <label>Search:</label>
+                <input type="text" id="searchTerm" placeholder="Search across all logs...">
+                <button class="secondary" onclick="searchLogs()">🔍 Search</button>
+                <button onclick="rotateLogs()">🔄 Rotate Logs</button>
+                <button class="danger" onclick="cleanLogs()">🗑️ Clean Old</button>
+            </div>
+        </div>
+
+        <div class="log-viewer" id="logViewer">
+            <div class="loading">Select a log file to view its contents...</div>
+        </div>
+
+        <div class="search-results" id="searchResults" style="display: none;">
+            <h3 style="padding: 15px; border-bottom: 1px solid #3d3d3d; margin: 0;">Search Results</h3>
+            <div id="searchResultsContent"></div>
+        </div>
+    </div>
+
+    <script>
+        let autoRefreshInterval;
+        let currentLogFile = '';
+
+        // Initialize
+        document.addEventListener('DOMContentLoaded', function() {
+            loadStats();
+            loadLogFiles();
+            
+            // Setup auto-refresh
+            document.getElementById('autoRefresh').addEventListener('change', function() {
+                if (this.checked) {
+                    autoRefreshInterval = setInterval(() => {
+                        if (currentLogFile) {
+                            loadLogs();
+                        }
+                    }, 5000);
+                } else {
+                    clearInterval(autoRefreshInterval);
+                }
+            });
+
+            // Setup enter key for search
+            document.getElementById('searchTerm').addEventListener('keypress', function(e) {
+                if (e.key === 'Enter') {
+                    searchLogs();
+                }
+            });
+
+            document.getElementById('filterText').addEventListener('keypress', function(e) {
+                if (e.key === 'Enter') {
+                    loadLogs();
+                }
+            });
+        });
+
+        async function loadStats() {
+            try {
+                const [statsResponse, crashResponse] = await Promise.all([
+                    fetch('/api/logs/stats'),
+                    fetch('/api/logs/crash-summary')
+                ]);
+
+                const statsData = await statsResponse.json();
+                const crashData = await crashResponse.json();
+
+                if (statsData.success) {
+                    document.getElementById('currentLogs').textContent = statsData.stats.currentLogs;
+                    document.getElementById('archivedLogs').textContent = statsData.stats.archivedLogs;
+                    document.getElementById('totalSize').textContent = statsData.stats.totalSize;
+                }
+
+                if (crashData.success) {
+                    document.getElementById('crashes').textContent = crashData.summary.crashes;
+                    document.getElementById('restarts').textContent = crashData.summary.restarts;
+                }
+            } catch (error) {
+                console.error('Error loading stats:', error);
+            }
+        }
+
+        async function loadLogFiles() {
+            try {
+                const response = await fetch('/api/logs/files');
+                const data = await response.json();
+
+                if (data.success) {
+                    const select = document.getElementById('logFile');
+                    select.innerHTML = '<option value="">Select a log file...</option>';
+
+                    // Add current files
+                    data.files.current.forEach(file => {
+                        const option = document.createElement('option');
+                        option.value = file.name;
+                        option.textContent = `${file.name} (${file.size})`;
+                        select.appendChild(option);
+                    });
+
+                    // Add archived files
+                    if (data.files.archived.length > 0) {
+                        const optgroup = document.createElement('optgroup');
+                        optgroup.label = 'Archived';
+                        data.files.archived.forEach(file => {
+                            const option = document.createElement('option');
+                            option.value = `archive/${file.name}`;
+                            option.textContent = `${file.name} (${file.size})`;
+                            optgroup.appendChild(option);
+                        });
+                        select.appendChild(optgroup);
+                    }
+                }
+            } catch (error) {
+                console.error('Error loading log files:', error);
+            }
+        }
+
+        async function loadLogs() {
+            const logFile = document.getElementById('logFile').value;
+            if (!logFile) return;
+
+            currentLogFile = logFile;
+            const lineCount = document.getElementById('lineCount').value;
+            const logType = document.getElementById('logType').value;
+            const filterText = document.getElementById('filterText').value;
+
+            const logViewer = document.getElementById('logViewer');
+            logViewer.innerHTML = '<div class="loading">Loading logs...</div>';
+
+            try {
+                const params = new URLSearchParams({
+                    lines: lineCount,
+                    type: logType,
+                    filter: filterText
+                });
+
+                const response = await fetch(`/api/logs/read/${encodeURIComponent(logFile)}?${params}`);
+                const data = await response.json();
+
+                if (data.success) {
+                    const content = data.data.content;
+                    const lines = content.split('\n').filter(line => line.trim());
+                    
+                    logViewer.innerHTML = '';
+                    
+                    if (lines.length === 0) {
+                        logViewer.innerHTML = '<div class="loading">No logs found matching the criteria.</div>';
+                        return;
+                    }
+
+                    lines.forEach(line => {
+                        const logLine = document.createElement('div');
+                        logLine.className = 'log-line';
+                        
+                        // Determine log type for styling
+                        if (line.includes('[ERROR]')) {
+                            logLine.classList.add('error');
+                        } else if (line.includes('[WARN]')) {
+                            logLine.classList.add('warn');
+                        } else if (line.includes('[INFO]')) {
+                            logLine.classList.add('info');
+                        } else if (line.includes('[STARTUP]')) {
+                            logLine.classList.add('startup');
+                        }
+
+                        // Format the line
+                        const formattedLine = formatLogLine(line);
+                        logLine.innerHTML = formattedLine;
+                        
+                        logViewer.appendChild(logLine);
+                    });
+
+                    // Auto-scroll to bottom
+                    logViewer.scrollTop = logViewer.scrollHeight;
+                } else {
+                    logViewer.innerHTML = `<div class="loading">Error: ${data.error}</div>`;
+                }
+            } catch (error) {
+                logViewer.innerHTML = `<div class="loading">Error loading logs: ${error.message}</div>`;
+            }
+        }
+
+        function formatLogLine(line) {
+            // Extract timestamp
+            const timestampMatch = line.match(/\[([\d-T:.Z]+)\]/);
+            if (timestampMatch) {
+                const timestamp = timestampMatch[1];
+                const rest = line.substring(timestampMatch[0].length);
+                
+                // Extract log type
+                const typeMatch = rest.match(/\[(\w+)\]/);
+                if (typeMatch) {
+                    const type = typeMatch[1];
+                    const message = rest.substring(typeMatch[0].length).trim();
+                    
+                    return `<span class="timestamp">[${timestamp}]</span> <span class="log-type">[${type}]</span> ${escapeHtml(message)}`;
+                }
+                
+                return `<span class="timestamp">[${timestamp}]</span> ${escapeHtml(rest.trim())}`;
+            }
+            
+            return escapeHtml(line);
+        }
+
+        function escapeHtml(unsafe) {
+            return unsafe
+                .replace(/&/g, "&amp;")
+                .replace(/</g, "&lt;")
+                .replace(/>/g, "&gt;")
+                .replace(/"/g, "&quot;")
+                .replace(/'/g, "&#039;");
+        }
+
+        async function searchLogs() {
+            const searchTerm = document.getElementById('searchTerm').value.trim();
+            if (!searchTerm) return;
+
+            const searchResults = document.getElementById('searchResults');
+            const searchResultsContent = document.getElementById('searchResultsContent');
+            
+            searchResultsContent.innerHTML = '<div class="loading">Searching...</div>';
+            searchResults.style.display = 'block';
+
+            try {
+                const response = await fetch('/api/logs/search', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        searchTerm: searchTerm,
+                        fileTypes: ['console', 'error', 'crash'],
+                        caseSensitive: false
+                    })
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    searchResultsContent.innerHTML = '';
+                    
+                    if (data.results.length === 0) {
+                        searchResultsContent.innerHTML = '<div class="loading">No results found.</div>';
+                        return;
+                    }
+
+                    data.results.forEach(result => {
+                        const resultDiv = document.createElement('div');
+                        resultDiv.className = 'search-result';
+                        resultDiv.innerHTML = `
+                            <div class="file-name">${result.file}</div>
+                            <div class="line-number">Line ${result.lineNumber} ${result.timestamp ? '• ' + result.timestamp : ''}</div>
+                            <div>${escapeHtml(result.content)}</div>
+                        `;
+                        
+                        resultDiv.addEventListener('click', () => {
+                            document.getElementById('logFile').value = result.file;
+                            loadLogs();
+                        });
+                        
+                        searchResultsContent.appendChild(resultDiv);
+                    });
+                } else {
+                    searchResultsContent.innerHTML = `<div class="loading">Error: ${data.error}</div>`;
+                }
+            } catch (error) {
+                searchResultsContent.innerHTML = `<div class="loading">Error searching: ${error.message}</div>`;
+            }
+        }
+
+        async function downloadLog() {
+            const logFile = document.getElementById('logFile').value;
+            if (!logFile) {
+                alert('Please select a log file first.');
+                return;
+            }
+
+            window.open(`/api/logs/download/${encodeURIComponent(logFile)}`, '_blank');
+        }
+
+        async function rotateLogs() {
+            if (!confirm('Are you sure you want to rotate the logs? This will archive current logs and start fresh ones.')) {
+                return;
+            }
+
+            try {
+                const response = await fetch('/api/logs/rotate', { method: 'POST' });
+                const data = await response.json();
+
+                if (data.success) {
+                    alert('Logs rotated successfully!');
+                    loadStats();
+                    loadLogFiles();
+                } else {
+                    alert(`Error: ${data.error}`);
+                }
+            } catch (error) {
+                alert(`Error rotating logs: ${error.message}`);
+            }
+        }
+
+        async function cleanLogs() {
+            if (!confirm('Are you sure you want to clean old logs? This will delete archived logs older than 30 days.')) {
+                return;
+            }
+
+            try {
+                const response = await fetch('/api/logs/clean', { method: 'POST' });
+                const data = await response.json();
+
+                if (data.success) {
+                    alert('Old logs cleaned successfully!');
+                    loadStats();
+                    loadLogFiles();
+                } else {
+                    alert(`Error: ${data.error}`);
+                }
+            } catch (error) {
+                alert(`Error cleaning logs: ${error.message}`);
+            }
+        }
+
+        // Auto-load logs when file selection changes
+        document.addEventListener('DOMContentLoaded', function() {
+            document.getElementById('logFile').addEventListener('change', loadLogs);
+            document.getElementById('lineCount').addEventListener('change', loadLogs);
+            document.getElementById('logType').addEventListener('change', loadLogs);
+        });
+    </script>
+</body>
+</html>

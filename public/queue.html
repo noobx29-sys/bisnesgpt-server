@@ -1,0 +1,1013 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Queue Monitor</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            background: #0f172a;
+            color: #e2e8f0;
+            font-family: 'Inter', sans-serif;
+            line-height: 1.6;
+        }
+
+        .container-fluid {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        .header {
+            background: #1e293b;
+            padding: 20px;
+            border-radius: 12px;
+            margin-bottom: 20px;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .header h1 {
+            font-size: 24px;
+            font-weight: 600;
+            color: #f8fafc;
+        }
+
+        .btn {
+            padding: 8px 16px;
+            border-radius: 6px;
+            font-size: 14px;
+            border: none;
+            cursor: pointer;
+            transition: background-color 0.2s;
+            color: white;
+        }
+
+        .btn-primary {
+            background: #3b82f6;
+        }
+
+        .btn-warning {
+            background: #eab308;
+        }
+
+        .btn-danger {
+            background: #dc2626;
+        }
+
+        .worker-card {
+            background: #1e293b;
+            border-radius: 12px;
+            margin-bottom: 24px;
+            overflow: hidden;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+        }
+
+        .worker-header {
+            padding: 20px;
+            background: #2d3748;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid #374151;
+        }
+
+        .worker-title {
+            font-size: 18px;
+            font-weight: 600;
+            color: #f8fafc;
+        }
+
+        .worker-status {
+            padding: 6px 12px;
+            border-radius: 6px;
+            font-size: 14px;
+            font-weight: 500;
+        }
+
+        .status-active {
+            background: #059669;
+            color: #ecfdf5;
+        }
+
+        .status-inactive {
+            background: #dc2626;
+            color: #fef2f2;
+        }
+
+        .worker-body {
+            padding: 20px;
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 16px;
+            margin-bottom: 24px;
+        }
+
+        .stat-item {
+            background: #2d3748;
+            padding: 16px;
+            border-radius: 8px;
+            text-align: center;
+        }
+
+        .stat-label {
+            color: #94a3b8;
+            font-size: 14px;
+            margin-bottom: 4px;
+        }
+
+        .stat-value {
+            color: #f8fafc;
+            font-size: 24px;
+            font-weight: 600;
+        }
+
+        .tabs {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 16px;
+            border-bottom: 1px solid #374151;
+            padding-bottom: 8px;
+        }
+
+        .tab-button {
+            padding: 8px 16px;
+            border: none;
+            background: transparent;
+            color: #94a3b8;
+            cursor: pointer;
+            border-radius: 6px;
+            font-size: 14px;
+            transition: all 0.2s;
+        }
+
+        .tab-button:hover {
+            background: #374151;
+            color: #f8fafc;
+        }
+
+        .tab-button.active {
+            background: #3b82f6;
+            color: white;
+        }
+
+        .tab-content {
+            display: none;
+        }
+
+        .tab-content.active {
+            display: block;
+        }
+
+        .job-list {
+            max-height: 500px;
+            overflow-y: auto;
+            padding: 8px;
+        }
+
+        .job-item {
+            background: #2d3748;
+            border-radius: 8px;
+            margin-bottom: 12px;
+            overflow: hidden;
+        }
+
+        .job-header {
+            padding: 16px;
+            border-bottom: 1px solid #374151;
+        }
+
+        .job-title {
+            font-size: 16px;
+            font-weight: 500;
+            color: #f8fafc;
+            margin-bottom: 4px;
+        }
+
+        .job-meta {
+            font-size: 12px;
+            color: #94a3b8;
+        }
+
+        .details-content {
+            padding: 16px;
+            background: #1e293b;
+        }
+
+        .details-section {
+            margin-bottom: 16px;
+        }
+
+        .details-section h5 {
+            color: #94a3b8;
+            font-size: 14px;
+            margin-bottom: 8px;
+            padding-bottom: 4px;
+            border-bottom: 1px solid #374151;
+        }
+
+        .detail-item {
+            margin: 8px 0;
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+        }
+
+        .detail-label {
+            color: #94a3b8;
+            font-size: 13px;
+            flex: 0 0 120px;
+        }
+
+        .detail-value {
+            color: #f8fafc;
+            font-size: 13px;
+            flex: 1;
+            word-break: break-word;
+        }
+
+        .message-item {
+            background: #374151;
+            padding: 12px;
+            border-radius: 6px;
+            margin: 8px 0;
+        }
+
+        .btn-toggle {
+            width: 100%;
+            padding: 8px;
+            background: #374151;
+            border: none;
+            color: #94a3b8;
+            cursor: pointer;
+            font-size: 13px;
+            transition: all 0.2s;
+        }
+
+        .btn-toggle:hover {
+            background: #4b5563;
+            color: #f8fafc;
+        }
+
+        .hidden {
+            display: none;
+        }
+
+        .collapsible {
+            margin-top: 8px;
+        }
+
+        .loading, .error {
+            padding: 20px;
+            text-align: center;
+            color: #94a3b8;
+        }
+
+        .error {
+            color: #ef4444;
+        }
+
+        .batch-section {
+            background: #1e293b;
+            padding: 16px;
+            margin-bottom: 16px;
+            border-radius: 8px;
+        }
+
+        .batch-section h6 {
+            color: #94a3b8;
+            font-size: 14px;
+            margin-bottom: 12px;
+        }
+
+        .message-item {
+            background: #2d3748;
+            padding: 12px;
+            margin-bottom: 12px;
+            border-radius: 6px;
+        }
+
+        .message-header {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 8px;
+            font-size: 12px;
+            color: #94a3b8;
+        }
+
+        .message-content {
+            color: #f8fafc;
+            font-size: 14px;
+            line-height: 1.5;
+            white-space: pre-wrap;
+        }
+
+        .detail-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 12px;
+        }
+
+        .status-badge {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: 500;
+        }
+
+        .status-badge.completed {
+            background: #059669;
+            color: #ecfdf5;
+        }
+
+        .status-badge.scheduled {
+            background: #3b82f6;
+            color: #eff6ff;
+        }
+
+        .status-badge.failed {
+            background: #dc2626;
+            color: #fef2f2;
+        }
+
+        .messages-container {
+            max-height: 400px;
+            overflow-y: auto;
+        }
+
+        .btn-toggle:disabled {
+            opacity: 0.7;
+            cursor: wait;
+        }
+
+        .job-date {
+            float: right;
+            font-size: 12px;
+            color: #94a3b8;
+            font-weight: normal;
+        }
+
+        .scheduled-time {
+            color: #3b82f6;
+        }
+
+        .completion-time {
+            color: #059669;
+        }
+
+        .failure-time {
+            color: #dc2626;
+        }
+
+        .job-item {
+            border-left: 4px solid transparent;
+        }
+
+        .job-item.delayed {
+            border-left-color: #3b82f6;
+        }
+
+        .job-item.completed {
+            border-left-color: #059669;
+        }
+
+        .job-item.failed {
+            border-left-color: #dc2626;
+        }
+
+        .job-item.active {
+            border-left-color: #eab308;
+        }
+
+        .btn-sm {
+            padding: 4px 8px;
+            font-size: 12px;
+            margin-left: 8px;
+        }
+
+        .job-meta {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .pagination {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: 1rem;
+            margin-top: 1rem;
+            padding: 1rem;
+        }
+
+        .page-info {
+            color: #94a3b8;
+            font-size: 0.875rem;
+        }
+
+        .job-count-warning {
+            text-align: center;
+            color: #eab308;
+            font-size: 0.875rem;
+            margin-top: 0.5rem;
+        }
+
+        .job-list-container {
+            position: relative;
+        }
+
+        .loading-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(15, 23, 42, 0.8);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 10;
+        }
+
+        .search-container {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 16px;
+            align-items: center;
+        }
+
+        .search-input {
+            padding: 8px 12px;
+            border: 1px solid #374151;
+            border-radius: 6px;
+            background: #1e293b;
+            color: #f8fafc;
+            font-size: 14px;
+            min-width: 200px;
+        }
+
+        .search-input::placeholder {
+            color: #94a3b8;
+        }
+
+        .hidden-card {
+            display: none;
+        }
+
+        .no-results {
+            text-align: center;
+            color: #94a3b8;
+            padding: 20px;
+            background: #1e293b;
+            border-radius: 8px;
+            margin: 16px 0;
+        }
+    </style>
+</head>
+<body>
+    <div class="container-fluid">
+        <div class="header">
+            <h1>Queue Monitor</h1>
+            <div class="search-container">
+                <input type="text" id="companySearch" placeholder="Search by Company ID" class="search-input">
+                <button class="btn btn-primary" onclick="filterByCompany()">Search</button>
+                <button class="btn btn-secondary" onclick="clearSearch()">Clear</button>
+            </div>
+            <div class="btn-group">
+                <button class="btn btn-primary" onclick="refreshData()">Refresh Now</button>
+                <button class="btn btn-warning" onclick="resetQueues()">Reset All Queues</button>
+                <button class="btn btn-danger" onclick="forceProcess()">Force Process</button>
+                <button class="btn btn-primary" onclick="requeueMessages()">Requeue Messages</button>
+            </div>
+        </div>
+
+        <div id="workersContainer">
+            <!-- Worker cards will be dynamically inserted here -->
+        </div>
+    </div>
+
+    <script>
+        async function refreshData() {
+            try {
+                const response = await fetch('/api/queue/diagnose');
+                const data = await response.json();
+                
+                const workersContainer = document.getElementById('workersContainer');
+                workersContainer.innerHTML = '';
+
+                // Store the current search value
+                const currentSearch = document.getElementById('companySearch').value.trim().toLowerCase();
+
+                // Create a card for each worker
+                Object.entries(data.queues).forEach(([botId, queueData]) => {
+                    const workerCard = `
+                        <div class="worker-card ${currentSearch && !botId.toLowerCase().includes(currentSearch) ? 'hidden-card' : ''}">
+                            <div class="worker-header">
+                                <div class="worker-title">
+                                    <span>Bot ${botId}</span>
+                                    <span class="bot-id">${queueData.botInfo?.name || 'Unknown Bot'}</span>
+                                </div>
+                                <div class="worker-status ${queueData.worker.isRunning ? 'status-active' : 'status-inactive'}">
+                                    ${queueData.worker.isRunning ? 'Active' : 'Inactive'}
+                                </div>
+                            </div>
+                            
+                            <div class="worker-body">
+                                <!-- Stats Grid -->
+                                <div class="stats-grid">
+                                    <div class="stat-item">
+                                        <div class="stat-label">Active</div>
+                                        <div class="stat-value">${queueData.counts.active}</div>
+                                    </div>
+                                    <div class="stat-item">
+                                        <div class="stat-label">Waiting</div>
+                                        <div class="stat-value">${queueData.counts.waiting}</div>
+                                    </div>
+                                    <div class="stat-item">
+                                        <div class="stat-label">Delayed</div>
+                                        <div class="stat-value">${queueData.counts.delayed}</div>
+                                    </div>
+                                    <div class="stat-item">
+                                        <div class="stat-label">Completed</div>
+                                        <div class="stat-value">${queueData.counts.completed}</div>
+                                    </div>
+                                    <div class="stat-item">
+                                        <div class="stat-label">Failed</div>
+                                        <div class="stat-value">${queueData.counts.failed}</div>
+                                    </div>
+                                </div>
+
+                                <!-- Tabs Navigation -->
+                                <div class="tabs">
+                                    <button class="tab-button active" onclick="showTab(this, 'delayed-${botId}')">Delayed (${queueData.counts.delayed})</button>
+                                    <button class="tab-button" onclick="showTab(this, 'active-${botId}')">Active (${queueData.counts.active})</button>
+                                    <button class="tab-button" onclick="showTab(this, 'completed-${botId}')">Completed (${queueData.counts.completed})</button>
+                                    <button class="tab-button" onclick="showTab(this, 'failed-${botId}')">Failed (${queueData.counts.failed})</button>
+                                </div>
+
+                                <!-- Tab Contents with Pagination -->
+                                <div id="delayed-${botId}" class="tab-content active">
+                                    ${createPaginatedTabContent(queueData.delayedJobs || [], 'delayed', botId)}
+                                </div>
+
+                                <div id="active-${botId}" class="tab-content">
+                                    ${createPaginatedTabContent(queueData.activeJobs || [], 'active', botId)}
+                                </div>
+
+                                <div id="completed-${botId}" class="tab-content">
+                                    ${createPaginatedTabContent(queueData.completedJobs || [], 'completed', botId)}
+                                </div>
+
+                                <div id="failed-${botId}" class="tab-content">
+                                    ${createPaginatedTabContent(queueData.failedJobs || [], 'failed', botId)}
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                    workersContainer.innerHTML += workerCard;
+                });
+
+                // Reapply search filter if there was one
+                if (currentSearch) {
+                    filterByCompany();
+                }
+
+            } catch (error) {
+                console.error('Error fetching queue data:', error);
+            }
+        }
+
+        async function resetQueues() {
+            if (!confirm('Are you sure you want to reset all queues? This will clear all pending jobs.')) {
+                return;
+            }
+            try {
+                const response = await fetch('/api/queue/reset', { method: 'POST' });
+                const data = await response.json();
+                console.log('Reset response:', data);
+                refreshData();
+            } catch (error) {
+                console.error('Error resetting queues:', error);
+                document.getElementById('errorLogs').innerHTML += `
+                    <div class="log-entry">
+                        ${new Date().toLocaleString()} - Error resetting queues: ${error.message}
+                    </div>
+                `;
+            }
+        }
+
+        async function forceProcess() {
+            if (!confirm('Are you sure you want to force process all queues?')) {
+                return;
+            }
+            try {
+                const response = await fetch('/api/queue/force-process', { method: 'POST' });
+                const data = await response.json();
+                console.log('Force process response:', data);
+                refreshData();
+            } catch (error) {
+                console.error('Error force processing:', error);
+                document.getElementById('errorLogs').innerHTML += `
+                    <div class="log-entry">
+                        ${new Date().toLocaleString()} - Error force processing: ${error.message}
+                    </div>
+                `;
+            }
+        }
+
+        async function requeueMessages() {
+            if (!confirm('Are you sure you want to requeue scheduled messages?')) {
+                return;
+            }
+            
+            try {
+                const response = await fetch('/api/requeue-scheduled-messages', {
+                    method: 'POST'
+                });
+                
+                const data = await response.json();
+                
+                // Create a formatted message
+                const message = `
+Requeue completed:
+- Messages requeued: ${data.messagesRequeued}
+- Companies processed: ${data.companiesProcessed}
+- Messages skipped:
+  • Too old: ${data.messagesSkipped.tooOld}
+  • Outside time window: ${data.messagesSkipped.outsideTimeWindow}
+- Time span: ${data.schedulingSummary.totalTimeSpan}
+- Start time: ${new Date(data.schedulingSummary.startTime).toLocaleString()}
+- Last scheduled: ${new Date(data.schedulingSummary.lastScheduledTime).toLocaleString()}
+${data.errors.length > 0 ? '\nErrors encountered: ' + data.errors.length : ''}`;
+
+                alert(message);
+                
+                // Refresh the display to show updated queue status
+                refreshData();
+                
+            } catch (error) {
+                console.error('Error requeueing messages:', error);
+                alert('Failed to requeue messages. Check console for details.');
+            }
+        }
+
+        // Initial load
+        refreshData();
+        setInterval(refreshData, 30000); // Refresh every 30 seconds
+
+        function showTab(button, tabId) {
+            // Remove active class from all tabs and buttons
+            const tabContents = button.closest('.worker-body').querySelectorAll('.tab-content');
+            const tabButtons = button.closest('.tabs').querySelectorAll('.tab-button');
+            
+            tabContents.forEach(tab => tab.classList.remove('active'));
+            tabButtons.forEach(btn => btn.classList.remove('active'));
+            
+            // Add active class to selected tab and button
+            document.getElementById(tabId).classList.add('active');
+            button.classList.add('active');
+        }
+
+        function sortJobsByDate(jobs, type) {
+            return [...jobs].sort((a, b) => {
+                let dateA, dateB;
+                
+                switch(type) {
+                    case 'delayed':
+                        // For delayed jobs, sort by scheduled time
+                        dateA = a.timestamp + (a.opts?.delay || 0);
+                        dateB = b.timestamp + (b.opts?.delay || 0);
+                        break;
+                    case 'completed':
+                        // For completed jobs, sort by completion time
+                        dateA = a.finishedOn;
+                        dateB = b.finishedOn;
+                        break;
+                    case 'failed':
+                        // For failed jobs, sort by failure time
+                        dateA = a.failedOn;
+                        dateB = b.failedOn;
+                        break;
+                    default:
+                        // For active jobs, sort by processing time
+                        dateA = a.processedOn;
+                        dateB = b.processedOn;
+                }
+                
+                // Sort in ascending order (earliest first)
+                return dateA - dateB;
+            });
+        }
+
+        function createPaginatedTabContent(jobs, type, botId) {
+            const PAGE_SIZE = 20;
+            const sortedJobs = sortJobsByDate(jobs, type);
+            
+            // Store the jobs in a data attribute for pagination
+            const jobsData = encodeURIComponent(JSON.stringify(sortedJobs));
+            const totalPages = Math.ceil(sortedJobs.length / PAGE_SIZE);
+
+            return `
+                <div class="job-list-container">
+                    <div class="job-list" 
+                        id="job-list-${type}-${botId}" 
+                        data-page="1" 
+                        data-total-pages="${totalPages}"
+                        data-jobs='${jobsData}'>
+                        ${createJobList(sortedJobs.slice(0, PAGE_SIZE), type)}
+                    </div>
+                    ${totalPages > 1 ? createPagination(type, botId, totalPages) : ''}
+                    ${sortedJobs.length > 100 ? 
+                        `<div class="job-count-warning">Showing ${Math.min(sortedJobs.length, 500)} of ${sortedJobs.length} jobs</div>` 
+                        : ''}
+                </div>
+            `;
+        }
+
+        function createPagination(type, botId, totalPages) {
+            return `
+                <div class="pagination">
+                    <button onclick="changePage('${type}', '${botId}', 'prev')" class="btn btn-sm">Previous</button>
+                    <span class="page-info">Page <span id="current-page-${type}-${botId}">1</span> of ${totalPages}</span>
+                    <button onclick="changePage('${type}', '${botId}', 'next')" class="btn btn-sm">Next</button>
+                </div>
+            `;
+        }
+
+        function createJobList(jobs, type) {
+            return jobs.map(job => createJobCard(job, type)).join('') || `No ${type} jobs`;
+        }
+
+        async function changePage(type, botId, direction) {
+            const container = document.getElementById(`job-list-${type}-${botId}`);
+            const currentPage = parseInt(container.dataset.page);
+            const totalPages = parseInt(container.dataset.totalPages);
+            const PAGE_SIZE = 20;
+            
+            let newPage = direction === 'next' ? currentPage + 1 : currentPage - 1;
+            if (newPage < 1) newPage = 1;
+            if (newPage > totalPages) newPage = totalPages;
+            
+            if (newPage !== currentPage) {
+                try {
+                    container.dataset.page = newPage;
+                    document.getElementById(`current-page-${type}-${botId}`).textContent = newPage;
+
+                    // Get stored jobs data
+                    const jobsData = JSON.parse(decodeURIComponent(container.dataset.jobs));
+                    
+                    // Calculate slice indexes
+                    const startIndex = (newPage - 1) * PAGE_SIZE;
+                    const endIndex = startIndex + PAGE_SIZE;
+                    
+                    // Get jobs for current page
+                    const pageJobs = jobsData.slice(startIndex, endIndex);
+                    
+                    // Update the container with new jobs
+                    container.innerHTML = createJobList(pageJobs, type);
+                } catch (error) {
+                    console.error('Error changing page:', error);
+                    container.innerHTML = '<div class="error">Error loading jobs</div>';
+                }
+            }
+        }
+
+        function createJobCard(job, type) {
+            let dateDisplay;
+            switch(type) {
+                case 'delayed':
+                    dateDisplay = new Date(job.timestamp + (job.opts?.delay || 0)).toLocaleString();
+                    break;
+                case 'completed':
+                    dateDisplay = new Date(job.finishedOn).toLocaleString();
+                    break;
+                case 'failed':
+                    dateDisplay = new Date(job.failedOn).toLocaleString();
+                    break;
+                default:
+                    dateDisplay = new Date(job.processedOn).toLocaleString();
+            }
+
+            return `
+                <div class="job-item ${type}">
+                    <div class="job-header">
+                        <div class="job-title">
+                            <span>Message ID: ${job.data.messageId}</span>
+                            <span class="job-date">${dateDisplay}</span>
+                        </div>
+                        <div class="job-meta">
+                            <span>Company: ${job.data.companyId}</span>
+                            ${type === 'delayed' ? 
+                                `<span class="scheduled-time">Scheduled for: ${dateDisplay}</span>` :
+                                type === 'completed' ? 
+                                `<span class="completion-time">Completed: ${dateDisplay}</span>` :
+                                type === 'failed' ? 
+                                `<span class="failure-time">Failed: ${dateDisplay}</span>` : ''
+                            }
+                            ${type === 'delayed' || type === 'active' ? 
+                                `<button class="btn btn-danger btn-sm" onclick="cancelJob('${job.data.companyId}', '${job.data.messageId}')">
+                                    Cancel Job
+                                </button>` : ''
+                            }
+                        </div>
+                    </div>
+                    <div class="job-details">
+                        <button class="btn-toggle" onclick="toggleDetails(this, '${job.data.companyId}', '${job.data.messageId}')">
+                            Show Details
+                        </button>
+                        <div class="details-content hidden"></div>
+                    </div>
+                </div>
+            `;
+        }
+
+        // Add this function to fetch message details
+        async function fetchMessageDetails(companyId, messageId) {
+            try {
+                const response = await fetch(`/api/queue/message-details/${companyId}/${messageId}`);
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                const data = await response.json();
+                console.log('Fetched message details:', data); // Debug log
+                return data.messageDetails;
+            } catch (error) {
+                console.error('Error fetching message details:', error);
+                return null;
+            }
+        }
+
+        // Update the toggleDetails function
+        async function toggleDetails(button, companyId, messageId) {
+            console.log('Toggle details for:', { companyId, messageId }); // Debug log
+            const detailsContent = button.nextElementSibling;
+            const isHidden = detailsContent.classList.contains('hidden');
+            
+            if (isHidden && !detailsContent.hasAttribute('data-loaded')) {
+                button.disabled = true;
+                button.textContent = 'Loading...';
+                detailsContent.innerHTML = '<div class="loading">Loading message details...</div>';
+                detailsContent.classList.remove('hidden');
+                
+                try {
+                    const details = await fetchMessageDetails(companyId, messageId);
+                    if (details) {
+                        let messagesHtml = '';
+                        if (details.batches && details.batches.length > 0) {
+                            messagesHtml = details.batches.map(batch => `
+                                <div class="batch-section">
+                                    <h6>Batch ${batch.batchIndex + 1} of ${batch.batchQuantity}</h6>
+                                    ${batch.messages?.map(msg => `
+                                        <div class="message-item">
+                                            <div class="message-header">
+                                                <span class="chat-id">Chat ID: ${msg.chatId}</span>
+                                                ${msg.delay ? `<span class="delay">Delay: ${msg.delay}s</span>` : ''}
+                                            </div>
+                                            <div class="message-content">${msg.message}</div>
+                                        </div>
+                                    `).join('') || 'No messages in batch'}
+                                </div>
+                            `).join('');
+                        }
+
+                        detailsContent.innerHTML = `
+                            <div class="details-content">
+                                <div class="details-section">
+                                    <h5>Configuration</h5>
+                                    <div class="detail-grid">
+                                        <div class="detail-item">
+                                            <span class="detail-label">Status:</span>
+                                            <span class="detail-value status-badge ${details.status}">${details.status}</span>
+                                        </div>
+                                        <div class="detail-item">
+                                            <span class="detail-label">Scheduled Time:</span>
+                                            <span class="detail-value">${new Date(details.scheduledTime.seconds * 1000).toLocaleString()}</span>
+                                        </div>
+                                        <div class="detail-item">
+                                            <span class="detail-label">Infinite Loop:</span>
+                                            <span class="detail-value">${details.infiniteLoop ? 'Yes' : 'No'}</span>
+                                        </div>
+                                        ${details.activeHours ? `
+                                            <div class="detail-item">
+                                                <span class="detail-label">Active Hours:</span>
+                                                <span class="detail-value">${details.activeHours.start} - ${details.activeHours.end}</span>
+                                            </div>
+                                        ` : ''}
+                                        ${details.minDelay ? `
+                                            <div class="detail-item">
+                                                <span class="detail-label">Delay Range:</span>
+                                                <span class="detail-value">${details.minDelay}s - ${details.maxDelay}s</span>
+                                            </div>
+                                        ` : ''}
+                                    </div>
+                                </div>
+                                <div class="details-section">
+                                    <h5>Messages</h5>
+                                    <div class="messages-container">
+                                        ${messagesHtml || 'No messages found'}
+                                    </div>
+                                </div>
+                            </div>
+                        `;
+                        detailsContent.setAttribute('data-loaded', 'true');
+                    } else {
+                        detailsContent.innerHTML = '<div class="error">Failed to load message details</div>';
+                    }
+                } catch (error) {
+                    console.error('Error in toggleDetails:', error);
+                    detailsContent.innerHTML = '<div class="error">Error loading details</div>';
+                } finally {
+                    button.disabled = false;
+                    button.textContent = 'Hide Details';
+                }
+            } else {
+                detailsContent.classList.toggle('hidden');
+                button.textContent = isHidden ? 'Hide Details' : 'Show Details';
+            }
+        }
+
+        // Add this new function to handle job cancellation
+        async function cancelJob(companyId, messageId) {
+            if (!confirm('Are you sure you want to cancel this job?')) {
+                return;
+            }
+
+            try {
+                const response = await fetch(`/api/schedule-message/${companyId}/${messageId}`, {
+                    method: 'DELETE'
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    alert('Job cancelled successfully');
+                    refreshData(); // Refresh the display
+                } else {
+                    alert(`Failed to cancel job: ${data.error}`);
+                }
+            } catch (error) {
+                console.error('Error cancelling job:', error);
+                alert('Failed to cancel job. Check console for details.');
+            }
+        }
+
+        function filterByCompany() {
+            const searchValue = document.getElementById('companySearch').value.trim().toLowerCase();
+            const workerCards = document.querySelectorAll('.worker-card');
+            let hasVisibleCards = false;
+
+            workerCards.forEach(card => {
+                const botId = card.querySelector('.worker-title span').textContent.toLowerCase().replace('bot ', '');
+                const botName = card.querySelector('.bot-id').textContent.toLowerCase();
+                
+                if (searchValue === '' || botId.includes(searchValue) || botName.includes(searchValue)) {
+                    card.classList.remove('hidden-card');
+                    hasVisibleCards = true;
+                } else {
+                    card.classList.add('hidden-card');
+                }
+            });
+
+            // Show/hide no results message
+            let noResultsMsg = document.getElementById('noResultsMessage');
+            if (!hasVisibleCards) {
+                if (!noResultsMsg) {
+                    noResultsMsg = document.createElement('div');
+                    noResultsMsg.id = 'noResultsMessage';
+                    noResultsMsg.className = 'no-results';
+                    noResultsMsg.textContent = 'No matching companies found';
+                    document.getElementById('workersContainer').appendChild(noResultsMsg);
+                }
+            } else if (noResultsMsg) {
+                noResultsMsg.remove();
+            }
+        }
+
+        function clearSearch() {
+            document.getElementById('companySearch').value = '';
+            filterByCompany();
+        }
+
+        // Add search by Enter key
+        document.addEventListener('DOMContentLoaded', function() {
+            const searchInput = document.getElementById('companySearch');
+            searchInput.addEventListener('keypress', function(e) {
+                if (e.key === 'Enter') {
+                    filterByCompany();
+                }
+            });
+        });
+    </script>
+</body>
+</html>

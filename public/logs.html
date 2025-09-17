@@ -1,0 +1,1257 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>PM2 Logs 2</title>
+    <link rel="icon" type="image/png" href="/favicon.png">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+            color: #e2e8f0;
+            font-family: 'Inter', sans-serif;
+            line-height: 1.6;
+            min-height: 100vh;
+            position: relative;
+        }
+
+        /* Futuristic background pattern */
+        body::before {
+            content: "";
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: radial-gradient(
+                circle at 25% 25%,
+                rgba(59, 130, 246, 0.05) 0%,
+                transparent 50%
+            ),
+            radial-gradient(
+                circle at 75% 75%,
+                rgba(139, 92, 246, 0.05) 0%,
+                transparent 50%
+            ),
+            radial-gradient(
+                circle at 50% 50%,
+                rgba(16, 185, 129, 0.03) 0%,
+                transparent 50%
+            );
+            pointer-events: none;
+            z-index: -1;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 30px;
+        }
+
+        .header {
+            background: linear-gradient(
+                135deg,
+                rgba(30, 41, 59, 0.9) 0%,
+                rgba(51, 65, 85, 0.9) 100%
+            );
+            backdrop-filter: blur(20px);
+            border: 1px solid rgba(51, 65, 85, 0.3);
+            padding: 25px 30px;
+            border-radius: 20px;
+            margin-bottom: 30px;
+            box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1),
+                0 10px 10px -5px rgba(0, 0, 0, 0.04),
+                inset 0 1px 0 0 rgba(255, 255, 255, 0.1);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .header::before {
+            content: "";
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 1px;
+            background: linear-gradient(
+                90deg,
+                transparent,
+                rgba(59, 130, 246, 0.5),
+                transparent
+            );
+        }
+
+        .header h1 {
+            font-size: 28px;
+            font-weight: 700;
+            color: #f8fafc;
+            text-shadow: 0 0 30px rgba(59, 130, 246, 0.3);
+            background: linear-gradient(135deg, #f8fafc 0%, #cbd5e1 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .header-buttons {
+            display: flex;
+            gap: 12px;
+            align-items: center;
+        }
+
+        .status-btn {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 12px 18px;
+            background: linear-gradient(
+                135deg,
+                rgba(59, 130, 246, 0.8) 0%,
+                rgba(99, 102, 241, 0.8) 100%
+            );
+            color: white;
+            text-decoration: none;
+            border-radius: 12px;
+            font-size: 14px;
+            font-weight: 500;
+            border: 1px solid rgba(59, 130, 246, 0.3);
+            backdrop-filter: blur(10px);
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            position: relative;
+            overflow: hidden;
+            cursor: pointer;
+            min-height: 44px;
+            min-width: 120px;
+            justify-content: center;
+        }
+
+        .status-btn::before {
+            content: "";
+            position: absolute;
+            top: 0;
+            left: -100%;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(
+                90deg,
+                transparent,
+                rgba(255, 255, 255, 0.2),
+                transparent
+            );
+            transition: left 0.6s;
+        }
+
+        .status-btn:hover::before {
+            left: 100%;
+        }
+
+        .status-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 25px rgba(59, 130, 246, 0.3);
+            border-color: rgba(59, 130, 246, 0.5);
+        }
+
+        .logs-container {
+            background: linear-gradient(135deg,
+                rgba(30, 41, 59, 0.9) 0%,
+                rgba(51, 65, 85, 0.9) 100%
+            );
+            backdrop-filter: blur(20px);
+            border: 1px solid rgba(51, 65, 85, 0.3);
+            border-radius: 20px;
+            overflow: hidden;
+            box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1);
+            position: relative;
+            transition: all 0.3s ease;
+        }
+
+        .logs-container::before {
+            content: "";
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 1px;
+            background: linear-gradient(
+                90deg,
+                transparent,
+                rgba(0, 255, 0, 0.8),
+                transparent
+            );
+            animation: scan 2s infinite;
+        }
+
+        .logs-container::after {
+            content: "";
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            height: 1px;
+            background: linear-gradient(
+                90deg,
+                transparent,
+                rgba(0, 150, 255, 0.8),
+                transparent
+            );
+            animation: scan 3s infinite reverse;
+        }
+
+        .logs-container.high-volume {
+            border-color: rgba(0, 255, 0, 0.5);
+            box-shadow: 
+                0 20px 25px -5px rgba(0, 0, 0, 0.1),
+                0 0 30px rgba(0, 255, 0, 0.2),
+                inset 0 0 30px rgba(0, 255, 0, 0.05);
+        }
+
+        .logs-container.high-volume::before,
+        .logs-container.high-volume::after {
+            height: 2px;
+            box-shadow: 0 0 20px currentColor;
+        }
+
+        .logs-search {
+            position: sticky;
+            top: 0;
+            z-index: 10;
+            background: linear-gradient(
+                135deg,
+                rgba(40, 53, 72, 0.9) 0%,
+                rgba(51, 65, 85, 0.9) 100%
+            );
+            backdrop-filter: blur(20px);
+            padding: 20px;
+            border-bottom: 1px solid rgba(51, 65, 85, 0.3);
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            flex-wrap: wrap;
+        }
+
+        .logs-search input {
+            flex: 1;
+            padding: 16px 20px;
+            background: rgba(51, 65, 85, 0.8);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(75, 85, 99, 0.3);
+            border-radius: 12px;
+            color: #f8fafc;
+            font-size: 14px;
+            font-weight: 500;
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            min-width: 300px;
+        }
+
+        .logs-search input:focus {
+            outline: none;
+            border-color: rgba(59, 130, 246, 0.5);
+            box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.1);
+            transform: translateY(-1px);
+        }
+
+        .logs-search input::placeholder {
+            color: #94a3b8;
+        }
+
+        .search-navigation {
+            display: flex;
+            gap: 8px;
+        }
+
+        .nav-btn {
+            padding: 12px;
+            background: linear-gradient(
+                135deg,
+                rgba(59, 130, 246, 0.8) 0%,
+                rgba(99, 102, 241, 0.8) 100%
+            );
+            border: none;
+            border-radius: 10px;
+            color: white;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            position: relative;
+            overflow: hidden;
+            min-width: 44px;
+            min-height: 44px;
+        }
+
+        .nav-btn::before {
+            content: "";
+            position: absolute;
+            top: 0;
+            left: -100%;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(
+                90deg,
+                transparent,
+                rgba(255, 255, 255, 0.2),
+                transparent
+            );
+            transition: left 0.6s;
+        }
+
+        .nav-btn:hover::before {
+            left: 100%;
+        }
+
+        .nav-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 25px rgba(59, 130, 246, 0.3);
+        }
+
+        .nav-btn:active {
+            transform: translateY(0);
+        }
+
+        .nav-btn.active {
+            background: linear-gradient(135deg, rgba(16, 185, 129, 0.8) 0%, rgba(5, 150, 105, 0.8) 100%);
+            box-shadow: 0 0 20px rgba(16, 185, 129, 0.4);
+        }
+
+        .match-count {
+            min-width: 100px;
+            text-align: right;
+            color: #94a3b8;
+            font-size: 14px;
+            font-weight: 500;
+            padding: 8px 16px;
+            background: rgba(51, 65, 85, 0.6);
+            border-radius: 8px;
+            backdrop-filter: blur(10px);
+        }
+
+        #logs {
+            padding: 20px;
+            height: calc(80vh - 200px);
+            overflow-y: auto;
+            font-family: 'Monaco', 'Menlo', 'Courier New', monospace;
+            font-size: 14px;
+            line-height: 1.6;
+            background: rgba(15, 23, 42, 0.3);
+            position: relative;
+        }
+
+        #logs::before {
+            content: "";
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: 
+                radial-gradient(circle at 20% 30%, rgba(0, 255, 0, 0.03) 0%, transparent 50%),
+                radial-gradient(circle at 80% 70%, rgba(0, 150, 255, 0.03) 0%, transparent 50%),
+                linear-gradient(90deg, transparent 0%, rgba(0, 255, 0, 0.02) 50%, transparent 100%);
+            pointer-events: none;
+            z-index: 0;
+        }
+
+        #logs > div {
+            position: relative;
+            z-index: 1;
+            animation: fadeIn 0.3s ease-out;
+            border-radius: 8px;
+            margin-bottom: 6px;
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            backdrop-filter: blur(10px);
+            border: 1px solid transparent;
+        }
+
+        #logs > div:hover {
+            transform: translateX(4px);
+            border-color: rgba(0, 255, 0, 0.3);
+            box-shadow: 
+                0 0 20px rgba(0, 255, 0, 0.2),
+                inset 0 0 20px rgba(0, 255, 0, 0.05);
+        }
+
+        .error { 
+            color: #ff6b6b; 
+            background: linear-gradient(135deg, 
+                rgba(255, 107, 107, 0.15) 0%, 
+                rgba(255, 107, 107, 0.05) 100%);
+            padding: 12px 16px;
+            margin: 4px 0;
+            border-radius: 8px;
+            border-left: 4px solid #ff6b6b;
+            box-shadow: 
+                0 0 15px rgba(255, 107, 107, 0.2),
+                inset 0 1px 0 rgba(255, 255, 255, 0.1);
+            text-shadow: 0 0 8px rgba(255, 107, 107, 0.5);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .error::before {
+            content: "";
+            position: absolute;
+            top: 0;
+            left: -100%;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(90deg, transparent, rgba(255, 107, 107, 0.1), transparent);
+            animation: scan 3s infinite;
+        }
+        
+        .info { 
+            color: #00ff88; 
+            background: linear-gradient(135deg, 
+                rgba(0, 255, 136, 0.15) 0%, 
+                rgba(0, 255, 136, 0.05) 100%);
+            padding: 12px 16px;
+            margin: 4px 0;
+            border-radius: 8px;
+            border-left: 4px solid #00ff88;
+            box-shadow: 
+                0 0 15px rgba(0, 255, 136, 0.2),
+                inset 0 1px 0 rgba(255, 255, 255, 0.1);
+            text-shadow: 0 0 8px rgba(0, 255, 136, 0.5);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .info::before {
+            content: "";
+            position: absolute;
+            top: 0;
+            left: -100%;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(90deg, transparent, rgba(0, 255, 136, 0.1), transparent);
+            animation: scan 4s infinite;
+        }
+        
+        .warn { 
+            color: #ffd93d; 
+            background: linear-gradient(135deg, 
+                rgba(255, 217, 61, 0.15) 0%, 
+                rgba(255, 217, 61, 0.05) 100%);
+            padding: 12px 16px;
+            margin: 4px 0;
+            border-radius: 8px;
+            border-left: 4px solid #ffd93d;
+            box-shadow: 
+                0 0 15px rgba(255, 217, 61, 0.2),
+                inset 0 1px 0 rgba(255, 255, 255, 0.1);
+            text-shadow: 0 0 8px rgba(255, 217, 61, 0.5);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .warn::before {
+            content: "";
+            position: absolute;
+            top: 0;
+            left: -100%;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(90deg, transparent, rgba(255, 217, 61, 0.1), transparent);
+            animation: scan 5s infinite;
+        }
+
+        @keyframes scan {
+            0% { left: -100%; }
+            50% { left: 100%; }
+            100% { left: 100%; }
+        }
+
+        /* Cyberpunk scrollbar styling */
+        #logs::-webkit-scrollbar {
+            width: 12px;
+        }
+
+        #logs::-webkit-scrollbar-track {
+            background: rgba(0, 0, 0, 0.3);
+            border-radius: 6px;
+            border: 1px solid rgba(0, 255, 0, 0.2);
+        }
+
+        #logs::-webkit-scrollbar-thumb {
+            background: linear-gradient(180deg, 
+                rgba(0, 255, 0, 0.8) 0%, 
+                rgba(0, 150, 255, 0.8) 100%);
+            border-radius: 6px;
+            border: 1px solid rgba(0, 255, 0, 0.5);
+            box-shadow: 
+                0 0 10px rgba(0, 255, 0, 0.5),
+                inset 0 0 10px rgba(255, 255, 255, 0.1);
+        }
+
+        #logs::-webkit-scrollbar-thumb:hover {
+            background: linear-gradient(180deg, 
+                rgba(0, 255, 0, 1) 0%, 
+                rgba(0, 150, 255, 1) 100%);
+            box-shadow: 
+                0 0 20px rgba(0, 255, 0, 0.8),
+                inset 0 0 20px rgba(255, 255, 255, 0.2);
+        }
+
+        .highlight {
+            background: rgba(0, 255, 255, 0.3);
+            color: #00ffff;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-weight: 600;
+            text-shadow: 0 0 8px rgba(0, 255, 255, 0.8);
+            box-shadow: 0 0 10px rgba(0, 255, 255, 0.3);
+            border: 1px solid rgba(0, 255, 255, 0.5);
+        }
+
+        .highlight.active {
+            background: rgba(0, 255, 255, 0.6) !important;
+            color: #000;
+            box-shadow: 
+                0 0 20px rgba(0, 255, 255, 0.8),
+                0 0 40px rgba(0, 255, 255, 0.4);
+            text-shadow: none;
+            border: 2px solid rgba(0, 255, 255, 0.8);
+        }
+
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+                transform: translateY(10px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        /* High-volume log styling */
+        .logs-container.high-volume #logs > div {
+            animation: fadeIn 0.1s ease-out;
+            margin-bottom: 2px;
+        }
+
+        .logs-container.high-volume #logs > div:nth-child(even) {
+            background: linear-gradient(135deg, 
+                rgba(0, 255, 0, 0.05) 0%, 
+                rgba(0, 150, 255, 0.05) 100%);
+            border-left: 2px solid rgba(0, 255, 0, 0.3);
+        }
+
+        .logs-container.high-volume #logs > div:nth-child(odd) {
+            background: linear-gradient(135deg, 
+                rgba(0, 150, 255, 0.05) 0%, 
+                rgba(0, 255, 0, 0.05) 100%);
+            border-left: 2px solid rgba(0, 150, 255, 0.3);
+        }
+
+        /* Matrix-style typing effect for new logs */
+        .logs-container.high-volume #logs > div {
+            position: relative;
+        }
+
+        .logs-container.high-volume #logs > div::after {
+            content: "█";
+            color: #00ff00;
+            position: absolute;
+            right: 8px;
+            top: 50%;
+            transform: translateY(-50%);
+            animation: blink 1s infinite;
+            text-shadow: 0 0 10px #00ff00;
+        }
+
+        @keyframes blink {
+            0%, 50% { opacity: 1; }
+            51%, 100% { opacity: 0; }
+        }
+
+        /* Smooth scrolling for logs */
+        #logs {
+            scroll-behavior: smooth;
+        }
+
+        @keyframes pulse {
+            0% {
+                opacity: 1;
+            }
+            50% {
+                opacity: 0.6;
+            }
+            100% {
+                opacity: 1;
+            }
+        }
+
+        .connection-status {
+            position: fixed;
+            bottom: 30px;
+            right: 30px;
+            padding: 12px 20px;
+            border-radius: 12px;
+            background: linear-gradient(
+                135deg,
+                rgba(30, 41, 59, 0.95),
+                rgba(51, 65, 85, 0.95)
+            );
+            backdrop-filter: blur(20px);
+            border: 1px solid rgba(51, 65, 85, 0.3);
+            font-size: 14px;
+            box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.2);
+            display: none;
+            z-index: 1000;
+            color: #f8fafc;
+        }
+
+        .notification {
+            position: fixed;
+            bottom: 30px;
+            left: 50%;
+            transform: translateX(-50%);
+            padding: 16px 24px;
+            border-radius: 16px;
+            background: linear-gradient(
+                135deg,
+                rgba(5, 150, 105, 0.95) 0%,
+                rgba(16, 185, 129, 0.95) 100%
+            );
+            backdrop-filter: blur(20px);
+            border: 1px solid rgba(5, 150, 105, 0.3);
+            color: white;
+            font-size: 14px;
+            font-weight: 500;
+            box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.2),
+                0 10px 10px -5px rgba(0, 0, 0, 0.04), 
+                0 0 30px rgba(5, 150, 105, 0.3);
+            animation: slideUp 0.3s ease-out, fadeOut 0.5s ease-out 2.5s forwards;
+            z-index: 10000;
+            overflow: hidden;
+            max-width: 90vw;
+            text-align: center;
+        }
+
+        .notification::before {
+            content: "";
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 2px;
+            background: linear-gradient(
+                90deg,
+                rgba(255, 255, 255, 0.5),
+                rgba(255, 255, 255, 0.8),
+                rgba(255, 255, 255, 0.5)
+            );
+        }
+
+        @keyframes slideUp {
+            from {
+                transform: translate(-50%, 100%);
+            }
+            to {
+                transform: translate(-50%, 0);
+            }
+        }
+
+        @keyframes fadeOut {
+            to {
+                opacity: 0;
+                visibility: hidden;
+            }
+        }
+
+        /* Responsive design */
+        @media (max-width: 768px) {
+            .container {
+                padding: 16px;
+            }
+            
+            .header {
+                padding: 20px;
+                flex-direction: column;
+                gap: 16px;
+                text-align: center;
+            }
+            
+            .logs-search {
+                flex-direction: column;
+                align-items: stretch;
+            }
+            
+            .logs-search input {
+                min-width: auto;
+            }
+            
+            .search-navigation {
+                justify-content: center;
+            }
+            
+            .match-count {
+                text-align: center;
+                min-width: auto;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>PM2 Logs Monitor</h1>
+            <div class="header-buttons">
+                <button onclick="window.open('/status', '_blank')" class="status-btn">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <circle cx="12" cy="12" r="3"/>
+                        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+                    </svg>
+                    Status
+                </button>
+            </div>
+        </div>
+        
+        <div class="logs-container">
+            <div class="logs-search">
+                <input type="text" id="logSearch" placeholder="Search logs...">
+                <div class="search-navigation">
+                    <button onclick="navigateHighlight(-1)" class="nav-btn" title="Previous match (Shift + Enter)">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M18 15l-6-6-6 6"/>
+                        </svg>
+                    </button>
+                    <button onclick="navigateHighlight(1)" class="nav-btn" title="Next match (Enter)">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M6 9l6 6 6-6"/>
+                        </svg>
+                    </button>
+                    <button id="autoScrollBtn" onclick="toggleAutoScroll()" class="nav-btn" title="Toggle auto-scroll (Space)">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M12 2v20M2 12h20"/>
+                        </svg>
+                    </button>
+                </div>
+                <span class="match-count" id="matchCount"></span>
+            </div>
+            <div id="logs"></div>
+        </div>
+    </div>
+
+    <script>
+        // Global variables
+        let highlights = [];
+        let currentHighlightIndex = -1;
+        let isDeleting = false;
+        
+        // Auto-scroll variables
+        let isAutoScrolling = false;
+        let autoScrollInterval = null;
+        let isScrolledToBottom = true;
+        let scrollBuffer = [];
+        let lastScrollTime = 0;
+        let scrollThrottle = 500; // Scroll every 500ms instead of 100ms
+        
+        // DOM elements
+        const logsDiv = document.getElementById('logs');
+        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const ws = new WebSocket(`${protocol}//${window.location.host}/logs`);
+        let logSearch; // Will be initialized after DOM loads
+        let matchCount; // Will be initialized after DOM loads
+
+        // Initialize DOM-dependent elements when the document is ready
+        document.addEventListener('DOMContentLoaded', () => {
+            logSearch = document.getElementById('logSearch');
+            matchCount = document.getElementById('matchCount');
+
+            // Add input event listener for real-time searching
+            logSearch.addEventListener('input', () => {
+                searchLogs();
+            });
+
+            // Add keydown event listener for navigation
+            logSearch.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') {
+                    if (!e.shiftKey) {
+                        // When pressing Enter without Shift, enable auto-scroll
+                        isScrolledToBottom = true;
+                    }
+                    navigateHighlight(e.shiftKey ? -1 : 1);
+                }
+            });
+
+            // Add keyboard event listener for auto-scroll toggle
+            document.addEventListener('keydown', (e) => {
+                if (e.code === 'Space' && e.target !== logSearch) {
+                    e.preventDefault();
+                    toggleAutoScroll();
+                }
+            });
+
+            // Start auto-scroll by default
+            startAutoScroll();
+        });
+
+        ws.onmessage = (event) => {
+            const data = JSON.parse(event.data);
+            if (data.type === 'log') {
+                const logEntry = document.createElement('div');
+                
+                if (data.data.toLowerCase().includes('error')) {
+                    logEntry.className = 'error';
+                    try {
+                        const errorObj = JSON.parse(data.data);
+                        logEntry.innerHTML = typeof errorObj === 'object' ? 
+                            `${escapeHtml(errorObj.message)}\n${escapeHtml(errorObj.stack)}` : 
+                            escapeHtml(data.data);
+                    } catch {
+                        logEntry.innerHTML = escapeHtml(data.data);
+                    }
+                } else if (data.data.toLowerCase().includes('warn')) {
+                    logEntry.className = 'warn';
+                    logEntry.innerHTML = escapeHtml(data.data);
+                } else {
+                    logEntry.className = 'info';
+                    logEntry.innerHTML = escapeHtml(data.data);
+                }
+
+                logsDiv.appendChild(logEntry);
+                
+                // Add to scroll buffer for throttled auto-scroll
+                if (isAutoScrolling && isScrolledToBottom) {
+                    scrollBuffer.push(logEntry);
+                    
+                    // Handle rapid log bursts
+                    handleRapidLogs();
+                    
+                    // If buffer gets too large, force a scroll
+                    if (scrollBuffer.length > 50) {
+                        setTimeout(() => {
+                            smoothScrollToBottom();
+                            scrollBuffer = [];
+                            lastScrollTime = Date.now();
+                        }, 100);
+                    }
+                }
+                
+                if (logSearch && logSearch.value) {
+                    searchLogs();
+                }
+            } else if (data.type === 'restart') {
+                const logEntry = document.createElement('div');
+                logEntry.className = data.success ? 'info' : 'error';
+                logEntry.textContent = data.message;
+                logsDiv.appendChild(logEntry);
+            } else if (data.type === 'sessionsDeleted') {
+                const logEntry = document.createElement('div');
+                logEntry.className = data.success ? 'info' : 'error';
+                logEntry.textContent = data.message;
+                logsDiv.appendChild(logEntry);
+                
+                if (data.success) {
+                    loadSessions();
+                }
+                isDeleting = false;
+                updateDeleteButton();
+            }
+        };
+
+        ws.onclose = () => {
+            const reconnectMessage = document.createElement('div');
+            reconnectMessage.className = 'error';
+            reconnectMessage.textContent = 'Connection lost. Reconnecting...';
+            logsDiv.appendChild(reconnectMessage);
+            
+            // Attempt to reconnect after 3 seconds
+            setTimeout(() => {
+                window.location.reload();
+            }, 3000);
+        };
+
+        // Auto-scroll functions
+        function toggleAutoScroll() {
+            if (isAutoScrolling) {
+                stopAutoScroll();
+            } else {
+                startAutoScroll();
+            }
+        }
+
+        function startAutoScroll() {
+            if (isAutoScrolling) return;
+            
+            isAutoScrolling = true;
+            isScrolledToBottom = true;
+            
+            // Update button appearance
+            const autoScrollBtn = document.getElementById('autoScrollBtn');
+            if (autoScrollBtn) {
+                autoScrollBtn.classList.add('active'); // Add active class
+                autoScrollBtn.style.background = 'linear-gradient(135deg, rgba(16, 185, 129, 0.8) 0%, rgba(5, 150, 105, 0.8) 100%)';
+                autoScrollBtn.title = 'Stop auto-scroll (Space)';
+            }
+            
+            // Start the throttled auto-scroll interval
+            autoScrollInterval = setInterval(() => {
+                if (isScrolledToBottom && logsDiv && scrollBuffer.length > 0) {
+                    const now = Date.now();
+                    if (now - lastScrollTime >= scrollThrottle) {
+                        // Smooth scroll to bottom with easing
+                        smoothScrollToBottom();
+                        lastScrollTime = now;
+                        scrollBuffer = []; // Clear buffer after scrolling
+                    }
+                }
+            }, 100);
+            
+            console.log('Auto-scroll started (throttled)');
+        }
+
+        function stopAutoScroll() {
+            if (!isAutoScrolling) return;
+            
+            isAutoScrolling = false;
+            
+            // Update button appearance
+            const autoScrollBtn = document.getElementById('autoScrollBtn');
+            if (autoScrollBtn) {
+                autoScrollBtn.classList.remove('active'); // Remove active class
+                autoScrollBtn.style.background = 'linear-gradient(135deg, rgba(59, 130, 246, 0.8) 0%, rgba(99, 102, 241, 0.8) 100%)';
+                autoScrollBtn.title = 'Start auto-scroll (Space)';
+            }
+            
+            // Clear the auto-scroll interval
+            if (autoScrollInterval) {
+                clearInterval(autoScrollInterval);
+                autoScrollInterval = null;
+            }
+            
+            console.log('Auto-scroll stopped');
+        }
+
+        function smoothScrollToBottom() {
+            if (!logsDiv) return;
+            
+            const currentScrollTop = logsDiv.scrollTop;
+            const targetScrollTop = logsDiv.scrollHeight - logsDiv.clientHeight;
+            const distance = targetScrollTop - currentScrollTop;
+            
+            if (Math.abs(distance) < 10) {
+                // If we're very close to bottom, just snap to it
+                logsDiv.scrollTop = targetScrollTop;
+                return;
+            }
+            
+            // Smooth scroll with easing
+            const duration = 300; // 300ms for smooth scroll
+            const startTime = performance.now();
+            
+            function animateScroll(currentTime) {
+                const elapsed = currentTime - startTime;
+                const progress = Math.min(elapsed / duration, 1);
+                
+                // Easing function (ease-out)
+                const easeOut = 1 - Math.pow(1 - progress, 3);
+                
+                logsDiv.scrollTop = currentScrollTop + (distance * easeOut);
+                
+                if (progress < 1) {
+                    requestAnimationFrame(animateScroll);
+                }
+            }
+            
+            requestAnimationFrame(animateScroll);
+        }
+
+        function handleRapidLogs() {
+            // If we have a lot of logs in the buffer, adjust scroll behavior
+            if (scrollBuffer.length > 100) {
+                // Increase throttle for very high volume
+                scrollThrottle = 1000; // 1 second
+                document.querySelector('.logs-container').classList.add('high-volume');
+            } else if (scrollBuffer.length > 50) {
+                // Medium throttle for high volume
+                scrollThrottle = 750; // 750ms
+                document.querySelector('.logs-container').classList.add('high-volume');
+            } else {
+                // Normal throttle
+                scrollThrottle = 500; // 500ms
+                document.querySelector('.logs-container').classList.remove('high-volume');
+            }
+        }
+
+        function restartServer() {
+            const password = document.getElementById('password').value;
+            ws.send(JSON.stringify({
+                type: 'restart',
+                password: password
+            }));
+            document.getElementById('password').value = ''; // Clear password field
+        }
+
+        async function loadSessions() {
+            try {
+                const response = await fetch('/api/sessions');
+                const sessions = await response.json();
+                const select = document.getElementById('sessionSelect');
+                select.innerHTML = ''; // Clear existing options
+                
+                sessions.forEach(session => {
+                    const option = document.createElement('option');
+                    option.value = session;
+                    option.textContent = session;
+                    select.appendChild(option);
+                });
+                
+                updateDeleteButton();
+                filterSessions(); // Apply any existing search filter
+            } catch (error) {
+                console.error('Error loading sessions:', error);
+            }
+        }
+
+        function toggleSelectSize() {
+            const select = document.getElementById('sessionSelect');
+            const toggleBtn = document.querySelector('.toggle-btn');
+            
+            select.classList.toggle('collapsed');
+            select.classList.toggle('expanded');
+            toggleBtn.classList.toggle('expanded');
+        }
+
+        function filterSessions() {
+            const searchTerm = document.getElementById('sessionSearch').value.toLowerCase();
+            const select = document.getElementById('sessionSelect');
+            const options = select.options;
+
+            for (let option of options) {
+                const text = option.textContent.toLowerCase();
+                const match = text.includes(searchTerm);
+                option.style.display = match ? '' : 'none';
+            }
+        }
+
+        function updateDeleteButton() {
+            const select = document.getElementById('sessionSelect');
+            const deleteBtn = document.querySelector('.delete-btn');
+            deleteBtn.disabled = select.selectedOptions.length === 0 || isDeleting;
+        }
+
+        async function deleteSessions() {
+            const password = document.getElementById('password').value;
+            const select = document.getElementById('sessionSelect');
+            const selectedSessions = Array.from(select.selectedOptions).map(option => option.value);
+            
+            if (selectedSessions.length === 0) {
+                alert('Please select at least one session to delete');
+                return;
+            }
+            
+            if (!password) {
+                alert('Please enter the password');
+                return;
+            }
+
+            const confirmMessage = `Are you sure you want to delete ${selectedSessions.length} session(s)?\n\n${selectedSessions.join('\n')}`;
+            if (!confirm(confirmMessage)) {
+                return;
+            }
+
+            isDeleting = true;
+            updateDeleteButton();
+
+            ws.send(JSON.stringify({
+                type: 'deleteSessions',
+                password: password,
+                sessions: selectedSessions
+            }));
+            
+            document.getElementById('password').value = '';
+        }
+
+        // Add event listeners
+        document.getElementById('sessionSelect').addEventListener('change', updateDeleteButton);
+
+        document.getElementById('sessionSearch').addEventListener('input', filterSessions);
+
+        // Remove the mousedown event listener and use this click handler instead
+        document.getElementById('sessionSelect').addEventListener('click', function(e) {
+            e.preventDefault();
+            
+            const option = e.target;
+            if (option.tagName === 'OPTION') {
+                option.selected = !option.selected;
+                updateDeleteButton();
+            }
+        });
+
+        // Prevent the default selection behavior
+        document.getElementById('sessionSelect').addEventListener('mousedown', function(e) {
+            e.preventDefault();
+            return false;
+        });
+
+        // Call this when page loads
+        loadSessions();
+
+    // ... existing code ...
+
+    function searchLogs() {
+            if (!logSearch) return; // Guard clause
+            
+            const searchTerm = logSearch.value.toLowerCase();
+            const logsContent = document.getElementById('logs');
+            const logLines = Array.from(logsContent.children);
+            
+            // Show all lines if search is empty
+            if (!searchTerm) {
+                logLines.forEach(line => {
+                    line.style.display = '';
+                    line.innerHTML = line.innerHTML.replace(/<mark class="highlight">(.*?)<\/mark>/g, '$1');
+                });
+                if (matchCount) matchCount.textContent = '';
+                currentHighlightIndex = -1;
+                highlights = [];
+                
+                // Re-enable auto-scroll if it was disabled during search
+                if (!isAutoScrolling) {
+                    startAutoScroll();
+                }
+                return;
+            }
+
+            // Temporarily disable auto-scroll during search
+            if (isAutoScrolling) {
+                stopAutoScroll();
+            }
+
+            let matches = 0;
+            logLines.forEach(line => {
+                const originalText = line.innerHTML;
+                // Remove existing highlights first
+                line.innerHTML = originalText.replace(/<mark class="highlight">(.*?)<\/mark>/g, '$1');
+                
+                // Always show the line, never hide it
+                line.style.display = '';
+                
+                if (line.textContent.toLowerCase().includes(searchTerm)) {
+                    const regex = new RegExp(`(${escapeRegExp(searchTerm)})`, 'gi');
+                    line.innerHTML = line.innerHTML.replace(regex, '<mark class="highlight">$1</mark>');
+                    matches++;
+                }
+            });
+
+            highlights = document.getElementsByClassName('highlight');
+            currentHighlightIndex = highlights.length > 0 ? 0 : -1;
+            if (matchCount) matchCount.textContent = `${matches} matches`;
+            
+            // Auto-scroll to first match if found
+            if (currentHighlightIndex >= 0) {
+                setTimeout(() => {
+                    scrollToHighlight(currentHighlightIndex);
+                }, 100);
+            }
+        }
+
+        function navigateHighlight(direction) {
+            if (highlights.length === 0) return;
+            
+            // Remove active class from current highlight if it exists
+            if (currentHighlightIndex >= 0) {
+                highlights[currentHighlightIndex].classList.remove('active');
+            }
+            
+            currentHighlightIndex += direction;
+            if (currentHighlightIndex >= highlights.length) {
+                currentHighlightIndex = 0;
+            } else if (currentHighlightIndex < 0) {
+                currentHighlightIndex = highlights.length - 1;
+            }
+            
+            scrollToHighlight(currentHighlightIndex);
+            if (matchCount) matchCount.textContent = `${currentHighlightIndex + 1}/${highlights.length} matches`;
+            
+            // Keep auto-scroll disabled during navigation
+            if (isAutoScrolling) {
+                stopAutoScroll();
+            }
+        }
+
+        function scrollToHighlight(index) {
+            const highlight = highlights[index];
+            if (!highlight) return;
+            
+            // Remove active class from all highlights first
+            Array.from(highlights).forEach(h => h.classList.remove('active'));
+            
+            // Add active class to current highlight
+            highlight.classList.add('active');
+            
+            // Scroll to the highlighted element with smooth behavior
+            highlight.scrollIntoView({
+                behavior: 'smooth',
+                block: 'center',
+                inline: 'nearest'
+            });
+        }
+
+        // Add keydown event listener for search navigation
+        logSearch.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault(); // Prevent form submission
+                if (e.shiftKey) {
+                    navigateHighlight(-1); // Previous match
+                } else {
+                    navigateHighlight(1); // Next match
+                }
+            }
+        });
+
+// ... existing code ...
+        function escapeHtml(unsafe) {
+            return unsafe
+                .replace(/&/g, "&amp;")
+                .replace(/</g, "&lt;")
+                .replace(/>/g, "&gt;")
+                .replace(/"/g, "&quot;")
+                .replace(/'/g, "&#039;");
+        }
+
+        // Add this CSS to style the active highlight
+        const style = document.createElement('style');
+        style.textContent = `
+            .highlight.active {
+                background: #f97316 !important;
+            }
+        `;
+        document.head.appendChild(style);
+
+        // Add this helper function to escape special characters in search term
+        function escapeRegExp(string) {
+            return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        }
+
+        // Add this scroll event listener after DOM elements section
+        logsDiv.addEventListener('scroll', () => {
+            if (!isAutoScrolling) {
+                const scrollPosition = logsDiv.scrollHeight - logsDiv.clientHeight - logsDiv.scrollTop;
+                isScrolledToBottom = scrollPosition < 1;
+            }
+        });
+
+        // Add scroll event listener for auto-scroll control
+        logsDiv.addEventListener('scroll', () => {
+            const scrollPosition = logsDiv.scrollHeight - logsDiv.clientHeight - logsDiv.scrollTop;
+            isScrolledToBottom = scrollPosition < 1;
+            
+            // If user manually scrolls up, stop auto-scroll
+            if (!isScrolledToBottom && isAutoScrolling) {
+                stopAutoScroll();
+            }
+        });
+    </script>
+</body>
+</html>
