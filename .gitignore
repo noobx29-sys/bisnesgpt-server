@@ -41,6 +41,7 @@ firebase.json
 config.json
 last_processed_row.json
 config.js
+public/
 
 # Ignore all session-related directories and their contents
 .sessions/

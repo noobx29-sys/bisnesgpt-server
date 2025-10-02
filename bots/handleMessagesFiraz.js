@@ -21,6 +21,7 @@ const db = admin.firestore();
 const { doc, collection, query, where, getDocs } = db;
 const pdf = require("pdf-parse");
 const { fromPath } = require("pdf2pic");
+const { Poppler } = require('node-poppler');
 const SKCSpreadsheet = require("../spreadsheet/SKCSpreadsheet");
 const CarCareSpreadsheet = require("../blast/bookingCarCareGroup");
 const ConvertAPI = require("convertapi");
@@ -3520,7 +3521,7 @@ async function prepareContactData(
   function getDisplayName(contactData, contact, extractedNumber) {
     // Get candidate names
     const candidateName =
-      contactData?.contact_name || contactData?.name || contact?.name || "";
+      contactData?.name || contactData?.contact_name || contact?.name || "";
     const pushname = contact.pushname || "";
 
     // Helper to check if a string is a phone number (digits only, possibly with +)
@@ -3600,6 +3601,7 @@ async function prepareContactData(
     city: null,
     company: companyName || null,
     name: displayName,
+    contact_name: displayName,
     thread_id: threadID ?? "",
     profile_pic_url: profilePicUrl,
     last_message: {
@@ -4741,8 +4743,8 @@ async function processImmediateActions(client, msg, botName, phoneIndex) {
       idSubstring: idSubstring,
       extractedNumber: extractedNumber,
       contactName:
-        contactData?.contact_name ||
         contactData?.name ||
+        contactData?.contact_name ||
         contact.pushname ||
         extractedNumber,
       phoneIndex: phoneIndex,
@@ -5258,8 +5260,8 @@ async function processMessage(
       idSubstring: idSubstring,
       extractedNumber: extractedNumber,
       contactName:
-        contactData?.contact_name ||
         contactData?.name ||
+        contactData?.contact_name ||
         contact.pushname ||
         extractedNumber,
       phoneIndex: phoneIndex,
@@ -5322,7 +5324,7 @@ async function processMessage(
           msg.type === "document" &&
           msg._data.mimetype === "application/pdf"
         ) {
-          const pdfAnalysis = await handlePDFMessage(
+          const pdfAnalysis = await handlePDFMessagePoppler(
             msg,
             sender,
             threadID,
@@ -5339,8 +5341,8 @@ async function processMessage(
             extractedNumber,
             idSubstring,
             client,
-            contactData?.contact_name ||
-              contactData?.name ||
+            contactData?.name ||
+              contactData?.contact_name ||
               contact.pushname ||
               extractedNumber,
             phoneIndex,
@@ -5355,8 +5357,8 @@ async function processMessage(
             extractedNumber,
             idSubstring,
             client,
-            contactData?.contact_name ||
-              contactData?.name ||
+            contactData?.name ||
+              contactData?.contact_name ||
               contact.pushname ||
               extractedNumber,
             phoneIndex,
@@ -5380,8 +5382,8 @@ async function processMessage(
             extractedNumber,
             idSubstring,
             client,
-            contactData?.contact_name ||
-              contactData?.name ||
+            contactData?.name ||
+              contactData?.contact_name ||
               contact.pushname ||
               extractedNumber,
             phoneIndex,
@@ -5413,8 +5415,8 @@ async function processMessage(
             extractedNumber,
             idSubstring,
             client,
-            contactData?.contact_name ||
-              contactData?.name ||
+            contactData?.name ||
+              contactData?.contact_name ||
               contact.pushname ||
               extractedNumber,
             phoneIndex,
@@ -5430,8 +5432,8 @@ async function processMessage(
             idSubstring,
             extractedNumber,
             contactName:
-              contactData?.contact_name ||
               contactData?.name ||
+              contactData?.contact_name ||
               contact.pushname ||
               extractedNumber,
             phoneIndex,
@@ -5609,7 +5611,7 @@ async function getContactDataFromDatabaseByPhone(phoneNumber, idSubstring) {
       return null;
     } else {
       const contactData = result[0];
-      const contactName = contactData.contact_name || contactData.name;
+      const contactName = contactData.name || contactData.contact_name;
       const threadID = contactData.thread_id;
 
       return {
@@ -5703,6 +5705,8 @@ async function addMessageToPostgres(
         mediaMetadata.pageCount = messageData.document?.page_count;
         mediaMetadata.fileSize = messageData.document?.file_size;
       }
+    } else if (msg.type === "audio" || msg.type === "ptt") {
+      mediaData = messageData.audio?.data || null;
     }
   }
 
@@ -5961,7 +5965,7 @@ async function handleMessageByType({
   phoneIndex = 0,
 }) {
   if (msg.type === "document" && msg._data.mimetype === "application/pdf") {
-    return await handlePDFMessage(
+    return await handlePDFMessagePoppler(
       msg,
       sender,
       threadID,
@@ -6150,7 +6154,7 @@ async function processBotResponse({
       idSubstring: idSubstring,
       extractedNumber: extractedNumber,
       contactName:
-        contactData?.contact_name || contactData?.name || extractedNumber,
+        contactData?.name || contactData?.contact_name || extractedNumber,
       phoneIndex: phoneIndex,
     };
 
@@ -7530,6 +7534,229 @@ async function handlePDFMessage(
     }
   }
 }
+
+async function handlePDFMessagePoppler(
+  msg,
+  sender,
+  threadID,
+  client,
+  idSubstring,
+  extractedNumber,
+  phoneIndex
+) {
+  let tempPdfPath = null;
+  let tempDir = "./temp";
+  let outputPrefix = null;
+
+  try {
+    console.log("[PDF] Starting PDF document processing with Poppler...");
+    const media = await msg.downloadMedia();
+    console.log("[PDF] Media downloaded, size:", media.data.length);
+
+    // Convert base64 to buffer
+    const buffer = Buffer.from(media.data, "base64");
+    console.log("[PDF] Buffer created, length:", buffer.length);
+
+    // Create temp directory if it doesn't exist
+    try {
+      await fs.promises.access(tempDir);
+    } catch {
+      await fs.promises.mkdir(tempDir, { recursive: true });
+    }
+
+    // Save buffer to temporary PDF file
+    tempPdfPath = path.join(tempDir, `temp_pdf_${Date.now()}.pdf`);
+    await fs.promises.writeFile(tempPdfPath, buffer);
+    console.log("[PDF] Temporary PDF file created:", tempPdfPath);
+
+    // Use pdf-parse to get number of pages
+    const pdfData = await pdf(buffer);
+    const pageCount = pdfData.numpages;
+    console.log(`[PDF] PDF parsed, total pages: ${pageCount}`);
+
+    // Initialize Poppler
+    const poppler = new Poppler();
+    outputPrefix = path.join(tempDir, `pdf_page_${Date.now()}`);
+
+    // Convert PDF to images using Poppler
+    const options = {
+      firstPageToConvert: 1,
+      lastPageToConvert: Math.min(pageCount, 3),
+      pngFile: true,
+      resolutionXYAxis: 300, // 300 DPI for both X and Y
+      scalePageTo: 2480, // Scale long side to 2480 pixels (A4 width at 300 DPI)
+    };
+
+    console.log("[PDF] Converting PDF to images with Poppler...");
+    await poppler.pdfToCairo(tempPdfPath, outputPrefix, options);
+    console.log("[PDF] PDF converted to images successfully");
+
+    let allPagesAnalysis = [];
+    const pagesToProcess = Math.min(pageCount, 3);
+
+    for (let i = 1; i <= pagesToProcess; i++) {
+      console.log(`[PDF] Processing page ${i} of ${pagesToProcess}...`);
+      
+      // Try different naming patterns that poppler might use
+      let imagePath = `${outputPrefix}-${i}.png`;
+      
+      // Check if image file exists
+      try {
+        await fs.promises.access(imagePath);
+      } catch {
+        console.log(`[PDF] Image for page ${i} not found, trying alternative naming...`);
+        // Try alternative naming patterns
+        const altPaths = [
+          `${outputPrefix}_${i}.png`,
+          `${outputPrefix}-${String(i).padStart(3, '0')}.png`,
+          `${outputPrefix}${i}.png`,
+        ];
+        
+        let found = false;
+        for (const altPath of altPaths) {
+          try {
+            await fs.promises.access(altPath);
+            imagePath = altPath;
+            found = true;
+            break;
+          } catch {
+            // Continue trying
+          }
+        }
+        
+        if (!found) {
+          console.error(`[PDF] Could not find converted image for page ${i}`);
+          continue; // Skip this page but continue with others
+        }
+      }
+
+      console.log(`[PDF] Page ${i} image found: ${imagePath}`);
+
+      // Convert image to base64
+      const imageBuffer = await fs.promises.readFile(imagePath);
+      const base64Image = imageBuffer.toString("base64");
+      console.log(`[PDF] Page ${i} image loaded, base64 length: ${base64Image.length}`);
+
+      // Analyze image using GPT-4-mini
+      console.log(`[PDF] Sending page ${i} to OpenAI for analysis...`);
+      const response = await openai.chat.completions.create({
+        model: "gpt-4.1-mini",
+        messages: [
+          {
+            role: "user",
+            content: [
+              {
+                type: "text",
+                text: `Please extract and analyze ALL text and data from this PDF page with high accuracy. Focus on:
+
+1. **Contact Information:**
+   - Full names (first and last names)
+   - Email addresses (be very careful with accuracy - double check each character)
+   - Phone numbers (including country codes and formatting)
+   - Addresses (complete street addresses, cities, states, postal codes)
+   - Company names and job titles
+
+2. **Form Data:**
+   - Any form fields and their values
+   - Checkboxes, radio buttons, and their selections
+   - Dates (in any format)
+   - ID numbers, reference numbers, or codes
+
+3. **Document Content:**
+   - Headers, titles, and section names
+   - Body text and paragraphs
+   - Tables and their data (preserve structure)
+   - Lists and bullet points
+   - Any signatures or handwritten text
+
+4. **Financial/Numerical Data:**
+   - Amounts, prices, quantities
+   - Account numbers, invoice numbers
+   - Percentages and calculations
+
+Provide the extracted information in a structured format with clear labels. Be especially careful with email addresses - verify each character and ensure proper formatting (name@domain.com). If uncertain about any character in an email, mention the uncertainty.
+
+Also describe what type of document this appears to be (form, invoice, letter, etc.).`,
+              },
+              {
+                type: "image_url",
+                image_url: {
+                  url: `data:image/png;base64,${base64Image}`,
+                },
+              },
+            ],
+          },
+        ],
+        max_tokens: 700,
+      });
+
+      // Add page analysis to results
+      const pageAnalysis = response.choices[0].message.content;
+      console.log(`[PDF] Page ${i} analysis received, length: ${pageAnalysis.length}`);
+      allPagesAnalysis.push(`Page ${i}: ${pageAnalysis}`);
+
+      // Clean up temporary image file
+      try {
+        await fs.promises.unlink(imagePath);
+        console.log(`[PDF] Page ${i} temporary image deleted.`);
+      } catch (err) {
+        console.error(`[PDF] Error deleting temp image for page ${i}:`, err);
+      }
+    }
+
+    if (allPagesAnalysis.length === 0) {
+      throw new Error("No pages were successfully processed");
+    }
+
+    // Combine analysis from all pages
+    const combinedAnalysis = allPagesAnalysis.join("\n\n");
+    console.log("[PDF] Combined analysis completed");
+
+    return `[PDF Content Analysis: ${combinedAnalysis}]`;
+
+  } catch (error) {
+    console.error("[PDF] Error processing PDF:", error);
+    if (error && typeof error === "object") {
+      Object.entries(error).forEach(([key, value]) => {
+        console.log(`[PDF] Error detail: ${key}: ${value}`);
+      });
+    }
+    return "[Error: Unable to process PDF document]";
+  } finally {
+    // Clean up temporary files
+    try {
+      // Delete PDF file
+      if (tempPdfPath) {
+        try {
+          await fs.promises.unlink(tempPdfPath);
+          console.log("[PDF] Temporary PDF file deleted.");
+        } catch (error) {
+          console.error("[PDF] Error deleting PDF file:", error);
+        }
+      }
+      
+      // Clean up any remaining image files
+      try {
+        const files = await fs.promises.readdir(tempDir);
+        for (const file of files) {
+          if (file.includes('pdf_page_') && file.endsWith('.png')) {
+            try {
+              await fs.promises.unlink(path.join(tempDir, file));
+            } catch (error) {
+              console.error(`[PDF] Error deleting image file ${file}:`, error);
+            }
+          }
+        }
+        console.log("[PDF] Temporary image files cleaned up.");
+      } catch (error) {
+        console.error("[PDF] Error reading temp directory:", error);
+      }
+    } catch (error) {
+      console.error("[PDF] Error in cleanup:", error);
+    }
+  }
+}
+
 async function getFollowUpTemplates(companyId) {
   const templates = [];
   const sqlClient = await pool.connect();
@@ -8646,10 +8873,12 @@ async function processAudioMessage(msg) {
   if (msg.type !== "audio" && msg.type !== "ptt") {
     return null;
   }
+  
+  const media = await msg.downloadMedia();
 
   return {
     mimetype: "audio/ogg; codecs=opus",
-    data: null,
+    data: media.data,
   };
 }
 

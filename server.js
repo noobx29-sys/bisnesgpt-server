@@ -789,6 +789,7 @@ const whitelist = [
   "https://web.jutateknologi.com",
   'https://app.jutateknologi.com',
   'https://server.jutateknologi.com',
+  'https://bisnesgpt.vercel.app/',
   "https://app.omniyal.com",
 ];
 
@@ -1465,6 +1466,161 @@ Please check the logs for more details.`;
     }
   }
 });
+// ============================================
+// ALIST BLAST - Round Robin Message Sending
+// ============================================
+
+const ALIST_COMPANIES = ["0156", "092", "296245"];
+
+
+app.post("/alist/blast", async (req, res) => {
+  const requestId = uuidv4().substring(0, 8);
+  console.log(`[AlistBlast][${requestId}] ===== NEW REQUEST STARTED =====`);
+  console.log(
+    `[AlistBlast][${requestId}] Request body:`,
+    JSON.stringify(req.body, null, 2)
+  );
+
+  try {
+    const { phone, phoneNumber, message, first_name, email, company } = req.body;
+
+    // Support both 'phone' and 'phoneNumber' field names
+    const recipientPhone = phone || phoneNumber;
+
+    // Validate required fields
+    if (!recipientPhone) {
+      console.log(
+        `[AlistBlast][${requestId}] ❌ Validation failed - missing phone number`
+      );
+      return res.status(400).json({
+        success: false,
+        error: "Missing required fields",
+        details: "phone or phoneNumber is required",
+      });
+    }
+
+    // Build message - use provided message or create default welcome message
+    let messageText = message;
+    if (!messageText) {
+      messageText = `Thank you for reaching out to The A-List Malaysia!`;
+      console.log(
+        `[AlistBlast][${requestId}] No message provided, using default welcome message`
+      );
+    } else {
+      console.log(
+        `[AlistBlast][${requestId}] Using provided message`
+      );
+    }
+
+    // Get current round robin index from Neon database
+    let currentSetting = await sqlDb.query(
+      `SELECT round_robin_index FROM alist_blast_config LIMIT 1`
+    );
+
+    let currentIndex = currentSetting.rows[0]?.round_robin_index || 0;
+
+    // Get next company ID using round robin
+    const companyId = ALIST_COMPANIES[currentIndex];
+    const nextIndex = (currentIndex + 1) % ALIST_COMPANIES.length;
+
+    // Update round robin index in database
+    await sqlDb.query(
+      `UPDATE alist_blast_config
+       SET round_robin_index = $1, updated_at = CURRENT_TIMESTAMP
+       WHERE id = 1`,
+      [nextIndex]
+    );
+
+    console.log(
+      `[AlistBlast][${requestId}] Selected company ID: ${companyId} (current index: ${currentIndex}, next index: ${nextIndex})`
+    );
+
+    // Format phone number for WhatsApp (remove + and add @c.us)
+    let formattedPhone = recipientPhone.replace(/\D/g, "");
+    if (!formattedPhone.startsWith("+")) {
+      formattedPhone = "+" + formattedPhone;
+    }
+    const chatId = formattedPhone.substring(1) + "@c.us";
+
+    console.log(
+      `[AlistBlast][${requestId}] Formatted phone: ${formattedPhone}, chatId: ${chatId}`
+    );
+
+    // Send message using v2/messages/text API
+    console.log(
+      `[AlistBlast][${requestId}] Sending message from company ${companyId}`
+    );
+
+    await axios.post(
+      `http://localhost:${port}/api/v2/messages/text/${companyId}/${encodeURIComponent(chatId)}`,
+      {
+        message: messageText,
+        phoneIndex: 0,
+      }
+    );
+
+    console.log(
+      `[AlistBlast][${requestId}] Message sent successfully`
+    );
+
+    // Save to Neon database
+    const contactID = companyId + "-" + formattedPhone.substring(1);
+    const messageId = `blast_${requestId}_${Date.now()}`;
+
+    await sqlDb.query(
+      `INSERT INTO messages (
+        company_id,
+        contact_id,
+        message_id,
+        content,
+        message_type,
+        from_me,
+        timestamp,
+        tags
+      ) VALUES ($1, $2, $3, $4, $5, $6, NOW(), $7)`,
+      [
+        companyId,
+        contactID,
+        messageId,
+        messageText,
+        "text",
+        true,
+        JSON.stringify(["alist-blast"]),
+      ]
+    );
+
+    console.log(
+      `[AlistBlast][${requestId}] Message saved to Neon database`
+    );
+
+    // Return success response
+    res.json({
+      success: true,
+      data: {
+        companyId,
+        phoneNumber: formattedPhone,
+        chatId,
+        messageId,
+      },
+    });
+
+    console.log(`[AlistBlast][${requestId}] ===== REQUEST COMPLETED =====`);
+  } catch (error) {
+    console.error(
+      `[AlistBlast][${requestId}] ❌ Error:`,
+      error.message
+    );
+    console.error(`[AlistBlast][${requestId}] Stack:`, error.stack);
+
+    res.status(500).json({
+      success: false,
+      error: "Failed to send blast message",
+      details: error.message,
+    });
+  }
+});
+
+
 
 // Background processing function
 async function processCertificateInBackground(
@@ -4980,6 +5136,7 @@ app.post("/api/facebook-lead-webhook", async (req, res) => {
                 
                 // Format phone for WhatsApp
                 const formattedPhone = formatPhoneForWhatsApp(phoneNumber);
+                console.log(`Formatted phone number = ${formattedPhone}`);
                 
                 // Get company mapping based on form ID or page ID
                 const companyId = await getCompanyIdForLead(formId, pageId);
@@ -10704,14 +10861,14 @@ async function sendScheduledMessage(message) {
           {
             originalLength: messageText.length,
             hasContact: Boolean(contact),
-            contactName: contact?.contact_name || null,
+            contactName: contact?.name || null,
             contactPhone: contact?.phone || null,
           }
         );
 
         let processedMessage = messageText;
         const placeholders = {
-          contactName: contact?.contact_name || "",
+          contactName: contact?.name || "",
           firstName: contact?.first_name || "",
           lastName: contact?.last_name || "",
           email: contact?.email || "",
@@ -11063,7 +11220,7 @@ async function sendScheduledMessage(message) {
                 `[Company ${companyId}] Found contact by ID and phone:`,
                 {
                   contactId: contactData.contact_id,
-                  name: contactData.contact_name,
+                  name: contactData.name,
                   phone: contactData.phone,
                 }
               );
@@ -11086,7 +11243,7 @@ async function sendScheduledMessage(message) {
               console.log(`[Company ${companyId}] Phone-only lookup result:`, {
                 found: phoneContactResult.rowCount > 0,
                 contactId: contactData.contact_id || null,
-                name: contactData.contact_name || null,
+                name: contactData.name || null,
               });
             }
           } else {
@@ -11106,14 +11263,14 @@ async function sendScheduledMessage(message) {
             console.log(`[Company ${companyId}] Phone lookup result:`, {
               found: contactResult.rowCount > 0,
               contactId: contactData.contact_id || null,
-              name: contactData.contact_name || null,
+              name: contactData.name || null,
             });
           }
 
           console.log(`[Company ${companyId}] Contact data summary:`, {
             exists: Object.keys(contactData).length > 0,
             contactId: contactData.contact_id || null,
-            name: contactData.contact_name || null,
+            name: contactData.name || null,
             phone: contactData.phone || null,
             tags: contactData.tags || null,
             customFields: contactData.custom_fields ? "Present" : "None",
@@ -11652,7 +11809,7 @@ function setupMessageCreateHandler(client, botName, phoneIndex) {
           msg,
           companyId,
           extractedNumber,
-          contactResult.rows[0]?.contact_name,
+          contactResult.rows[0]?.name,
           phoneIndex
         );
 
@@ -11715,7 +11872,7 @@ function setupMessageCreateHandler(client, botName, phoneIndex) {
           idSubstring: botName,
           extractedNumber: extractedNumber,
           contactName:
-            contactData?.contact_name || contactData?.name || extractedNumber,
+            contactData?.name || contactData?.contact_name || extractedNumber,
           phoneIndex: phoneIndex,
         };
 
@@ -17580,7 +17737,7 @@ async function getContactDataFromDatabaseByPhone(phoneNumber, idSubstring) {
         return null;
       } else {
         const contactData = result[0];
-        const contactName = contactData.contact_name || contactData.name;
+        const contactName = contactData.name || contactData.contact_name;
         const threadID = contactData.thread_id;
 
         return {
@@ -18051,20 +18208,15 @@ async function main(reinitialize = false) {
   // );
 
   // WHEN WANT TO INITIALIZE ALL BOTS
-  const companiesPromise = sqlDb.query(
-    "SELECT * FROM companies WHERE api_url = $1",
-    ["https://juta-dev.ngrok.dev"]
-  );
-
   // const companiesPromise = sqlDb.query(
-  //   "SELECT * FROM companies WHERE company_id IN ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33)",
-  //   [
-  //     "0107", "0119", "0160", "0161", "0182", "0245", "0271", "0291", "0327",
-  //     "0345", "0364", "0377", "0378", "063", "075", "079", "088", "098",
-  //     "098410", "107145", "128137", "314648", "327971", "330643", "456236",
-  //     "478608", "503217", "509387", "659516", "765943", "771344", "0123", "0380"
-  //   ]
+  //   "SELECT * FROM companies WHERE api_url = $1",
+  //   ["https://juta-dev.ngrok.dev"]
   // );
+
+  const companyIds = ['0160', '0161', '0377', '063', '079', '092', '399849', '458752', '765943', '088', '296245', '0245', '0210', '0156', '0101', '728219', '0342', '049815'];
+  const placeholders = companyIds.map((_, i) => `$${i + 1}`).join(', ');
+  const query = `SELECT * FROM companies WHERE company_id IN (${placeholders})`;
+  const companiesPromise = sqlDb.query(query, companyIds);
 
   // 2. If reinitializing, start cleanup early
   const cleanupPromise = reinitialize
@@ -18123,147 +18275,695 @@ async function main(reinitialize = false) {
     `Found ${botConfigs.length} bots to initialize (excluding EC2 instances)`
   );
 
-    // 6. Initialize bots in sequential clusters
-    const initializeBotsWithDelay = async (botConfigs) => {
-      if (!botConfigs || botConfigs.length === 0) {
-        console.log("No bot configurations found");
-        return;
-      }
-  
-      const MAX_CONCURRENT =5; // Maximum number of bots to initialize simultaneously
-      const BOT_TIMEOUT = 60000; // 1 minute timeout per bot
-      const RETRY_DELAY = 5000; // 5 seconds delay before retrying failed bots
-      const MAX_RETRIES = 2; // Maximum retry attempts per bot
-  
-      console.log(`Starting initialization of ${botConfigs.length} bots with max ${MAX_CONCURRENT} concurrent initializations...`);
-  
-      // Function to initialize mtdcSpreadsheet when bot 0380 is ready
-      const initializeMtdcSpreadsheet = async () => {
-        try {
-          console.log(
-            "Bot 0380 successfully initialized, starting mtdcSpreadsheet automation..."
-          );
-          const automationInstances = {
-            mtdcSpreadsheet: new mtdcSpreadsheet(botMap),
-          };
-          await automationInstances.mtdcSpreadsheet.initialize();
-          console.log("mtdcSpreadsheet automation initialized successfully");
-        } catch (error) {
-          console.error("Error initializing mtdcSpreadsheet automation:", error);
+  // 6. Initialize bots in sequential clusters
+  const initializeBotsWithDelay = async (botConfigs) => {
+    if (!botConfigs || botConfigs.length === 0) {
+      console.log("No bot configurations found");
+      return;
+    }
+
+    const MAX_CONCURRENT = 2;
+    const BOT_TIMEOUT = 120000;
+    const RETRY_DELAY = 5000;
+    const MAX_RETRIES = 3;
+    const STATUS_CHECK_INTERVAL = 10000;
+
+    // Create individual phone tasks from all bot configurations
+    const createPhoneTasks = (configs) => {
+      const phoneTasks = [];
+      
+      configs.forEach(config => {
+        const phoneCount = config.phoneCount || 1;
+        for (let phoneIndex = 0; phoneIndex < phoneCount; phoneIndex++) {
+          phoneTasks.push({
+            botName: config.botName,
+            phoneIndex: phoneIndex,
+            totalPhones: phoneCount,
+            isLastPhone: phoneIndex === phoneCount - 1,
+            originalConfig: config
+          });
         }
-      };
-  
-      // Function to initialize a single bot with timeout
-      const initializeSingleBotWithTimeout = async (config, retryCount = 0) => {
-        const timeoutPromise = new Promise((_, reject) => 
-          setTimeout(() => reject(new Error(`Timeout after ${BOT_TIMEOUT/1000}s`)), BOT_TIMEOUT)
+      });
+      
+      return phoneTasks;
+    };
+
+    const allPhoneTasks = createPhoneTasks(botConfigs);
+    console.log(`Starting phone-based initialization: ${allPhoneTasks.length} total phones from ${botConfigs.length} bots with max ${MAX_CONCURRENT} concurrent phone initializations...`);
+    
+    // Group phone tasks by company for tracking
+    const phoneTasksByBot = {};
+    allPhoneTasks.forEach(task => {
+      if (!phoneTasksByBot[task.botName]) {
+        phoneTasksByBot[task.botName] = [];
+      }
+      phoneTasksByBot[task.botName].push(task);
+    });      // Function to initialize mtdcSpreadsheet when bot 0380 is ready
+    const initializeMtdcSpreadsheet = async () => {
+      try {
+        console.log(
+          "Bot 0380 successfully initialized, starting mtdcSpreadsheet automation..."
         );
-  
-        const initPromise = (async () => {
-          await initializeBot(config.botName, config.phoneCount);
-          console.log(`✅ Successfully initialized bot ${config.botName}`);
-  
+        const automationInstances = {
+          mtdcSpreadsheet: new mtdcSpreadsheet(botMap),
+        };
+        await automationInstances.mtdcSpreadsheet.initialize();
+        console.log("mtdcSpreadsheet automation initialized successfully");
+      } catch (error) {
+        console.error("Error initializing mtdcSpreadsheet automation:", error);
+      }
+    };
+
+    // Enhanced function to get bot status from multiple sources
+    const getBotStatus = async (botName) => {
+      try {
+        // Check botMap first
+        const botData = botMap.get(botName);
+        if (botData && Array.isArray(botData)) {
+          const statuses = botData.map(phone => phone?.status || 'unknown');
+          const validStatuses = statuses.filter(s => s && s !== 'unknown');
+          
+          // Count status occurrences
+          const statusCounts = {
+            ready: statuses.filter(s => s === 'ready').length,
+            qr: statuses.filter(s => s === 'qr').length,
+            authenticated: statuses.filter(s => s === 'authenticated').length,
+            initializing: statuses.filter(s => s === 'initializing').length,
+            error: statuses.filter(s => s === 'error').length,
+            disconnected: statuses.filter(s => s === 'disconnected').length,
+            unknown: statuses.filter(s => !s || s === 'unknown').length
+          };
+
+          const totalPhones = botData.length;
+          const finalStatePhones = statusCounts.ready + statusCounts.qr; // End states
+          const processingPhones = statusCounts.initializing + statusCounts.authenticated; // Still processing
+          
+          console.log(`📊 Bot ${botName} phones: ${statusCounts.ready}R/${statusCounts.qr}Q/${statusCounts.authenticated}A/${statusCounts.initializing}I (${finalStatePhones}/${totalPhones} in final state)`);
+
+          // Wait for ALL phones to reach final states (ready or qr)
+          if (finalStatePhones === totalPhones) {
+            // All phones are in final states
+            if (statusCounts.ready > 0) {
+              // Has at least one ready phone - can proceed with post-init
+              return 'ready';
+            } else if (statusCounts.qr === totalPhones) {
+              // All phones are showing QR - pure QR state
+              return 'qr';
+            }
+          }
+          
+          // If phones are still processing (initializing/authenticated), keep waiting
+          if (processingPhones > 0) {
+            return 'initializing';
+          }
+          
+          // If we have errors or unknown states, handle appropriately
+          if (statusCounts.error > 0) {
+            return 'error';
+          }
+          
+          // Return the most common valid status as fallback
+          return validStatuses[0] || 'unknown';
+        }
+
+        // Check database as fallback
+        const result = await sqlDb.query(
+          "SELECT status FROM phone_status WHERE company_id = $1 ORDER BY phone_index LIMIT 1",
+          [botName]
+        );
+        return result.rows.length > 0 ? result.rows[0].status : 'unknown';
+      } catch (error) {
+        console.error(`Error getting status for bot ${botName}:`, error);
+        return 'unknown';
+      }
+    };
+
+    // Function to check if bot should proceed with post-initialization tasks
+    const shouldProceedWithPostInit = async (botName) => {
+      const status = await getBotStatus(botName);
+      const botData = botMap.get(botName);
+      
+      if (botData && Array.isArray(botData)) {
+        const statusCounts = {
+          ready: botData.filter(phone => phone?.status === 'ready').length,
+          qr: botData.filter(phone => phone?.status === 'qr').length,
+          initializing: botData.filter(phone => phone?.status === 'initializing').length,
+          authenticated: botData.filter(phone => phone?.status === 'authenticated').length
+        };
+        
+        const totalPhones = botData.length;
+        const finalStatePhones = statusCounts.ready + statusCounts.qr;
+        const allInFinalState = finalStatePhones === totalPhones;
+        
+        // Only proceed if ALL phones are in final state AND at least one is ready
+        return allInFinalState && statusCounts.ready > 0;
+      }
+      
+      return status === 'ready';
+    };
+
+    // Function to initialize a single phone with enhanced timeout and status tracking
+    const initializeSinglePhoneWithTimeout = async (phoneTask, retryCount = 0) => {
+      const { botName, phoneIndex, totalPhones, isLastPhone, originalConfig } = phoneTask;
+      const startTime = Date.now();
+      let statusCheckInterval;
+      let lastStatus = 'unknown';
+      
+      // Fixed timeout per phone (not dependent on total phone count since we're doing them individually)
+      const phoneTimeout = BOT_TIMEOUT;
+        
+      const timeoutPromise = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error(`Phone timeout after ${phoneTimeout/1000}s`)), phoneTimeout)
+      );
+
+      // Status monitoring promise for individual phone
+      const statusMonitorPromise = new Promise((resolve, reject) => {
+        statusCheckInterval = setInterval(async () => {
+          try {
+            const botData = botMap.get(botName);
+            let phoneStatus = 'unknown';
+            let phoneStatusDetails = '';
+            
+            if (botData && Array.isArray(botData) && botData[phoneIndex]) {
+              phoneStatus = botData[phoneIndex].status || 'unknown';
+              
+              // Get overall bot status for context
+              const statusCounts = {
+                ready: botData.filter(p => p?.status === 'ready').length,
+                qr: botData.filter(p => p?.status === 'qr').length,
+                authenticated: botData.filter(p => p?.status === 'authenticated').length,
+                initializing: botData.filter(p => p?.status === 'initializing').length,
+                error: botData.filter(p => p?.status === 'error').length
+              };
+              
+              const completedPhones = statusCounts.ready + statusCounts.qr;
+              phoneStatusDetails = ` (Bot ${botName}: ${completedPhones}/${totalPhones} phones done - P${phoneIndex + 1}: ${phoneStatus})`;
+            }
+            
+            const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+            
+            if (phoneStatus !== lastStatus) {
+              console.log(`🔄 Phone ${botName}-P${phoneIndex + 1} status: ${lastStatus} → ${phoneStatus}${phoneStatusDetails} (${elapsed}s)`);
+              lastStatus = phoneStatus;
+            }
+
+            // Check if this specific phone reached a final state
+            if (phoneStatus === 'ready') {
+              clearInterval(statusCheckInterval);
+              console.log(`✅ Phone ${botName}-P${phoneIndex + 1} ready${phoneStatusDetails} (${elapsed}s)`);
+              resolve({ status: 'ready', shouldProceedWithPostInit: isLastPhone });
+            } else if (phoneStatus === 'qr') {
+              clearInterval(statusCheckInterval);
+              console.log(`📱 Phone ${botName}-P${phoneIndex + 1} showing QR${phoneStatusDetails} (${elapsed}s)`);
+              resolve({ status: 'qr', shouldProceedWithPostInit: false });
+            } else if (phoneStatus === 'error') {
+              clearInterval(statusCheckInterval);
+              console.log(`❌ Phone ${botName}-P${phoneIndex + 1} error${phoneStatusDetails} (${elapsed}s)`);
+              reject(new Error(`Phone ${phoneIndex + 1} error`));
+            }
+
+            // Check for stuck initialization
+            if (phoneStatus === 'initializing' && elapsed > 60) {
+              console.warn(`⚠️ Phone ${botName}-P${phoneIndex + 1} still initializing after ${elapsed}s${phoneStatusDetails}`);
+            }
+            
+          } catch (error) {
+            console.error(`Error monitoring phone ${botName}-P${phoneIndex + 1}:`, error);
+          }
+        }, STATUS_CHECK_INTERVAL);
+      });
+
+      const initPromise = (async () => {
+        console.log(`🚀 Initializing phone ${botName}-P${phoneIndex + 1}/${totalPhones}...`);
+        
+        // Initialize the phone (this will create the bot entry if it doesn't exist)
+        if (phoneIndex === 0) {
+          // First phone initializes the whole bot
+          initializeBot(botName, totalPhones);
+        }
+        
+        // Wait for this specific phone's status resolution
+        const result = await Promise.race([statusMonitorPromise, timeoutPromise]);
+        
+        console.log(`✅ Phone ${botName}-P${phoneIndex + 1} initialization completed with status: ${result.status}`);
+        
+        // Only proceed with post-init tasks if this is the last phone and bot is ready
+        if (result.shouldProceedWithPostInit && isLastPhone) {
+          console.log(`📅 Starting post-initialization tasks for bot ${botName} (all phones complete)`);
+          
+          if (botName === "0380") {
+            initializeMtdcSpreadsheet();
+          }
+
+          scheduleAllMessages(botName);
+
+          // After successful initialization, sync messages and handle auto-replies
+          await syncMessagesAndHandleAutoReplies(botName, totalPhones);
+          
+          console.log(`🎉 All tasks completed for bot ${botName}`);
+        }
+                  
+        return result;
+      })();
+
+      try {
+        const result = await Promise.race([initPromise, timeoutPromise]);
+        clearInterval(statusCheckInterval);
+        return { 
+          success: true, 
+          phoneTask, 
+          retryCount, 
+          status: result.status,
+          completedPostInit: result.shouldProceedWithPostInit
+        };
+      } catch (error) {
+        clearInterval(statusCheckInterval);
+        console.error(`❌ Phone ${botName}-P${phoneIndex + 1} failed (attempt ${retryCount + 1}/${MAX_RETRIES + 1}):`, error.message);
+        
+        // Check if phone got stuck and attempt cleanup
+        const botData = botMap.get(botName);
+        if (botData && botData[phoneIndex]?.status === 'initializing') {
+          console.log(`🧹 Attempting cleanup for stuck phone ${botName}-P${phoneIndex + 1}`);
+          try {
+            await safeCleanup(botName, phoneIndex);
+          } catch (cleanupError) {
+            console.error(`Error during cleanup for ${botName}-P${phoneIndex + 1}:`, cleanupError);
+          }
+        }
+        
+        return { 
+          success: false, 
+          phoneTask, 
+          error: error.message, 
+          retryCount,
+          status: botData && botData[phoneIndex] ? botData[phoneIndex].status : 'unknown'
+        };
+      }
+    };
+
+    // Function to initialize a single bot with enhanced timeout and status tracking (kept for compatibility)
+    const initializeSingleBotWithTimeout = async (config, retryCount = 0) => {
+      const startTime = Date.now();
+      let statusCheckInterval;
+      let lastStatus = 'unknown';
+      
+      // Dynamic timeout based on phone count - multi-phone bots need more time
+      const dynamicTimeout = config.phoneCount > 1 
+        ? BOT_TIMEOUT + (config.phoneCount * 15000) // Extra 15s per additional phone
+        : BOT_TIMEOUT;
+        
+      const timeoutPromise = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error(`Timeout after ${dynamicTimeout/1000}s`)), dynamicTimeout)
+      );
+
+      // Status monitoring promise
+      const statusMonitorPromise = new Promise((resolve, reject) => {
+        statusCheckInterval = setInterval(async () => {
+          try {
+            const currentStatus = await getBotStatus(config.botName);
+            const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+            
+            // Get detailed phone status for multi-phone bots
+            const botData = botMap.get(config.botName);
+            let phoneStatusDetails = '';
+            let allPhonesInFinalState = false;
+            
+            if (botData && Array.isArray(botData)) {
+              const statusCounts = {
+                ready: botData.filter(p => p?.status === 'ready').length,
+                qr: botData.filter(p => p?.status === 'qr').length,
+                authenticated: botData.filter(p => p?.status === 'authenticated').length,
+                initializing: botData.filter(p => p?.status === 'initializing').length,
+                error: botData.filter(p => p?.status === 'error').length
+              };
+              
+              const totalPhones = botData.length;
+              const finalStatePhones = statusCounts.ready + statusCounts.qr;
+              allPhonesInFinalState = finalStatePhones === totalPhones;
+              
+              phoneStatusDetails = ` (${statusCounts.ready}R/${statusCounts.qr}Q/${statusCounts.authenticated}A/${statusCounts.initializing}I/${statusCounts.error}E - ${finalStatePhones}/${totalPhones} final)`;
+            }
+            
+            if (currentStatus !== lastStatus) {
+              console.log(`🔄 Bot ${config.botName} status changed: ${lastStatus} → ${currentStatus}${phoneStatusDetails} (${elapsed}s)`);
+              lastStatus = currentStatus;
+            }
+
+            // Only resolve when ALL phones have reached final states (ready or qr)
+            if (currentStatus === 'ready' && allPhonesInFinalState) {
+              clearInterval(statusCheckInterval);
+              console.log(`✅ Bot ${config.botName} all phones in final state, has ready phones - proceeding with setup${phoneStatusDetails}`);
+              resolve({ status: 'ready', shouldProceedWithPostInit: true });
+            } else if (currentStatus === 'qr' && allPhonesInFinalState) {
+              clearInterval(statusCheckInterval);
+              console.log(`📱 Bot ${config.botName} all phones in final state, all showing QR - no post-init tasks${phoneStatusDetails}`);
+              resolve({ status: 'qr', shouldProceedWithPostInit: false });
+            }
+
+            // Check for stuck initialization - but be more lenient for multi-phone bots
+            const maxWaitTime = (config.phoneCount && config.phoneCount > 1) ? 75 : 60; // Extra time for multi-phone
+            if (currentStatus === 'initializing' && elapsed > maxWaitTime) {
+              console.warn(`⚠️ Bot ${config.botName} still initializing after ${elapsed}s${phoneStatusDetails}`);
+              // Don't reject here, let timeout handle it
+            }
+            
+            // Progress logging for multi-phone bots
+            if (botData && botData.length > 1 && elapsed % 20 < (STATUS_CHECK_INTERVAL/1000)) {
+              console.log(`⏳ Bot ${config.botName} progress${phoneStatusDetails} (${elapsed}s)`);
+            }
+          } catch (error) {
+            console.error(`Error monitoring status for ${config.botName}:`, error);
+          }
+        }, STATUS_CHECK_INTERVAL);
+      });
+
+      const initPromise = (async () => {
+        console.log(`🚀 Initializing bot ${config.botName}...`);
+        
+        initializeBot(config.botName, config.phoneCount);
+        
+        // Wait for either status resolution OR initialization completion, whichever comes first
+        const result = await Promise.race([statusMonitorPromise, timeoutPromise]);
+        
+        console.log(`✅ Bot ${config.botName} initialization completed with status: ${result.status}`);
+        
+        // Only proceed with post-init tasks if bot is ready
+        if (result.shouldProceedWithPostInit) {
+          console.log(`📅 Starting post-initialization tasks for bot ${config.botName}`);
+          
           if (config.botName === "0380") {
             initializeMtdcSpreadsheet();
           }
-  
+
           scheduleAllMessages(config.botName);
-  
+
           // After successful initialization, sync messages and handle auto-replies
           await syncMessagesAndHandleAutoReplies(
             config.botName,
             config.phoneCount
           );
-        })();
-  
-        try {
-          await Promise.race([initPromise, timeoutPromise]);
-          return { success: true, config, retryCount };
-        } catch (error) {
-          console.error(`❌ Bot ${config.botName} failed (attempt ${retryCount + 1}/${MAX_RETRIES + 1}):`, error.message);
-          return { success: false, config, error: error.message, retryCount };
+          
+          console.log(`🎉 All tasks completed for bot ${config.botName}`);
+        } else {
+          console.log(`📱 Bot ${config.botName} is in ${result.status} state, skipping post-initialization tasks`);
         }
-      };
-  
+                  
+        return result;
+      })();
+
       try {
-        const pendingBots = [...botConfigs.map(config => ({ ...config, retryCount: 0 }))];
-        const completed = [];
-        const failed = [];
-        let activeBots = new Map(); // Track currently initializing bots
-  
-        while (pendingBots.length > 0 || activeBots.size > 0) {
-          // Start new bots up to the concurrent limit
-          while (activeBots.size < MAX_CONCURRENT && pendingBots.length > 0) {
-            const botConfig = pendingBots.shift();
-            console.log(`🚀 Starting bot ${botConfig.botName} (${activeBots.size + 1}/${MAX_CONCURRENT} concurrent, ${pendingBots.length} remaining)`);
-            
-            const botPromise = initializeSingleBotWithTimeout(botConfig, botConfig.retryCount);
-            activeBots.set(botConfig.botName, {
-              promise: botPromise,
-              config: botConfig,
-              startTime: Date.now()
-            });
+        const result = await Promise.race([initPromise, timeoutPromise]);
+        clearInterval(statusCheckInterval);
+        return { 
+          success: true, 
+          config, 
+          retryCount, 
+          status: result.status,
+          completedPostInit: result.shouldProceedWithPostInit
+        };
+      } catch (error) {
+        clearInterval(statusCheckInterval);
+        console.error(`❌ Bot ${config.botName} failed (attempt ${retryCount + 1}/${MAX_RETRIES + 1}):`, error.message);
+        
+        // Check if bot got stuck and attempt cleanup
+        const currentStatus = await getBotStatus(config.botName);
+        if (currentStatus === 'initializing') {
+          console.log(`🧹 Attempting cleanup for stuck bot ${config.botName}`);
+          try {
+            await safeCleanup(config.botName, 0); // Cleanup first phone
+          } catch (cleanupError) {
+            console.error(`Error during cleanup for ${config.botName}:`, cleanupError);
           }
-  
-          // Wait for at least one bot to complete
-          if (activeBots.size > 0) {
-            const activePromises = Array.from(activeBots.entries()).map(([botName, botData]) => 
-              botData.promise.then(result => ({ botName, result }))
-            );
-  
-            const { botName, result } = await Promise.race(activePromises);
-            const completionTime = ((Date.now() - activeBots.get(botName).startTime) / 1000).toFixed(1);
+        }
+        
+        return { 
+          success: false, 
+          config, 
+          error: error.message, 
+          retryCount,
+          status: currentStatus
+        };
+      }
+    };
+
+    try {
+      const completedBots = new Set();
+      const qrBots = new Set();
+      const failedBots = new Set();
+      const completedPhones = new Map(); // Track completed phones per bot
+      const failedPhones = new Map(); // Track failed phones per bot
+      let activePhones = new Map(); // Track currently initializing phones
+      
+      // Initialize tracking maps
+      Object.keys(phoneTasksByBot).forEach(botName => {
+        completedPhones.set(botName, []);
+        failedPhones.set(botName, []);
+      });
+      
+      const pendingPhones = [...allPhoneTasks.map(task => ({ ...task, retryCount: 0 }))];
+
+      while (pendingPhones.length > 0 || activePhones.size > 0) {
+        // Start new phones up to the concurrent limit
+        while (activePhones.size < MAX_CONCURRENT && pendingPhones.length > 0) {
+          const phoneTask = pendingPhones.shift();
+          const phoneId = `${phoneTask.botName}-P${phoneTask.phoneIndex + 1}`;
+          console.log(`🚀 Starting phone ${phoneId} (${activePhones.size + 1}/${MAX_CONCURRENT} concurrent, ${pendingPhones.length} phones remaining)`);
+          
+          const phonePromise = initializeSinglePhoneWithTimeout(phoneTask, phoneTask.retryCount);
+          activePhones.set(phoneId, {
+            promise: phonePromise,
+            task: phoneTask,
+            startTime: Date.now()
+          });
+        }
+
+        // Wait for at least one phone to complete
+        if (activePhones.size > 0) {
+          const activePromises = Array.from(activePhones.entries()).map(([phoneId, phoneData]) => 
+            phoneData.promise.then(result => ({ phoneId, result }))
+          );
+
+          const { phoneId, result } = await Promise.race(activePromises);
+          const completionTime = ((Date.now() - activePhones.get(phoneId).startTime) / 1000).toFixed(1);
+          const phoneTask = activePhones.get(phoneId).task;
+          const { botName, phoneIndex, totalPhones, isLastPhone } = phoneTask;
+          
+          // Remove completed phone from active tracking
+          activePhones.delete(phoneId);
+
+          if (result.success) {
+            // Track completed phone
+            completedPhones.get(botName).push(phoneTask);
             
-            // Remove completed bot from active tracking
-            activeBots.delete(botName);
-  
-            if (result.success) {
-              completed.push(result.config);
-              console.log(`✅ Bot ${botName} completed successfully in ${completionTime}s (${completed.length}/${botConfigs.length} total completed)`);
+            const completedCount = completedPhones.get(botName).length;
+            console.log(`✅ Phone ${phoneId} completed with status ${result.status} in ${completionTime}s (Bot ${botName}: ${completedCount}/${totalPhones} phones done)`);
+            
+            // Check if this bot is now complete (all phones processed)
+            if (completedCount === totalPhones) {
+              const botPhones = completedPhones.get(botName);
+              const readyPhones = botPhones.filter(p => {
+                const botData = botMap.get(p.botName);
+                return botData && botData[p.phoneIndex] && botData[p.phoneIndex].status === 'ready';
+              }).length;
+              
+              const qrPhones = botPhones.filter(p => {
+                const botData = botMap.get(p.botName);
+                return botData && botData[p.phoneIndex] && botData[p.phoneIndex].status === 'qr';
+              }).length;
+              
+              if (readyPhones > 0) {
+                completedBots.add(botName);
+                console.log(`🎉 Bot ${botName} ALL PHONES COMPLETE: ${readyPhones} ready, ${qrPhones} QR - bot operational (${completedBots.size}/${botConfigs.length} bots complete)`);
+              } else if (qrPhones === totalPhones) {
+                qrBots.add(botName);
+                console.log(`📱 Bot ${botName} ALL PHONES SHOWING QR: ${qrPhones}/${totalPhones} phones need pairing (${qrBots.size} bots showing QR)`);
+              }
+            }
+            
+          } else {
+            // Handle failed phone - send to back of queue for retry
+            if (result.retryCount < MAX_RETRIES) {
+              const retryTask = { 
+                ...phoneTask, 
+                retryCount: result.retryCount + 1 
+              };
+              console.log(`🔄 Phone ${phoneId} failed (status: ${result.status || 'unknown'}), retry attempt ${retryTask.retryCount + 1}/${MAX_RETRIES + 1}`);
+              
+              // Add failed phone to the back of the queue
+              pendingPhones.push(retryTask);
             } else {
-              // Handle failed bot - send to back of queue for retry
-              if (result.retryCount < MAX_RETRIES) {
-                const retryConfig = { 
-                  ...result.config, 
-                  retryCount: result.retryCount + 1 
-                };
-                console.log(`🔄 Bot ${botName} failed, sending to back of queue (attempt ${retryConfig.retryCount + 1}/${MAX_RETRIES + 1})`);
-                
-                // Add failed bot to the back of the queue (no delay - let other bots process first)
-                pendingBots.push(retryConfig);
-              } else {
-                failed.push(result.config);
-                console.log(`💀 Bot ${botName} permanently failed after ${MAX_RETRIES + 1} attempts`);
+              // Track permanently failed phone
+              failedPhones.get(botName).push(phoneTask);
+              const failedCount = failedPhones.get(botName).length;
+              console.log(`❌ Phone ${phoneId} permanently failed after ${MAX_RETRIES + 1} attempts (Bot ${botName}: ${failedCount}/${totalPhones} phones failed)`);
+              
+              // Check if bot should be marked as failed (all phones processed, none successful)
+              const completedCount = completedPhones.get(botName).length;
+              const totalProcessed = completedCount + failedCount;
+              
+              if (totalProcessed === totalPhones && completedCount === 0) {
+                failedBots.add(botName);
+                console.log(`💥 Bot ${botName} COMPLETELY FAILED: all ${totalPhones} phones failed (${failedBots.size} bots failed)`);
               }
             }
           }
         }
-  
-        // Final summary
-        console.log(`\n🎉 Bot initialization completed!`);
-        console.log(`✅ Successfully initialized: ${completed.length}/${botConfigs.length} bots`);
-        if (failed.length > 0) {
-          console.log(`❌ Failed bots: ${failed.map(c => c.botName).join(', ')}`);
-        }
-  
-        return {
-          completed: completed.length,
-          failed: failed.length,
-          total: botConfigs.length,
-          failedBots: failed.map(c => c.botName)
-        };
-  
-      } catch (error) {
-        console.error("Error during bot cluster initializations:", error.message);
-        throw error;
       }
-    };
+
+      // Final summary
+      console.log(`\n🎉 Phone-based bot initialization completed!`);
+      console.log(`✅ Ready bots: ${completedBots.size}/${botConfigs.length}`);
+      console.log(`📱 QR bots (awaiting pairing): ${qrBots.size}/${botConfigs.length}`);
+      console.log(`🟢 Total successful: ${completedBots.size + qrBots.size}/${botConfigs.length}`);
+      
+      if (failedBots.size > 0) {
+        console.log(`❌ Failed bots: ${Array.from(failedBots).join(', ')}`);
+      }
+      
+      if (qrBots.size > 0) {
+        console.log(`📱 QR bots (scan QR codes to complete setup): ${Array.from(qrBots).join(', ')}`);
+      }
+      
+      // Detailed phone breakdown
+      console.log(`\n📊 Phone breakdown:`);
+      Object.keys(phoneTasksByBot).forEach(botName => {
+        const totalPhones = phoneTasksByBot[botName].length;
+        const completed = completedPhones.get(botName).length;
+        const failed = failedPhones.get(botName).length;
+        const status = failedBots.has(botName) ? '❌ FAILED' : 
+                      qrBots.has(botName) ? '📱 QR' : 
+                      completedBots.has(botName) ? '✅ READY' : '⏳ PROCESSING';
+        console.log(`  Bot ${botName}: ${completed}/${totalPhones} phones completed, ${failed} failed - ${status}`);
+      });
+
+      return {
+        ready: completedBots.size,
+        qr: qrBots.size,
+        failed: failedBots.size,
+        total: botConfigs.length,
+        successful: completedBots.size + qrBots.size,
+        readyBots: Array.from(completedBots),
+        qrBots: Array.from(qrBots),
+        failedBots: Array.from(failedBots)
+      };
+
+    } catch (error) {
+      console.error("Error during bot cluster initializations:", error.message);
+      throw error;
+    }
+  };
 
   await initializeBotsWithDelay(botConfigs);
-  await setupNeonWebhooks(app, botMap);
+  setupNeonWebhooks(app, botMap);
+
+  // Start the bot monitoring system
+  startBotMonitoringSystem();
 
   console.log("Initialization complete");
   if (process.send) process.send("ready");
+}
+
+// Enhanced bot monitoring system to detect and handle stuck/failed bots
+function startBotMonitoringSystem() {
+  const MONITORING_INTERVAL = 30000;
+  const STUCK_THRESHOLD = 120000;
+  
+  console.log("🔍 Starting bot monitoring system...");
+  
+  setInterval(async () => {
+    try {
+      // Get all bots from botMap
+      for (const [botName, botData] of botMap.entries()) {
+        if (!Array.isArray(botData)) continue;
+        
+        for (let phoneIndex = 0; phoneIndex < botData.length; phoneIndex++) {
+          const phone = botData[phoneIndex];
+          if (!phone) continue;
+          
+          const currentTime = Date.now();
+          const status = phone.status;
+          const initStartTime = phone.initializationStartTime;
+          
+          // Check for stuck initialization
+          if (status === 'initializing' && initStartTime) {
+            const stuckDuration = currentTime - initStartTime;
+            
+            if (stuckDuration > STUCK_THRESHOLD) {
+              console.warn(`⚠️ Bot ${botName} Phone ${phoneIndex + 1} stuck in initializing for ${(stuckDuration/1000).toFixed(1)}s - attempting recovery`);
+              
+              try {
+                // Update status to indicate recovery attempt
+                botData[phoneIndex].status = 'recovering';
+                botMap.set(botName, botData);
+                await updatePhoneStatus(botName, phoneIndex, 'recovering');
+                
+                // Attempt cleanup and reinitialization
+                await safeCleanup(botName, phoneIndex);
+                
+                // Small delay before reinitializing
+                await new Promise(resolve => setTimeout(resolve, 5000));
+                
+                // Reinitialize this specific phone
+                console.log(`🔄 Attempting to reinitialize stuck bot ${botName} Phone ${phoneIndex + 1}`);
+                await initializeBot(botName, 1, phoneIndex);
+                
+              } catch (recoveryError) {
+                console.error(`❌ Failed to recover stuck bot ${botName} Phone ${phoneIndex + 1}:`, recoveryError);
+                botData[phoneIndex].status = 'error';
+                botData[phoneIndex].error = `Recovery failed: ${recoveryError.message}`;
+                botMap.set(botName, botData);
+                await updatePhoneStatus(botName, phoneIndex, 'error', { 
+                  error: recoveryError.message,
+                  recoveryAttempted: true
+                });
+              }
+            }
+          }
+        }
+      }
+      
+      // Optional: Log monitoring summary every 5 minutes
+      if (Date.now() % 300000 < MONITORING_INTERVAL) {
+        logBotStatusSummary();
+      }
+      
+    } catch (monitoringError) {
+      console.error("Error in bot monitoring system:", monitoringError);
+    }
+  }, MONITORING_INTERVAL);
+}
+
+// Helper function to log bot status summary
+function logBotStatusSummary() {
+  const summary = {
+    ready: 0,
+    qr: 0,
+    initializing: 0,
+    authenticated: 0,
+    disconnected: 0,
+    error: 0,
+    recovering: 0,
+    unknown: 0
+  };
+  
+  let totalBots = 0;
+  
+  for (const [botName, botData] of botMap.entries()) {
+    if (!Array.isArray(botData)) continue;
+    
+    for (const phone of botData) {
+      if (!phone) continue;
+      totalBots++;
+      const status = phone.status || 'unknown';
+      summary[status] = (summary[status] || 0) + 1;
+    }
+  }
+  
+  console.log(`📊 Bot Status Summary (${totalBots} total phones):`, 
+    Object.entries(summary)
+      .filter(([_, count]) => count > 0)
+      .map(([status, count]) => `${status}: ${count}`)
+      .join(', '));
 }
 
 // Define the function to initialize automations
@@ -18274,7 +18974,7 @@ function initializeAutomations(botMap) {
     // automationInstances.constantcoSpreadsheet.initialize(),
     // automationInstances.skcSpreadsheet.initialize(),
     checkAndScheduleDailyReport(),
-    initializeDailyReports(),
+    // initializeDailyReports(),
   ];
 }
 
@@ -18457,7 +19157,10 @@ async function checkAndScheduleDailyReport() {
             );
             schedule.scheduleJob(
               cronJobName,
-              `0 ${minutes} ${hours} * * *`,
+              {
+                rule: `0 ${minutes} ${hours} * * *`,
+                tz: 'Asia/Kuala_Lumpur'
+              },
               async function () {
                 console.log(`[${companyId}] Running scheduled daily report`);
 
@@ -18477,7 +19180,7 @@ async function checkAndScheduleDailyReport() {
                     `;
 
                     await sqlClientForCron.query(updateQuery, [
-                      new Date().toISOString(),
+                      moment().tz("Asia/Kuala_Lumpur").toISOString(),
                       companyId,
                     ]);
                     await sqlClientForCron.query("COMMIT");
@@ -18593,12 +19296,12 @@ async function getContactsAddedToday(idSubstring) {
     const result = await sql`
       SELECT 
         phone as "phoneNumber",
-        contact_name as "contactName",
+        name as "contactName",
         created_at as "createdAt",
         tags
       FROM public.contacts 
       WHERE company_id = ${idSubstring}
-      AND DATE(created_at AT TIME ZONE 'Asia/Kuala_Lumpur') = ${today}
+      AND DATE(created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Kuala_Lumpur') = ${today}
     `;
 
     const contacts = result.map((contact) => ({
@@ -24040,7 +24743,7 @@ app.post("/api/v2/messages/image/:companyId/:chatId", async (req, res) => {
       sentMessage,
       companyId,
       phoneNumber,
-      contactData.contact_name || contactData.name || "",
+      contactData.name || contactData.contact_name || "",
       phoneIndex,
       userName
     );
@@ -24124,7 +24827,7 @@ app.post("/api/v2/messages/audio/:companyId/:chatId", async (req, res) => {
       sentMessage,
       companyId,
       phoneNumber,
-      contactData?.contact_name || contactData?.name || "",
+      contactData?.name || contactData?.contact_name || "",
       phoneIndex,
       userName
     );
@@ -24620,7 +25323,7 @@ app.post(
                 lastMessageInfo = "\n💬 *Last Message:* Unable to retrieve";
               }
 
-              const notificationMessage = `🎯 *New Contact Assignment*\n\nHello ${employeeName}! A new contact has been assigned to you.\n\n�� *Contact Details:*\n• Contact Number: ${phoneNumber}\n• Assigned Date: ${new Date().toLocaleDateString()}\n• Time: ${new Date().toLocaleTimeString()}${lastMessageInfo}\n\n🌐 *Access Your Dashboard:*\nVisit: web.jutateknologi.com\n\nPlease take action on this new assignment.`;
+              const notificationMessage = `🎯 *New Contact Assignment*\n\nHello ${employeeName}! A new contact has been assigned to you.\n\n�� *Contact Details:*\n• Contact Number: ${phoneNumber}\n• Assigned Date: ${new Date().toLocaleDateString()}\n• Time: ${new Date().toLocaleTimeString()}${lastMessageInfo}\n\nPlease take action on this new assignment.`;
 
               console.log(
                 `Attempting to send notification to employee ${employeeName} at ${employeeChatId}`
@@ -24870,7 +25573,7 @@ app.delete(
 
             const unassignmentMessage = `🎯 *Contact Assignment Update*\n\nHello! Your contact assignments have been updated.\n\n📋 *Unassignment Details:*\n• Contact Number: ${phoneNumber}\n• Unassigned Employees: ${employeeNames.join(
               ", "
-            )}\n• Updated Date: ${new Date().toLocaleDateString()}\n• Time: ${new Date().toLocaleTimeString()}${lastMessageInfo}\n\n🌐 *Access Your Dashboard:*\nVisit: web.jutateknologi.com\n\nThank you for choosing our services!`;
+            )}\n• Updated Date: ${new Date().toLocaleDateString()}\n• Time: ${new Date().toLocaleTimeString()}${lastMessageInfo}\n\nThank you for choosing our services!`;
 
             const sentMessage = await whatsappClient.sendMessage(
               chatId,
@@ -24883,8 +25586,8 @@ app.delete(
                 sentMessage,
                 companyId,
                 phoneNumber,
-                updateResult.rows[0].contact_name ||
-                  updateResult.rows[0].name ||
+                updateResult.rows[0].name ||
+                  updateResult.rows[0].contact_name ||
                   "",
                 0, // phoneIndex
                 "System" // userName
@@ -25083,7 +25786,7 @@ app.post("/api/v2/messages/video/:companyId/:chatId", async (req, res) => {
       sentMessage,
       companyId,
       phoneNumber,
-      contactData.contact_name || contactData.name || "",
+      contactData.name || contactData.contact_name || "",
       phoneIndex,
       userName
     );
@@ -25167,7 +25870,7 @@ app.post("/api/v2/messages/document/:companyId/:chatId", async (req, res) => {
       sentMessage,
       companyId,
       phoneNumber,
-      contactData?.contact_name || contactData?.name || "",
+      contactData?.name || contactData?.contact_name || "",
       phoneIndex,
       userName
     );
@@ -26322,7 +27025,7 @@ async function sendAlertToEmployees(companyId) {
 
     const companyCategory = companies[0].category;
     let botId = "0134";
-    let alertMessage = `[ALERT] WhatsApp Connection Disconnected\n\nACTION REQUIRED:\n\n1. Navigate to web.jutateknologi.com\n2. Log in to your account.\n3. Scan the QR code to reinitialize your WhatsApp connection.\n\nFor support, please contact +601121677672`;
+    let alertMessage = `[ALERT] WhatsApp Connection Disconnected\n\nACTION REQUIRED:\n\n1. Navigate to the CRM.\n2. Log in to your account.\n3. Scan the QR code to reinitialize your WhatsApp connection.\n\nFor support, please contact +601121677672`;
 
     if (!companyCategory) {
       botId = "0134";
