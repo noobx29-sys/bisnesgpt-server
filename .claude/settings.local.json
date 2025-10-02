@@ -7,7 +7,13 @@
       "Bash(git push:*)",
       "Bash(gh auth:*)",
       "Bash(git config:*)",
-      "Bash(git rev-list:*)"
+      "Bash(git rev-list:*)",
+      "Bash(sudo apt:*)",
+      "Bash(sudo apt install:*)",
+      "Bash(curl -s https://ngrok-agent.s3.amazonaws.com/ngrok.asc)",
+      "Bash(sudo tee:*)",
+      "Bash(npm install:*)",
+      "Bash(sudo npm install -g pm2)"
     ],
     "deny": [],
     "ask": []

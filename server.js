@@ -1512,6 +1512,40 @@ app.post("/alist/blast", async (req, res) => {
       );
     }
 
+    // Format phone number early for duplicate check
+    let formattedPhone = recipientPhone.replace(/\D/g, "");
+    if (!formattedPhone.startsWith("+")) {
+      formattedPhone = "+" + formattedPhone;
+    }
+
+    // Check if message already sent to this lead (check across all companies)
+    const duplicateCheck = await sqlDb.query(
+      `SELECT contact_id, company_id FROM messages
+       WHERE contact_id LIKE $1
+       AND tags @> $2::jsonb
+       LIMIT 1`,
+      [`%-${formattedPhone.substring(1)}`, JSON.stringify(["alist-blast"])]
+    );
+
+    if (duplicateCheck.rows.length > 0) {
+      console.log(
+        `[AlistBlast][${requestId}] ⚠️ Duplicate detected - message already sent to ${formattedPhone}`
+      );
+      return res.status(200).json({
+        success: true,
+        duplicate: true,
+        message: "Message already sent to this lead",
+        data: {
+          existingCompanyId: duplicateCheck.rows[0].company_id,
+          phoneNumber: formattedPhone,
+        },
+      });
+    }
+
+    console.log(
+      `[AlistBlast][${requestId}] No duplicate found, proceeding with message send`
+    );
+
     // Get current round robin index from Neon database
     let currentSetting = await sqlDb.query(
       `SELECT round_robin_index FROM alist_blast_config LIMIT 1`
@@ -1535,11 +1569,7 @@ app.post("/alist/blast", async (req, res) => {
       `[AlistBlast][${requestId}] Selected company ID: ${companyId} (current index: ${currentIndex}, next index: ${nextIndex})`
     );
 
-    // Format phone number for WhatsApp (remove + and add @c.us)
-    let formattedPhone = recipientPhone.replace(/\D/g, "");
-    if (!formattedPhone.startsWith("+")) {
-      formattedPhone = "+" + formattedPhone;
-    }
+    // Create WhatsApp chat ID
     const chatId = formattedPhone.substring(1) + "@c.us";
 
     console.log(
@@ -18212,8 +18242,8 @@ async function main(reinitialize = false) {
   //   "SELECT * FROM companies WHERE api_url = $1",
   //   ["https://juta-dev.ngrok.dev"]
   // );
-
-  const companyIds = ['0160', '0161', '0377', '063', '079', '092', '399849', '458752', '765943', '088', '296245', '0245', '0210', '0156', '0101', '728219', '0342', '049815'];
+  //const companyIds = ['0145']; 
+ const companyIds = ['0107','0160', '0161', '0377', '063', '079', '092', '399849', '458752', '765943', '088', '296245', '0245', '0210', '0156', '0101', '728219', '0342', '049815'];
   const placeholders = companyIds.map((_, i) => `$${i + 1}`).join(', ');
   const query = `SELECT * FROM companies WHERE company_id IN (${placeholders})`;
   const companiesPromise = sqlDb.query(query, companyIds);
@@ -19403,7 +19433,6 @@ async function fetchCompanyConfigSql(companyId) {
       assistant_ids, 
       name, 
       phone_count, 
-      daily_report,
       phone_numbers
       FROM companies 
       WHERE company_id = $1
@@ -19461,6 +19490,19 @@ async function fetchCompanyConfigSql(companyId) {
     const assistantId3 = assistantIds[2] || null;
     const assistantId4 = assistantIds[3] || null;
 
+    // Get daily report settings from settings table
+    const settingsQuery = `
+      SELECT setting_value 
+      FROM public.settings 
+      WHERE company_id = $1 
+      AND setting_type = 'reporting' 
+      AND setting_key = 'dailyReport'
+    `;
+    const settingsResult = await sqlDb.query(settingsQuery, [companyId]);
+    const dailyReportSettings = settingsResult.rows.length > 0
+      ? settingsResult.rows[0].setting_value
+      : null;
+
     const openaiTokenQuery =
       "SELECT config_value FROM system_config WHERE config_key = $1";
     const openaiTokenResult = await sqlDb.query(openaiTokenQuery, [
@@ -19484,7 +19526,7 @@ async function fetchCompanyConfigSql(companyId) {
         apiUrl: companyData.api_url,
         aiDelay: parseInt(companyData.ai_delay || "0"),
         aiAutoResponse: companyData.ai_auto_response === "true",
-        dailyReport: companyData.daily_report,
+        dailyReport: dailyReportSettings,
       },
       openaiApiKey: openaiToken,
     };
@@ -26526,11 +26568,11 @@ async function initializeWithTimeout(botName, phoneIndex, clientName, clients, p
       botMap.set(botName, clients);
       await updatePhoneStatus(botName, phoneIndex, "initializing");
 
-      // Start checking for stuck initialization
+      // Start checking for stuck initialization (increased timeout to 2 minutes)
       const checkInitialization = setInterval(async () => {
         try {
           const result = await sqlDb.query(
-            `SELECT status FROM phone_status 
+            `SELECT status FROM phone_status
              WHERE company_id = $1 AND phone_number = $2`,
             [botName, phoneIndex]
           );
@@ -26542,7 +26584,7 @@ async function initializeWithTimeout(botName, phoneIndex, clientName, clients, p
             console.log(
               `${botName} Phone ${
                 phoneIndex + 1
-              } - Still initializing, running cleanup...`
+              } - Still initializing after 2 minutes, running cleanup...`
             );
 
             clearInterval(checkInitialization);
@@ -26551,10 +26593,11 @@ async function initializeWithTimeout(botName, phoneIndex, clientName, clients, p
         } catch (error) {
           console.error(`Error checking initialization status: ${error}`);
         }
-      }, 30000);
+      }, 120000);
 
       client.on("qr", async (qr) => {
         try {
+          clearInterval(checkInitialization);
           const qrCodeData = await qrcode.toDataURL(qr);
           clients[phoneIndex] = {
         ...clients[phoneIndex],
@@ -26580,6 +26623,7 @@ async function initializeWithTimeout(botName, phoneIndex, clientName, clients, p
 
       client.on("code", async (code) => {
         try {
+          clearInterval(checkInitialization);
           console.log(`${botName} Phone ${phoneIndex + 1} - PAIRING CODE RECEIVED: ${code}`);
           clients[phoneIndex] = {
             ...clients[phoneIndex],
