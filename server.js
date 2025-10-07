@@ -122,6 +122,13 @@ function getPlanBasedQuota(plan) {
       return 100; // Default to free plan quota
   }
 }
+
+// Helper function to check if plan uses monthly reset
+function isMonthlyResetPlan(plan) {
+  const planLower = plan?.toLowerCase();
+  return planLower === 'premium' || planLower === 'enterprise';
+}
+
 // Helper function to get quota key (monthly for paid plans, lifetime for free)
 function getQuotaKey(plan) {
   if (isMonthlyResetPlan(plan)) {
@@ -3201,6 +3208,63 @@ app.post("/api/auto-reply/settings/:companyId", async (req, res) => {
     });
   } finally {
     sqlClient.release();
+  }
+});
+
+// Manual sync messages and auto-reply trigger (bypasses auto-reply enabled check)
+app.post("/api/manual-sync-auto-reply/:companyId", async (req, res) => {
+  try {
+    const { companyId } = req.params;
+    const { autoReplyHours = 6 } = req.body;
+
+    console.log(`Manual sync and auto-reply trigger requested for company ${companyId}`);
+    
+    // Validate autoReplyHours
+    const hoursThreshold = parseInt(autoReplyHours);
+    if (isNaN(hoursThreshold) || hoursThreshold < 1) {
+      return res.status(400).json({
+        success: false,
+        error: "autoReplyHours must be a positive number"
+      });
+    }
+
+    // Check if bot exists
+    const botData = botMap.get(companyId);
+    if (!botData || !Array.isArray(botData)) {
+      return res.status(404).json({
+        success: false,
+        error: `Bot ${companyId} not found or not initialized`
+      });
+    }
+
+    try {
+      console.log(`[Manual] Processing all phones for bot ${companyId} with ${hoursThreshold} hours threshold`);
+      
+      // Use the existing function with forceEnabled=true and custom hours
+      await syncMessagesAndHandleAutoReplies(companyId, botData.length, true, hoursThreshold);
+      
+      const response = {
+        success: true,
+        message: `Manual sync and auto-reply completed for company ${companyId}`,
+        processedPhones: botData.length,
+        autoReplyHours: hoursThreshold
+      };
+
+      console.log(`[Manual] Completed manual trigger for company ${companyId}:`, response);
+      res.json(response);
+    } catch (error) {
+      console.error(`[Manual] Error processing company ${companyId}:`, error);
+      res.status(500).json({
+        success: false,
+        error: error.message || "Failed to process manual sync and auto-reply"
+      });
+    }
+  } catch (error) {
+    console.error("Error in manual sync auto-reply:", error);
+    res.status(500).json({
+      success: false,
+      error: error.message || "Failed to execute manual sync and auto-reply"
+    });
   }
 });
 
@@ -9943,16 +10007,23 @@ async function syncSingleContactName(
   }
 }
 
-async function syncMessagesAndHandleAutoReplies(botName, phoneCount) {
+async function syncMessagesAndHandleAutoReplies(botName, phoneCount, forceEnabled = false, customHours = null) {
   console.log(
-    `=== Starting syncMessagesAndHandleAutoReplies for bot ${botName} ===`
+    `=== Starting syncMessagesAndHandleAutoReplies for bot ${botName} ${forceEnabled ? '(Manual trigger)' : ''} ===`
   );
 
   try {
     // Get auto-reply settings for this bot
     const autoReplySettings = await getAutoReplySettings(botName);
 
-    if (!autoReplySettings || !autoReplySettings.enabled) {
+    // If forceEnabled is true, override the enabled setting
+    if (forceEnabled) {
+      autoReplySettings.enabled = true;
+      if (customHours) {
+        autoReplySettings.autoReplyHours = customHours.toString();
+      }
+      console.log(`[AutoReply] Manual trigger - forcing auto-reply enabled for bot ${botName}`);
+    } else if (!autoReplySettings || !autoReplySettings.enabled) {
       console.log(
         `[AutoReply] Auto-reply is disabled for bot ${botName}, skipping auto-reply processing`
       );
@@ -11677,8 +11748,10 @@ async function scheduleAllMessages(specificCompanyId = null) {
         
         if (isBatch) {
           // This is a batch message
+          console.log(`Checking batch message ${messageId} for schedule ${scheduleId} with delay ${delay}ms`);
           const existingJob = await queue.getJob(messageId);
           if (!existingJob) {
+            console.log(`Scheduling batch message ${messageId} for schedule ${scheduleId} with delay ${delay}ms`);
             await queue.add(
               "send-message-batch",
               {
@@ -11695,6 +11768,7 @@ async function scheduleAllMessages(specificCompanyId = null) {
             );
           }
         } else {
+          console.log(`Checking main message ${messageId} with delay ${delay}ms`);
           const batchesQuery = `
             SELECT COUNT(*) as batch_count FROM scheduled_messages 
             WHERE company_id = $1 
@@ -11706,6 +11780,7 @@ async function scheduleAllMessages(specificCompanyId = null) {
           const hasBatches = batchesResult.rows[0].batch_count > 0;
 
           if (!hasBatches) {
+            console.log(`Scheduling main message ${messageId} with delay ${delay}ms`);
             const existingJob = await queue.getJob(messageId);
             if (!existingJob) {
               await queue.add(
@@ -18243,7 +18318,7 @@ async function main(reinitialize = false) {
   //   ["https://juta-dev.ngrok.dev"]
   // );
   //const companyIds = ['0145']; 
- const companyIds = ['0107','0160', '0161', '0377', '063', '079', '092', '399849', '458752', '765943', '088', '296245', '0245', '0210', '0156', '0101', '728219', '0342', '049815'];
+  const companyIds = ['0107','0160', '0161', '0377', '063', '079', '092', '399849', '458752', '765943', '088', '296245', '0245', '0210', '0156', '0101', '728219', '0342', '049815'];
   const placeholders = companyIds.map((_, i) => `$${i + 1}`).join(', ');
   const query = `SELECT * FROM companies WHERE company_id IN (${placeholders})`;
   const companiesPromise = sqlDb.query(query, companyIds);
