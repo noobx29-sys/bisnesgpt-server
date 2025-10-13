@@ -17115,15 +17115,7 @@ async function addMessageToPostgres(
 }
 
 async function addNotificationToUser(companyId, message, contactName, contactId = null, chatId = null, phoneNumber = null, profilePicUrl = null) {
-  console.log("Adding notification and sending OneSignal");
-  console.log("📱 addNotificationToUser parameters:");
-  console.log("   companyId:", companyId);
-  console.log("   message:", message);
-  console.log("   contactName:", contactName);
-  console.log("   contactId:", contactId);
-  console.log("   chatId:", chatId);
-  console.log("   phoneNumber:", phoneNumber);
-  console.log("   profilePicUrl:", profilePicUrl);
+  console.log(`[BOT ${companyId}] Adding notification and sending OneSignal`);
   try {
     const client = await pool.connect();
 
@@ -17134,7 +17126,7 @@ async function addNotificationToUser(companyId, message, contactName, contactId 
       );
 
       if (usersQuery.rows.length === 0) {
-        console.log("No matching users found.");
+        console.log("No matching users found during notification addition.");
         return;
       }
 
@@ -17184,11 +17176,6 @@ async function addNotificationToUser(companyId, message, contactName, contactId 
             type: notificationType
           };
         }
-
-        console.log("📤 Sending to OneSignal with data:");
-        console.log("   additionalData:", JSON.stringify(additionalData, null, 2));
-     
-        console.log(`OneSignal notification sent to company: ${companyId} with type: ${notificationType}`);
       } catch (onesignalError) {
         console.error("Failed to send OneSignal notification:", onesignalError);
         // Continue with database operations even if OneSignal fails
@@ -17210,10 +17197,6 @@ async function addNotificationToUser(companyId, message, contactName, contactId 
             false,
             JSON.stringify(cleanMessage),
           ]
-        );
-
-        console.log(
-          `Notification added to PostgreSQL for user with ID: ${userId}`
         );
       });
 
@@ -18622,6 +18605,9 @@ async function main(reinitialize = false) {
 
           scheduleAllMessages(botName);
 
+          // Schedule daily reports for this bot (automated per-bot scheduling)
+          await scheduleDailyReportForBot(botName);
+
           // After successful initialization, sync messages and handle auto-replies
           await syncMessagesAndHandleAutoReplies(botName, totalPhones);
           
@@ -18761,6 +18747,9 @@ async function main(reinitialize = false) {
           }
 
           scheduleAllMessages(config.botName);
+
+          // Schedule daily reports for this bot (automated per-bot scheduling)
+          await scheduleDailyReportForBot(config.botName);
 
           // After successful initialization, sync messages and handle auto-replies
           await syncMessagesAndHandleAutoReplies(
@@ -19078,88 +19067,157 @@ function initializeAutomations(botMap) {
     // automationInstances.bhqSpreadsheet.initialize(),
     // automationInstances.constantcoSpreadsheet.initialize(),
     // automationInstances.skcSpreadsheet.initialize(),
-    checkAndScheduleDailyReport(),
+    // checkAndScheduleDailyReport(),
     // initializeDailyReports(),
   ];
 }
 
-async function initializeDailyReports() {
+// Schedule daily report for a specific bot
+async function scheduleDailyReportForBot(companyId) {
   try {
-    const settingsQuery = `
-      SELECT company_id, setting_value 
-      FROM public.settings 
-      WHERE setting_type = 'reporting' 
-      AND setting_key = 'dailyReport'
-    `;
-
-    const settingsResult = await sqlDb.query(settingsQuery);
-
-    for (const row of settingsResult.rows) {
-      const companyId = row.company_id;
-      const settings = row.setting_value;
-
+    console.log(`[${companyId}] Setting up daily report...`);
+    
+    const sqlClient = await pool.connect();
+    
+    try {
+      // Check if this company should be handled by this server instance
       const companyQuery = `
-        SELECT api_url FROM companies WHERE company_id = $1
+        SELECT api_url 
+        FROM public.companies 
+        WHERE company_id = $1
       `;
-      const companyResult = await sqlDb.query(companyQuery, [companyId]);
-      const apiUrl = companyResult.rows[0]?.api_url;
-
+      
+      const companyResult = await sqlClient.query(companyQuery, [companyId]);
+      
+      if (companyResult.rows.length === 0) {
+        console.log(`[${companyId}] Company not found, skipping daily report setup`);
+        return;
+      }
+      
+      const apiUrl = companyResult.rows[0].api_url;
+      
       if (apiUrl !== process.env.URL) {
-        continue;
+        console.log(`[${companyId}] Company belongs to different server (${apiUrl}), skipping`);
+        return;
       }
 
-      if (settings && settings.enabled && settings.time && settings.groupId) {
-        const [hour, minute] = settings.time.split(":");
+      const settingsQuery = `
+        SELECT setting_value 
+        FROM public.settings 
+        WHERE company_id = $1 
+        AND setting_type = 'reporting' 
+        AND setting_key = 'dailyReport'
+      `;
 
-        const cronJob = cron.schedule(
-          `${minute} ${hour} * * *`,
-          async () => {
-            try {
-              const botData = botMap.get(companyId);
-              if (!botData || !botData[0]?.client) {
-                console.error(
-                  `No WhatsApp client found for company ${companyId}`
-                );
-                return;
-              }
+      const settingsResult = await sqlClient.query(settingsQuery, [companyId]);
+      const settings =
+        settingsResult.rows.length > 0
+          ? settingsResult.rows[0].setting_value
+          : null;
 
-              const count = await countTodayLeads(companyId);
-              const message = `📊 Daily Lead Report\n\nNew Leads Today: ${count}\nDate: ${new Date().toLocaleDateString()}`;
+      if (settings?.enabled) {
+        const reportTime = settings.time || "09:00";
+        const groupId = settings.groupId;
+        const lastRun = settings.lastRun ? new Date(settings.lastRun) : null;
+        const [hours, minutes] = reportTime.split(":");
 
-              await botData[0].client.sendMessage(settings.groupId, message);
+        const cronJobName = `dailyReport_${companyId}`;
+        
+        // Cancel existing job if any
+        if (schedule.scheduledJobs[cronJobName]) {
+          schedule.scheduledJobs[cronJobName].cancel();
+          console.log(`[${companyId}] Cancelled existing daily report job`);
+        }
 
-              const updateLastRunQuery = `
+        const now = moment().tz("Asia/Kuala_Lumpur");
+        const wasRunToday =
+          lastRun &&
+          moment(lastRun).tz("Asia/Kuala_Lumpur").isSame(now, "day");
+
+        // Check if we need to send the report immediately (if it's past scheduled time and not sent today)
+        if (
+          !wasRunToday &&
+          now.hours() >= parseInt(hours) &&
+          now.minutes() >= parseInt(minutes)
+        ) {
+          console.log(
+            `[${companyId}] Daily report not sent yet today and it's past scheduled time. Sending now...`
+          );
+
+          const botData = botMap.get(companyId);
+          if (botData && botData[0]?.client) {
+            await sendDailyContactReport(botData[0].client, companyId);
+
+            const updateQuery = `
               UPDATE public.settings 
-              SET setting_value = jsonb_set(setting_value, '{lastRun}', to_jsonb($1::text), true),
-                  updated_at = CURRENT_TIMESTAMP
-              WHERE company_id = $2 AND setting_type = 'reporting' AND setting_key = 'dailyReport'
+              SET setting_value = jsonb_set(setting_value, '{lastRun}', to_jsonb($1::text))
+              WHERE company_id = $2 
+              AND setting_type = 'reporting' 
+              AND setting_key = 'dailyReport'
             `;
-              await sqlDb.query(updateLastRunQuery, [
-                new Date().toISOString(),
-                companyId,
-              ]);
-            } catch (error) {
-              console.error(
-                `Error sending daily report for company ${companyId}:`,
-                error
-              );
-            }
-          },
+
+            await sqlClient.query(updateQuery, [now.toISOString(), companyId]);
+          } else {
+            console.log(`[${companyId}] No WhatsApp client found for immediate report`);
+          }
+        }
+
+        // Schedule the recurring daily report
+        console.log(`[${companyId}] Scheduling daily report for ${reportTime}`);
+        
+        schedule.scheduleJob(
+          cronJobName,
           {
-            timezone: "Asia/Kuala_Lumpur",
+            rule: `0 ${minutes} ${hours} * * *`,
+            tz: 'Asia/Kuala_Lumpur'
+          },
+          async function () {
+            console.log(`[${companyId}] Running scheduled daily report`);
+
+            const botData = botMap.get(companyId);
+            if (botData && botData[0]?.client) {
+              await sendDailyContactReport(botData[0].client, companyId);
+
+              const sqlClientForCron = await pool.connect();
+              try {
+                await sqlClientForCron.query("BEGIN");
+                const updateQuery = `
+                  UPDATE public.settings 
+                  SET setting_value = jsonb_set(setting_value, '{lastRun}', to_jsonb($1::text))
+                  WHERE company_id = $2 
+                  AND setting_type = 'reporting' 
+                  AND setting_key = 'dailyReport'
+                `;
+
+                await sqlClientForCron.query(updateQuery, [
+                  moment().tz("Asia/Kuala_Lumpur").toISOString(),
+                  companyId,
+                ]);
+                await sqlClientForCron.query("COMMIT");
+              } catch (cronError) {
+                await sqlClientForCron.query("ROLLBACK");
+                console.error(
+                  `[${companyId}] Error updating lastRun after scheduled report:`,
+                  cronError
+                );
+              } finally {
+                sqlClientForCron.release();
+              }
+            } else {
+              console.log(`[${companyId}] No WhatsApp client found for scheduled report`);
+            }
           }
         );
 
-        dailyReportCrons.set(companyId, cronJob);
-        console.log(
-          `Daily report scheduled for company ${companyId} at ${settings.time}`
-        );
+        console.log(`[${companyId}] Daily report scheduled successfully`);
+      } else {
+        console.log(`[${companyId}] Daily reporting not enabled, skipping`);
       }
+    } finally {
+      await safeRelease(sqlClient);
     }
-
-    console.log(`Initialized ${dailyReportCrons.size} daily report cron jobs`);
   } catch (error) {
-    console.error("Error initializing daily reports:", error);
+    console.error(`[${companyId}] Error setting up daily report:`, error);
   }
 }
 
@@ -19190,133 +19248,7 @@ async function checkAndScheduleDailyReport() {
           continue;
         }
 
-        try {
-          const settingsQuery = `
-            SELECT setting_value 
-            FROM public.settings 
-            WHERE company_id = $1 
-            AND setting_type = 'reporting' 
-            AND setting_key = 'dailyReport'
-          `;
-
-          const settingsResult = await sqlClient.query(settingsQuery, [
-            companyId,
-          ]);
-          const settings =
-            settingsResult.rows.length > 0
-              ? settingsResult.rows[0].setting_value
-              : null;
-
-          if (settings?.enabled) {
-            const reportTime = settings.time || "09:00";
-            const groupId = settings.groupId;
-            const lastRun = settings.lastRun
-              ? new Date(settings.lastRun)
-              : null;
-            const [hours, minutes] = reportTime.split(":");
-
-            const cronJobName = `dailyReport_${companyId}`;
-            if (schedule.scheduledJobs[cronJobName]) {
-              schedule.scheduledJobs[cronJobName].cancel();
-            }
-
-            const now = moment().tz("Asia/Kuala_Lumpur");
-            const wasRunToday =
-              lastRun &&
-              moment(lastRun).tz("Asia/Kuala_Lumpur").isSame(now, "day");
-
-            if (
-              !wasRunToday &&
-              now.hours() >= parseInt(hours) &&
-              now.minutes() >= parseInt(minutes)
-            ) {
-              console.log(
-                `[${companyId}] Daily report not sent yet today and it's past scheduled time. Sending now...`
-              );
-
-              const botData = botMap.get(companyId);
-              if (botData && botData[0]?.client) {
-                await sendDailyContactReport(botData[0].client, companyId);
-
-                const updateQuery = `
-                  UPDATE public.settings 
-                  SET setting_value = jsonb_set(setting_value, '{lastRun}', to_jsonb($1::text))
-                  WHERE company_id = $2 
-                  AND setting_type = 'reporting' 
-                  AND setting_key = 'dailyReport'
-                `;
-
-                await sqlClient.query(updateQuery, [
-                  now.toISOString(),
-                  companyId,
-                ]);
-              } else {
-                console.log(
-                  `[${companyId}] No WhatsApp client found for immediate report`
-                );
-              }
-            }
-
-            console.log(
-              `[${companyId}] Scheduling daily report for ${reportTime}`
-            );
-            schedule.scheduleJob(
-              cronJobName,
-              {
-                rule: `0 ${minutes} ${hours} * * *`,
-                tz: 'Asia/Kuala_Lumpur'
-              },
-              async function () {
-                console.log(`[${companyId}] Running scheduled daily report`);
-
-                const botData = botMap.get(companyId);
-                if (botData && botData[0]?.client) {
-                  await sendDailyContactReport(botData[0].client, companyId);
-
-                  const sqlClientForCron = await pool.connect();
-                  try {
-                    await sqlClientForCron.query("BEGIN");
-                    const updateQuery = `
-                      UPDATE public.settings 
-                      SET setting_value = jsonb_set(setting_value, '{lastRun}', to_jsonb($1::text))
-                      WHERE company_id = $2 
-                      AND setting_type = 'reporting' 
-                      AND setting_key = 'dailyReport'
-                    `;
-
-                    await sqlClientForCron.query(updateQuery, [
-                      moment().tz("Asia/Kuala_Lumpur").toISOString(),
-                      companyId,
-                    ]);
-                    await sqlClientForCron.query("COMMIT");
-                  } catch (cronError) {
-                    await sqlClientForCron.query("ROLLBACK");
-                    console.error(
-                      `[${companyId}] Error updating lastRun after scheduled report:`,
-                      cronError
-                    );
-                  } finally {
-                    sqlClientForCron.release();
-                  }
-                } else {
-                  console.log(
-                    `[${companyId}] No WhatsApp client found for scheduled report`
-                  );
-                }
-              }
-            );
-
-            console.log(`[${companyId}] Daily report scheduled successfully`);
-          } else {
-            //console.log(`[${companyId}] Daily reporting not enabled, skipping`);
-          }
-        } catch (companyError) {
-          console.error(
-            `[${companyId}] Error setting up daily report:`,
-            companyError
-          );
-          console.log(`Continuing with next company...`);
-        }
+        await scheduleDailyReportForBot(companyId);
       }
 
       await sqlClient.query("COMMIT");
