@@ -1988,7 +1988,7 @@ async function fetchParticipantData() {
 
     // 1. Fetch from Neon database
     try {
-      const baseUrl = process.env.BASE_URL || "https://juta-dev.ngrok.dev";
+      const baseUrl = process.env.BASE_URL || "https://bisnesgpt.serveo.net";
       const companyId = "0380";
 
       const [participantsResponse, enrolleesResponse, eventsResponse] =
@@ -2227,7 +2227,7 @@ async function fetchParticipantData() {
     try {
       const registrationFormId = "1f666a83-9825-4d26-af03-edc2c0aeb39e";
       const registrationUrl = `${
-        process.env.BASE_URL || "https://juta-dev.ngrok.dev"
+        process.env.BASE_URL || "https://bisnesgpt.serveo.net"
       }/api/feedback-responses/form/${registrationFormId}`;
 
       const registrationResponse = await axios.get(registrationUrl);
@@ -6236,7 +6236,7 @@ app.post(
           .json({ error: "fileName and companyId are required" });
       }
 
-      const baseUrl = process.env.BASE_URL || "https://juta-dev.ngrok.dev";
+      const baseUrl = process.env.BASE_URL || "https://bisnesgpt.serveo.net";
       const fileUrl = `${baseUrl}/media/files/${companyId}/${req.file.filename}`;
 
       console.log(
@@ -11714,7 +11714,7 @@ async function scheduleAllMessages(specificCompanyId = null) {
         const apiUrlResult = await client.query(apiUrlQuery, [companyId]);
         const companyApiUrl = apiUrlResult.rows[0]?.api_url;
 
-        if (companyApiUrl !== "https://juta-dev.ngrok.dev") {
+        if (companyApiUrl !== "https://bisnesgpt.serveo.net") {
           continue;
         }
       }
@@ -18315,7 +18315,7 @@ async function main(reinitialize = false) {
   // WHEN WANT TO INITIALIZE ALL BOTS
   // const companiesPromise = sqlDb.query(
   //   "SELECT * FROM companies WHERE api_url = $1",
-  //   ["https://juta-dev.ngrok.dev"]
+  //   ["https://bisnesgpt.serveo.net"]
   // );
   //const companyIds = ['0145']; 
   const companyIds = ['0107','0160', '0161', '0377', '063', '079', '092', '399849', '458752', '765943', '088', '296245', '0245', '0210', '0156', '0101', '728219', '0342', '049815'];
