@@ -3,8 +3,8 @@ tunnels:
   whatsapp-service:
     addr: 8443
     proto: http
-    hostname: bisnesgpt.serveo.net
-    host_header: bisnesgpt.serveo.net
+    hostname: bisnesgpt.jutateknologi.com
+    host_header: bisnesgpt.jutateknologi.com
   api-service:
     addr: 8441
     proto: http

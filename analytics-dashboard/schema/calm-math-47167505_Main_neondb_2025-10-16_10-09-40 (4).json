@@ -1,0 +1,67 @@
+[{
+  "column_name": "id",
+  "data_type": "integer",
+  "character_maximum_length": null,
+  "is_nullable": "NO",
+  "column_default": "nextval('contact_tag_history_id_seq'::regclass)"
+}, {
+  "column_name": "company_id",
+  "data_type": "character varying",
+  "character_maximum_length": 255,
+  "is_nullable": "NO",
+  "column_default": null
+}, {
+  "column_name": "contact_id",
+  "data_type": "character varying",
+  "character_maximum_length": 255,
+  "is_nullable": "NO",
+  "column_default": null
+}, {
+  "column_name": "tag",
+  "data_type": "character varying",
+  "character_maximum_length": 100,
+  "is_nullable": "NO",
+  "column_default": null
+}, {
+  "column_name": "action",
+  "data_type": "character varying",
+  "character_maximum_length": 20,
+  "is_nullable": "NO",
+  "column_default": null
+}, {
+  "column_name": "method",
+  "data_type": "character varying",
+  "character_maximum_length": 20,
+  "is_nullable": "NO",
+  "column_default": null
+}, {
+  "column_name": "reason",
+  "data_type": "text",
+  "character_maximum_length": null,
+  "is_nullable": "YES",
+  "column_default": null
+}, {
+  "column_name": "confidence",
+  "data_type": "numeric",
+  "character_maximum_length": null,
+  "is_nullable": "YES",
+  "column_default": null
+}, {
+  "column_name": "metadata",
+  "data_type": "jsonb",
+  "character_maximum_length": null,
+  "is_nullable": "YES",
+  "column_default": null
+}, {
+  "column_name": "created_by",
+  "data_type": "character varying",
+  "character_maximum_length": 100,
+  "is_nullable": "YES",
+  "column_default": null
+}, {
+  "column_name": "created_at",
+  "data_type": "timestamp without time zone",
+  "character_maximum_length": null,
+  "is_nullable": "YES",
+  "column_default": "now()"
+}]

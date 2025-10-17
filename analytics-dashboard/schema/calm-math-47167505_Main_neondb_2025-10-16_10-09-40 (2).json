@@ -1,0 +1,175 @@
+[{
+  "column_name": "id",
+  "data_type": "uuid",
+  "character_maximum_length": null,
+  "is_nullable": "NO",
+  "column_default": "uuid_generate_v4()"
+}, {
+  "column_name": "message_id",
+  "data_type": "character varying",
+  "character_maximum_length": 255,
+  "is_nullable": "YES",
+  "column_default": null
+}, {
+  "column_name": "company_id",
+  "data_type": "character varying",
+  "character_maximum_length": 255,
+  "is_nullable": "NO",
+  "column_default": null
+}, {
+  "column_name": "contact_id",
+  "data_type": "character varying",
+  "character_maximum_length": 255,
+  "is_nullable": "YES",
+  "column_default": null
+}, {
+  "column_name": "thread_id",
+  "data_type": "character varying",
+  "character_maximum_length": 255,
+  "is_nullable": "YES",
+  "column_default": null
+}, {
+  "column_name": "customer_phone",
+  "data_type": "character varying",
+  "character_maximum_length": 50,
+  "is_nullable": "YES",
+  "column_default": null
+}, {
+  "column_name": "content",
+  "data_type": "text",
+  "character_maximum_length": null,
+  "is_nullable": "YES",
+  "column_default": null
+}, {
+  "column_name": "message_type",
+  "data_type": "character varying",
+  "character_maximum_length": 50,
+  "is_nullable": "YES",
+  "column_default": null
+}, {
+  "column_name": "media_url",
+  "data_type": "text",
+  "character_maximum_length": null,
+  "is_nullable": "YES",
+  "column_default": null
+}, {
+  "column_name": "timestamp",
+  "data_type": "timestamp with time zone",
+  "character_maximum_length": null,
+  "is_nullable": "YES",
+  "column_default": "CURRENT_TIMESTAMP"
+}, {
+  "column_name": "logs",
+  "data_type": "jsonb",
+  "character_maximum_length": null,
+  "is_nullable": "YES",
+  "column_default": null
+}, {
+  "column_name": "tags",
+  "data_type": "jsonb",
+  "character_maximum_length": null,
+  "is_nullable": "YES",
+  "column_default": null
+}, {
+  "column_name": "reaction",
+  "data_type": "character varying",
+  "character_maximum_length": 100,
+  "is_nullable": "YES",
+  "column_default": null
+}, {
+  "column_name": "reaction_timestamp",
+  "data_type": "timestamp with time zone",
+  "character_maximum_length": null,
+  "is_nullable": "YES",
+  "column_default": null
+}, {
+  "column_name": "edited",
+  "data_type": "boolean",
+  "character_maximum_length": null,
+  "is_nullable": "YES",
+  "column_default": "false"
+}, {
+  "column_name": "edited_at",
+  "data_type": "timestamp with time zone",
+  "character_maximum_length": null,
+  "is_nullable": "YES",
+  "column_default": null
+}, {
+  "column_name": "start_time",
+  "data_type": "timestamp with time zone",
+  "character_maximum_length": null,
+  "is_nullable": "YES",
+  "column_default": null
+}, {
+  "column_name": "end_time",
+  "data_type": "timestamp with time zone",
+  "character_maximum_length": null,
+  "is_nullable": "YES",
+  "column_default": null
+}, {
+  "column_name": "duration",
+  "data_type": "integer",
+  "character_maximum_length": null,
+  "is_nullable": "YES",
+  "column_default": null
+}, {
+  "column_name": "direction",
+  "data_type": "character varying",
+  "character_maximum_length": 20,
+  "is_nullable": "YES",
+  "column_default": null
+}, {
+  "column_name": "status",
+  "data_type": "character varying",
+  "character_maximum_length": 50,
+  "is_nullable": "YES",
+  "column_default": "'sent'::character varying"
+}, {
+  "column_name": "created_at",
+  "data_type": "timestamp with time zone",
+  "character_maximum_length": null,
+  "is_nullable": "YES",
+  "column_default": "CURRENT_TIMESTAMP"
+}, {
+  "column_name": "from_me",
+  "data_type": "boolean",
+  "character_maximum_length": null,
+  "is_nullable": "YES",
+  "column_default": "false"
+}, {
+  "column_name": "chat_id",
+  "data_type": "character varying",
+  "character_maximum_length": 255,
+  "is_nullable": "YES",
+  "column_default": null
+}, {
+  "column_name": "author",
+  "data_type": "character varying",
+  "character_maximum_length": 255,
+  "is_nullable": "YES",
+  "column_default": null
+}, {
+  "column_name": "media_data",
+  "data_type": "text",
+  "character_maximum_length": null,
+  "is_nullable": "YES",
+  "column_default": null
+}, {
+  "column_name": "media_metadata",
+  "data_type": "jsonb",
+  "character_maximum_length": null,
+  "is_nullable": "YES",
+  "column_default": null
+}, {
+  "column_name": "phone_index",
+  "data_type": "integer",
+  "character_maximum_length": null,
+  "is_nullable": "YES",
+  "column_default": null
+}, {
+  "column_name": "quoted_message",
+  "data_type": "jsonb",
+  "character_maximum_length": null,
+  "is_nullable": "YES",
+  "column_default": null
+}]

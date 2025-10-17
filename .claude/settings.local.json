@@ -13,7 +13,21 @@
       "Bash(curl -s https://ngrok-agent.s3.amazonaws.com/ngrok.asc)",
       "Bash(sudo tee:*)",
       "Bash(npm install:*)",
-      "Bash(sudo npm install -g pm2)"
+      "Bash(sudo npm install -g pm2)",
+      "Bash(node test-websocket.js)",
+      "Bash(pm2 restart:*)",
+      "Bash(psql:*)",
+      "Bash(pm2 list:*)",
+      "Bash(pm2 logs:*)",
+      "Read(//home/firaz/Downloads/**)",
+      "Bash(chmod:*)",
+      "Bash(node -e:*)",
+      "Bash(node tagCLI.js test:*)",
+      "Bash(node:*)",
+      "Bash(curl:*)",
+      "Read(//home/firaz/Pictures/Screenshots/**)",
+      "Bash(pkill:*)",
+      "Bash(kill:*)"
     ],
     "deny": [],
     "ask": []

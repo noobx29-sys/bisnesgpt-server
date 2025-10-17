@@ -1443,6 +1443,27 @@
               </svg>
               Reinitialize Pending
             </button>
+            <button
+              onclick="triggerHealthReport()"
+              class="refresh-button"
+              id="healthReportButton"
+              style="background: linear-gradient(135deg, rgba(16, 185, 129, 0.8) 0%, rgba(5, 150, 105, 0.8) 100%); border-color: rgba(16, 185, 129, 0.3);"
+            >
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <path d="M22 12h-4l-3 9L9 3l-3 9H2" />
+              </svg>
+              Health Report
+            </button>
           </div>
         </div>
         <!-- Auto-Reply Test Section -->
@@ -1991,7 +2012,7 @@
           // );
 
           // Define the allowed company IDs
-          const companyIds = ['0160', '0161', '0377', '063', '079', '092', '399849', '458752', '765943', '088', '296245', '0245', '0210', '0156', '0101', '728219', '0342', '049815'];
+          const companyIds = ['0210','0107','0160', '0161', '0377', '063', '079', '092', '399849', '458752', '765943', '088', '296245', '0245', '0210', '0156', '0101', '728219', '0342', '049815', '325117', '946386'];
 
           // Filter bots to only include those with the specified companyIds
           const jutaBots = bots.filter(
@@ -2573,6 +2594,48 @@
                         <line x1="14" y1="11" x2="14" y2="17"/>
                     </svg>
                     Cleanup Jobs
+                `;
+        }
+      }
+
+      async function triggerHealthReport() {
+        try {
+          const button = document.getElementById("healthReportButton");
+          button.disabled = true;
+          button.innerHTML = `
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="animation: spin 1s linear infinite;">
+                        <path d="M22 12h-4l-3 9L9 3l-3 9H2" />
+                    </svg>
+                    Sending...
+                `;
+
+          showNotification("Triggering health report...");
+
+          const response = await fetch("/api/health-report/trigger", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+          });
+
+          const data = await response.json();
+
+          if (!response.ok) {
+            throw new Error(data.error || "Failed to trigger health report");
+          }
+
+          showNotification("Health report sent successfully to WhatsApp group!");
+        } catch (error) {
+          console.error("Error triggering health report:", error);
+          showNotification("Failed to send health report: " + error.message, true);
+        } finally {
+          const button = document.getElementById("healthReportButton");
+          button.disabled = false;
+          button.innerHTML = `
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M22 12h-4l-3 9L9 3l-3 9H2" />
+                    </svg>
+                    Health Report
                 `;
         }
       }

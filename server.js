@@ -1,4 +1,4 @@
-﻿// ======================
+// ======================
 // 1. CORE IMPORTS
 // ======================
 
@@ -794,128 +794,158 @@ const whitelist = [
   "http://localhost:8080",
   "https://d178-2001-e68-5409-64f-f850-607e-e056-2a9e.ngrok-free.app",
   "https://web.jutateknologi.com",
+  "http://web.jutateknologi.com",
   'https://app.jutateknologi.com',
   'https://server.jutateknologi.com',
-  'https://bisnesgpt.vercel.app/',
+  'https://bisnesgpt.vercel.app',
   "https://app.omniyal.com",
+  "https://bisnesgpt.jutateknologi.com",
+  "http://bisnesgpt.jutateknologi.com"
 ];
 
+// Also allow serveo.net domains dynamically
+const isServeoOrigin = (origin) => {
+  return origin ;
+};
+
+// WebSocket server configuration
 const wss = new WebSocket.Server({
   server,
-  // Add CORS headers for WebSocket connections
-  verifyClient: (info, callback) => {
+  verifyClient: (info, done) => {
     const origin = info.origin || info.req.headers.origin;
+    
+    // Allow connections with no origin (like mobile apps or non-browser clients)
+    if (!origin) return done(true);
 
-    // Allow connections with no origin
-    if (!origin) {
-      return callback(true);
+    // Define allowed origin patterns
+    const allowedOriginPatterns = [
+      /^https?:\/\/localhost(:\d+)?(?:$|\/)/i,  // Localhost with any port
+      /^https?:\/\/127\.0\.0\.1(:\d+)?(?:$|\/)/i,  // 127.0.0.1 with any port
+      /^https?:\/\/([a-zA-Z0-9-]+\.)*ngrok\.(io|dev|app)(?:$|\/)/i,  // ngrok domains
+      /^https?:\/\/([a-zA-Z0-9-]+\.)*jutateknologi\.com(?:$|\/)/i,
+      /^https?:\/\/([a-zA-Z0-9-]+\.)*bisnesgpt\.com(?:$|\/)/i,
+      /^https?:\/\/([a-zA-Z0-9-]+\.)*omniyal\.com(?:$|\/)/i,
+      /^https?:\/\/([a-zA-Z0-9-]+\.)*xyzaibot\.com(?:$|\/)/i,
+      /^https?:\/\/([a-zA-Z0-9-]+\.)*vercel\.app(?:$|\/)/i
+    ];
+
+    // Check if origin matches any allowed pattern
+    const isAllowed = allowedOriginPatterns.some(pattern => pattern.test(origin));
+    
+    if (isAllowed) {
+      console.log('WebSocket connection allowed from origin:', origin);
+      return done(true);
     }
 
-    // Check if origin is in whitelist
-    if (whitelist.includes(origin)) {
-      return callback(true);
-    }
-
-    // Check for localhost variations
-    if (
-      origin.startsWith("http://localhost:") ||
-      origin.startsWith("https://localhost:")
-    ) {
-      return callback(true);
-    }
-
-    // Check for ngrok variations
-    if (origin.includes("ngrok") || origin.includes("ngrok-free.app")) {
-      return callback(true);
-    }
-
-    console.log("WebSocket connection blocked from origin:", origin);
-    callback(false);
-  },
+    console.log('WebSocket connection blocked from origin:', origin);
+    return done(false, 403, 'Origin not allowed');
+  }
 });
 const db = admin.firestore();
 global.wss = wss;
 // CORS Configuration
+// Apply CORS with options
+app.use((req, res, next) => {
+  // Handle preflight requests
+  if (req.method === 'OPTIONS') {
+    const origin = req.headers.origin;
+    if (origin) {
+      res.header('Access-Control-Allow-Origin', origin);
+      res.header('Access-Control-Allow-Methods', corsOptions.methods.join(', '));
+      res.header('Access-Control-Allow-Headers', corsOptions.allowedHeaders.join(', '));
+      res.header('Access-Control-Allow-Credentials', 'true');
+      return res.status(204).end();
+    }
+  }
+  
+  // Apply CORS for actual requests
+  cors(corsOptions)(req, res, next);
+});
+
+// Error handler for CORS
+app.use((err, req, res, next) => {
+  if (err.message === 'Not allowed by CORS') {
+    return res.status(403).json({ 
+      success: false, 
+      error: 'Not allowed by CORS',
+      message: 'The origin is not allowed by CORS policy'
+    });
+  }
+  next(err);
+});
+
 const corsOptions = {
-  origin: function (origin, callback) {
+  origin: (origin, callback) => {
     // Allow requests with no origin (like mobile apps or curl requests)
-    if (!origin) {
-      return callback(null, true);
-    }
+    if (!origin) return callback(null, true);
+    
+    // Define allowed origin patterns
+    const allowedOrigins = [
+      /^https?:\/\/localhost(:\d+)?(?:$|\/)/i,  // Localhost with any port
+      /^https?:\/\/127\.0\.0\.1(:\d+)?(?:$|\/)/i,  // 127.0.0.1 with any port
+      /^https?:\/\/([a-zA-Z0-9-]+\.)*ngrok\.(io|dev|app)(?:$|\/)/i,  // ngrok domains
+      /^https?:\/\/([a-zA-Z0-9-]+\.)*jutateknologi\.com(?:$|\/)/i,
+      /^https?:\/\/([a-zA-Z0-9-]+\.)*bisnesgpt\.com(?:$|\/)/i,
+      /^https?:\/\/([a-zA-Z0-9-]+\.)*omniyal\.com(?:$|\/)/i,
+      /^https?:\/\/([a-zA-Z0-9-]+\.)*xyzaibot\.com(?:$|\/)/i,
+      /^https?:\/\/([a-zA-Z0-9-]+\.)*vercel\.app(?:$|\/)/i
+    ];
 
-    // Check if origin is in whitelist
-    if (whitelist.includes(origin)) {
-      return callback(null, true);
+    // Check if the origin matches any allowed pattern
+    const isAllowed = allowedOrigins.some(regex => regex.test(origin));
+    
+    if (isAllowed) {
+      console.log('CORS allowed origin:', origin);
+      return callback(null, origin);  // Return the origin for dynamic CORS
+    } else {
+      console.log('CORS blocked origin:', origin);
+      return callback(new Error('Not allowed by CORS'));
     }
-
-    // Check for localhost variations
-    if (
-      origin.startsWith("http://localhost:") ||
-      origin.startsWith("https://localhost:")
-    ) {
-      return callback(null, true);
-    }
-
-    // Check for ngrok variations
-    if (origin.includes("ngrok") || origin.includes("ngrok-free.app")) {
-      return callback(null, true);
-    }
-
-    console.log("CORS blocked origin:", origin);
-    callback(new Error("Not allowed by CORS"));
   },
-  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+  credentials: true,  // Required for cookies, authorization headers with HTTPS
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: [
-    "Content-Type",
-    "Authorization",
-    "ngrok-skip-browser-warning",
-    "x-requested-with",
-    "Accept",
-    "Origin",
-    "X-Requested-With",
+    'Content-Type',
+    'Authorization',
+    'ngrok-skip-browser-warning',
+    'x-requested-with',
+    'x-csrf-token',
+    'Accept',
+    'Origin',
+    'X-Requested-With'
   ],
-  credentials: true,
   preflightContinue: false,
   optionsSuccessStatus: 204,
+  maxAge: 3600 // 1 hour
 };
 
-// Middleware
-app.use(cors(corsOptions));
-
-// Add additional CORS headers for all responses
+// Custom CORS middleware to handle credentials properly
 app.use((req, res, next) => {
   const origin = req.headers.origin;
-
-  // Check if origin is allowed
-  if (
-    origin &&
-    (whitelist.includes(origin) ||
-      origin.startsWith("http://localhost:") ||
-      origin.startsWith("https://localhost:") ||
-      origin.includes("ngrok"))
-  ) {
-    res.header("Access-Control-Allow-Origin", origin);
+  
+  // Log CORS requests for debugging
+  console.log('CORS request from origin:', origin);
+  
+  // Check if the origin is allowed
+  if (origin) {
+    corsOptions.origin(origin, (err, isAllowed) => {
+      if (!err && isAllowed) {
+        res.header('Access-Control-Allow-Origin', origin);
+        res.header('Access-Control-Allow-Credentials', 'true');
+        
+        // Handle preflight requests
+        if (req.method === 'OPTIONS') {
+          res.header('Access-Control-Allow-Methods', corsOptions.methods.join(', '));
+          res.header('Access-Control-Allow-Headers', corsOptions.allowedHeaders.join(', '));
+          res.header('Access-Control-Max-Age', '3600');
+          return res.status(204).end();
+        }
+      }
+      next();
+    });
   } else {
-    res.header("Access-Control-Allow-Origin", "*");
+    next();
   }
-
-  res.header(
-    "Access-Control-Allow-Methods",
-    "GET, POST, PUT, DELETE, OPTIONS, PATCH"
-  );
-  res.header(
-    "Access-Control-Allow-Headers",
-    "Content-Type, Authorization, ngrok-skip-browser-warning, x-requested-with, Accept, Origin, X-Requested-With, Access-Control-Allow-Origin"
-  );
-  res.header("Access-Control-Allow-Credentials", "true");
-
-  // Handle preflight requests
-  if (req.method === "OPTIONS") {
-    res.status(204).end();
-    return;
-  }
-
-  next();
 });
 
 app.use(express.json({ limit: "50mb" }));
@@ -923,9 +953,6 @@ app.use(bodyParser.json({ limit: "50mb" }));
 app.use(bodyParser.urlencoded({ extended: true, limit: "50mb" }));
 app.use("/media", express.static(MEDIA_DIR));
 app.use(express.static("public"));
-
-// Handle preflight requests
-app.options("*", cors());
 
 // Serve topup success page
 app.get("/topup-success", (req, res) => {
@@ -1312,6 +1339,16 @@ app.get("/logs", (req, res) =>
 app.get("/log-manager", (req, res) =>
   res.sendFile(path.join(__dirname, "public", "log-manager.html"))
 );
+// Health check endpoint for frontend
+app.get("/api/health", (req, res) => {
+  res.status(200).json({
+    status: "ok",
+    timestamp: new Date().toISOString(),
+    uptime: process.uptime(),
+    service: "bisnesgpt-server"
+  });
+});
+
 app.get("/status", (req, res) =>
   res.sendFile(path.join(__dirname, "public", "status.html"))
 );
@@ -1988,7 +2025,7 @@ async function fetchParticipantData() {
 
     // 1. Fetch from Neon database
     try {
-      const baseUrl = process.env.BASE_URL || "https://bisnesgpt.serveo.net";
+      const baseUrl = process.env.BASE_URL || "https://bisnesgpt.jutateknologi.com";
       const companyId = "0380";
 
       const [participantsResponse, enrolleesResponse, eventsResponse] =
@@ -2227,7 +2264,7 @@ async function fetchParticipantData() {
     try {
       const registrationFormId = "1f666a83-9825-4d26-af03-edc2c0aeb39e";
       const registrationUrl = `${
-        process.env.BASE_URL || "https://bisnesgpt.serveo.net"
+        process.env.BASE_URL || "https://bisnesgpt.jutateknologi.com"
       }/api/feedback-responses/form/${registrationFormId}`;
 
       const registrationResponse = await axios.get(registrationUrl);
@@ -2846,6 +2883,10 @@ app.use("/api/attendance-events", attendanceEventsRouter);
 app.use("/api/attendance-records", attendanceRecordsRouter);
 app.use("/api/feedback-responses", feedbackResponsesRouter);
 app.use("/api/certificates", certificatesRouter);
+
+// Lead Analytics Routes
+const leadAnalyticsRouter = require("./routes/leadAnalytics");
+app.use("/api/lead-analytics", leadAnalyticsRouter);
 // Read specific log file
 app.get("/api/logs/read/:filename", async (req, res) => {
   try {
@@ -5098,17 +5139,45 @@ async function countTodayLeads(companyId) {
 
 app.post("/api/daily-report/:companyId/trigger", async (req, res) => {
   const { companyId } = req.params;
+  const { date } = req.body; // Optional date parameter in YYYY-MM-DD format
+  const sqlClient = await pool.connect();
 
   try {
+    // Validate date format if provided
+    if (date && !moment(date, "YYYY-MM-DD", true).isValid()) {
+      return res.status(400).json({
+        success: false,
+        error: "Invalid date format. Please use YYYY-MM-DD format (e.g., 2025-10-15)",
+      });
+    }
+
+    // Check if this company should be handled by this server instance
+    const companyQuery = `
+      SELECT api_url
+      FROM public.companies
+      WHERE company_id = $1
+    `;
+
+    const companyResult = await sqlClient.query(companyQuery, [companyId]);
+
+    if (companyResult.rows.length === 0) {
+      return res.status(400).json({
+        success: false,
+        error: "Company not found",
+      });
+    }
+
+    const apiUrl = companyResult.rows[0].api_url;
+
     const settingsQuery = `
-      SELECT setting_value 
-      FROM public.settings 
-      WHERE company_id = $1 
-      AND setting_type = 'reporting' 
+      SELECT setting_value
+      FROM public.settings
+      WHERE company_id = $1
+      AND setting_type = 'reporting'
       AND setting_key = 'dailyReport'
     `;
 
-    const settingsResult = await sqlDb.query(settingsQuery, [companyId]);
+    const settingsResult = await sqlClient.query(settingsQuery, [companyId]);
 
     if (settingsResult.rows.length === 0) {
       return res.status(400).json({
@@ -5126,43 +5195,112 @@ app.post("/api/daily-report/:companyId/trigger", async (req, res) => {
       });
     }
 
-    const { groupId } = settings;
     const botData = botMap.get(companyId);
 
     if (!botData || !botData[0]?.client) {
-      throw new Error("WhatsApp client not found");
+      return res.status(400).json({
+        success: false,
+        error: "WhatsApp client not found",
+      });
     }
 
-    const count = await countTodayLeads(companyId);
-    const message = `📊 Daily Lead Report (Manual Trigger)\n\nNew Leads Today: ${count}\nDate: ${new Date().toLocaleDateString()}`;
+    // Use the same function as the scheduled report, with optional date
+    await sendDailyContactReport(botData[0].client, companyId, date);
 
-    await botData[0].client.sendMessage(groupId, message);
+    // Update lastRun timestamp only if no date was specified (current day report)
+    if (!date) {
+      await sqlClient.query("BEGIN");
+      const updateQuery = `
+        UPDATE public.settings
+        SET setting_value = jsonb_set(setting_value, '{lastRun}', to_jsonb($1::text))
+        WHERE company_id = $2
+        AND setting_type = 'reporting'
+        AND setting_key = 'dailyReport'
+      `;
 
-    const updateLastRunQuery = `
-      UPDATE public.settings 
-      SET setting_value = jsonb_set(setting_value, '{lastRun}', to_jsonb($1::text), true),
-          updated_at = CURRENT_TIMESTAMP
-      WHERE company_id = $2 AND setting_type = 'reporting' AND setting_key = 'dailyReport'
-    `;
-    await sqlDb.query(updateLastRunQuery, [
-      new Date().toISOString(),
-      companyId,
-    ]);
+      await sqlClient.query(updateQuery, [
+        moment().tz("Asia/Kuala_Lumpur").toISOString(),
+        companyId,
+      ]);
+      await sqlClient.query("COMMIT");
+    }
+
+    // Get the count for the response
+    const { count } = await getContactsAddedToday(companyId, date);
+
+    const reportDate = date || moment().tz("Asia/Kuala_Lumpur").format("YYYY-MM-DD");
 
     res.json({
       success: true,
-      message: "Report triggered successfully",
+      message: `Report triggered successfully for ${reportDate}`,
+      date: reportDate,
       count,
     });
   } catch (error) {
+    await sqlClient.query("ROLLBACK");
     console.error("Error triggering daily report:", error);
     res.status(500).json({
       success: false,
       error: error.message,
     });
+  } finally {
+    await safeRelease(sqlClient);
   }
 });
 
+// Manual trigger endpoint for weekly summary report
+app.post("/api/weekly-report/:companyId/trigger", async (req, res) => {
+  const { companyId } = req.params;
+
+  try {
+    console.log(`[Weekly Report] Manual trigger requested for ${companyId}`);
+
+    // Get bot client
+    const botData = botMap.get(companyId);
+    if (!botData || !botData[0]?.client) {
+      return res.status(404).json({
+        success: false,
+        error: "WhatsApp client not found for this company"
+      });
+    }
+
+    // Send the weekly report
+    const result = await sendWeeklySummaryReport(botData[0].client, companyId);
+
+    res.json({
+      success: true,
+      message: `Weekly report triggered successfully for ${companyId}`,
+      result
+    });
+  } catch (error) {
+    console.error(`[Weekly Report] Error in manual trigger for ${companyId}:`, error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+// Manual trigger endpoint for health report
+app.post("/api/health-report/trigger", async (req, res) => {
+  try {
+    console.log("[Health Report] Manual trigger requested");
+
+    // Send the health report
+    await sendHealthReportToGroup();
+
+    res.json({
+      success: true,
+      message: "Health report triggered and sent successfully"
+    });
+  } catch (error) {
+    console.error("[Health Report] Error in manual trigger:", error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
 
 app.get("/api/facebook-lead-webhook", (req, res) => {
   const VERIFY_TOKEN = "test"; // Use the token you entered in the Facebook dashboard
@@ -6236,7 +6374,7 @@ app.post(
           .json({ error: "fileName and companyId are required" });
       }
 
-      const baseUrl = process.env.BASE_URL || "https://bisnesgpt.serveo.net";
+      const baseUrl = process.env.BASE_URL || "https://bisnesgpt.jutateknologi.com";
       const fileUrl = `${baseUrl}/media/files/${companyId}/${req.file.filename}`;
 
       console.log(
@@ -11714,7 +11852,7 @@ async function scheduleAllMessages(specificCompanyId = null) {
         const apiUrlResult = await client.query(apiUrlQuery, [companyId]);
         const companyApiUrl = apiUrlResult.rows[0]?.api_url;
 
-        if (companyApiUrl !== "https://bisnesgpt.serveo.net") {
+        if (companyApiUrl !== "https://bisnesgpt.jutateknologi.com") {
           continue;
         }
       }
@@ -18298,10 +18436,10 @@ async function main(reinitialize = false) {
   // WHEN WANT TO INITIALIZE ALL BOTS
   // const companiesPromise = sqlDb.query(
   //   "SELECT * FROM companies WHERE api_url = $1",
-  //   ["https://bisnesgpt.serveo.net"]
+  //   ["https://bisnesgpt.jutateknologi.com"]
   // );
   //const companyIds = ['0145']; 
-  const companyIds = ['0107','0160', '0161', '0377', '063', '079', '092', '399849', '458752', '765943', '088', '296245', '0245', '0210', '0156', '0101', '728219', '0342', '049815'];
+  const companyIds = ['0210','0107','0160', '0161', '0377', '063', '079', '092', '399849', '458752', '765943', '088', '296245', '0245', '0210', '0156', '0101', '728219', '0342', '049815', '325117', '946386'];
   const placeholders = companyIds.map((_, i) => `$${i + 1}`).join(', ');
   const query = `SELECT * FROM companies WHERE company_id IN (${placeholders})`;
   const companiesPromise = sqlDb.query(query, companyIds);
@@ -18370,7 +18508,7 @@ async function main(reinitialize = false) {
       return;
     }
 
-    const MAX_CONCURRENT = 2;
+    const MAX_CONCURRENT = 3;
     const BOT_TIMEOUT = 120000;
     const RETRY_DELAY = 5000;
     const MAX_RETRIES = 3;
@@ -19210,6 +19348,35 @@ async function scheduleDailyReportForBot(companyId) {
         );
 
         console.log(`[${companyId}] Daily report scheduled successfully`);
+
+        // Schedule weekly summary report (every Sunday at 18:00)
+        const weeklyJobName = `weeklyReport_${companyId}`;
+
+        // Cancel existing weekly job if any
+        if (schedule.scheduledJobs[weeklyJobName]) {
+          schedule.scheduledJobs[weeklyJobName].cancel();
+          console.log(`[${companyId}] Cancelled existing weekly report job`);
+        }
+
+        schedule.scheduleJob(
+          weeklyJobName,
+          {
+            rule: '0 0 18 * * 0', // Every Sunday at 18:00 (6 PM)
+            tz: 'Asia/Kuala_Lumpur'
+          },
+          async function () {
+            console.log(`[${companyId}] Running scheduled weekly summary report`);
+
+            const botData = botMap.get(companyId);
+            if (botData && botData[0]?.client) {
+              await sendWeeklySummaryReport(botData[0].client, companyId);
+            } else {
+              console.log(`[${companyId}] No WhatsApp client found for weekly report`);
+            }
+          }
+        );
+
+        console.log(`[${companyId}] Weekly report scheduled successfully for Sundays at 18:00`);
       } else {
         console.log(`[${companyId}] Daily reporting not enabled, skipping`);
       }
@@ -19264,33 +19431,194 @@ async function checkAndScheduleDailyReport() {
   }
 }
 
-async function sendDailyContactReport(client, idSubstring) {
+async function sendDailyContactReport(client, idSubstring, targetDate = null) {
   const sqlClient = await pool.connect();
 
   try {
     const { count, contacts } = await getContactsAddedToday(
       idSubstring,
-      sqlClient
+      targetDate
     );
+    
+    // Format new contacts details
+    const newContactsDetails = contacts.map(contact => ({
+      name: contact.contactName || 'No Name',
+      phone: contact.phoneNumber,
+      addedAt: moment(contact.createdAt).format('h:mm A'),
+      tags: Array.isArray(contact.tags) ? contact.tags.join(', ') : ''
+    }));
 
-    const currentNow = moment().tz("Asia/Kuala_Lumpur");
+    // If targetDate is provided, use it; otherwise use current date
+    const reportDate = targetDate
+      ? moment(targetDate).tz("Asia/Kuala_Lumpur")
+      : moment().tz("Asia/Kuala_Lumpur");
+
+    // Get engagement metrics for today
+    const dateStr = reportDate.format('YYYY-MM-DD');
+
+    // Get reply rate and conversation stats
+    const replyRateQuery = await sqlClient.query(`
+      SELECT
+        COUNT(DISTINCT CASE WHEN from_me = false THEN contact_id END) as replied_count,
+        COUNT(DISTINCT CASE WHEN from_me = true THEN contact_id END) as total_contacted
+      FROM messages
+      WHERE company_id = $1
+      AND DATE(timestamp AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Kuala_Lumpur') = $2
+    `, [idSubstring, dateStr]);
+
+    const replyStats = replyRateQuery.rows[0];
+    const replyRate = replyStats.total_contacted > 0
+      ? Math.round((replyStats.replied_count / replyStats.total_contacted) * 100)
+      : 0;
+
+    // Get total AI conversations today
+    const conversationQuery = await sqlClient.query(`
+      SELECT COUNT(*) as count
+      FROM messages
+      WHERE company_id = $1
+      AND DATE(timestamp AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Kuala_Lumpur') = $2
+    `, [idSubstring, dateStr]);
+
+    const totalMessages = parseInt(conversationQuery.rows[0].count) || 0;
+
+    // Find contacts with no reply in 48-72 hours (cold leads needing follow-up)
+    const coldLeadsQuery = await sqlClient.query(`
+      SELECT
+        c.name as contact_name,
+        c.phone,
+        MAX(m.timestamp) as last_message_time
+      FROM contacts c
+      LEFT JOIN messages m ON c.contact_id = m.contact_id AND c.company_id = m.company_id
+      WHERE c.company_id = $1
+      AND c.created_at > NOW() - INTERVAL '7 days'
+      GROUP BY c.contact_id, c.name, c.phone
+      HAVING MAX(m.timestamp) < NOW() - INTERVAL '48 hours'
+         OR MAX(m.timestamp) IS NULL
+      ORDER BY last_message_time ASC NULLS FIRST
+      LIMIT 5
+    `, [idSubstring]);
+
+    const coldLeads = coldLeadsQuery.rows;
+
+    // Get closed contacts today
+    const closedTodayQuery = await sqlClient.query(`
+      SELECT COUNT(*) as count
+      FROM contacts
+      WHERE company_id = $1
+      AND tags ? 'closed'
+      AND DATE(created_at AT TIME ZONE 'Asia/Kuala_Lumpur') = $2
+    `, [idSubstring, dateStr]);
+    const closedToday = parseInt(closedTodayQuery.rows[0].count) || 0;
+
+    // Get yesterday's stats for comparison
+    const yesterdayStr = moment(reportDate).subtract(1, 'day').format('YYYY-MM-DD');
+    const yesterdayQuery = await sqlClient.query(`
+      SELECT
+        COUNT(DISTINCT contact_id) as leads_yesterday,
+        COUNT(DISTINCT CASE WHEN from_me = false THEN contact_id END) as replied_yesterday
+      FROM messages
+      WHERE company_id = $1
+      AND DATE(timestamp AT TIME ZONE 'Asia/Kuala_Lumpur') = $2
+    `, [idSubstring, yesterdayStr]);
+
+    const leadsYesterday = parseInt(yesterdayQuery.rows[0].leads_yesterday) || 0;
+    const repliedYesterday = parseInt(yesterdayQuery.rows[0].replied_yesterday) || 0;
+
+    // Calculate trends
+    const leadsTrend = leadsYesterday > 0 ? Math.round(((count - leadsYesterday) / leadsYesterday) * 100) : 0;
+    const leadsTrendArrow = leadsTrend > 0 ? '↑' : leadsTrend < 0 ? '↓' : '→';
+    const leadsTrendText = leadsTrend !== 0 ? ` ${leadsTrendArrow} ${leadsTrend > 0 ? '+' : ''}${leadsTrend}%` : '';
+
+    const repliedToday = parseInt(replyStats.replied_count) || 0;
+    const repliesTrend = repliedYesterday > 0 ? Math.round(((repliedToday - repliedYesterday) / repliedYesterday) * 100) : 0;
+    const repliesTrendArrow = repliesTrend > 0 ? '↑' : repliesTrend < 0 ? '↓' : '→';
+    const repliesTrendText = repliesTrend !== 0 ? ` ${repliesTrendArrow} ${repliesTrend > 0 ? '+' : ''}${repliesTrend}%` : '';
+
+
+    // Format cold leads details
+    const coldLeadsDetails = coldLeads.map(lead => ({
+      name: lead.contact_name || 'No Name',
+      phone: lead.phone,
+      lastContact: lead.last_message_time 
+        ? moment(lead.last_message_time).fromNow()
+        : 'No messages yet',
+      daysSinceLastContact: lead.last_message_time 
+        ? Math.ceil(moment.duration(moment().diff(moment(lead.last_message_time))).asDays())
+        : Math.ceil(moment.duration(moment().diff(moment(lead.contact_created))).asDays()),
+      messageCount: lead.total_messages || 0
+    }));
+
+    // Get 7-day context for motivation
+    const sevenDaysAgo = moment(reportDate).subtract(7, 'days').format('YYYY-MM-DD');
+    const weeklyContextQuery = await sqlClient.query(`
+      SELECT COUNT(DISTINCT contact_id) as total_leads_7d
+      FROM contacts
+      WHERE company_id = $1
+      AND DATE(created_at AT TIME ZONE 'Asia/Kuala_Lumpur') >= $2
+    `, [idSubstring, sevenDaysAgo]);
+    const totalLeads7d = parseInt(weeklyContextQuery.rows[0].total_leads_7d) || 0;
+
+    // Generate personalized encouragement/motivation
+    let motivationalMessage = '';
+    if (count > leadsYesterday && count > 0) {
+      motivationalMessage = `🔥 You're on fire! ${count} leads today is ${leadsTrendText.includes('+') ? 'your best this week' : 'momentum building'}!`;
+    } else if (closedToday > 0) {
+      motivationalMessage = `🎯 ${closedToday} deal${closedToday > 1 ? 's' : ''} closed today — great work converting!`;
+    } else if (replyRate > 60) {
+      motivationalMessage = `💪 ${replyRate}% response rate — your messaging is working!`;
+    } else if (count > 0) {
+      motivationalMessage = `🚀 Keep it up — consistency = conversions.`;
+    } else {
+      motivationalMessage = `💡 Tip: Engage your existing leads while waiting for new ones.`;
+    }
+
+    // Actionable alert with context
+    let actionableAlert = '';
+    if (coldLeads.length > 0) {
+      actionableAlert = `⚠️ ${coldLeads.length} lead${coldLeads.length > 1 ? 's' : ''} ${coldLeads.length > 1 ? 'haven\'t' : 'hasn\'t'} been followed up in 48h. Try re-engaging them today 💪\n\n`;
+    } else if (repliedToday > 0 && closedToday === 0) {
+      actionableAlert = `💡 You have ${repliedToday} engaged lead${repliedToday > 1 ? 's' : ''} — follow up to convert them!\n\n`;
+    }
+
+    // Format new contacts section for the message
+    let newContactsSection = '';
+    if (newContactsDetails && newContactsDetails.length > 0) {
+      newContactsSection = `\n📌 *New Leads (${count})*:\n` +
+        newContactsDetails
+          .map((contact, index) => 
+            `${index + 1}. ${contact.name} (${contact.phone}) - ${contact.addedAt}` +
+            (contact.tags ? `\n   🏷️ Tags: ${contact.tags}` : '')
+          )
+          .join('\n') + '\n\n';
+    }
+
+    // Format cold leads details for the message
+    let coldLeadsSection = '';
+    if (coldLeadsDetails.length > 0) {
+      coldLeadsSection = `\n❄️ *Cold Leads (${coldLeadsDetails.length}) - Needs Follow-up*:\n` +
+        coldLeadsDetails
+          .map((lead, index) => 
+            `${index + 1}. ${lead.name} (${lead.phone})\n   ⏱️ Last contact: ${lead.lastContact} (${lead.daysSinceLastContact} days ago)\n` +
+            `   💬 Messages: ${lead.messageCount}`
+          )
+          .join('\n') + '\n\n';
+    }
 
     const message =
-      `📊 *Daily Contact Report*\n\n` +
-      `📅 Date: ${currentNow.format("DD/MM/YYYY")}\n` +
-      `🔔 New Leads Today: ${count}\n\n` +
-      (contacts.length > 0
-        ? `*New Contacts:*\n${contacts
-            .map((c) => `- ${c.contactName} (${c.phoneNumber})`)
-            .join("\n")}\n\n`
-        : "") +
-      `Generated by Juta AI`;
+      `📊 *Daily Summary – ${reportDate.format("DD MMM YYYY")}*\n\n` +
+      `👥 New Leads Today: *${count}*${leadsTrendText}\n` +
+      `💬 Replies Received: *${repliedToday}*${repliesTrendText}\n` +
+      `✅ Closed Contacts: *${closedToday}*\n` +
+      `📈 Response Rate: *${replyRate}%*\n\n` +
+      (newContactsSection || '') +
+      (coldLeadsSection || '') +
+      (actionableAlert || '');
 
     const settingsQuery = `
       SELECT setting_value->>'groupId' as group_id
-      FROM public.settings 
-      WHERE company_id = $1 
-      AND setting_type = 'reporting' 
+      FROM public.settings
+      WHERE company_id = $1
+      AND setting_type = 'reporting'
       AND setting_key = 'dailyReport'
     `;
 
@@ -19301,8 +19629,8 @@ async function sendDailyContactReport(client, idSubstring) {
     if (groupId) {
       await client.sendMessage(groupId, message);
       console.log(
-        `Daily report sent to group ${groupId} for company ${idSubstring} at ${currentNow.format(
-          "HH:mm"
+        `Daily report sent to group ${groupId} for company ${idSubstring} for date ${reportDate.format(
+          "DD/MM/YYYY"
         )}`
       );
     } else {
@@ -19323,22 +19651,376 @@ async function sendDailyContactReport(client, idSubstring) {
   }
 }
 
-async function getContactsAddedToday(idSubstring) {
+// Generate data-driven AI insights from actual conversation patterns
+async function generateDailyAIInsight(companyId, sqlClient) {
   try {
-    const today = moment()
-      .tz("Asia/Kuala_Lumpur")
-      .startOf("day")
-      .format("YYYY-MM-DD");
+    const today = moment().tz("Asia/Kuala_Lumpur").format('YYYY-MM-DD');
+    const yesterday = moment().tz("Asia/Kuala_Lumpur").subtract(1, 'day').format('YYYY-MM-DD');
+    const sevenDaysAgo = moment().tz("Asia/Kuala_Lumpur").subtract(7, 'days').format('YYYY-MM-DD');
+
+    // Get real conversation insights
+    const insightData = await sqlClient.query(`
+      WITH today_stats AS (
+        SELECT
+          COUNT(DISTINCT contact_id) as contacts_today,
+          COUNT(*) as messages_today,
+          COUNT(DISTINCT CASE WHEN from_me = false THEN contact_id END) as replied_today
+        FROM messages
+        WHERE company_id = $1
+        AND DATE(timestamp AT TIME ZONE 'Asia/Kuala_Lumpur') = $2
+      ),
+      yesterday_stats AS (
+        SELECT
+          COUNT(DISTINCT contact_id) as contacts_yesterday,
+          COUNT(*) as messages_yesterday,
+          COUNT(DISTINCT CASE WHEN from_me = false THEN contact_id END) as replied_yesterday
+        FROM messages
+        WHERE company_id = $1
+        AND DATE(timestamp AT TIME ZONE 'Asia/Kuala_Lumpur') = $3
+      ),
+      week_stats AS (
+        SELECT
+          COUNT(DISTINCT contact_id) as contacts_week,
+          AVG(CASE WHEN from_me = false THEN 1 ELSE 0 END) as avg_reply_rate_week,
+          COUNT(DISTINCT CASE WHEN from_me = false THEN contact_id END)::float /
+            NULLIF(COUNT(DISTINCT CASE WHEN from_me = true THEN contact_id END), 0) as engagement_rate_week
+        FROM messages
+        WHERE company_id = $1
+        AND DATE(timestamp AT TIME ZONE 'Asia/Kuala_Lumpur') >= $4
+      ),
+      recent_conversation_samples AS (
+        SELECT
+          c.name,
+          c.phone,
+          COUNT(m.message_id) as message_count,
+          MAX(CASE WHEN m.from_me = false THEN 1 ELSE 0 END) as has_reply,
+          STRING_AGG(
+            CASE WHEN m.from_me = true THEN SUBSTRING(m.content, 1, 100) ELSE NULL END,
+            ' | '
+          ) as bot_messages_sample
+        FROM contacts c
+        LEFT JOIN messages m ON c.contact_id = m.contact_id AND c.company_id = m.company_id
+        WHERE c.company_id = $1
+        AND DATE(c.created_at AT TIME ZONE 'Asia/Kuala_Lumpur') >= $3
+        GROUP BY c.contact_id, c.name, c.phone
+        ORDER BY c.created_at DESC
+        LIMIT 5
+      ),
+      closed_today AS (
+        SELECT COUNT(*) as closed_count
+        FROM contacts
+        WHERE company_id = $1
+        AND 'closed' = ANY(tags)
+        AND DATE(created_at AT TIME ZONE 'Asia/Kuala_Lumpur') = $2
+      )
+      SELECT
+        t.contacts_today,
+        t.messages_today,
+        t.replied_today,
+        y.contacts_yesterday,
+        y.messages_yesterday,
+        y.replied_yesterday,
+        w.contacts_week,
+        w.avg_reply_rate_week,
+        w.engagement_rate_week,
+        ct.closed_count,
+        (SELECT JSON_AGG(row_to_json(recent_conversation_samples.*)) FROM recent_conversation_samples) as conversation_samples
+      FROM today_stats t, yesterday_stats y, week_stats w, closed_today ct
+    `, [companyId, today, yesterday, sevenDaysAgo]);
+
+    const data = insightData.rows[0];
+
+    // Calculate trends
+    const leadTrend = data.contacts_yesterday > 0
+      ? Math.round(((data.contacts_today - data.contacts_yesterday) / data.contacts_yesterday) * 100)
+      : 0;
+    const replyRateToday = data.contacts_today > 0
+      ? Math.round((data.replied_today / data.contacts_today) * 100)
+      : 0;
+    const replyRateYesterday = data.contacts_yesterday > 0
+      ? Math.round((data.replied_yesterday / data.contacts_yesterday) * 100)
+      : 0;
+
+    // Extract conversation pattern insights
+    const conversationSamples = data.conversation_samples || [];
+    const noReplyContacts = conversationSamples.filter(c => c.has_reply === 0);
+    const avgMessagesPerContact = conversationSamples.length > 0
+      ? Math.round(conversationSamples.reduce((sum, c) => sum + c.message_count, 0) / conversationSamples.length)
+      : 0;
+
+    const prompt = `You are a WhatsApp sales performance analyst. Analyze these REAL conversation metrics and provide ONE specific, actionable insight (max 2 sentences).
+
+REAL DATA FROM TODAY:
+- New leads today: ${data.contacts_today} (${leadTrend > 0 ? '+' : ''}${leadTrend}% vs yesterday)
+- Reply rate today: ${replyRateToday}% (yesterday: ${replyRateYesterday}%)
+- Total messages exchanged: ${data.messages_today}
+- Deals closed today: ${data.closed_count || 0}
+- Average messages per conversation: ${avgMessagesPerContact}
+- Leads not responding: ${noReplyContacts.length} out of ${conversationSamples.length} recent
+
+7-DAY TREND:
+- Weekly engagement rate: ${Math.round((data.engagement_rate_week || 0) * 100)}%
+- Total leads this week: ${data.contacts_week}
+
+PRIORITY INSIGHTS (choose the MOST important one):
+1. If reply rate dropped >10%: Identify what changed in messaging approach
+2. If leads increasing but replies flat: Message quality or timing issue
+3. If no deals closed but high engagement: Suggest stronger call-to-action
+4. If >50% not responding: Opening message may be weak
+5. If avg messages high but no close: May need better qualification
+
+Return ONLY ONE specific actionable insight based on the actual numbers above. Reference the specific metrics. No generic advice.`;
+
+    const completion = await openai.chat.completions.create({
+      model: "gpt-5-mini",
+      messages: [{ role: "user", content: prompt }],
+      max_tokens: 120,
+      temperature: 0.6,
+    });
+
+    return completion.choices[0].message.content.trim();
+  } catch (error) {
+    console.error('Error generating AI insight:', error);
+    return null; // Return null instead of generic advice
+  }
+}
+
+async function generateAIWeeklyTip(stats) {
+  try {
+    const totalLeads = parseInt(stats.total_leads) || 0;
+    const engagedLeads = parseInt(stats.engaged_leads) || 0;
+    const totalMessages = parseInt(stats.total_messages) || 0;
+    const qualifiedLeads = parseInt(stats.qualified_leads) || 0;
+    const engagementRate = totalLeads > 0 ? Math.round((engagedLeads / totalLeads) * 100) : 0;
+    const dailyAvg = Math.round(totalLeads / 7);
+
+    const prompt = `You are a sales performance AI consultant. Based on these WhatsApp lead generation metrics for the past week, provide ONE actionable tip (2-3 sentences max) to improve their sales performance.
+
+Weekly Metrics:
+- Total Leads: ${totalLeads}
+- Daily Average: ${dailyAvg} leads/day
+- Engaged Leads: ${engagedLeads}
+- Engagement Rate: ${engagementRate}%
+- Total Conversations: ${totalMessages}
+- Qualified Leads: ${qualifiedLeads}
+
+Focus on:
+1. If engagement rate is low (<40%): suggest better opening messages or follow-up timing
+2. If qualified leads are low: suggest better lead qualification questions
+3. If daily average is declining: suggest lead generation strategies
+4. If engagement is high: suggest how to convert engaged leads to sales
+
+Return ONLY the tip as plain text, no formatting, no bullet points. Start directly with actionable advice.`;
+
+    const completion = await openai.chat.completions.create({
+      model: "gpt-5-mini",
+      messages: [{ role: "user", content: prompt }],
+      max_tokens: 150,
+      temperature: 0.7,
+    });
+
+    return completion.choices[0].message.content.trim();
+  } catch (error) {
+    console.error('Error generating AI tip:', error);
+    // Fallback tips based on simple logic
+    const engagementRate = parseInt(stats.total_leads) > 0
+      ? Math.round((parseInt(stats.engaged_leads) / parseInt(stats.total_leads)) * 100)
+      : 0;
+
+    if (engagementRate < 40) {
+      return "Your engagement rate could be improved. Try personalizing your opening messages with the lead's name and reference their specific needs. Response rates increase 3x with personalized outreach.";
+    } else if (parseInt(stats.qualified_leads) < parseInt(stats.engaged_leads) * 0.3) {
+      return "Focus on qualifying leads earlier in the conversation. Ask specific questions about budget, timeline, and decision-making authority within the first 3 messages to save time and improve conversion rates.";
+    } else {
+      return "Great engagement! Now focus on speed - leads who receive follow-ups within 5 minutes are 21x more likely to convert. Set up instant auto-replies for common questions to maintain momentum.";
+    }
+  }
+}
+
+async function sendWeeklySummaryReport(client, idSubstring) {
+  const sqlClient = await pool.connect();
+
+  try {
+    const endDate = moment().tz("Asia/Kuala_Lumpur");
+    const startDate = moment(endDate).subtract(7, 'days');
+    const prevWeekStart = moment(startDate).subtract(7, 'days');
+
+    console.log(`[${idSubstring}] Generating weekly summary for ${startDate.format('DD/MM')} - ${endDate.format('DD/MM/YYYY')}`);
+
+    // Get this week's metrics
+    const weeklyQuery = await sqlClient.query(`
+      SELECT
+        COUNT(DISTINCT c.contact_id) as total_leads,
+        COUNT(DISTINCT CASE WHEN m.from_me = false THEN c.contact_id END) as engaged_leads,
+        COUNT(DISTINCT CASE WHEN c.tags ? 'closed' THEN c.contact_id END) as closed_deals,
+        COUNT(m.message_id) as total_messages
+      FROM contacts c
+      LEFT JOIN messages m ON c.contact_id = m.contact_id AND c.company_id = m.company_id
+      WHERE c.company_id = $1
+      AND c.created_at >= $2::timestamp AND c.created_at < $3::timestamp
+    `, [idSubstring, startDate.toISOString(), endDate.toISOString()]);
+
+    // Get last week's metrics for comparison
+    const lastWeekQuery = await sqlClient.query(`
+      SELECT
+        COUNT(DISTINCT c.contact_id) as total_leads,
+        COUNT(DISTINCT CASE WHEN m.from_me = false THEN c.contact_id END) as engaged_leads,
+        COUNT(DISTINCT CASE WHEN c.tags ? 'closed' THEN c.contact_id END) as closed_deals
+      FROM contacts c
+      LEFT JOIN messages m ON c.contact_id = m.contact_id AND c.company_id = m.company_id
+      WHERE c.company_id = $1
+      AND c.created_at >= $2::timestamp AND c.created_at < $3::timestamp
+    `, [idSubstring, prevWeekStart.toISOString(), startDate.toISOString()]);
+
+    const thisWeek = weeklyQuery.rows[0];
+    const lastWeek = lastWeekQuery.rows[0];
+
+    const totalLeads = parseInt(thisWeek.total_leads) || 0;
+    const engagedLeads = parseInt(thisWeek.engaged_leads) || 0;
+    const closedDeals = parseInt(thisWeek.closed_deals) || 0;
+    const totalMessages = parseInt(thisWeek.total_messages) || 0;
+
+    const lastWeekLeads = parseInt(lastWeek.total_leads) || 0;
+    const lastWeekEngaged = parseInt(lastWeek.engaged_leads) || 0;
+    const lastWeekClosed = parseInt(lastWeek.closed_deals) || 0;
+
+    // Calculate trends
+    const leadsTrend = lastWeekLeads > 0 ? Math.round(((totalLeads - lastWeekLeads) / lastWeekLeads) * 100) : 0;
+    const engagedTrend = lastWeekEngaged > 0 ? Math.round(((engagedLeads - lastWeekEngaged) / lastWeekEngaged) * 100) : 0;
+    const closedTrend = lastWeekClosed > 0 ? Math.round(((closedDeals - lastWeekClosed) / lastWeekClosed) * 100) : 0;
+
+    const responseRate = totalLeads > 0 ? Math.round((engagedLeads / totalLeads) * 100) : 0;
+
+    // Engagement insights - best performing day
+    const dailyPerformanceQuery = await sqlClient.query(`
+      SELECT
+        TO_CHAR(DATE(c.created_at AT TIME ZONE 'Asia/Kuala_Lumpur'), 'Day') as day_name,
+        COUNT(DISTINCT c.contact_id) as leads_count,
+        COUNT(DISTINCT CASE WHEN m.from_me = false THEN c.contact_id END) as replied_count
+      FROM contacts c
+      LEFT JOIN messages m ON c.contact_id = m.contact_id AND c.company_id = m.company_id
+      WHERE c.company_id = $1
+      AND c.created_at >= $2 AND c.created_at < $3
+      GROUP BY day_name, DATE(c.created_at AT TIME ZONE 'Asia/Kuala_Lumpur')
+      ORDER BY replied_count DESC
+      LIMIT 1
+    `, [idSubstring, startDate.toISOString(), endDate.toISOString()]);
+
+    const bestDay = dailyPerformanceQuery.rows[0];
+    const bestDayName = bestDay ? bestDay.day_name.trim() : 'N/A';
+    const bestDayRate = bestDay && parseInt(bestDay.leads_count) > 0
+      ? Math.round((parseInt(bestDay.replied_count) / parseInt(bestDay.leads_count)) * 100)
+      : 0;
+
+    // Cold leads that need re-engagement
+    const coldLeadsQuery = await sqlClient.query(`
+      SELECT COUNT(DISTINCT c.contact_id) as cold_count
+      FROM contacts c
+      LEFT JOIN messages m ON c.contact_id = m.contact_id AND c.company_id = m.company_id
+      WHERE c.company_id = $1
+      AND c.created_at >= $2::timestamp
+      AND c.created_at < $3::timestamp
+      GROUP BY c.contact_id
+      HAVING MAX(m.timestamp) < NOW() - INTERVAL '48 hours'
+         OR MAX(m.timestamp) IS NULL
+    `, [idSubstring, startDate.toISOString(), endDate.toISOString()]);
+
+    const coldLeadsCount = coldLeadsQuery.rows.length || 0;
+
+    // Performance badges
+    let topMetric = '';
+    if (closedTrend > 0 && closedTrend >= leadsTrend) {
+      topMetric = `🏆 Top Metric: +${closedTrend}% higher conversion this week!`;
+    } else if (leadsTrend > 10) {
+      topMetric = `🏆 Top Metric: +${leadsTrend}% more leads this week!`;
+    } else if (responseRate > 60) {
+      topMetric = `🏆 Top Metric: ${responseRate}% response rate — excellent engagement!`;
+    } else {
+      topMetric = `🏆 Consistency Score: You're building momentum week over week!`;
+    }
+
+    // Generate AI-powered insight
+    console.log(`[${idSubstring}] Generating AI insight for weekly report...`);
+    const stats = {
+      total_leads: totalLeads,
+      engaged_leads: engagedLeads,
+      total_messages: totalMessages,
+      qualified_leads: closedDeals,
+      leadsTrend,
+      engagedTrend,
+      closedTrend
+    };
+    const aiInsight = await generateAIWeeklyTip(stats);
+
+    // Action suggestions
+    let actionSuggestions = `🎯 *Recommended Actions:*\n`;
+    if (coldLeadsCount > 0) {
+      actionSuggestions += `Re-engage ${coldLeadsCount} cold lead${coldLeadsCount > 1 ? 's' : ''} from this week.\n`;
+    }
+
+    const message =
+      `📅 *Weekly Report (${startDate.format("DD MMM")}–${endDate.format("DD MMM YYYY")})*\n\n` +
+      `👥 Total Leads: *${totalLeads}*  (${leadsTrend > 0 ? '↑' : leadsTrend < 0 ? '↓' : '→'} ${leadsTrend > 0 ? '+' : ''}${leadsTrend}% from last week)\n` +
+      `💬 Replies: *${engagedLeads}*  (${engagedTrend > 0 ? '↑' : engagedTrend < 0 ? '↓' : '→'} ${engagedTrend > 0 ? '+' : ''}${engagedTrend}%)\n` +
+      `✅ Closed Deals: *${closedDeals}*  (${closedTrend > 0 ? '↑' : closedTrend < 0 ? '↓' : '→'} ${closedTrend > 0 ? '+' : ''}${closedTrend}%)\n` +
+      `⚡ Response Rate: *${responseRate}%*\n\n` +
+      `━━━━━━━━━━━━━━━━━━━━\n` +
+      `📈 *Engagement Insights*\n` +
+      (bestDayName !== 'N/A' ? `• Fastest Response Day: ${bestDayName} (${bestDayRate}% reply rate)\n` : '') +
+      `• Total Conversations: ${totalMessages}\n\n` +
+      `🤖 *AI Insight:*\n${aiInsight}\n\n` +
+      `━━━━━━━━━━━━━━━━━━━━\n` +
+      topMetric + `\n\n` +
+      `━━━━━━━━━━━━━━━━━━━━\n` +
+      actionSuggestions + `\n` +
+      `━━━━━━━━━━━━━━━━━━━━\n`;
+
+    // Get group ID from settings (use weeklyReport or fallback to dailyReport)
+    const settingsQuery = `
+      SELECT setting_value->>'groupId' as group_id
+      FROM public.settings
+      WHERE company_id = $1
+      AND setting_type = 'reporting'
+      AND (setting_key = 'weeklyReport' OR setting_key = 'dailyReport')
+      ORDER BY CASE WHEN setting_key = 'weeklyReport' THEN 0 ELSE 1 END
+      LIMIT 1
+    `;
+
+    const settingsResult = await sqlClient.query(settingsQuery, [idSubstring]);
+    const groupId = settingsResult.rows.length > 0 ? settingsResult.rows[0].group_id : null;
+
+    if (groupId) {
+      await client.sendMessage(groupId, message);
+      console.log(`Weekly summary sent to group ${groupId} for company ${idSubstring}`);
+    } else {
+      console.log(`No group ID configured for weekly report for company ${idSubstring}`);
+    }
+
+    return { success: true, message: "Weekly report sent successfully" };
+  } catch (error) {
+    console.error(`Error sending weekly summary for ${idSubstring}:`, error);
+    return { success: false, error: error.message };
+  } finally {
+    await safeRelease(sqlClient);
+  }
+}
+
+async function getContactsAddedToday(idSubstring, targetDate = null) {
+  try {
+    // If targetDate is provided, use it; otherwise use today
+    const date = targetDate
+      ? moment(targetDate).tz("Asia/Kuala_Lumpur").startOf("day").format("YYYY-MM-DD")
+      : moment().tz("Asia/Kuala_Lumpur").startOf("day").format("YYYY-MM-DD");
 
     const result = await sql`
-      SELECT 
+      SELECT
         phone as "phoneNumber",
         name as "contactName",
         created_at as "createdAt",
         tags
-      FROM public.contacts 
+      FROM public.contacts
       WHERE company_id = ${idSubstring}
-      AND DATE(created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Kuala_Lumpur') = ${today}
+      AND DATE(created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Kuala_Lumpur') = ${date}
     `;
 
     const contacts = result.map((contact) => ({
@@ -27421,6 +28103,210 @@ async function checkDatabaseHealth() {
 
 // Run health check every 5 minutes
 setInterval(checkDatabaseHealth, 5 * 60 * 1000);
+
+// ============================================
+// HOURLY SERVER HEALTH MONITORING & REPORTING
+// ============================================
+
+// Comprehensive health check function
+async function performComprehensiveHealthCheck() {
+  const healthReport = {
+    timestamp: new Date().toISOString(),
+    status: "OK",
+    checks: {}
+  };
+
+  // 1. API Health Check
+  try {
+    const baseUrl = process.env.URL || "http://localhost:3000";
+    const healthResponse = await axios.get(`${baseUrl}/api/health`, { timeout: 5000 });
+    healthReport.checks.apiHealth = {
+      status: healthResponse.status === 200 ? "OK" : "FAIL",
+      uptime: healthResponse.data.uptime || 0
+    };
+  } catch (error) {
+    healthReport.checks.apiHealth = {
+      status: "FAIL",
+      error: error.message
+    };
+    healthReport.status = "DEGRADED";
+  }
+
+  // 2. Login API Test
+  try {
+    const baseUrl = process.env.URL || "http://localhost:3000";
+    const loginResponse = await axios.post(`${baseUrl}/api/login`, {
+      email: "admin@juta.com",
+      password: "123456"
+    }, { timeout: 5000 });
+
+    healthReport.checks.loginApi = {
+      status: loginResponse.data.success ? "OK" : "FAIL",
+      user: loginResponse.data.user?.email || "N/A"
+    };
+  } catch (error) {
+    healthReport.checks.loginApi = {
+      status: "FAIL",
+      error: error.message
+    };
+    healthReport.status = "DEGRADED";
+  }
+
+  // 3. Database Health
+  try {
+    await sql`SELECT 1`;
+    healthReport.checks.database = {
+      status: "OK"
+    };
+  } catch (error) {
+    healthReport.checks.database = {
+      status: "FAIL",
+      error: error.message
+    };
+    healthReport.status = "CRITICAL";
+  }
+
+  // 4. Memory Usage
+  const memUsage = process.memoryUsage();
+  const heapUsedMB = Math.round(memUsage.heapUsed / 1024 / 1024);
+  const heapTotalMB = Math.round(memUsage.heapTotal / 1024 / 1024);
+  healthReport.checks.memory = {
+    status: heapUsedMB > 500 ? "WARNING" : "OK",
+    heapUsedMB,
+    heapTotalMB,
+    percentage: Math.round((heapUsedMB / heapTotalMB) * 100)
+  };
+
+  // 5. Bot Connections Status
+  const botCount = botMap.size;
+  const activeBots = Array.from(botMap.entries())
+    .filter(([_, botData]) => botData && botData[0]?.client)
+    .length;
+
+  healthReport.checks.bots = {
+    status: botCount > 0 ? "OK" : "WARNING",
+    total: botCount,
+    active: activeBots,
+    inactive: botCount - activeBots
+  };
+
+  // 6. System Uptime
+  const uptimeHours = Math.floor(process.uptime() / 3600);
+  const uptimeMinutes = Math.floor((process.uptime() % 3600) / 60);
+  healthReport.checks.uptime = {
+    status: "OK",
+    hours: uptimeHours,
+    minutes: uptimeMinutes,
+    totalSeconds: Math.floor(process.uptime())
+  };
+
+  return healthReport;
+}
+
+// Function to send health report to WhatsApp group
+async function sendHealthReportToGroup() {
+  try {
+    const companyId = "0210";
+    const groupId = "120363178065670386@g.us";
+
+    // Get bot client for company 0210
+    const botData = botMap.get(companyId);
+
+    if (!botData || !botData[0]?.client) {
+      console.error(`[Health Report] No WhatsApp client found for company ${companyId}`);
+      return;
+    }
+
+    // Perform comprehensive health check
+    const healthReport = await performComprehensiveHealthCheck();
+
+    // Format message
+    const statusEmoji = healthReport.status === "OK" ? "✅" :
+                       healthReport.status === "DEGRADED" ? "⚠️" : "❌";
+
+    let message = `${statusEmoji} *Hourly Server Health Report*\n\n`;
+    message += `🕐 *Time:* ${moment().tz("Asia/Kuala_Lumpur").format("DD/MM/YYYY HH:mm:ss")}\n`;
+    message += `📊 *Overall Status:* ${healthReport.status}\n\n`;
+
+    // API Health
+    message += `🌐 *API Health:* ${healthReport.checks.apiHealth.status}\n`;
+    if (healthReport.checks.apiHealth.uptime) {
+      const uptimeHours = Math.floor(healthReport.checks.apiHealth.uptime / 3600);
+      message += `   Uptime: ${uptimeHours}h\n`;
+    }
+    if (healthReport.checks.apiHealth.error) {
+      message += `   Error: ${healthReport.checks.apiHealth.error}\n`;
+    }
+    message += `\n`;
+
+    // Login API
+    message += `🔐 *Login API:* ${healthReport.checks.loginApi.status}\n`;
+    if (healthReport.checks.loginApi.user) {
+      message += `   Test User: ${healthReport.checks.loginApi.user}\n`;
+    }
+    if (healthReport.checks.loginApi.error) {
+      message += `   Error: ${healthReport.checks.loginApi.error}\n`;
+    }
+    message += `\n`;
+
+    // Database
+    message += `💾 *Database:* ${healthReport.checks.database.status}\n`;
+    if (healthReport.checks.database.error) {
+      message += `   Error: ${healthReport.checks.database.error}\n`;
+    }
+    message += `\n`;
+
+    // Memory
+    const memStatus = healthReport.checks.memory.status === "OK" ? "✅" : "⚠️";
+    message += `${memStatus} *Memory:* ${healthReport.checks.memory.heapUsedMB}MB / ${healthReport.checks.memory.heapTotalMB}MB (${healthReport.checks.memory.percentage}%)\n\n`;
+
+    // Bot Connections
+    message += `🤖 *Bot Connections:* ${healthReport.checks.bots.active}/${healthReport.checks.bots.total} active\n`;
+    if (healthReport.checks.bots.inactive > 0) {
+      message += `   ⚠️ ${healthReport.checks.bots.inactive} inactive\n`;
+    }
+    message += `\n`;
+
+    // Uptime
+    message += `⏱️ *System Uptime:* ${healthReport.checks.uptime.hours}h ${healthReport.checks.uptime.minutes}m\n\n`;
+
+    message += `_Generated by Juta AI Health Monitor_`;
+
+    // Send message
+    await botData[0].client.sendMessage(groupId, message);
+
+    console.log(`[Health Report] Successfully sent to group ${groupId} for company ${companyId}`);
+
+    // Log to system
+    logger.logEvent("HEALTH_REPORT", "Hourly health report sent", healthReport);
+
+  } catch (error) {
+    console.error("[Health Report] Error sending health report:", error);
+    logger.logEvent("HEALTH_REPORT_ERROR", "Failed to send health report", {
+      error: error.message,
+      stack: error.stack
+    });
+  }
+}
+
+// Schedule hourly health report (at the top of every hour)
+const healthReportCron = cron.schedule(
+  "0 * * * *", // Every hour at minute 0
+  async () => {
+    console.log("[Health Report] Running hourly health check...");
+    await sendHealthReportToGroup();
+  },
+  {
+    timezone: "Asia/Kuala_Lumpur"
+  }
+);
+
+console.log("[Health Report] Hourly health monitoring scheduled successfully");
+
+// ============================================
+// END HOURLY SERVER HEALTH MONITORING
+// ============================================
+
 // New endpoint to fetch message details from Firebase
 app.get(
   "/api/queue/message-details/:companyId/:messageId",

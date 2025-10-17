@@ -1,0 +1,289 @@
+[{
+  "column_name": "id",
+  "data_type": "uuid",
+  "character_maximum_length": null,
+  "is_nullable": "NO",
+  "column_default": "uuid_generate_v4()"
+}, {
+  "column_name": "contact_id",
+  "data_type": "character varying",
+  "character_maximum_length": 255,
+  "is_nullable": "NO",
+  "column_default": null
+}, {
+  "column_name": "company_id",
+  "data_type": "character varying",
+  "character_maximum_length": 255,
+  "is_nullable": "NO",
+  "column_default": null
+}, {
+  "column_name": "name",
+  "data_type": "character varying",
+  "character_maximum_length": 255,
+  "is_nullable": "YES",
+  "column_default": null
+}, {
+  "column_name": "contact_name",
+  "data_type": "character varying",
+  "character_maximum_length": 255,
+  "is_nullable": "YES",
+  "column_default": null
+}, {
+  "column_name": "phone",
+  "data_type": "character varying",
+  "character_maximum_length": 50,
+  "is_nullable": "YES",
+  "column_default": null
+}, {
+  "column_name": "email",
+  "data_type": "character varying",
+  "character_maximum_length": 255,
+  "is_nullable": "YES",
+  "column_default": null
+}, {
+  "column_name": "thread_id",
+  "data_type": "character varying",
+  "character_maximum_length": 255,
+  "is_nullable": "YES",
+  "column_default": null
+}, {
+  "column_name": "profile",
+  "data_type": "jsonb",
+  "character_maximum_length": null,
+  "is_nullable": "YES",
+  "column_default": null
+}, {
+  "column_name": "points",
+  "data_type": "integer",
+  "character_maximum_length": null,
+  "is_nullable": "YES",
+  "column_default": "0"
+}, {
+  "column_name": "tags",
+  "data_type": "jsonb",
+  "character_maximum_length": null,
+  "is_nullable": "YES",
+  "column_default": null
+}, {
+  "column_name": "reaction",
+  "data_type": "character varying",
+  "character_maximum_length": 100,
+  "is_nullable": "YES",
+  "column_default": null
+}, {
+  "column_name": "reaction_timestamp",
+  "data_type": "timestamp with time zone",
+  "character_maximum_length": null,
+  "is_nullable": "YES",
+  "column_default": null
+}, {
+  "column_name": "last_updated",
+  "data_type": "timestamp with time zone",
+  "character_maximum_length": null,
+  "is_nullable": "YES",
+  "column_default": "CURRENT_TIMESTAMP"
+}, {
+  "column_name": "edited",
+  "data_type": "boolean",
+  "character_maximum_length": null,
+  "is_nullable": "YES",
+  "column_default": "false"
+}, {
+  "column_name": "edited_at",
+  "data_type": "timestamp with time zone",
+  "character_maximum_length": null,
+  "is_nullable": "YES",
+  "column_default": null
+}, {
+  "column_name": "whapi_token",
+  "data_type": "character varying",
+  "character_maximum_length": 255,
+  "is_nullable": "YES",
+  "column_default": null
+}, {
+  "column_name": "created_at",
+  "data_type": "timestamp with time zone",
+  "character_maximum_length": null,
+  "is_nullable": "YES",
+  "column_default": "CURRENT_TIMESTAMP"
+}, {
+  "column_name": "additional_emails",
+  "data_type": "jsonb",
+  "character_maximum_length": null,
+  "is_nullable": "YES",
+  "column_default": "'[]'::jsonb"
+}, {
+  "column_name": "address1",
+  "data_type": "text",
+  "character_maximum_length": null,
+  "is_nullable": "YES",
+  "column_default": null
+}, {
+  "column_name": "assigned_to",
+  "data_type": "character varying",
+  "character_maximum_length": 255,
+  "is_nullable": "YES",
+  "column_default": null
+}, {
+  "column_name": "business_id",
+  "data_type": "character varying",
+  "character_maximum_length": 255,
+  "is_nullable": "YES",
+  "column_default": null
+}, {
+  "column_name": "chat_data",
+  "data_type": "jsonb",
+  "character_maximum_length": null,
+  "is_nullable": "YES",
+  "column_default": null
+}, {
+  "column_name": "is_group",
+  "data_type": "boolean",
+  "character_maximum_length": null,
+  "is_nullable": "YES",
+  "column_default": "false"
+}, {
+  "column_name": "unread_count",
+  "data_type": "integer",
+  "character_maximum_length": null,
+  "is_nullable": "YES",
+  "column_default": "0"
+}, {
+  "column_name": "last_message",
+  "data_type": "jsonb",
+  "character_maximum_length": null,
+  "is_nullable": "YES",
+  "column_default": null
+}, {
+  "column_name": "custom_fields",
+  "data_type": "jsonb",
+  "character_maximum_length": null,
+  "is_nullable": "YES",
+  "column_default": null
+}, {
+  "column_name": "company",
+  "data_type": "character varying",
+  "character_maximum_length": 255,
+  "is_nullable": "YES",
+  "column_default": null
+}, {
+  "column_name": "multi_assign",
+  "data_type": "jsonb",
+  "character_maximum_length": null,
+  "is_nullable": "YES",
+  "column_default": "'[]'::jsonb"
+}, {
+  "column_name": "not_spam",
+  "data_type": "boolean",
+  "character_maximum_length": null,
+  "is_nullable": "YES",
+  "column_default": "true"
+}, {
+  "column_name": "profile_pic_url",
+  "data_type": "text",
+  "character_maximum_length": null,
+  "is_nullable": "YES",
+  "column_default": null
+}, {
+  "column_name": "pinned",
+  "data_type": "boolean",
+  "character_maximum_length": null,
+  "is_nullable": "YES",
+  "column_default": "false"
+}, {
+  "column_name": "customer_message",
+  "data_type": "text",
+  "character_maximum_length": null,
+  "is_nullable": "YES",
+  "column_default": null
+}, {
+  "column_name": "storage_requirements",
+  "data_type": "jsonb",
+  "character_maximum_length": null,
+  "is_nullable": "YES",
+  "column_default": null
+}, {
+  "column_name": "form_submission",
+  "data_type": "jsonb",
+  "character_maximum_length": null,
+  "is_nullable": "YES",
+  "column_default": null
+}, {
+  "column_name": "phone_indexes",
+  "data_type": "jsonb",
+  "character_maximum_length": null,
+  "is_nullable": "YES",
+  "column_default": "'[]'::jsonb"
+}, {
+  "column_name": "personal_id",
+  "data_type": "character",
+  "character_maximum_length": 255,
+  "is_nullable": "YES",
+  "column_default": null
+}, {
+  "column_name": "last_name",
+  "data_type": "character varying",
+  "character_maximum_length": 255,
+  "is_nullable": "YES",
+  "column_default": null
+}, {
+  "column_name": "notes",
+  "data_type": "text",
+  "character_maximum_length": null,
+  "is_nullable": "YES",
+  "column_default": null
+}, {
+  "column_name": "chat_id",
+  "data_type": "character varying",
+  "character_maximum_length": 255,
+  "is_nullable": "YES",
+  "column_default": null
+}, {
+  "column_name": "updated_at",
+  "data_type": "timestamp with time zone",
+  "character_maximum_length": null,
+  "is_nullable": "YES",
+  "column_default": "CURRENT_TIMESTAMP"
+}, {
+  "column_name": "location_id",
+  "data_type": "character varying",
+  "character_maximum_length": 255,
+  "is_nullable": "YES",
+  "column_default": null
+}, {
+  "column_name": "branch",
+  "data_type": "character varying",
+  "character_maximum_length": 255,
+  "is_nullable": "YES",
+  "column_default": null
+}, {
+  "column_name": "expiry_date",
+  "data_type": "character varying",
+  "character_maximum_length": 255,
+  "is_nullable": "YES",
+  "column_default": null
+}, {
+  "column_name": "vehicle_number",
+  "data_type": "character varying",
+  "character_maximum_length": 255,
+  "is_nullable": "YES",
+  "column_default": null
+}, {
+  "column_name": "ic",
+  "data_type": "character varying",
+  "character_maximum_length": 255,
+  "is_nullable": "YES",
+  "column_default": null
+}, {
+  "column_name": "phone_index",
+  "data_type": "integer",
+  "character_maximum_length": null,
+  "is_nullable": "YES",
+  "column_default": null
+}, {
+  "column_name": "lead_number",
+  "data_type": "character varying",
+  "character_maximum_length": 255,
+  "is_nullable": "YES",
+  "column_default": null
+}]

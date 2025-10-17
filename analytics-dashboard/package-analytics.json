@@ -1,0 +1,27 @@
+{
+  "name": "lead-analytics-server",
+  "version": "1.0.0",
+  "description": "Standalone lead analytics server with web dashboard",
+  "main": "analytics-server.js",
+  "scripts": {
+    "start": "node analytics-server.js",
+    "dev": "nodemon analytics-server.js"
+  },
+  "keywords": [
+    "analytics",
+    "leads",
+    "dashboard",
+    "crm"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "express": "^4.18.2",
+    "cors": "^2.8.5",
+    "dotenv": "^16.0.3",
+    "pg": "^8.11.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.1"
+  }
+}

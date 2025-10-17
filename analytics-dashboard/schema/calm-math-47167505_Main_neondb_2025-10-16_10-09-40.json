@@ -1,0 +1,256 @@
+[{
+  "table_name": "active_companies",
+  "table_type": "VIEW"
+}, {
+  "table_name": "ai_assign_responses",
+  "table_type": "BASE TABLE"
+}, {
+  "table_name": "ai_document_responses",
+  "table_type": "BASE TABLE"
+}, {
+  "table_name": "ai_followup_builder_save_thread",
+  "table_type": "BASE TABLE"
+}, {
+  "table_name": "ai_image_responses",
+  "table_type": "BASE TABLE"
+}, {
+  "table_name": "ai_response_assignments",
+  "table_type": "BASE TABLE"
+}, {
+  "table_name": "ai_response_media",
+  "table_type": "BASE TABLE"
+}, {
+  "table_name": "ai_response_tags",
+  "table_type": "BASE TABLE"
+}, {
+  "table_name": "ai_responses",
+  "table_type": "BASE TABLE"
+}, {
+  "table_name": "ai_tag_responses",
+  "table_type": "BASE TABLE"
+}, {
+  "table_name": "ai_video_responses",
+  "table_type": "BASE TABLE"
+}, {
+  "table_name": "ai_voice_responses",
+  "table_type": "BASE TABLE"
+}, {
+  "table_name": "alist_blast_config",
+  "table_type": "BASE TABLE"
+}, {
+  "table_name": "alist_blast_state",
+  "table_type": "BASE TABLE"
+}, {
+  "table_name": "appointments",
+  "table_type": "BASE TABLE"
+}, {
+  "table_name": "archived_messages",
+  "table_type": "BASE TABLE"
+}, {
+  "table_name": "assignment_counts",
+  "table_type": "BASE TABLE"
+}, {
+  "table_name": "assignment_logs",
+  "table_type": "BASE TABLE"
+}, {
+  "table_name": "assignments",
+  "table_type": "BASE TABLE"
+}, {
+  "table_name": "assistant_files",
+  "table_type": "BASE TABLE"
+}, {
+  "table_name": "attendance_records",
+  "table_type": "BASE TABLE"
+}, {
+  "table_name": "auto_reply_log",
+  "table_type": "BASE TABLE"
+}, {
+  "table_name": "batches",
+  "table_type": "BASE TABLE"
+}, {
+  "table_name": "booking_slots",
+  "table_type": "BASE TABLE"
+}, {
+  "table_name": "bot_state",
+  "table_type": "BASE TABLE"
+}, {
+  "table_name": "client_analytics",
+  "table_type": "BASE TABLE"
+}, {
+  "table_name": "client_invoices",
+  "table_type": "BASE TABLE"
+}, {
+  "table_name": "client_payments",
+  "table_type": "BASE TABLE"
+}, {
+  "table_name": "companies",
+  "table_type": "BASE TABLE"
+}, {
+  "table_name": "company_stats",
+  "table_type": "VIEW"
+}, {
+  "table_name": "company_tags",
+  "table_type": "BASE TABLE"
+}, {
+  "table_name": "contact_tag_analytics",
+  "table_type": "BASE TABLE"
+}, {
+  "table_name": "contact_tag_history",
+  "table_type": "BASE TABLE"
+}, {
+  "table_name": "contacts",
+  "table_type": "BASE TABLE"
+}, {
+  "table_name": "customer_variation_assignments",
+  "table_type": "BASE TABLE"
+}, {
+  "table_name": "daily_report_logs",
+  "table_type": "BASE TABLE"
+}, {
+  "table_name": "duplicate_check_logs",
+  "table_type": "BASE TABLE"
+}, {
+  "table_name": "employee_monthly_assignments",
+  "table_type": "BASE TABLE"
+}, {
+  "table_name": "employees",
+  "table_type": "BASE TABLE"
+}, {
+  "table_name": "enrollees",
+  "table_type": "BASE TABLE"
+}, {
+  "table_name": "error_logs",
+  "table_type": "BASE TABLE"
+}, {
+  "table_name": "events",
+  "table_type": "BASE TABLE"
+}, {
+  "table_name": "expense_categories",
+  "table_type": "BASE TABLE"
+}, {
+  "table_name": "expenses",
+  "table_type": "BASE TABLE"
+}, {
+  "table_name": "facebook_form_mappings",
+  "table_type": "BASE TABLE"
+}, {
+  "table_name": "facebook_lead_analytics",
+  "table_type": "VIEW"
+}, {
+  "table_name": "facebook_lead_campaigns",
+  "table_type": "BASE TABLE"
+}, {
+  "table_name": "facebook_leads",
+  "table_type": "BASE TABLE"
+}, {
+  "table_name": "facebook_webhook_logs",
+  "table_type": "BASE TABLE"
+}, {
+  "table_name": "feedback",
+  "table_type": "BASE TABLE"
+}, {
+  "table_name": "feedback_forms",
+  "table_type": "BASE TABLE"
+}, {
+  "table_name": "feedback_responses",
+  "table_type": "BASE TABLE"
+}, {
+  "table_name": "followup_messages",
+  "table_type": "BASE TABLE"
+}, {
+  "table_name": "followup_templates",
+  "table_type": "BASE TABLE"
+}, {
+  "table_name": "income_sources",
+  "table_type": "BASE TABLE"
+}, {
+  "table_name": "instruction_templates",
+  "table_type": "BASE TABLE"
+}, {
+  "table_name": "kol_niches",
+  "table_type": "BASE TABLE"
+}, {
+  "table_name": "kols",
+  "table_type": "BASE TABLE"
+}, {
+  "table_name": "merchants",
+  "table_type": "BASE TABLE"
+}, {
+  "table_name": "message_usage",
+  "table_type": "BASE TABLE"
+}, {
+  "table_name": "messages",
+  "table_type": "BASE TABLE"
+}, {
+  "table_name": "monthly_financial_data",
+  "table_type": "BASE TABLE"
+}, {
+  "table_name": "niches",
+  "table_type": "BASE TABLE"
+}, {
+  "table_name": "notifications",
+  "table_type": "BASE TABLE"
+}, {
+  "table_name": "participants",
+  "table_type": "BASE TABLE"
+}, {
+  "table_name": "password_resets",
+  "table_type": "BASE TABLE"
+}, {
+  "table_name": "pending_topups",
+  "table_type": "BASE TABLE"
+}, {
+  "table_name": "phone_status",
+  "table_type": "BASE TABLE"
+}, {
+  "table_name": "pinned_items",
+  "table_type": "BASE TABLE"
+}, {
+  "table_name": "pricing",
+  "table_type": "BASE TABLE"
+}, {
+  "table_name": "private_notes",
+  "table_type": "BASE TABLE"
+}, {
+  "table_name": "quick_replies",
+  "table_type": "BASE TABLE"
+}, {
+  "table_name": "recent_messages",
+  "table_type": "VIEW"
+}, {
+  "table_name": "scheduled_messages",
+  "table_type": "BASE TABLE"
+}, {
+  "table_name": "sent_followups",
+  "table_type": "BASE TABLE"
+}, {
+  "table_name": "sent_messages",
+  "table_type": "BASE TABLE"
+}, {
+  "table_name": "sessions",
+  "table_type": "BASE TABLE"
+}, {
+  "table_name": "settings",
+  "table_type": "BASE TABLE"
+}, {
+  "table_name": "split_test_variations",
+  "table_type": "BASE TABLE"
+}, {
+  "table_name": "system_config",
+  "table_type": "BASE TABLE"
+}, {
+  "table_name": "tag_definitions",
+  "table_type": "BASE TABLE"
+}, {
+  "table_name": "threads",
+  "table_type": "BASE TABLE"
+}, {
+  "table_name": "topup_transactions",
+  "table_type": "BASE TABLE"
+}, {
+  "table_name": "usage_logs",
+  "table_type": "BASE TABLE"
+}, {
+  "table_name": "users",
+  "table_type": "BASE TABLE"
+}]

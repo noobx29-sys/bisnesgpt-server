@@ -1,0 +1,28 @@
+[{
+  "indexname": "idx_messages_company_id",
+  "indexdef": "CREATE INDEX idx_messages_company_id ON public.messages USING btree (company_id)"
+}, {
+  "indexname": "idx_messages_contact_id",
+  "indexdef": "CREATE INDEX idx_messages_contact_id ON public.messages USING btree (contact_id)"
+}, {
+  "indexname": "idx_messages_logs",
+  "indexdef": "CREATE INDEX idx_messages_logs ON public.messages USING gin (logs)"
+}, {
+  "indexname": "idx_messages_message_type",
+  "indexdef": "CREATE INDEX idx_messages_message_type ON public.messages USING btree (message_type)"
+}, {
+  "indexname": "idx_messages_tags",
+  "indexdef": "CREATE INDEX idx_messages_tags ON public.messages USING gin (tags)"
+}, {
+  "indexname": "idx_messages_thread_id",
+  "indexdef": "CREATE INDEX idx_messages_thread_id ON public.messages USING btree (thread_id)"
+}, {
+  "indexname": "idx_messages_timestamp",
+  "indexdef": "CREATE INDEX idx_messages_timestamp ON public.messages USING btree (\"timestamp\")"
+}, {
+  "indexname": "messages_pkey",
+  "indexdef": "CREATE UNIQUE INDEX messages_pkey ON public.messages USING btree (id)"
+}, {
+  "indexname": "messages_message_id_company_id_unique",
+  "indexdef": "CREATE UNIQUE INDEX messages_message_id_company_id_unique ON public.messages USING btree (message_id, company_id)"
+}]

@@ -1,0 +1,51 @@
+[{
+  "contact_id": "007-test",
+  "phone": "",
+  "name": "",
+  "tags": "[]",
+  "last_updated": "2025-06-19 03:15:14.596+08",
+  "assigned_to": null,
+  "created_at": "2025-06-19 03:15:14.596+08",
+  "thread_id": "",
+  "company_id": "007"
+}, {
+  "contact_id": "079-60168655846",
+  "phone": "+60168655846",
+  "name": "EMRAN BIN LIMAN",
+  "tags": "[\"October 2024\", \"Perodua\", \"Blasted\", \"ILA\"]",
+  "last_updated": "2025-09-22 10:55:44.046303+08",
+  "assigned_to": null,
+  "created_at": "2025-09-18 19:39:03.381+08",
+  "thread_id": "thread_5GheaOEJziwVGuLJlonmRi58",
+  "company_id": "079"
+}, {
+  "contact_id": "008-0FpYJOttDph5isYddYgQ",
+  "phone": "+601163153939",
+  "name": "salmah binti awang",
+  "tags": "[]",
+  "last_updated": "2025-06-19 03:15:14.634+08",
+  "assigned_to": null,
+  "created_at": "2025-06-19 03:15:14.634+08",
+  "thread_id": "",
+  "company_id": "008"
+}, {
+  "contact_id": "0380-60143693450",
+  "phone": "+60143693450",
+  "name": null,
+  "tags": "[\"Digitalpreneur Create an Online Course with AI\"]",
+  "last_updated": "2025-09-08 22:45:17.281554+08",
+  "assigned_to": null,
+  "created_at": "2025-08-12 16:04:17.10033+08",
+  "thread_id": "thread_in0iYyU945Bl3vanW3O4FPVO",
+  "company_id": "0380"
+}, {
+  "contact_id": "0161-60102388816",
+  "phone": "+60102388816",
+  "name": "Azri_E\"chi",
+  "tags": "[\"hot\"]",
+  "last_updated": "2025-09-24 06:50:27.276702+08",
+  "assigned_to": null,
+  "created_at": "2025-08-27 15:52:40.838+08",
+  "thread_id": "thread_eCxryfIrXBWYUAL45U4mo5x2",
+  "company_id": "0161"
+}]

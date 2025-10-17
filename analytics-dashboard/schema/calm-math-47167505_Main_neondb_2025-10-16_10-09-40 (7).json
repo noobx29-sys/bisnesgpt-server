@@ -1,0 +1,91 @@
+[{
+  "id": "10d6c8f0-76f4-4357-be58-967d12aeca01",
+  "company_id": "0160",
+  "contact_id": "0160-60143581929",
+  "template_id": "SgFSEBQWhOm1fZKqRB7Y",
+  "status": "scheduled",
+  "scheduled_time": "2026-01-12 19:00:00.287+08",
+  "sent_at": null,
+  "message_content": "Hi dear! Can I know which area you would like to focus on? (Face/Neck/Hair/Body/Tummy/Arms/Hands/Thighs?) I'll check the available slots for you right away."
+}, {
+  "id": "1aadd36b-9172-4e8c-befb-5e1cceb7eca2",
+  "company_id": "0160",
+  "contact_id": "0160-60126268707",
+  "template_id": "SgFSEBQWhOm1fZKqRB7Y",
+  "status": "scheduled",
+  "scheduled_time": "2026-01-11 19:00:00.471+08",
+  "sent_at": null,
+  "message_content": "Hi dear! Can I know which area you would like to focus on? (Face/Neck/Hair/Body/Tummy/Arms/Hands/Thighs?) I'll check the available slots for you right away."
+}, {
+  "id": "b0f71858-621e-42fa-b6c2-949273306f85",
+  "company_id": "0160",
+  "contact_id": "0160-60143581929",
+  "template_id": "SgFSEBQWhOm1fZKqRB7Y",
+  "status": "scheduled",
+  "scheduled_time": "2025-12-13 20:30:00.043+08",
+  "sent_at": null,
+  "message_content": "Hi dear, how are you?"
+}, {
+  "id": "2ff6b07a-8c7e-4ae1-8941-8481e57148e9",
+  "company_id": "0160",
+  "contact_id": "0160-60126268707",
+  "template_id": "SgFSEBQWhOm1fZKqRB7Y",
+  "status": "scheduled",
+  "scheduled_time": "2025-12-12 20:30:00.241+08",
+  "sent_at": null,
+  "message_content": "Hi dear, how are you?"
+}, {
+  "id": "aabcff14-0774-4ae3-8129-512c17a37776",
+  "company_id": "0160",
+  "contact_id": "0160-60143581929",
+  "template_id": "SgFSEBQWhOm1fZKqRB7Y",
+  "status": "scheduled",
+  "scheduled_time": "2025-11-13 21:00:00.81+08",
+  "sent_at": null,
+  "message_content": "Do let me know when you want to come in for complimentary consultation - limited time offer only.\n\n*LOCATION INFO*\n\n📍 Finesse Aesthetic Clinic\nLevel G, Jadite Suites, Jade Hills, Persiaran Jade Hills, 4300 Kajang, Selangor, Malaysia.\n\n*Reserve parking available*"
+}, {
+  "id": "39f04f1e-f4e8-4bbf-aa2f-53707732b738",
+  "company_id": "0160",
+  "contact_id": "0160-60126268707",
+  "template_id": "SgFSEBQWhOm1fZKqRB7Y",
+  "status": "scheduled",
+  "scheduled_time": "2025-11-12 21:00:00.04+08",
+  "sent_at": null,
+  "message_content": "Do let me know when you want to come in for complimentary consultation - limited time offer only.\n\n*LOCATION INFO*\n\n📍 Finesse Aesthetic Clinic\nLevel G, Jadite Suites, Jade Hills, Persiaran Jade Hills, 4300 Kajang, Selangor, Malaysia.\n\n*Reserve parking available*"
+}, {
+  "id": "a770a0b1-e748-4409-92bc-f26fb3708f44",
+  "company_id": "0160",
+  "contact_id": "0160-60126268707",
+  "template_id": "SgFSEBQWhOm1fZKqRB7Y",
+  "status": "scheduled",
+  "scheduled_time": "2025-11-04 16:30:00.834+08",
+  "sent_at": null,
+  "message_content": "Do let me know when you want to come in for consultation as prior appointment is required :)"
+}, {
+  "id": "c9d1de62-2a78-4168-9e78-206bcba22062",
+  "company_id": "0160",
+  "contact_id": "0160-60126268707",
+  "template_id": "SgFSEBQWhOm1fZKqRB7Y",
+  "status": "scheduled",
+  "scheduled_time": "2025-11-04 16:30:00.627+08",
+  "sent_at": null,
+  "message_content": "Hi dear, Sherry here from Finesse Aesthetic Clinic and I am assigned for you, \n \nwe received your enquiry."
+}, {
+  "id": "0155ee63-98f6-43c3-be55-953f6b92c146",
+  "company_id": "0160",
+  "contact_id": "0160-60143581929",
+  "template_id": "SgFSEBQWhOm1fZKqRB7Y",
+  "status": "scheduled",
+  "scheduled_time": "2025-11-04 16:30:00.56+08",
+  "sent_at": null,
+  "message_content": "Do let me know when you want to come in for consultation as prior appointment is required :)"
+}, {
+  "id": "650dc369-6c1f-4cf3-b1aa-9976d019e4a1",
+  "company_id": "0160",
+  "contact_id": "0160-60143581929",
+  "template_id": "SgFSEBQWhOm1fZKqRB7Y",
+  "status": "scheduled",
+  "scheduled_time": "2025-11-04 16:30:00.309+08",
+  "sent_at": null,
+  "message_content": "Hi dear, Sherry here from Finesse Aesthetic Clinic and I am assigned for you, \n \nwe received your enquiry."
+}]

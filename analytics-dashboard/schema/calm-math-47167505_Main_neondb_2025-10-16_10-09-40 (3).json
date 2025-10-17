@@ -1,0 +1,235 @@
+[{
+  "column_name": "id",
+  "data_type": "uuid",
+  "character_maximum_length": null,
+  "is_nullable": "NO",
+  "column_default": "uuid_generate_v4()"
+}, {
+  "column_name": "schedule_id",
+  "data_type": "character varying",
+  "character_maximum_length": 255,
+  "is_nullable": "NO",
+  "column_default": null
+}, {
+  "column_name": "company_id",
+  "data_type": "character varying",
+  "character_maximum_length": 255,
+  "is_nullable": "NO",
+  "column_default": null
+}, {
+  "column_name": "contact_id",
+  "data_type": "character varying",
+  "character_maximum_length": 255,
+  "is_nullable": "YES",
+  "column_default": null
+}, {
+  "column_name": "message_content",
+  "data_type": "text",
+  "character_maximum_length": null,
+  "is_nullable": "YES",
+  "column_default": null
+}, {
+  "column_name": "media_url",
+  "data_type": "character varying",
+  "character_maximum_length": 500,
+  "is_nullable": "YES",
+  "column_default": null
+}, {
+  "column_name": "scheduled_time",
+  "data_type": "timestamp with time zone",
+  "character_maximum_length": null,
+  "is_nullable": "NO",
+  "column_default": null
+}, {
+  "column_name": "status",
+  "data_type": "character varying",
+  "character_maximum_length": 50,
+  "is_nullable": "YES",
+  "column_default": "'pending'::character varying"
+}, {
+  "column_name": "attempt_count",
+  "data_type": "integer",
+  "character_maximum_length": null,
+  "is_nullable": "YES",
+  "column_default": "0"
+}, {
+  "column_name": "last_attempt",
+  "data_type": "timestamp with time zone",
+  "character_maximum_length": null,
+  "is_nullable": "YES",
+  "column_default": null
+}, {
+  "column_name": "created_at",
+  "data_type": "timestamp with time zone",
+  "character_maximum_length": null,
+  "is_nullable": "YES",
+  "column_default": "CURRENT_TIMESTAMP"
+}, {
+  "column_name": "sent_at",
+  "data_type": "timestamp with time zone",
+  "character_maximum_length": null,
+  "is_nullable": "YES",
+  "column_default": null
+}, {
+  "column_name": "chat_id",
+  "data_type": "character varying",
+  "character_maximum_length": 255,
+  "is_nullable": "YES",
+  "column_default": null
+}, {
+  "column_name": "message_id",
+  "data_type": "character varying",
+  "character_maximum_length": 255,
+  "is_nullable": "YES",
+  "column_default": null
+}, {
+  "column_name": "phone_index",
+  "data_type": "integer",
+  "character_maximum_length": null,
+  "is_nullable": "YES",
+  "column_default": "0"
+}, {
+  "column_name": "is_media",
+  "data_type": "boolean",
+  "character_maximum_length": null,
+  "is_nullable": "YES",
+  "column_default": "false"
+}, {
+  "column_name": "document_url",
+  "data_type": "character varying",
+  "character_maximum_length": 500,
+  "is_nullable": "YES",
+  "column_default": null
+}, {
+  "column_name": "file_name",
+  "data_type": "character varying",
+  "character_maximum_length": 255,
+  "is_nullable": "YES",
+  "column_default": null
+}, {
+  "column_name": "caption",
+  "data_type": "text",
+  "character_maximum_length": null,
+  "is_nullable": "YES",
+  "column_default": null
+}, {
+  "column_name": "chat_ids",
+  "data_type": "jsonb",
+  "character_maximum_length": null,
+  "is_nullable": "YES",
+  "column_default": null
+}, {
+  "column_name": "batch_quantity",
+  "data_type": "integer",
+  "character_maximum_length": null,
+  "is_nullable": "YES",
+  "column_default": null
+}, {
+  "column_name": "repeat_interval",
+  "data_type": "integer",
+  "character_maximum_length": null,
+  "is_nullable": "YES",
+  "column_default": null
+}, {
+  "column_name": "repeat_unit",
+  "data_type": "character varying",
+  "character_maximum_length": 20,
+  "is_nullable": "YES",
+  "column_default": null
+}, {
+  "column_name": "message_delays",
+  "data_type": "jsonb",
+  "character_maximum_length": null,
+  "is_nullable": "YES",
+  "column_default": null
+}, {
+  "column_name": "infinite_loop",
+  "data_type": "boolean",
+  "character_maximum_length": null,
+  "is_nullable": "YES",
+  "column_default": "false"
+}, {
+  "column_name": "min_delay",
+  "data_type": "integer",
+  "character_maximum_length": null,
+  "is_nullable": "YES",
+  "column_default": null
+}, {
+  "column_name": "max_delay",
+  "data_type": "integer",
+  "character_maximum_length": null,
+  "is_nullable": "YES",
+  "column_default": null
+}, {
+  "column_name": "activate_sleep",
+  "data_type": "boolean",
+  "character_maximum_length": null,
+  "is_nullable": "YES",
+  "column_default": "false"
+}, {
+  "column_name": "sleep_after_messages",
+  "data_type": "integer",
+  "character_maximum_length": null,
+  "is_nullable": "YES",
+  "column_default": null
+}, {
+  "column_name": "sleep_duration",
+  "data_type": "integer",
+  "character_maximum_length": null,
+  "is_nullable": "YES",
+  "column_default": null
+}, {
+  "column_name": "active_hours",
+  "data_type": "jsonb",
+  "character_maximum_length": null,
+  "is_nullable": "YES",
+  "column_default": null
+}, {
+  "column_name": "batch_index",
+  "data_type": "integer",
+  "character_maximum_length": null,
+  "is_nullable": "YES",
+  "column_default": null
+}, {
+  "column_name": "from_me",
+  "data_type": "boolean",
+  "character_maximum_length": null,
+  "is_nullable": "YES",
+  "column_default": "true"
+}, {
+  "column_name": "messages",
+  "data_type": "jsonb",
+  "character_maximum_length": null,
+  "is_nullable": "YES",
+  "column_default": null
+}, {
+  "column_name": "skipped_reason",
+  "data_type": "text",
+  "character_maximum_length": null,
+  "is_nullable": "YES",
+  "column_default": null
+}, {
+  "column_name": "skipped_at",
+  "data_type": "timestamp with time zone",
+  "character_maximum_length": null,
+  "is_nullable": "YES",
+  "column_default": null
+}, {
+  "column_name": "contact_ids",
+  "data_type": "jsonb",
+  "character_maximum_length": null,
+  "is_nullable": "YES",
+  "column_default": null
+}, {
+  "column_name": "multiple",
+  "data_type": "boolean",
+  "character_maximum_length": null,
+  "is_nullable": "YES",
+  "column_default": "false"
+}, {
+  "column_name": "template_id",
+  "data_type": "text",
+  "character_maximum_length": null,
+  "is_nullable": "YES",
+  "column_default": null
+}]
