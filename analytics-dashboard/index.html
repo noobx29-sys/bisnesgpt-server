@@ -338,36 +338,202 @@
                 </div>
 
                 <!-- Candidates List -->
-                <div class="card-dark rounded-xl shadow-lg p-6">
-                    <div class="flex justify-between items-center mb-4">
-                        <h3 class="text-lg font-semibold text-white">Reactivation Candidates</h3>
-                        <div class="flex space-x-2">
-                            <button onclick="analyzeCompany()" class="px-4 py-2 bg-gradient-to-r from-blue-600 to-blue-500 text-white rounded-lg hover:from-blue-700 hover:to-blue-600 transition text-sm shadow-lg shadow-blue-500/20">
-                                <i class="fas fa-chart-line mr-2"></i>Analyze Company
-                            </button>
-                            <button onclick="triggerReactivation()" class="px-4 py-2 bg-gradient-to-r from-green-600 to-green-500 text-white rounded-lg hover:from-green-700 hover:to-green-600 transition text-sm shadow-lg shadow-green-500/20">
-                                <i class="fas fa-rocket mr-2"></i>Trigger Campaign
-                            </button>
+                <div class="card-dark rounded-2xl shadow-xl overflow-hidden">
+                    <div class="p-6 pb-4 border-b border-slate-700/50">
+                        <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+                            <div>
+                                <h3 class="text-xl font-bold text-white">Reactivation Candidates</h3>
+                                <p class="text-sm text-slate-400 mt-1">Manage and re-engage with inactive contacts</p>
+                            </div>
+                            <div class="flex flex-wrap gap-2">
+                                <button onclick="analyzeCompany()" class="group flex items-center px-4 py-2.5 bg-slate-700/50 hover:bg-slate-600/50 border border-slate-600 hover:border-slate-500 rounded-xl text-slate-200 hover:text-white transition-all duration-200 shadow-sm">
+                                    <i class="fas fa-chart-line mr-2 text-blue-400 group-hover:text-blue-300"></i>
+                                    <span>Analyze</span>
+                                    <span class="hidden md:inline ml-1 text-xs opacity-70">Company</span>
+                                </button>
+                                
+                                <button onclick="showAIMessageGenerator()" class="group flex items-center px-4 py-2.5 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 border border-indigo-500/30 rounded-xl text-white transition-all duration-200 shadow-lg shadow-purple-500/10 hover:shadow-purple-500/20">
+                                    <i class="fas fa-robot mr-2 text-white"></i>
+                                    <span>AI Message</span>
+                                    <span class="hidden md:inline ml-1 text-xs opacity-90">Generator</span>
+                                    <span id="selectedCountBadge" class="ml-2 px-2 py-0.5 bg-white/10 text-xs rounded-full">0</span>
+                                </button>
+                                
+                                <button onclick="triggerReactivation()" class="group flex items-center px-4 py-2.5 bg-gradient-to-r from-green-600 to-emerald-500 hover:from-green-500 hover:to-emerald-400 border border-green-500/30 rounded-xl text-white transition-all duration-200 shadow-lg shadow-green-500/10 hover:shadow-green-500/20">
+                                    <i class="fas fa-paper-plane mr-2 text-white"></i>
+                                    <span>Send</span>
+                                    <span class="hidden md:inline ml-1 text-xs opacity-90">Campaign</span>
+                                </button>
+                            </div>
+                        </div>
+                        
+                        <!-- Filters and Search -->
+                        <div class="mt-4 flex flex-col sm:flex-row gap-3">
+                            <div class="relative flex-1">
+                                <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                                    <i class="fas fa-search text-slate-500"></i>
+                                </div>
+                                <input type="text" id="searchContacts" placeholder="Search contacts..." class="pl-10 pr-4 py-2 w-full bg-slate-800/50 border border-slate-700 rounded-lg text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent">
+                            </div>
+                            
+                            <div class="flex items-center space-x-2">
+                                <select class="bg-slate-800/50 border border-slate-700 text-slate-300 text-sm rounded-lg focus:ring-indigo-500 focus:border-indigo-500 block w-full p-2">
+                                    <option selected>All Priorities</option>
+                                    <option>High</option>
+                                    <option>Medium</option>
+                                    <option>Low</option>
+                                </select>
+                                
+                                <select class="bg-slate-800/50 border border-slate-700 text-slate-300 text-sm rounded-lg focus:ring-indigo-500 focus:border-indigo-500 block w-full p-2">
+                                    <option selected>All Stages</option>
+                                    <option>New Lead</option>
+                                    <option>Contacted</option>
+                                    <option>Qualified</option>
+                                    <option>Proposal Sent</option>
+                                </select>
+                            </div>
                         </div>
                     </div>
                     <div class="overflow-x-auto">
-                        <table class="min-w-full divide-y divide-slate-700">
-                            <thead class="bg-slate-800/50">
-                                <tr>
-                                    <th class="px-6 py-3 text-left text-xs font-medium text-slate-400 uppercase">
-                                        <input type="checkbox" id="selectAll" onclick="toggleSelectAll()" class="rounded bg-slate-700 border-slate-600">
+                        <table class="min-w-full divide-y divide-slate-700/50">
+                            <thead class="bg-slate-800/30">
+                                <tr class="text-left text-xs font-medium text-slate-400">
+                                    <th class="pl-6 pr-3 py-3.5">
+                                        <div class="flex items-center">
+                                            <input type="checkbox" id="selectAll" onclick="toggleSelectAll()" class="h-4 w-4 rounded border-slate-600 bg-slate-700 text-indigo-500 focus:ring-indigo-500 focus:ring-offset-slate-800">
+                                        </div>
                                     </th>
-                                    <th class="px-6 py-3 text-left text-xs font-medium text-slate-400 uppercase">Name</th>
-                                    <th class="px-6 py-3 text-left text-xs font-medium text-slate-400 uppercase">Phone</th>
-                                    <th class="px-6 py-3 text-left text-xs font-medium text-slate-400 uppercase">Priority</th>
-                                    <th class="px-6 py-3 text-left text-xs font-medium text-slate-400 uppercase">Days Dormant</th>
-                                    <th class="px-6 py-3 text-left text-xs font-medium text-slate-400 uppercase">Engagement</th>
-                                    <th class="px-6 py-3 text-left text-xs font-medium text-slate-400 uppercase">Last Stage</th>
+                                    <th class="px-4 py-3.5">Contact</th>
+                                    <th class="px-4 py-3.5">Last Contact</th>
+                                    <th class="px-4 py-3.5">Priority</th>
+                                    <th class="px-4 py-3.5">Engagement</th>
+                                    <th class="px-4 py-3.5">Inactive</th>
+                                    <th class="px-4 py-3.5">Last Stage</th>
+                                    <th class="pr-6 py-3.5 text-right">Actions</th>
                                 </tr>
                             </thead>
-                            <tbody id="candidatesTableBody" class="divide-y divide-slate-700">
+                            <tbody id="candidatesTableBody" class="divide-y divide-slate-700/30">
+                                <!-- Loading state row -->
+                                <tr>
+                                    <td colspan="8" class="px-6 py-12 text-center">
+                                        <div class="flex flex-col items-center justify-center text-slate-500">
+                                            <i class="fas fa-user-clock text-4xl mb-3 opacity-30"></i>
+                                            <p class="text-sm">Loading contacts...</p>
+                                        </div>
+                                    </td>
+                                </tr>
                             </tbody>
                         </table>
+                    </div>
+                    
+                    <!-- Table Footer -->
+                    <div class="px-6 py-3 border-t border-slate-700/50 bg-slate-800/30 flex items-center justify-between">
+                        <div class="text-sm text-slate-400">
+                            Showing <span class="font-medium text-white">1</span> to <span class="font-medium text-white">10</span> of <span class="font-medium text-white">24</span> results
+                        </div>
+                        <div class="flex items-center space-x-2">
+                            <button class="px-3 py-1.5 rounded-lg border border-slate-700 text-slate-400 hover:bg-slate-700/50 disabled:opacity-50 disabled:cursor-not-allowed" disabled>
+                                <i class="fas fa-chevron-left"></i>
+                            </button>
+                            <div class="flex space-x-1">
+                                <button class="w-8 h-8 rounded-lg bg-indigo-600 text-white text-sm font-medium">1</button>
+                                <button class="w-8 h-8 rounded-lg text-slate-400 hover:bg-slate-700/50 text-sm">2</button>
+                                <button class="w-8 h-8 rounded-lg text-slate-400 hover:bg-slate-700/50 text-sm">3</button>
+                                <span class="px-2 flex items-end text-slate-500">...</span>
+                                <button class="w-8 h-8 rounded-lg text-slate-400 hover:bg-slate-700/50 text-sm">8</button>
+                            </div>
+                            <button class="px-3 py-1.5 rounded-lg border border-slate-700 text-slate-400 hover:bg-slate-700/50">
+                                <i class="fas fa-chevron-right"></i>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- AI Message Generator Modal -->
+    <div id="aiMessageModal" class="hidden fixed inset-0 bg-black/70 backdrop-blur-sm z-50 overflow-y-auto">
+        <div class="flex items-center justify-center min-h-screen p-4">
+            <div class="bg-slate-800 rounded-2xl shadow-2xl w-full max-w-4xl max-h-[90vh] overflow-hidden flex flex-col">
+                <div class="p-6 border-b border-slate-700">
+                    <div class="flex justify-between items-center">
+                        <h3 class="text-xl font-bold text-white">AI Message Generator</h3>
+                        <button onclick="closeAIMessageModal()" class="text-slate-400 hover:text-white">
+                            <i class="fas fa-times text-2xl"></i>
+                        </button>
+                    </div>
+                </div>
+                <div class="p-6 overflow-y-auto flex-grow">
+                    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                        <div class="lg:col-span-1">
+                            <div class="card-dark p-4 rounded-xl">
+                                <h4 class="font-semibold text-white mb-4">Message Settings</h4>
+                                
+                                <div class="mb-4">
+                                    <label class="block text-sm font-medium text-slate-300 mb-1">Message Style</label>
+                                    <select id="messageStyle" class="w-full p-2 rounded-lg bg-slate-700 border border-slate-600 text-white text-sm">
+                                        <option value="friendly">Friendly & Casual</option>
+                                        <option value="professional">Professional</option>
+                                        <option value="urgent">Urgent</option>
+                                        <option value="curious">Curious</option>
+                                        <option value="personalized" selected>Personalized (AI Recommended)</option>
+                                    </select>
+                                </div>
+
+                                <div class="mb-4">
+                                    <label class="block text-sm font-medium text-slate-300 mb-1">Tone</label>
+                                    <select id="messageTone" class="w-full p-2 rounded-lg bg-slate-700 border border-slate-600 text-white text-sm">
+                                        <option value="warm">Warm</option>
+                                        <option value="neutral">Neutral</option>
+                                        <option value="formal">Formal</option>
+                                        <option value="casual" selected>Casual</option>
+                                    </select>
+                                </div>
+
+                                <div class="mb-4">
+                                    <label class="block text-sm font-medium text-slate-300 mb-1">Key Points to Include</label>
+                                    <textarea id="keyPoints" class="w-full p-2 rounded-lg bg-slate-700 border border-slate-600 text-white text-sm" rows="3" placeholder="Enter key points to include in the message..."></textarea>
+                                </div>
+
+                                <div class="mb-4">
+                                    <label class="block text-sm font-medium text-slate-300 mb-1">Custom Instructions</label>
+                                    <textarea id="customInstructions" class="w-full p-2 rounded-lg bg-slate-700 border border-slate-600 text-white text-sm" rows="2" placeholder="Any specific instructions for the AI..."></textarea>
+                                </div>
+
+                                <button onclick="generateAIMessages()" class="w-full bg-gradient-to-r from-purple-600 to-indigo-500 text-white py-2 px-4 rounded-lg hover:from-purple-700 hover:to-indigo-600 transition-colors text-sm font-medium">
+                                    <i class="fas fa-magic mr-2"></i> Generate Messages
+                                </button>
+                            </div>
+                        </div>
+
+                        <div class="lg:col-span-2">
+                            <div class="card-dark p-4 rounded-xl h-full flex flex-col">
+                                <div class="flex justify-between items-center mb-4">
+                                    <h4 class="font-semibold text-white">Message Preview</h4>
+                                    <div class="flex items-center space-x-2">
+                                        <span id="selectedCount" class="text-xs bg-slate-700 text-slate-300 px-2 py-1 rounded-full">0 selected</span>
+                                    </div>
+                                </div>
+                                
+                                <div id="messagePreview" class="bg-slate-800 rounded-lg p-4 flex-grow overflow-y-auto min-h-[300px] max-h-[400px]">
+                                    <div class="text-center text-slate-500 py-12">
+                                        <i class="fas fa-robot text-4xl mb-3 text-indigo-400"></i>
+                                        <p class="text-sm">Your AI-generated messages will appear here.</p>
+                                        <p class="text-xs mt-2 text-slate-600">Select contacts and click "Generate Messages" to begin.</p>
+                                    </div>
+                                </div>
+
+                                <div class="mt-4 flex justify-between items-center">
+                                    <div class="text-xs text-slate-500">
+                                        <p><i class="fas fa-info-circle mr-1"></i> AI will personalize messages based on each contact's history.</p>
+                                    </div>
+                                    <button id="sendMessagesBtn" onclick="sendAIMessages()" class="bg-gradient-to-r from-green-600 to-emerald-500 text-white py-2 px-4 rounded-lg hover:from-green-700 hover:to-emerald-600 transition-colors text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed" disabled>
+                                        <i class="fas fa-paper-plane mr-2"></i> Send to Selected
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -392,5 +558,46 @@
     </div>
 
     <script src="app.js"></script>
+    <script type="module">
+        import { initReactivationManager } from './reactivationManager.js';
+        
+        // Initialize Reactivation Manager when the reactivation tab is shown
+        document.addEventListener('DOMContentLoaded', () => {
+            const companySelect = document.getElementById('companySelect');
+            const reactivationTab = document.querySelector('[onclick*="switchTab(\'reactivation\')"]');
+            
+            // Function to initialize the manager
+            const initializeReactivationManager = () => {
+                const companyId = companySelect?.value;
+                const activeTab = document.querySelector('.tab-btn.active');
+                
+                // Only initialize if we're on the reactivation tab and have a company selected
+                if (activeTab && activeTab.textContent.toLowerCase().includes('reactivation') && companyId) {
+                    // Clear any existing reactivation manager
+                    const existingManager = document.querySelector('.reactivation-manager');
+                    if (existingManager) {
+                        existingManager.remove();
+                    }
+                    
+                    // Initialize the manager
+                    initReactivationManager(companyId);
+                }
+            };
+            
+            // Handle company selection changes
+            companySelect?.addEventListener('change', initializeReactivationManager);
+            
+            // Handle tab switching
+            if (reactivationTab) {
+                reactivationTab.addEventListener('click', () => {
+                    // Small delay to allow the tab to become active
+                    setTimeout(initializeReactivationManager, 50);
+                });
+            }
+            
+            // Initial check in case we're already on the reactivation tab
+            initializeReactivationManager();
+        });
+    </script>
 </body>
 </html>

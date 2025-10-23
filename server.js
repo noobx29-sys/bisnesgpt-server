@@ -474,12 +474,12 @@ const createQueueAndWorker = (botId) => {
             // Check if all batches are now processed
             const batchesCheckQuery = `
             SELECT COUNT(*) as pending_count,
-                   (SELECT status FROM scheduled_messages WHERE id = $1::uuid) as main_status
+            (SELECT status FROM scheduled_messages WHERE id = $1::uuid) as main_status
             FROM scheduled_messages 
-            WHERE schedule_id = $1::uuid
+            WHERE schedule_id = $1
             AND company_id = $2 
             AND status != 'sent'
-            AND id::uuid != schedule_id::uuid
+            AND id != $1::uuid
           `;
             const batchesCheck = await client.query(batchesCheckQuery, [
               messageId,
@@ -12149,8 +12149,6 @@ function setupMessageCreateHandler(client, botName, phoneIndex) {
         );
         broadcastNewMessageToCompany(botName, messageData);
 
-        // ... rest of existing code ...l
-
         // 5. Handle bot tags for certain companies
         if (
           isFromHuman &&
@@ -12163,6 +12161,7 @@ function setupMessageCreateHandler(client, botName, phoneIndex) {
             "0123",
             "0119",
             "0102",
+            "0156",
           ].includes(companyId)
         ) {
           await sqlDb.query(
@@ -18439,7 +18438,7 @@ async function main(reinitialize = false) {
   //   ["https://bisnesgpt.jutateknologi.com"]
   // );
   //const companyIds = ['0145']; 
-  const companyIds = ['0210','0107','0160', '0161', '0377', '063', '079', '092', '399849', '458752', '765943', '088', '296245', '0245', '0210', '0156', '0101', '728219', '0342', '049815', '325117', '946386'];
+  const companyIds = ['022027','0149','058666','0210','0107','0160', '0161', '0377', '063', '079', '092', '399849', '458752', '765943', '088', '296245', '0245', '0210', '0156', '0101', '728219', '0342', '049815', '325117', '946386'];
   const placeholders = companyIds.map((_, i) => `$${i + 1}`).join(', ');
   const query = `SELECT * FROM companies WHERE company_id IN (${placeholders})`;
   const companiesPromise = sqlDb.query(query, companyIds);
@@ -28289,7 +28288,7 @@ async function sendHealthReportToGroup() {
   }
 }
 
-// Schedule hourly health report (at the top of every hour)
+/*Schedule hourly health report (at the top of every hour)
 const healthReportCron = cron.schedule(
   "0 * * * *", // Every hour at minute 0
   async () => {
@@ -28299,7 +28298,7 @@ const healthReportCron = cron.schedule(
   {
     timezone: "Asia/Kuala_Lumpur"
   }
-);
+);*/
 
 console.log("[Health Report] Hourly health monitoring scheduled successfully");
 

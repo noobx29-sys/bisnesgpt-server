@@ -9,7 +9,7 @@ const cors = require('cors');
 const path = require('path');
 const sqlDb = require('../db');
 const leadAnalyticsRouter = require('./routes/leadAnalytics');
-
+const reactivationRouter = require('../routes/reactivationRoutes');
 const app = express();
 const PORT = process.env.ANALYTICS_PORT || process.env.PORT || 3005;
 
@@ -21,20 +21,23 @@ app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Serve static files from public directory
-app.use(express.static(path.join(__dirname, 'analytics-dashboard')));
+// Serve static files from the current directory
+app.use(express.static(path.join(__dirname)));
+
+// API routes
+app.use('/api/lead-analytics', leadAnalyticsRouter);
+app.use('/api', reactivationRouter);
 
 // =====================================================
 // API ROUTES
 // =====================================================
 
-// Health check
+// Health check endpoint
 app.get('/api/health', (req, res) => {
   res.json({
     success: true,
     service: 'Lead Analytics Server',
     status: 'running',
-    timestamp: new Date().toISOString()
   });
 });
 
@@ -56,7 +59,7 @@ app.get('/api/lead-analytics', (req, res) => {
   });
 });
 
-app.use('/api/lead-analytics', leadAnalyticsRouter);
+// API routes are now registered above
 
 // Get list of companies
 app.get('/api/companies', async (req, res) => {
@@ -85,12 +88,84 @@ app.get('/api/companies', async (req, res) => {
   }
 });
 
+// Log a contact attempt
+app.post('/api/contacts/:contactId/log', async (req, res) => {
+  try {
+    const { contactId } = req.params;
+    const { message, status = 'contacted' } = req.body;
+    
+    // Start a transaction
+    await sqlDb.query('BEGIN');
+    
+    // Log the contact
+    const logResult = await sqlDb.query(
+      `INSERT INTO contact_history 
+       (contact_id, message, status, next_contact_date)
+       VALUES ($1, $2, $3, NOW() + INTERVAL '3 days')
+       RETURNING *`,
+      [contactId, message, status]
+    );
+    
+    // Update the contact's last_contact and contact_count
+    await sqlDb.query(
+      `UPDATE contacts 
+       SET last_contact = NOW(),
+           contact_count = COALESCE(contact_count, 0) + 1,
+           last_contact_status = $1
+       WHERE id = $2`,
+      [status, contactId]
+    );
+    
+    // Commit the transaction
+    await sqlDb.query('COMMIT');
+    
+    res.json({ 
+      success: true, 
+      data: logResult.rows[0] 
+    });
+    
+  } catch (error) {
+    await sqlDb.query('ROLLBACK');
+    console.error('Error logging contact:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: error.message 
+    });
+  }
+});
+
+// Get contact history
+app.get('/api/contacts/:contactId/history', async (req, res) => {
+  try {
+    const { contactId } = req.params;
+    const result = await sqlDb.query(
+      `SELECT * FROM contact_history 
+       WHERE contact_id = $1 
+       ORDER BY contact_date DESC`,
+      [contactId]
+    );
+    
+    res.json({ 
+      success: true, 
+      data: result.rows 
+    });
+    
+  } catch (error) {
+    console.error('Error fetching contact history:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: error.message 
+    });
+  }
+});
+
 // =====================================================
 // SERVE DASHBOARD
 // =====================================================
 
-app.get('/', (req, res) => {
-  res.sendFile(path.join(__dirname, 'analytics-dashboard', 'index.html'));
+// Serve the main app for all other GET requests
+app.get('*', (req, res) => {
+  res.sendFile(path.join(__dirname, 'index.html'));
 });
 
 // =====================================================

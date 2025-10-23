@@ -736,6 +736,280 @@ function renderStageDetails(stages) {
 }
 
 // =====================================================
+// AI MESSAGE GENERATOR
+// =====================================================
+
+let generatedMessages = new Map();
+
+function showAIMessageGenerator() {
+    if (selectedContacts.size === 0) {
+        alert('Please select at least one contact to generate messages for');
+        return;
+    }
+    
+    document.getElementById('aiMessageModal').classList.remove('hidden');
+    document.getElementById('selectedCount').textContent = `${selectedContacts.size} selected`;
+    
+    // Reset message preview
+    const preview = document.getElementById('messagePreview');
+    preview.innerHTML = `
+        <div class="text-center text-slate-500 py-12">
+            <i class="fas fa-robot text-4xl mb-3 text-indigo-400"></i>
+            <p class="text-sm">Your AI-generated messages will appear here.</p>
+            <p class="text-xs mt-2 text-slate-600">Click "Generate Messages" to begin.</p>
+        </div>
+    `;
+    
+    // Disable send button until messages are generated
+    document.getElementById('sendMessagesBtn').disabled = true;
+}
+
+function closeAIMessageModal() {
+    document.getElementById('aiMessageModal').classList.add('hidden');
+    generatedMessages.clear();
+}
+
+async function generateAIMessages() {
+    const style = document.getElementById('messageStyle').value;
+    const tone = document.getElementById('messageTone').value;
+    const keyPoints = document.getElementById('keyPoints').value;
+    const customInstructions = document.getElementById('customInstructions').value;
+    
+    if (selectedContacts.size === 0) {
+        alert('Please select at least one contact');
+        return;
+    }
+    
+    try {
+        // Show loading state
+        const preview = document.getElementById('messagePreview');
+        preview.innerHTML = `
+            <div class="text-center py-12">
+                <i class="fas fa-spinner fa-spin text-4xl text-indigo-400 mb-3"></i>
+                <p class="text-slate-300">Generating personalized messages...</p>
+                <p class="text-xs text-slate-500 mt-2">This may take a moment.</p>
+            </div>
+        `;
+        
+        // Get contact details for selected contacts
+        const response = await fetch(`${API_BASE}/api/lead-analytics/${currentCompany}/reactivation/candidates`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                contactIds: Array.from(selectedContacts),
+                includeHistory: true
+            })
+        });
+        
+        if (!response.ok) throw new Error('Failed to fetch contact details');
+        const { candidates } = await response.json();
+        
+        // Generate messages for each contact
+        const messagePromises = candidates.map(async (contact) => {
+            const message = await generateAIMessage(contact, { style, tone, keyPoints, customInstructions });
+            return { contact, message };
+        });
+        
+        const results = await Promise.all(messagePromises);
+        
+        // Store generated messages
+        generatedMessages.clear();
+        results.forEach(({ contact, message }) => {
+            generatedMessages.set(contact.contact_id, { contact, message });
+        });
+        
+        // Display messages
+        renderAIMessages(results);
+        
+        // Enable send button
+        document.getElementById('sendMessagesBtn').disabled = false;
+        
+    } catch (error) {
+        console.error('Error generating messages:', error);
+        const preview = document.getElementById('messagePreview');
+        preview.innerHTML = `
+            <div class="text-center py-12 text-red-400">
+                <i class="fas fa-exclamation-triangle text-4xl mb-3"></i>
+                <p class="text-sm">Failed to generate messages.</p>
+                <p class="text-xs mt-2">${error.message || 'Please try again later.'}</p>
+                <button onclick="generateAIMessages()" class="mt-4 text-indigo-400 hover:text-indigo-300 text-sm">
+                    <i class="fas fa-sync-alt mr-1"></i> Retry
+                </button>
+            </div>
+        `;
+    }
+}
+
+async function generateAIMessage(contact, options) {
+    const { style, tone, keyPoints, customInstructions } = options;
+    
+    // Prepare the prompt for the AI
+    const prompt = `
+        You are a helpful assistant that generates personalized reactivation messages for leads.
+        
+        Contact Details:
+        - Name: ${contact.name || 'Not provided'}
+        - Last Interaction: ${contact.last_interaction || 'Unknown'}
+        - Last Stage: ${contact.last_stage || 'N/A'}
+        - Dormant For: ${contact.days_dormant} days
+        - Previous Messages: ${contact.message_history?.slice(0, 3).map(m => `[${m.date}] ${m.content}`).join('\n') || 'No recent messages'}
+        
+        Message Style: ${style}
+        Tone: ${tone}
+        ${keyPoints ? `Key Points to Include: ${keyPoints}\n` : ''}
+        ${customInstructions ? `Additional Instructions: ${customInstructions}\n` : ''}
+        
+        Generate a personalized message to re-engage this lead. Keep it concise (1-2 short paragraphs).
+    `;
+    
+    try {
+        // Call your AI service (replace with your actual API call)
+        const response = await fetch(`${API_BASE}/api/ai/generate`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ prompt })
+        });
+        
+        if (!response.ok) throw new Error('AI service error');
+        const { message } = await response.json();
+        
+        return message.trim();
+    } catch (error) {
+        console.error('Error generating AI message:', error);
+        // Fallback message if AI service fails
+        return `Hi${contact.name ? ` ${contact.name}` : ''}, I hope you're doing well! I noticed we haven't connected in a while. I'd love to catch up and see how we can assist you. Let me know a good time to talk!`;
+    }
+}
+
+function renderAIMessages(messages) {
+    const preview = document.getElementById('messagePreview');
+    
+    if (!messages || messages.length === 0) {
+        preview.innerHTML = `
+            <div class="text-center text-slate-500 py-12">
+                <i class="fas fa-robot text-4xl mb-3 text-indigo-400"></i>
+                <p class="text-sm">No messages were generated.</p>
+                <p class="text-xs mt-2 text-slate-600">Please try again or adjust your settings.</p>
+            </div>
+        `;
+        return;
+    }
+    
+    preview.innerHTML = `
+        <div class="space-y-6">
+            ${messages.map(({ contact, message }, index) => `
+                <div class="bg-slate-700/50 rounded-lg p-4">
+                    <div class="flex justify-between items-start mb-2">
+                        <div>
+                            <h4 class="font-medium text-white">${contact.name || 'Contact'} (${contact.phone})</h4>
+                            <p class="text-xs text-slate-400">
+                                ${contact.last_stage ? `Last stage: ${formatStageName(contact.last_stage)} • ` : ''}
+                                Dormant: ${contact.days_dormant} days
+                            </p>
+                        </div>
+                        <div class="flex space-x-2">
+                            <button onclick="regenerateMessage('${contact.contact_id}')" class="text-slate-400 hover:text-white" title="Regenerate">
+                                <i class="fas fa-sync-alt text-xs"></i>
+                            </button>
+                            <button onclick="editMessage('${contact.contact_id}')" class="text-slate-400 hover:text-white" title="Edit">
+                                <i class="fas fa-edit text-xs"></i>
+                            </button>
+                        </div>
+                    </div>
+                    <div class="bg-slate-800/50 p-3 rounded text-sm text-slate-200 whitespace-pre-line">
+                        ${message.replace(/\n/g, '<br>')}
+                            .replace(/(https?:\/\/[^\s]+)/g, '<a href="$1" class="text-blue-400 hover:underline" target="_blank">$1</a>')}
+                    </div>
+                </div>
+            `).join('')}
+        </div>
+    `;
+}
+
+async function regenerateMessage(contactId) {
+    const contact = generatedMessages.get(contactId)?.contact;
+    if (!contact) return;
+    
+    const style = document.getElementById('messageStyle').value;
+    const tone = document.getElementById('messageTone').value;
+    const keyPoints = document.getElementById('keyPoints').value;
+    const customInstructions = document.getElementById('customInstructions').value;
+    
+    try {
+        const message = await generateAIMessage(contact, { style, tone, keyPoints, customInstructions });
+        generatedMessages.set(contactId, { contact, message });
+        
+        // Re-render all messages
+        renderAIMessages(Array.from(generatedMessages.values()));
+    } catch (error) {
+        console.error('Error regenerating message:', error);
+        alert('Failed to regenerate message. Please try again.');
+    }
+}
+
+function editMessage(contactId) {
+    const messageData = generatedMessages.get(contactId);
+    if (!messageData) return;
+    
+    const { contact, message } = messageData;
+    const newMessage = prompt('Edit the message:', message);
+    
+    if (newMessage !== null && newMessage.trim() !== '') {
+        generatedMessages.set(contactId, { contact, message: newMessage });
+        renderAIMessages(Array.from(generatedMessages.values()));
+    }
+}
+
+async function sendAIMessages() {
+    if (generatedMessages.size === 0) {
+        alert('No messages to send. Please generate messages first.');
+        return;
+    }
+    
+    if (!confirm(`Send ${generatedMessages.size} personalized messages?`)) {
+        return;
+    }
+    
+    try {
+        const sendBtn = document.getElementById('sendMessagesBtn');
+        sendBtn.disabled = true;
+        sendBtn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i> Sending...';
+        
+        const messages = Array.from(generatedMessages.entries()).map(([contactId, { message }]) => ({
+            contactId,
+            message,
+            timestamp: new Date().toISOString(),
+            status: 'pending'
+        }));
+        
+        const response = await fetch(`${API_BASE}/api/lead-analytics/${currentCompany}/reactivation/send-messages`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ messages })
+        });
+        
+        if (!response.ok) throw new Error('Failed to send messages');
+        
+        const result = await response.json();
+        
+        if (result.success) {
+            alert(`Successfully sent ${result.sentCount} messages!`);
+            closeAIMessageModal();
+            await loadReactivationData(); // Refresh the data
+        } else {
+            throw new Error(result.error || 'Failed to send messages');
+        }
+    } catch (error) {
+        console.error('Error sending messages:', error);
+        alert(`Error: ${error.message}`);
+    } finally {
+        const sendBtn = document.getElementById('sendMessagesBtn');
+        sendBtn.disabled = false;
+        sendBtn.innerHTML = '<i class="fas fa-paper-plane mr-2"></i> Send to Selected';
+    }
+}
+
+// =====================================================
 // REACTIVATION TAB
 // =====================================================
 
@@ -789,42 +1063,283 @@ async function analyzeCompany() {
     }
 }
 
+// Function to format date in a readable format
+function formatDate(dateString) {
+  if (!dateString) return 'Never';
+  const date = new Date(dateString);
+  return date.toLocaleString();
+}
+
+// Function to log a contact attempt
+async function logContact(contactId, message = '') {
+  try {
+    const response = await fetch(`/api/contacts/${contactId}/log`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message })
+    });
+    
+    const result = await response.json();
+    if (!result.success) throw new Error(result.error || 'Failed to log contact');
+    
+    // Refresh the table to show updated contact info
+    loadReactivationData();
+    return result.data;
+  } catch (error) {
+    console.error('Error logging contact:', error);
+    alert(`Failed to log contact: ${error.message}`);
+    return null;
+  }
+}
+
+// Function to show contact history in a modal
+async function showContactHistory(contactId, contactName) {
+  try {
+    const response = await fetch(`/api/contacts/${contactId}/history`);
+    const result = await response.json();
+    
+    if (!result.success) throw new Error(result.error || 'Failed to load contact history');
+    
+    // Create and show modal with contact history
+    const modal = document.createElement('div');
+    modal.className = 'fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50';
+    modal.onclick = (e) => e.target === modal && modal.remove();
+    
+    const historyHtml = result.data.length > 0 
+      ? result.data.map(entry => `
+          <div class="p-4 border-b border-slate-700">
+            <div class="flex justify-between items-center">
+              <span class="font-medium text-white">${formatDate(entry.contact_date)}</span>
+              <span class="px-2 py-1 text-xs rounded-full bg-slate-700 text-slate-300">
+                ${entry.status}
+              </span>
+            </div>
+            ${entry.message ? `<p class="mt-2 text-slate-300">${entry.message}</p>` : ''}
+          </div>
+        `).join('')
+      : '<p class="p-4 text-slate-400">No contact history found.</p>';
+    
+    modal.innerHTML = `
+      <div class="bg-slate-800 rounded-xl shadow-2xl w-full max-w-2xl max-h-[80vh] flex flex-col" onclick="event.stopPropagation()">
+        <div class="p-6 border-b border-slate-700 flex justify-between items-center">
+          <h3 class="text-xl font-bold text-white">Contact History: ${contactName || 'Contact'}</h3>
+          <button onclick="this.closest('.bg-opacity-50').remove()" class="text-slate-400 hover:text-white">
+            <i class="fas fa-times text-xl"></i>
+          </button>
+        </div>
+        <div class="overflow-y-auto flex-1">
+          ${historyHtml}
+        </div>
+        <div class="p-4 border-t border-slate-700 flex justify-between items-center">
+          <button 
+            onclick="this.closest('.bg-opacity-50').remove()" 
+            class="px-4 py-2 bg-slate-700 hover:bg-slate-600 rounded-lg text-white"
+          >
+            Close
+          </button>
+        </div>
+      </div>
+    `;
+    
+    document.body.appendChild(modal);
+    
+  } catch (error) {
+    console.error('Error loading contact history:', error);
+    alert(`Failed to load contact history: ${error.message}`);
+  }
+}
+
+// Function to show contact log modal
+function showContactLogModal(contactId, contactName) {
+  const modal = document.createElement('div');
+  modal.className = 'fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50';
+  modal.onclick = (e) => e.target === modal && modal.remove();
+  
+  modal.innerHTML = `
+    <div class="bg-slate-800 rounded-xl shadow-2xl w-full max-w-md flex flex-col" onclick="event.stopPropagation()">
+      <div class="p-6 border-b border-slate-700">
+        <h3 class="text-xl font-bold text-white">Log Contact</h3>
+        <p class="text-sm text-slate-400 mt-1">Log a contact attempt for ${contactName || 'this contact'}</p>
+      </div>
+      <div class="p-6">
+        <div class="mb-4">
+          <label class="block text-sm font-medium text-slate-300 mb-2">Notes</label>
+          <textarea 
+            id="contactNotes" 
+            class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-2 text-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+            rows="4"
+            placeholder="Add any notes about this contact..."
+          ></textarea>
+        </div>
+      </div>
+      <div class="p-4 border-t border-slate-700 flex justify-between">
+        <button 
+          onclick="this.closest('.bg-opacity-50').remove()" 
+          class="px-4 py-2 bg-slate-700 hover:bg-slate-600 rounded-lg text-white"
+        >
+          Cancel
+        </button>
+        <button 
+          id="saveContactLog" 
+          class="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 rounded-lg text-white"
+        >
+          Save Log
+        </button>
+      </div>
+    </div>
+  `;
+  
+  document.body.appendChild(modal);
+  
+  // Add event listener for save button
+  modal.querySelector('#saveContactLog').addEventListener('click', async () => {
+    const notes = modal.querySelector('#contactNotes').value;
+    await logContact(contactId, notes);
+    modal.remove();
+  });
+}
+
 function renderCandidatesTable(candidates) {
     const tbody = document.getElementById('candidatesTableBody');
     tbody.innerHTML = '';
     selectedContacts.clear();
     
     if (candidates.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="7" class="px-6 py-4 text-center text-gray-500">No reactivation candidates found</td></tr>';
+        tbody.innerHTML = `
+            <tr>
+                <td colspan="8" class="px-6 py-12 text-center">
+                    <div class="flex flex-col items-center justify-center text-slate-400">
+                        <i class="fas fa-user-clock text-4xl mb-3 opacity-50"></i>
+                        <p class="text-lg font-medium">No reactivation candidates found</p>
+                        <p class="text-sm mt-1">Check back later for new candidates</p>
+                    </div>
+                </td>
+            </tr>`;
         return;
     }
     
-    candidates.forEach(candidate => {
+    candidates.forEach((candidate, index) => {
         const tr = document.createElement('tr');
-        tr.className = 'hover:bg-gray-50';
+        tr.className = 'group hover:bg-slate-800/50 transition-colors border-b border-slate-700/50';
         
         const tierColors = {
-            'high': 'bg-red-100 text-red-800',
-            'medium': 'bg-yellow-100 text-yellow-800',
-            'low': 'bg-blue-100 text-blue-800'
+            'high': 'bg-red-500/10 text-red-400 border-red-500/30',
+            'medium': 'bg-yellow-500/10 text-yellow-400 border-yellow-500/30',
+            'low': 'bg-blue-500/10 text-blue-400 border-blue-500/30'
         };
         
+        const lastContact = candidate.last_contact 
+            ? new Date(candidate.last_contact).toLocaleDateString() 
+            : 'Never';
+            
+        const engagementColor = candidate.engagement_rate > 0.7 ? 'text-green-400' : 
+                              candidate.engagement_rate > 0.3 ? 'text-yellow-400' : 'text-red-400';
+        
+        // Safely get first character of name for avatar
+        const nameInitial = candidate.name && typeof candidate.name === 'string' 
+            ? candidate.name.charAt(0).toUpperCase() 
+            : '?';
+            
+        // Safely format priority tier display
+        let priorityDisplay = 'N/A';
+        if (candidate.priority_tier) {
+            const tierText = String(candidate.priority_tier);
+            priorityDisplay = tierText.charAt(0).toUpperCase() + tierText.slice(1);
+        }
+            
         tr.innerHTML = `
-            <td class="px-6 py-4 whitespace-nowrap">
-                <input type="checkbox" class="contact-checkbox rounded" data-contact-id="${candidate.contact_id}">
+            <td class="px-4 py-3">
+                <div class="flex items-center">
+                    <div class="relative flex items-center h-5">
+                        <input type="checkbox" 
+                               class="contact-checkbox h-4 w-4 rounded border-slate-600 bg-slate-700 text-indigo-500 focus:ring-indigo-500 focus:ring-offset-slate-800" 
+                               data-contact-id="${candidate.contact_id || ''}">
+                    </div>
+                </div>
             </td>
-            <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">${candidate.name || 'Unknown'}</td>
-            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-600">${candidate.phone}</td>
-            <td class="px-6 py-4 whitespace-nowrap">
-                <span class="px-2 py-1 text-xs font-semibold rounded-full ${tierColors[candidate.priority_tier]}">
-                    ${candidate.priority} - ${candidate.priority_tier}
+            <td class="px-4 py-3 whitespace-nowrap">
+                <div class="flex items-center">
+                    <div class="flex-shrink-0 h-10 w-10 flex items-center justify-center rounded-full bg-slate-700 text-slate-300 font-medium group-hover:bg-slate-600 transition-colors">
+                        ${nameInitial}
+                    </div>
+                    <div class="ml-4">
+                        <div class="text-sm font-medium text-white">${candidate.name || 'Unknown Contact'}</div>
+                        <div class="text-xs text-slate-400">${candidate.phone || 'No phone'}</div>
+                    </div>
+                </div>
+            </td>
+            <td class="px-4 py-3 whitespace-nowrap">
+                <div class="flex items-center">
+                    <div>
+                        <div class="text-sm text-slate-300">${lastContact}</div>
+                        <div class="text-xs text-slate-500">
+                            ${candidate.contact_count ? `${candidate.contact_count} contacts` : 'Never contacted'}
+                        </div>
+                    </div>
+                    ${candidate.last_contact ? `
+                        <button 
+                            onclick="event.stopPropagation(); showContactHistory('${candidate.contact_id || ''}', '${candidate.name || ''}')"
+                            class="ml-2 p-1 text-slate-500 hover:text-indigo-400 transition-colors"
+                            title="View contact history"
+                        >
+                            <i class="fas fa-history text-sm"></i>
+                        </button>
+                    ` : ''}
+                </div>
+            </td>
+            <td class="px-4 py-3 whitespace-nowrap">
+                <span class="px-2.5 py-1 text-xs font-medium rounded-full border ${tierColors[candidate.priority_tier] || 'bg-slate-700/50 text-slate-300 border-slate-600'}">
+                    ${priorityDisplay}
                 </span>
             </td>
-            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-600">${candidate.days_dormant} days</td>
-            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-600">${(candidate.engagement_rate * 100).toFixed(1)}%</td>
-            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-600">${formatStageName(candidate.last_stage)}</td>
+            <td class="px-4 py-3 whitespace-nowrap">
+                <div class="flex items-center">
+                    <div class="w-full bg-slate-700 rounded-full h-2">
+                        <div class="bg-gradient-to-r from-blue-500 to-indigo-500 h-2 rounded-full" style="width: ${candidate.engagement_rate * 100}%"></div>
+                    </div>
+                    <span class="ml-2 text-xs font-medium w-12 text-right ${engagementColor}">${(candidate.engagement_rate * 100).toFixed(0)}%</span>
+                </div>
+                <div class="text-xs text-slate-500 mt-1">Engagement</div>
+            </td>
+            <td class="px-4 py-3 whitespace-nowrap">
+                <div class="text-sm text-slate-300">${candidate.days_dormant} days</div>
+                <div class="text-xs text-slate-500">Inactive</div>
+            </td>
+            <td class="px-4 py-3 whitespace-nowrap text-sm text-slate-400">
+                ${formatStageName(candidate.last_stage) || 'N/A'}
+            </td>
+            <td class="px-4 py-3 whitespace-nowrap text-right text-sm font-medium">
+                <div class="flex items-center justify-end space-x-2">
+                    <button 
+                        onclick="event.stopPropagation(); showContactLogModal('${candidate.contact_id || ''}', '${candidate.name || ''}')"
+                        class="px-3 py-1.5 bg-slate-700 hover:bg-slate-600 text-white text-xs font-medium rounded-lg transition-colors flex items-center"
+                    >
+                        <i class="fas fa-phone-alt mr-1.5 text-xs"></i>
+                        Contacted
+                    </button>
+                </div>
+            </td>
         `;
+        
         tbody.appendChild(tr);
+    });
+    
+    // Add event listeners to checkboxes
+    document.querySelectorAll('.contact-checkbox').forEach(checkbox => {
+        checkbox.addEventListener('change', (e) => {
+            const contactId = e.target.dataset.contactId;
+            if (e.target.checked) {
+                selectedContacts.add(contactId);
+            } else {
+                selectedContacts.delete(contactId);
+            }
+            
+            // Update the selected count in the AI message modal if it's open
+            const selectedCount = document.getElementById('selectedCount');
+            if (selectedCount) {
+                selectedCount.textContent = `${selectedContacts.size} selected`;
+            }
+        });
     });
     
     // Add event listeners to checkboxes

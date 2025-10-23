@@ -4398,6 +4398,28 @@ async function updateContactInDatabase(idSubstring, phoneNumber, contactData) {
   }
 }
 
+async function getFollowUpTemplatesForNewContacts(companyId) {
+  console.log(`Fetching follow-up templates for new contacts for company ${companyId}...`);
+  const sqlClient = await pool.connect();
+  
+  try {
+    const result = await sqlClient.query(
+      `SELECT * FROM public.followup_templates 
+       WHERE company_id = $1 
+       AND status = 'active' 
+       AND trigger_on_new_contact = true 
+       ORDER BY created_at`,
+      [companyId]
+    );
+    return result.rows;
+  } catch (error) {
+    console.error('Error fetching follow-up templates for new contacts:', error);
+    return [];
+  } finally {
+    await safeRelease(sqlClient);
+  }
+}
+
 async function createContactInDatabase(idSubstring, contactData) {
   console.log(`Creating contact for company ${idSubstring}...`);
   const sqlClient = await pool.connect();
@@ -4463,6 +4485,34 @@ async function createContactInDatabase(idSubstring, contactData) {
     console.log(
       `Successfully created contact for Company ${idSubstring} at ID ${contactData.phone}`
     );
+
+    // Trigger follow-up templates for new contacts in the background
+    (async () => {
+      try {
+        const templates = await getFollowUpTemplatesForNewContacts(idSubstring);
+        if (templates.length > 0) {
+          console.log(`Found ${templates.length} follow-up templates for new contacts`);
+          
+          for (const template of templates) {
+            try {
+              await callFollowUpAPI(
+                'startTemplate',
+                contactData.phone,
+                contactData.name || 'New Contact',
+                0, // phoneIndex
+                template.template_id,
+                idSubstring
+              );
+              console.log(`Triggered follow-up template "${template.name}" for new contact ${contactData.phone}`);
+            } catch (error) {
+              console.error(`Error triggering follow-up template "${template.name}":`, error);
+            }
+          }
+        }
+      } catch (error) {
+        console.error('Error processing follow-up templates for new contact:', error);
+      }
+    })();
 
     return "Contact created successfully";
   } catch (error) {

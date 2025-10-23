@@ -86,8 +86,9 @@ async function run() {
     });
 
     const startTime = Date.now();
-   // Process all contacts
-  const results = await tagger.tagAllContacts(limit);
+    // Process all contacts (null means no limit)
+    const limit = null; // Set to a number to limit the number of contacts processed
+    const results = await tagger.tagAllContacts(limit);
   console.log('\n✅ Contact tagging completed!');
   
   // Generate final report
