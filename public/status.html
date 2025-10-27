@@ -1447,7 +1447,14 @@
               onclick="triggerHealthReport()"
               class="refresh-button"
               id="healthReportButton"
-              style="background: linear-gradient(135deg, rgba(16, 185, 129, 0.8) 0%, rgba(5, 150, 105, 0.8) 100%); border-color: rgba(16, 185, 129, 0.3);"
+              style="
+                background: linear-gradient(
+                  135deg,
+                  rgba(16, 185, 129, 0.8) 0%,
+                  rgba(5, 150, 105, 0.8) 100%
+                );
+                border-color: rgba(16, 185, 129, 0.3);
+              "
             >
               <svg
                 xmlns="http://www.w3.org/2000/svg"
@@ -2012,11 +2019,36 @@
           // );
 
           // Define the allowed company IDs
-          const companyIds = ['0210','0107','0160', '0161', '0377', '063', '079', '092', '399849', '458752', '765943', '088', '296245', '0245', '058666', '0156', '0101', '728219', '0342', '049815', '325117', '946386', '0149', '022027'];
+          const companyIds = [
+            "0101",
+            "0107",
+            "0149",
+            "0156",
+            "0160",
+            "0161",
+            "0210",
+            "022027",
+            "0245",
+            "0342",
+            "0377",
+            "049815",
+            "058666",
+            "063",
+            "079",
+            "088",
+            "092",
+            "296245",
+            "325117",
+            "399849",
+            "458752",
+            "728219",
+            "765943",
+            "946386",
+          ];
 
           // Filter bots to only include those with the specified companyIds
-          const jutaBots = bots.filter(
-            (bot) => companyIds.includes(bot.botName)
+          const jutaBots = bots.filter((bot) =>
+            companyIds.includes(bot.botName)
           );
 
           jutaBots.forEach((bot) => {
@@ -2624,10 +2656,15 @@
             throw new Error(data.error || "Failed to trigger health report");
           }
 
-          showNotification("Health report sent successfully to WhatsApp group!");
+          showNotification(
+            "Health report sent successfully to WhatsApp group!"
+          );
         } catch (error) {
           console.error("Error triggering health report:", error);
-          showNotification("Failed to send health report: " + error.message, true);
+          showNotification(
+            "Failed to send health report: " + error.message,
+            true
+          );
         } finally {
           const button = document.getElementById("healthReportButton");
           button.disabled = false;

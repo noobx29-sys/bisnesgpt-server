@@ -112,11 +112,11 @@ function checkRateLimit(identifier) {
 }
 function getPlanBasedQuota(plan) {
   switch (plan?.toLowerCase()) {
-    case 'free':
+    case "free":
       return 100;
-    case 'premium':
+    case "premium":
       return 5000;
-    case 'enterprise':
+    case "enterprise":
       return 20000;
     default:
       return 100; // Default to free plan quota
@@ -126,7 +126,7 @@ function getPlanBasedQuota(plan) {
 // Helper function to check if plan uses monthly reset
 function isMonthlyResetPlan(plan) {
   const planLower = plan?.toLowerCase();
-  return planLower === 'premium' || planLower === 'enterprise';
+  return planLower === "premium" || planLower === "enterprise";
 }
 
 // Helper function to get quota key (monthly for paid plans, lifetime for free)
@@ -137,7 +137,7 @@ function getQuotaKey(plan) {
     const month = (now.getMonth() + 1).toString().padStart(2, "0");
     return `${year}-${month}`;
   } else {
-    return 'lifetime'; // Free plan uses lifetime quota
+    return "lifetime"; // Free plan uses lifetime quota
   }
 }
 // ======================
@@ -288,6 +288,136 @@ async function getDatabaseConnection(timeoutMs = 5000) {
       // Wait before retrying
       await new Promise((resolve) => setTimeout(resolve, 1000 * attempts));
     }
+  }
+}
+
+// ======================
+// PHONE NUMBER EXTRACTION UTILITIES WITH @LID FAILSAFE
+// ======================
+
+// Utility function to safely extract phone number with @lid failsafe
+async function safeExtractPhoneNumber(msg, client = null) {
+  try {
+    let phoneNumber;
+
+    // Check if it's a @lid case
+    if (msg.from && msg.from.includes("@lid")) {
+      console.log(
+        "🔧 [safeExtractPhoneNumber] @lid detected, using chat/contact method"
+      );
+
+      if (!client) {
+        console.error(
+          "❌ [safeExtractPhoneNumber] Client required for @lid extraction but not provided"
+        );
+        return null;
+      }
+
+      try {
+        const chat = await msg.getChat();
+        const contact = await chat.getContact();
+
+        if (contact && contact.id && contact.id._serialized) {
+          // Extract phone number from contact.id._serialized
+          phoneNumber = contact.id._serialized.split("@")[0];
+          console.log(
+            "✅ [safeExtractPhoneNumber] Extracted from contact:",
+            phoneNumber
+          );
+        } else {
+          console.error(
+            "❌ [safeExtractPhoneNumber] Could not get contact info from chat"
+          );
+          return null;
+        }
+      } catch (error) {
+        console.error(
+          "❌ [safeExtractPhoneNumber] Error getting chat/contact for @lid:",
+          error
+        );
+        return null;
+      }
+    } else {
+      // Standard extraction method
+      phoneNumber = msg.from.split("@")[0];
+      console.log(
+        "✅ [safeExtractPhoneNumber] Standard extraction:",
+        phoneNumber
+      );
+    }
+
+    // Add + prefix if not present
+    if (phoneNumber && !phoneNumber.startsWith("+")) {
+      phoneNumber = "+" + phoneNumber;
+    }
+
+    return phoneNumber;
+  } catch (error) {
+    console.error("❌ [safeExtractPhoneNumber] Unexpected error:", error);
+    return null;
+  }
+}
+
+// Utility function to safely extract "to" phone number with @lid failsafe
+async function safeExtractToPhoneNumber(msg, client = null) {
+  try {
+    let phoneNumber;
+
+    // Check if it's a @lid case
+    if (msg.to && msg.to.includes("@lid")) {
+      console.log(
+        '🔧 [safeExtractToPhoneNumber] @lid detected in "to", using chat/contact method'
+      );
+
+      if (!client) {
+        console.error(
+          "❌ [safeExtractToPhoneNumber] Client required for @lid extraction but not provided"
+        );
+        return null;
+      }
+
+      try {
+        const chat = await msg.getChat();
+        const contact = await chat.getContact();
+
+        if (contact && contact.id && contact.id._serialized) {
+          // Extract phone number from contact.id._serialized
+          phoneNumber = contact.id._serialized.split("@")[0];
+          console.log(
+            "✅ [safeExtractToPhoneNumber] Extracted from contact:",
+            phoneNumber
+          );
+        } else {
+          console.error(
+            "❌ [safeExtractToPhoneNumber] Could not get contact info from chat"
+          );
+          return null;
+        }
+      } catch (error) {
+        console.error(
+          "❌ [safeExtractToPhoneNumber] Error getting chat/contact for @lid:",
+          error
+        );
+        return null;
+      }
+    } else {
+      // Standard extraction method
+      phoneNumber = msg.to.split("@")[0];
+      console.log(
+        "✅ [safeExtractToPhoneNumber] Standard extraction:",
+        phoneNumber
+      );
+    }
+
+    // Add + prefix if not present
+    if (phoneNumber && !phoneNumber.startsWith("+")) {
+      phoneNumber = "+" + phoneNumber;
+    }
+
+    return phoneNumber;
+  } catch (error) {
+    console.error("❌ [safeExtractToPhoneNumber] Unexpected error:", error);
+    return null;
   }
 }
 
@@ -813,17 +943,17 @@ const whitelist = [
   "https://d178-2001-e68-5409-64f-f850-607e-e056-2a9e.ngrok-free.app",
   "https://web.jutateknologi.com",
   "http://web.jutateknologi.com",
-  'https://app.jutateknologi.com',
-  'https://server.jutateknologi.com',
-  'https://bisnesgpt.vercel.app',
+  "https://app.jutateknologi.com",
+  "https://server.jutateknologi.com",
+  "https://bisnesgpt.vercel.app",
   "https://app.omniyal.com",
   "https://bisnesgpt.jutateknologi.com",
-  "http://bisnesgpt.jutateknologi.com"
+  "http://bisnesgpt.jutateknologi.com",
 ];
 
 // Also allow serveo.net domains dynamically
 const isServeoOrigin = (origin) => {
-  return origin ;
+  return origin;
 };
 
 // WebSocket server configuration
@@ -831,33 +961,35 @@ const wss = new WebSocket.Server({
   server,
   verifyClient: (info, done) => {
     const origin = info.origin || info.req.headers.origin;
-    
+
     // Allow connections with no origin (like mobile apps or non-browser clients)
     if (!origin) return done(true);
 
     // Define allowed origin patterns
     const allowedOriginPatterns = [
-      /^https?:\/\/localhost(:\d+)?(?:$|\/)/i,  // Localhost with any port
-      /^https?:\/\/127\.0\.0\.1(:\d+)?(?:$|\/)/i,  // 127.0.0.1 with any port
-      /^https?:\/\/([a-zA-Z0-9-]+\.)*ngrok\.(io|dev|app)(?:$|\/)/i,  // ngrok domains
+      /^https?:\/\/localhost(:\d+)?(?:$|\/)/i, // Localhost with any port
+      /^https?:\/\/127\.0\.0\.1(:\d+)?(?:$|\/)/i, // 127.0.0.1 with any port
+      /^https?:\/\/([a-zA-Z0-9-]+\.)*ngrok\.(io|dev|app)(?:$|\/)/i, // ngrok domains
       /^https?:\/\/([a-zA-Z0-9-]+\.)*jutateknologi\.com(?:$|\/)/i,
       /^https?:\/\/([a-zA-Z0-9-]+\.)*bisnesgpt\.com(?:$|\/)/i,
       /^https?:\/\/([a-zA-Z0-9-]+\.)*omniyal\.com(?:$|\/)/i,
       /^https?:\/\/([a-zA-Z0-9-]+\.)*xyzaibot\.com(?:$|\/)/i,
-      /^https?:\/\/([a-zA-Z0-9-]+\.)*vercel\.app(?:$|\/)/i
+      /^https?:\/\/([a-zA-Z0-9-]+\.)*vercel\.app(?:$|\/)/i,
     ];
 
     // Check if origin matches any allowed pattern
-    const isAllowed = allowedOriginPatterns.some(pattern => pattern.test(origin));
-    
+    const isAllowed = allowedOriginPatterns.some((pattern) =>
+      pattern.test(origin)
+    );
+
     if (isAllowed) {
-      console.log('WebSocket connection allowed from origin:', origin);
+      console.log("WebSocket connection allowed from origin:", origin);
       return done(true);
     }
 
-    console.log('WebSocket connection blocked from origin:', origin);
-    return done(false, 403, 'Origin not allowed');
-  }
+    console.log("WebSocket connection blocked from origin:", origin);
+    return done(false, 403, "Origin not allowed");
+  },
 });
 const db = admin.firestore();
 global.wss = wss;
@@ -865,28 +997,34 @@ global.wss = wss;
 // Apply CORS with options
 app.use((req, res, next) => {
   // Handle preflight requests
-  if (req.method === 'OPTIONS') {
+  if (req.method === "OPTIONS") {
     const origin = req.headers.origin;
     if (origin) {
-      res.header('Access-Control-Allow-Origin', origin);
-      res.header('Access-Control-Allow-Methods', corsOptions.methods.join(', '));
-      res.header('Access-Control-Allow-Headers', corsOptions.allowedHeaders.join(', '));
-      res.header('Access-Control-Allow-Credentials', 'true');
+      res.header("Access-Control-Allow-Origin", origin);
+      res.header(
+        "Access-Control-Allow-Methods",
+        corsOptions.methods.join(", ")
+      );
+      res.header(
+        "Access-Control-Allow-Headers",
+        corsOptions.allowedHeaders.join(", ")
+      );
+      res.header("Access-Control-Allow-Credentials", "true");
       return res.status(204).end();
     }
   }
-  
+
   // Apply CORS for actual requests
   cors(corsOptions)(req, res, next);
 });
 
 // Error handler for CORS
 app.use((err, req, res, next) => {
-  if (err.message === 'Not allowed by CORS') {
-    return res.status(403).json({ 
-      success: false, 
-      error: 'Not allowed by CORS',
-      message: 'The origin is not allowed by CORS policy'
+  if (err.message === "Not allowed by CORS") {
+    return res.status(403).json({
+      success: false,
+      error: "Not allowed by CORS",
+      message: "The origin is not allowed by CORS policy",
     });
   }
   next(err);
@@ -896,66 +1034,70 @@ const corsOptions = {
   origin: (origin, callback) => {
     // Allow requests with no origin (like mobile apps or curl requests)
     if (!origin) return callback(null, true);
-    
+
     // Define allowed origin patterns
     const allowedOrigins = [
-      /^https?:\/\/localhost(:\d+)?(?:$|\/)/i,  // Localhost with any port
-      /^https?:\/\/127\.0\.0\.1(:\d+)?(?:$|\/)/i,  // 127.0.0.1 with any port
-      /^https?:\/\/([a-zA-Z0-9-]+\.)*ngrok\.(io|dev|app)(?:$|\/)/i,  // ngrok domains
+      /^https?:\/\/localhost(:\d+)?(?:$|\/)/i, // Localhost with any port
+      /^https?:\/\/127\.0\.0\.1(:\d+)?(?:$|\/)/i, // 127.0.0.1 with any port
+      /^https?:\/\/([a-zA-Z0-9-]+\.)*ngrok\.(io|dev|app)(?:$|\/)/i, // ngrok domains
       /^https?:\/\/([a-zA-Z0-9-]+\.)*jutateknologi\.com(?:$|\/)/i,
       /^https?:\/\/([a-zA-Z0-9-]+\.)*bisnesgpt\.com(?:$|\/)/i,
       /^https?:\/\/([a-zA-Z0-9-]+\.)*omniyal\.com(?:$|\/)/i,
       /^https?:\/\/([a-zA-Z0-9-]+\.)*xyzaibot\.com(?:$|\/)/i,
-      /^https?:\/\/([a-zA-Z0-9-]+\.)*vercel\.app(?:$|\/)/i
+      /^https?:\/\/([a-zA-Z0-9-]+\.)*vercel\.app(?:$|\/)/i,
     ];
 
     // Check if the origin matches any allowed pattern
-    const isAllowed = allowedOrigins.some(regex => regex.test(origin));
-    
+    const isAllowed = allowedOrigins.some((regex) => regex.test(origin));
+
     if (isAllowed) {
-      console.log('CORS allowed origin:', origin);
-      return callback(null, origin);  // Return the origin for dynamic CORS
+      return callback(null, origin); // Return the origin for dynamic CORS
     } else {
-      console.log('CORS blocked origin:', origin);
-      return callback(new Error('Not allowed by CORS'));
+      console.log("CORS blocked origin:", origin);
+      return callback(new Error("Not allowed by CORS"));
     }
   },
-  credentials: true,  // Required for cookies, authorization headers with HTTPS
-  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  credentials: true, // Required for cookies, authorization headers with HTTPS
+  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
   allowedHeaders: [
-    'Content-Type',
-    'Authorization',
-    'ngrok-skip-browser-warning',
-    'x-requested-with',
-    'x-csrf-token',
-    'Accept',
-    'Origin',
-    'X-Requested-With'
+    "Content-Type",
+    "Authorization",
+    "ngrok-skip-browser-warning",
+    "x-requested-with",
+    "x-csrf-token",
+    "Accept",
+    "Origin",
+    "X-Requested-With",
   ],
   preflightContinue: false,
   optionsSuccessStatus: 204,
-  maxAge: 3600 // 1 hour
+  maxAge: 3600, // 1 hour
 };
 
 // Custom CORS middleware to handle credentials properly
 app.use((req, res, next) => {
   const origin = req.headers.origin;
-  
+
   // Log CORS requests for debugging
-  console.log('CORS request from origin:', origin);
-  
+
   // Check if the origin is allowed
   if (origin) {
     corsOptions.origin(origin, (err, isAllowed) => {
       if (!err && isAllowed) {
-        res.header('Access-Control-Allow-Origin', origin);
-        res.header('Access-Control-Allow-Credentials', 'true');
-        
+        res.header("Access-Control-Allow-Origin", origin);
+        res.header("Access-Control-Allow-Credentials", "true");
+
         // Handle preflight requests
-        if (req.method === 'OPTIONS') {
-          res.header('Access-Control-Allow-Methods', corsOptions.methods.join(', '));
-          res.header('Access-Control-Allow-Headers', corsOptions.allowedHeaders.join(', '));
-          res.header('Access-Control-Max-Age', '3600');
+        if (req.method === "OPTIONS") {
+          res.header(
+            "Access-Control-Allow-Methods",
+            corsOptions.methods.join(", ")
+          );
+          res.header(
+            "Access-Control-Allow-Headers",
+            corsOptions.allowedHeaders.join(", ")
+          );
+          res.header("Access-Control-Max-Age", "3600");
           return res.status(204).end();
         }
       }
@@ -1363,7 +1505,7 @@ app.get("/api/health", (req, res) => {
     status: "ok",
     timestamp: new Date().toISOString(),
     uptime: process.uptime(),
-    service: "bisnesgpt-server"
+    service: "bisnesgpt-server",
   });
 });
 
@@ -1534,7 +1676,6 @@ Please check the logs for more details.`;
 
 const ALIST_COMPANIES = ["0156", "092", "296245"];
 
-
 app.post("/alist/blast", async (req, res) => {
   const requestId = uuidv4().substring(0, 8);
   console.log(`[AlistBlast][${requestId}] ===== NEW REQUEST STARTED =====`);
@@ -1544,7 +1685,8 @@ app.post("/alist/blast", async (req, res) => {
   );
 
   try {
-    const { phone, phoneNumber, message, first_name, email, company } = req.body;
+    const { phone, phoneNumber, message, first_name, email, company } =
+      req.body;
 
     // Support both 'phone' and 'phoneNumber' field names
     const recipientPhone = phone || phoneNumber;
@@ -1569,9 +1711,7 @@ app.post("/alist/blast", async (req, res) => {
         `[AlistBlast][${requestId}] No message provided, using default welcome message`
       );
     } else {
-      console.log(
-        `[AlistBlast][${requestId}] Using provided message`
-      );
+      console.log(`[AlistBlast][${requestId}] Using provided message`);
     }
 
     // Format phone number early for duplicate check
@@ -1644,16 +1784,16 @@ app.post("/alist/blast", async (req, res) => {
     );
 
     await axios.post(
-      `http://localhost:${port}/api/v2/messages/text/${companyId}/${encodeURIComponent(chatId)}`,
+      `http://localhost:${port}/api/v2/messages/text/${companyId}/${encodeURIComponent(
+        chatId
+      )}`,
       {
         message: messageText,
         phoneIndex: 0,
       }
     );
 
-    console.log(
-      `[AlistBlast][${requestId}] Message sent successfully`
-    );
+    console.log(`[AlistBlast][${requestId}] Message sent successfully`);
 
     // Save to Neon database
     const contactID = companyId + "-" + formattedPhone.substring(1);
@@ -1681,9 +1821,7 @@ app.post("/alist/blast", async (req, res) => {
       ]
     );
 
-    console.log(
-      `[AlistBlast][${requestId}] Message saved to Neon database`
-    );
+    console.log(`[AlistBlast][${requestId}] Message saved to Neon database`);
 
     // Return success response
     res.json({
@@ -1698,10 +1836,7 @@ app.post("/alist/blast", async (req, res) => {
 
     console.log(`[AlistBlast][${requestId}] ===== REQUEST COMPLETED =====`);
   } catch (error) {
-    console.error(
-      `[AlistBlast][${requestId}] ❌ Error:`,
-      error.message
-    );
+    console.error(`[AlistBlast][${requestId}] ❌ Error:`, error.message);
     console.error(`[AlistBlast][${requestId}] Stack:`, error.stack);
 
     res.status(500).json({
@@ -1711,8 +1846,6 @@ app.post("/alist/blast", async (req, res) => {
     });
   }
 });
-
-
 
 // Background processing function
 async function processCertificateInBackground(
@@ -2043,7 +2176,8 @@ async function fetchParticipantData() {
 
     // 1. Fetch from Neon database
     try {
-      const baseUrl = process.env.BASE_URL || "https://bisnesgpt.jutateknologi.com";
+      const baseUrl =
+        process.env.BASE_URL || "https://bisnesgpt.jutateknologi.com";
       const companyId = "0380";
 
       const [participantsResponse, enrolleesResponse, eventsResponse] =
@@ -3178,12 +3312,12 @@ app.get("/api/auto-reply/unreplied/:companyId", async (req, res) => {
 app.get("/api/auto-reply/settings/:companyId", async (req, res) => {
   try {
     const { companyId } = req.params;
-    
+
     const settings = await getAutoReplySettings(companyId);
-    
+
     res.json({
       success: true,
-      settings: settings
+      settings: settings,
     });
   } catch (error) {
     console.error("Error getting auto-reply settings:", error);
@@ -3200,7 +3334,7 @@ app.post("/api/auto-reply/settings/:companyId", async (req, res) => {
   if (!sqlClient) {
     return res.status(500).json({
       success: false,
-      error: "Database connection failed"
+      error: "Database connection failed",
     });
   }
 
@@ -3209,23 +3343,26 @@ app.post("/api/auto-reply/settings/:companyId", async (req, res) => {
     const { enabled, autoReplyHours } = req.body;
 
     // Validate input
-    if (typeof enabled !== 'boolean') {
+    if (typeof enabled !== "boolean") {
       return res.status(400).json({
         success: false,
-        error: "enabled must be a boolean value"
+        error: "enabled must be a boolean value",
       });
     }
 
-    if (autoReplyHours && (isNaN(parseInt(autoReplyHours)) || parseInt(autoReplyHours) < 1)) {
+    if (
+      autoReplyHours &&
+      (isNaN(parseInt(autoReplyHours)) || parseInt(autoReplyHours) < 1)
+    ) {
       return res.status(400).json({
         success: false,
-        error: "autoReplyHours must be a positive number"
+        error: "autoReplyHours must be a positive number",
       });
     }
 
     const settingsData = {
       enabled: enabled,
-      autoReplyHours: autoReplyHours || "6"
+      autoReplyHours: autoReplyHours || "6",
     };
 
     // Check if setting exists
@@ -3252,18 +3389,21 @@ app.post("/api/auto-reply/settings/:companyId", async (req, res) => {
       );
     }
 
-    console.log(`Auto-reply settings updated for company ${companyId}:`, settingsData);
+    console.log(
+      `Auto-reply settings updated for company ${companyId}:`,
+      settingsData
+    );
 
     res.json({
       success: true,
       message: "Auto-reply settings saved successfully",
-      settings: settingsData
+      settings: settingsData,
     });
   } catch (error) {
     console.error("Error saving auto-reply settings:", error);
     res.status(500).json({
       success: false,
-      error: "Failed to save auto-reply settings"
+      error: "Failed to save auto-reply settings",
     });
   } finally {
     sqlClient.release();
@@ -3276,14 +3416,16 @@ app.post("/api/manual-sync-auto-reply/:companyId", async (req, res) => {
     const { companyId } = req.params;
     const { autoReplyHours = 6 } = req.body;
 
-    console.log(`Manual sync and auto-reply trigger requested for company ${companyId}`);
-    
+    console.log(
+      `Manual sync and auto-reply trigger requested for company ${companyId}`
+    );
+
     // Validate autoReplyHours
     const hoursThreshold = parseInt(autoReplyHours);
     if (isNaN(hoursThreshold) || hoursThreshold < 1) {
       return res.status(400).json({
         success: false,
-        error: "autoReplyHours must be a positive number"
+        error: "autoReplyHours must be a positive number",
       });
     }
 
@@ -3292,37 +3434,47 @@ app.post("/api/manual-sync-auto-reply/:companyId", async (req, res) => {
     if (!botData || !Array.isArray(botData)) {
       return res.status(404).json({
         success: false,
-        error: `Bot ${companyId} not found or not initialized`
+        error: `Bot ${companyId} not found or not initialized`,
       });
     }
 
     try {
-      console.log(`[Manual] Processing all phones for bot ${companyId} with ${hoursThreshold} hours threshold`);
-      
+      console.log(
+        `[Manual] Processing all phones for bot ${companyId} with ${hoursThreshold} hours threshold`
+      );
+
       // Use the existing function with forceEnabled=true and custom hours
-      await syncMessagesAndHandleAutoReplies(companyId, botData.length, true, hoursThreshold);
-      
+      await syncMessagesAndHandleAutoReplies(
+        companyId,
+        botData.length,
+        true,
+        hoursThreshold
+      );
+
       const response = {
         success: true,
         message: `Manual sync and auto-reply completed for company ${companyId}`,
         processedPhones: botData.length,
-        autoReplyHours: hoursThreshold
+        autoReplyHours: hoursThreshold,
       };
 
-      console.log(`[Manual] Completed manual trigger for company ${companyId}:`, response);
+      console.log(
+        `[Manual] Completed manual trigger for company ${companyId}:`,
+        response
+      );
       res.json(response);
     } catch (error) {
       console.error(`[Manual] Error processing company ${companyId}:`, error);
       res.status(500).json({
         success: false,
-        error: error.message || "Failed to process manual sync and auto-reply"
+        error: error.message || "Failed to process manual sync and auto-reply",
       });
     }
   } catch (error) {
     console.error("Error in manual sync auto-reply:", error);
     res.status(500).json({
       success: false,
-      error: error.message || "Failed to execute manual sync and auto-reply"
+      error: error.message || "Failed to execute manual sync and auto-reply",
     });
   }
 });
@@ -3463,18 +3615,18 @@ app.post("/api/upload-media", upload.single("file"), (req, res) => {
 wss.on("connection", (ws, req) => {
   // Parse URL to handle different WebSocket endpoints
   const urlParts = req.url.split("/");
-  
+
   let email, companyId;
-  
+
   // Handle different URL patterns:
   // /ws/chatgpt/email/companyId - ChatGPT endpoint
   // /ws/email/companyId - Legacy endpoint
   // /status, /logs, /ai-assistant-stream - Other endpoints
   if (req.url.startsWith("/ws/chatgpt/")) {
-    email = urlParts[3];      // /ws/chatgpt/email/companyId
+    email = urlParts[3]; // /ws/chatgpt/email/companyId
     companyId = urlParts[4];
   } else if (req.url.startsWith("/ws/") && urlParts.length >= 4) {
-    email = urlParts[2];      // /ws/email/companyId
+    email = urlParts[2]; // /ws/email/companyId
     companyId = urlParts[3];
   }
 
@@ -3718,7 +3870,9 @@ wss.on("connection", (ws, req) => {
       if (ws.pathname === "/ai-assistant-stream") {
         if (data.type === "ai-brainstorm" && data.message && data.email) {
           console.log("🤖 AI Assistant Brainstorm WebSocket Request:", {
-            userInput: data.message ? data.message.substring(0, 100) + "..." : "No message",
+            userInput: data.message
+              ? data.message.substring(0, 100) + "..."
+              : "No message",
             email: data.email,
             messageLength: data.message ? data.message.length : 0,
           });
@@ -3726,7 +3880,9 @@ wss.on("connection", (ws, req) => {
           // Process AI brainstorm request with streaming
           try {
             let threadID;
-            const contactData = await getContactDataFromDatabaseByEmail(data.email);
+            const contactData = await getContactDataFromDatabaseByEmail(
+              data.email
+            );
 
             if (contactData?.thread_id) {
               threadID = contactData.thread_id;
@@ -3736,21 +3892,37 @@ wss.on("connection", (ws, req) => {
               threadID = thread.id;
               console.log("🆕 Created new thread ID:", threadID);
               await saveThreadIDPostgres(data.email, threadID);
-              console.log("💾 Saved new thread ID to database for email:", data.email);
+              console.log(
+                "💾 Saved new thread ID to database for email:",
+                data.email
+              );
             }
 
             // Add user message to thread
-            console.log("📝 Adding user message to thread (length:", data.message.length, ")");
+            console.log(
+              "📝 Adding user message to thread (length:",
+              data.message.length,
+              ")"
+            );
             await addMessage(threadID, data.message);
             console.log("✅ User message added to thread");
 
             // Create and run the assistant with streaming
-            console.log("🤖 Creating and running multi-layer agent assistant...");
-            
-            const assistantResponse = await openai.beta.threads.runs.create(threadID, {
-              assistant_id: process.env.ASSISTANT_ID || "asst_QfkZ8GeCw0Rbc2zRW4B86FWD",
-            });
-            console.log("✅ Assistant run created with ID:", assistantResponse.id);
+            console.log(
+              "🤖 Creating and running multi-layer agent assistant..."
+            );
+
+            const assistantResponse = await openai.beta.threads.runs.create(
+              threadID,
+              {
+                assistant_id:
+                  process.env.ASSISTANT_ID || "asst_QfkZ8GeCw0Rbc2zRW4B86FWD",
+              }
+            );
+            console.log(
+              "✅ Assistant run created with ID:",
+              assistantResponse.id
+            );
 
             // Stream the completion to WebSocket
             await waitForCompletionBrainstormStream(
@@ -3759,15 +3931,18 @@ wss.on("connection", (ws, req) => {
               data.email,
               ws
             );
-
           } catch (error) {
             console.error("💥 AI Assistant brainstorm WebSocket error:", error);
-            ws.send(JSON.stringify({
-              type: "error",
-              success: false,
-              error: error.code || "AI_ERROR",
-              message: error.message || "An error occurred while processing your AI request"
-            }));
+            ws.send(
+              JSON.stringify({
+                type: "error",
+                success: false,
+                error: error.code || "AI_ERROR",
+                message:
+                  error.message ||
+                  "An error occurred while processing your AI request",
+              })
+            );
           }
         }
       }
@@ -3777,20 +3952,24 @@ wss.on("connection", (ws, req) => {
         if (data.type === "ai-message" && data.message && data.email) {
           // Send IMMEDIATE acknowledgment - fastest possible response
           if (ws.readyState === WebSocket.OPEN) {
-            ws.send(JSON.stringify({
-              type: "received",
-              message: "📨 Message received!",
-              status: "received",
-              animation: "quickFlash",
-              color: "#22c55e",
-              icon: "📨",
-              progress: 0,
-              timestamp: new Date().toISOString()
-            }));
+            ws.send(
+              JSON.stringify({
+                type: "received",
+                message: "📨 Message received!",
+                status: "received",
+                animation: "quickFlash",
+                color: "#22c55e",
+                icon: "📨",
+                progress: 0,
+                timestamp: new Date().toISOString(),
+              })
+            );
           }
 
           console.log("💬 ChatGPT WebSocket Request:", {
-            userInput: data.message ? data.message.substring(0, 100) + "..." : "No message",
+            userInput: data.message
+              ? data.message.substring(0, 100) + "..."
+              : "No message",
             email: data.email,
             companyId: data.companyId,
             messageLength: data.message ? data.message.length : 0,
@@ -3798,7 +3977,9 @@ wss.on("connection", (ws, req) => {
 
           try {
             let threadID;
-            const contactData = await getContactDataFromDatabaseByEmail(data.email);
+            const contactData = await getContactDataFromDatabaseByEmail(
+              data.email
+            );
 
             if (contactData?.thread_id) {
               threadID = contactData.thread_id;
@@ -3808,48 +3989,66 @@ wss.on("connection", (ws, req) => {
               threadID = thread.id;
               console.log("🆕 Created new thread ID:", threadID);
               await saveThreadIDPostgres(data.email, threadID);
-              console.log("💾 Saved new thread ID to database for email:", data.email);
+              console.log(
+                "💾 Saved new thread ID to database for email:",
+                data.email
+              );
             }
 
             // Send preparing message
             if (ws.readyState === WebSocket.OPEN) {
-              ws.send(JSON.stringify({
-                type: "preparing",
-                message: "⚡ Preparing AI response...",
-                status: "preparing",
-                animation: "ripple",
-                color: "#f97316",
-                icon: "⚡",
-                progress: 3,
-                step: "setup"
-              }));
+              ws.send(
+                JSON.stringify({
+                  type: "preparing",
+                  message: "⚡ Preparing AI response...",
+                  status: "preparing",
+                  animation: "ripple",
+                  color: "#f97316",
+                  icon: "⚡",
+                  progress: 3,
+                  step: "setup",
+                })
+              );
             }
 
             // Add user message to thread
-            console.log("📝 Adding user message to thread (length:", data.message.length, ")");
+            console.log(
+              "📝 Adding user message to thread (length:",
+              data.message.length,
+              ")"
+            );
             await addMessage(threadID, data.message);
             console.log("✅ User message added to thread");
 
             // Create and run the assistant with streaming
             console.log("🤖 Creating and running ChatGPT assistant...");
-            
-            const assistantResponse = await openai.beta.threads.runs.create(threadID, {
-              assistant_id: process.env.ASSISTANT_ID || "asst_QfkZ8GeCw0Rbc2zRW4B86FWD",
-            });
-            console.log("✅ Assistant run created with ID:", assistantResponse.id);
+
+            const assistantResponse = await openai.beta.threads.runs.create(
+              threadID,
+              {
+                assistant_id:
+                  process.env.ASSISTANT_ID || "asst_QfkZ8GeCw0Rbc2zRW4B86FWD",
+              }
+            );
+            console.log(
+              "✅ Assistant run created with ID:",
+              assistantResponse.id
+            );
 
             // Send immediate thinking indicator
             if (ws.readyState === WebSocket.OPEN) {
-              ws.send(JSON.stringify({
-                type: "thinking",
-                message: "🤖 AI is thinking...",
-                status: "generating",
-                animation: "fadeIn",
-                color: "#6366f1",
-                icon: "🤖",
-                progress: 5,
-                isInitial: true
-              }));
+              ws.send(
+                JSON.stringify({
+                  type: "thinking",
+                  message: "🤖 AI is thinking...",
+                  status: "generating",
+                  animation: "fadeIn",
+                  color: "#6366f1",
+                  icon: "🤖",
+                  progress: 5,
+                  isInitial: true,
+                })
+              );
             }
 
             // Stream the completion to WebSocket
@@ -3859,15 +4058,18 @@ wss.on("connection", (ws, req) => {
               data.email,
               ws
             );
-
           } catch (error) {
             console.error("💥 ChatGPT WebSocket error:", error);
-            ws.send(JSON.stringify({
-              type: "error",
-              success: false,
-              error: error.code || "AI_ERROR",
-              message: error.message || "An error occurred while processing your ChatGPT request"
-            }));
+            ws.send(
+              JSON.stringify({
+                type: "error",
+                success: false,
+                error: error.code || "AI_ERROR",
+                message:
+                  error.message ||
+                  "An error occurred while processing your ChatGPT request",
+              })
+            );
           }
         }
       }
@@ -3941,7 +4143,7 @@ app.post("/api/ai-assistant-brainstorm/", async (req, res) => {
 
     // Create and run the assistant with tool definitions
     console.log("🤖 Creating and running multi-layer agent assistant...");
-    
+
     const assistantResponse = await openai.beta.threads.runs.create(threadID, {
       assistant_id: process.env.ASSISTANT_ID || "asst_QfkZ8GeCw0Rbc2zRW4B86FWD",
     });
@@ -4075,7 +4277,13 @@ async function waitForCompletionBrainstorm(threadId, runId, email, depth = 0) {
 }
 
 // WebSocket Streaming version of waitForCompletionBrainstorm
-async function waitForCompletionBrainstormStream(threadId, runId, email, ws, depth = 0) {
+async function waitForCompletionBrainstormStream(
+  threadId,
+  runId,
+  email,
+  ws,
+  depth = 0
+) {
   const maxDepth = 5;
   const maxAttempts = 30;
   const pollingInterval = 2000; // 2 seconds
@@ -4087,80 +4295,97 @@ async function waitForCompletionBrainstormStream(threadId, runId, email, ws, dep
 
   // Send initial status update if WebSocket is available
   if (depth === 0 && ws && ws.readyState === WebSocket.OPEN) {
-    ws.send(JSON.stringify({
-      type: "status",
-      message: "🚀 Processing your request...",
-      status: "processing",
-      animation: "slideIn",
-      color: "#059669",
-      icon: "🚀",
-      progress: 10
-    }));
+    ws.send(
+      JSON.stringify({
+        type: "status",
+        message: "🚀 Processing your request...",
+        status: "processing",
+        animation: "slideIn",
+        color: "#059669",
+        icon: "🚀",
+        progress: 10,
+      })
+    );
   }
 
   if (depth >= maxDepth) {
     console.error(`❌ Max recursion depth reached for runId: ${runId}`);
-    const errorMessage = "I apologize, but I'm having trouble completing this task. Could you please try rephrasing your request?";
+    const errorMessage =
+      "I apologize, but I'm having trouble completing this task. Could you please try rephrasing your request?";
     if (ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({
-        type: "error",
-        message: errorMessage
-      }));
+      ws.send(
+        JSON.stringify({
+          type: "error",
+          message: errorMessage,
+        })
+      );
     }
     return errorMessage;
   }
 
   for (let attempts = 0; attempts < maxAttempts; attempts++) {
     try {
-      const runObject = await openai.beta.threads.runs.retrieve(threadId, runId);
-      
+      const runObject = await openai.beta.threads.runs.retrieve(
+        threadId,
+        runId
+      );
+
       console.log(
-        `🔄 Run status (depth: ${depth}, attempt: ${attempts + 1}): ${runObject.status}`
+        `🔄 Run status (depth: ${depth}, attempt: ${attempts + 1}): ${
+          runObject.status
+        }`
       );
 
       // Send periodic thinking indicators during long processing
       if (runObject.status === "in_progress" || runObject.status === "queued") {
-        if (ws && ws.readyState === WebSocket.OPEN && attempts > 0 && attempts % 3 === 0) {
+        if (
+          ws &&
+          ws.readyState === WebSocket.OPEN &&
+          attempts > 0 &&
+          attempts % 3 === 0
+        ) {
           const thinkingStates = [
             {
               message: "🧠 Thinking...",
               animation: "pulse",
               color: "#3b82f6",
-              icon: "🧠"
+              icon: "🧠",
             },
             {
               message: "🔍 Analyzing your request...",
-              animation: "spin", 
+              animation: "spin",
               color: "#8b5cf6",
-              icon: "🔍"
+              icon: "🔍",
             },
             {
               message: "✨ Generating response...",
               animation: "bounce",
-              color: "#10b981", 
-              icon: "✨"
+              color: "#10b981",
+              icon: "✨",
             },
             {
               message: "⚡ Almost ready...",
               animation: "glow",
               color: "#f59e0b",
-              icon: "⚡"
-            }
+              icon: "⚡",
+            },
           ];
           const stateIndex = Math.floor(attempts / 3) % thinkingStates.length;
           const currentState = thinkingStates[stateIndex];
-          
-          ws.send(JSON.stringify({
-            type: "thinking",
-            message: currentState.message,
-            status: "processing",
-            animation: currentState.animation,
-            color: currentState.color,
-            icon: currentState.icon,
-            progress: Math.min(95, (attempts / maxAttempts) * 100),
-            attempt: attempts + 1,
-            maxAttempts: maxAttempts
-          }));
+
+          ws.send(
+            JSON.stringify({
+              type: "thinking",
+              message: currentState.message,
+              status: "processing",
+              animation: currentState.animation,
+              color: currentState.color,
+              icon: currentState.icon,
+              progress: Math.min(95, (attempts / maxAttempts) * 100),
+              attempt: attempts + 1,
+              maxAttempts: maxAttempts,
+            })
+          );
         }
       }
 
@@ -4170,63 +4395,85 @@ async function waitForCompletionBrainstormStream(threadId, runId, email, ws, dep
         const assistantMessages = messages.data.filter(
           (message) => message.role === "assistant"
         );
-        
+
         if (assistantMessages.length > 0) {
           const latestMessage = assistantMessages[0];
-          if (latestMessage.content && latestMessage.content[0] && latestMessage.content[0].text) {
+          if (
+            latestMessage.content &&
+            latestMessage.content[0] &&
+            latestMessage.content[0].text
+          ) {
             fullResponse = latestMessage.content[0].text.value;
             console.log("📝 Got response, streaming to client...");
-            
+
             // Stream the response word by word
-            const words = fullResponse.split(' ');
-            let streamedText = '';
-            
+            const words = fullResponse.split(" ");
+            let streamedText = "";
+
             for (let i = 0; i < words.length; i++) {
               if (ws.readyState !== WebSocket.OPEN) {
                 console.log("WebSocket closed, stopping stream");
                 break;
               }
-              
-              streamedText += (i > 0 ? ' ' : '') + words[i];
-              
-              ws.send(JSON.stringify({
-                type: "stream",
-                content: words[i],
-                fullContent: streamedText,
-                isComplete: i === words.length - 1,
-                wordIndex: i,
-                totalWords: words.length
-              }));
-              
+
+              streamedText += (i > 0 ? " " : "") + words[i];
+
+              ws.send(
+                JSON.stringify({
+                  type: "stream",
+                  content: words[i],
+                  fullContent: streamedText,
+                  isComplete: i === words.length - 1,
+                  wordIndex: i,
+                  totalWords: words.length,
+                })
+              );
+
               // Add a small delay between words to simulate ChatGPT-like streaming
               await new Promise((resolve) => setTimeout(resolve, 50));
             }
-            
+
             // Send completion message
             if (ws.readyState === WebSocket.OPEN) {
-              ws.send(JSON.stringify({
-                type: "complete",
-                fullResponse: fullResponse,
-                analysis: fullResponse.split("[ANALYSIS_START]")[1]?.split("[ANALYSIS_END]")[0]?.trim() || "AI configuration created successfully!",
-                suggestions: [
-                  fullResponse.split("[AI_CONFIG_START]")[1]?.split("[AI_CONFIG_END]")[0]?.trim() || fullResponse,
-                ],
-                threadID: threadId,
-                webSearchPerformed: fullResponse.includes("web search") || fullResponse.includes("search results"),
-                toolsUsed: fullResponse.includes("tool") || fullResponse.includes("function")
-              }));
+              ws.send(
+                JSON.stringify({
+                  type: "complete",
+                  fullResponse: fullResponse,
+                  analysis:
+                    fullResponse
+                      .split("[ANALYSIS_START]")[1]
+                      ?.split("[ANALYSIS_END]")[0]
+                      ?.trim() || "AI configuration created successfully!",
+                  suggestions: [
+                    fullResponse
+                      .split("[AI_CONFIG_START]")[1]
+                      ?.split("[AI_CONFIG_END]")[0]
+                      ?.trim() || fullResponse,
+                  ],
+                  threadID: threadId,
+                  webSearchPerformed:
+                    fullResponse.includes("web search") ||
+                    fullResponse.includes("search results"),
+                  toolsUsed:
+                    fullResponse.includes("tool") ||
+                    fullResponse.includes("function"),
+                })
+              );
             }
-            
+
             return fullResponse;
           }
         }
-        
-        const defaultResponse = "I apologize, but I couldn't generate a proper response. Please try again.";
+
+        const defaultResponse =
+          "I apologize, but I couldn't generate a proper response. Please try again.";
         if (ws.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify({
-            type: "error",
-            message: defaultResponse
-          }));
+          ws.send(
+            JSON.stringify({
+              type: "error",
+              message: defaultResponse,
+            })
+          );
         }
         return defaultResponse;
       } else if (runObject.status === "requires_action") {
@@ -4235,13 +4482,15 @@ async function waitForCompletionBrainstormStream(threadId, runId, email, ws, dep
           runObject.required_action.submit_tool_outputs.tool_calls,
           email
         );
-        
+
         await openai.beta.threads.runs.submitToolOutputs(threadId, runId, {
           tool_outputs: toolOutputs,
         });
-        
-        console.log("✅ Tool outputs submitted, restarting wait for completion...");
-        
+
+        console.log(
+          "✅ Tool outputs submitted, restarting wait for completion..."
+        );
+
         return await waitForCompletionBrainstormStream(
           threadId,
           runId,
@@ -4249,14 +4498,18 @@ async function waitForCompletionBrainstormStream(threadId, runId, email, ws, dep
           ws,
           depth + 1
         );
-      } else if (["failed", "cancelled", "expired"].includes(runObject.status)) {
+      } else if (
+        ["failed", "cancelled", "expired"].includes(runObject.status)
+      ) {
         console.error(`❌ Run ${runId} ended with status: ${runObject.status}`);
         const errorMessage = `I encountered an error (${runObject.status}). Please try your request again.`;
         if (ws.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify({
-            type: "error",
-            message: errorMessage
-          }));
+          ws.send(
+            JSON.stringify({
+              type: "error",
+              message: errorMessage,
+            })
+          );
         }
         return errorMessage;
       }
@@ -4266,12 +4519,15 @@ async function waitForCompletionBrainstormStream(threadId, runId, email, ws, dep
       console.error(
         `❌ Error in waitForCompletionBrainstormStream (depth: ${depth}, runId: ${runId}): ${error}`
       );
-      const errorMessage = "I'm sorry, but I encountered an error while processing your request. Please try again.";
+      const errorMessage =
+        "I'm sorry, but I encountered an error while processing your request. Please try again.";
       if (ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({
-          type: "error",
-          message: errorMessage
-        }));
+        ws.send(
+          JSON.stringify({
+            type: "error",
+            message: errorMessage,
+          })
+        );
       }
       return errorMessage;
     }
@@ -4280,12 +4536,15 @@ async function waitForCompletionBrainstormStream(threadId, runId, email, ws, dep
   console.error(
     `⏰ Timeout: Assistant did not complete in time (depth: ${depth}, runId: ${runId})`
   );
-  const timeoutMessage = "I'm sorry, but it's taking longer than expected to process your request. Please try again or rephrase your question.";
+  const timeoutMessage =
+    "I'm sorry, but it's taking longer than expected to process your request. Please try again or rephrase your question.";
   if (ws.readyState === WebSocket.OPEN) {
-    ws.send(JSON.stringify({
-      type: "error",
-      message: timeoutMessage
-    }));
+    ws.send(
+      JSON.stringify({
+        type: "error",
+        message: timeoutMessage,
+      })
+    );
   }
   return timeoutMessage;
 }
@@ -4491,8 +4750,8 @@ app.post("/api/prompt-brainstorm/", async (req, res) => {
       console.log("Saved new thread ID to database for email:", email);
     }
 
-   // Create the full prompt for the assistant
-const fullPrompt = `You are a prompt engineering expert. 
+    // Create the full prompt for the assistant
+    const fullPrompt = `You are a prompt engineering expert. 
 The user wants to modify or create a new AI assistant prompt.
 
 Your task: Provide the EXACT text that should be added or created for their prompt. 
@@ -4546,12 +4805,17 @@ Formatting rules:
 
 ${
   currentPrompt
-    ? `Current Prompt:\n${currentPrompt}\n\nUser Request: ${userInput}\n\nCompany Info (from user): ${JSON.stringify(req.body.companyInfo || {}, null, 2)}\n\nProvide the EXACT text to add/change.`
-    : `User Request: ${userInput}\n\nCompany Info (from user): ${JSON.stringify(req.body.companyInfo || {}, null, 2)}\n\nProvide the EXACT text for a NEW assistant prompt with named stages and scripts.`
+    ? `Current Prompt:\n${currentPrompt}\n\nUser Request: ${userInput}\n\nCompany Info (from user): ${JSON.stringify(
+        req.body.companyInfo || {},
+        null,
+        2
+      )}\n\nProvide the EXACT text to add/change.`
+    : `User Request: ${userInput}\n\nCompany Info (from user): ${JSON.stringify(
+        req.body.companyInfo || {},
+        null,
+        2
+      )}\n\nProvide the EXACT text for a NEW assistant prompt with named stages and scripts.`
 }`;
-
-
-
 
     // Add user message to thread
     await addMessage(threadID, fullPrompt);
@@ -5165,7 +5429,8 @@ app.post("/api/daily-report/:companyId/trigger", async (req, res) => {
     if (date && !moment(date, "YYYY-MM-DD", true).isValid()) {
       return res.status(400).json({
         success: false,
-        error: "Invalid date format. Please use YYYY-MM-DD format (e.g., 2025-10-15)",
+        error:
+          "Invalid date format. Please use YYYY-MM-DD format (e.g., 2025-10-15)",
       });
     }
 
@@ -5246,7 +5511,8 @@ app.post("/api/daily-report/:companyId/trigger", async (req, res) => {
     // Get the count for the response
     const { count } = await getContactsAddedToday(companyId, date);
 
-    const reportDate = date || moment().tz("Asia/Kuala_Lumpur").format("YYYY-MM-DD");
+    const reportDate =
+      date || moment().tz("Asia/Kuala_Lumpur").format("YYYY-MM-DD");
 
     res.json({
       success: true,
@@ -5278,7 +5544,7 @@ app.post("/api/weekly-report/:companyId/trigger", async (req, res) => {
     if (!botData || !botData[0]?.client) {
       return res.status(404).json({
         success: false,
-        error: "WhatsApp client not found for this company"
+        error: "WhatsApp client not found for this company",
       });
     }
 
@@ -5288,13 +5554,16 @@ app.post("/api/weekly-report/:companyId/trigger", async (req, res) => {
     res.json({
       success: true,
       message: `Weekly report triggered successfully for ${companyId}`,
-      result
+      result,
     });
   } catch (error) {
-    console.error(`[Weekly Report] Error in manual trigger for ${companyId}:`, error);
+    console.error(
+      `[Weekly Report] Error in manual trigger for ${companyId}:`,
+      error
+    );
     res.status(500).json({
       success: false,
-      error: error.message
+      error: error.message,
     });
   }
 });
@@ -5309,13 +5578,13 @@ app.post("/api/health-report/trigger", async (req, res) => {
 
     res.json({
       success: true,
-      message: "Health report triggered and sent successfully"
+      message: "Health report triggered and sent successfully",
     });
   } catch (error) {
     console.error("[Health Report] Error in manual trigger:", error);
     res.status(500).json({
       success: false,
-      error: error.message
+      error: error.message,
     });
   }
 });
@@ -5327,18 +5596,22 @@ app.get("/api/facebook-lead-webhook", (req, res) => {
   const token = req.query["hub.verify_token"];
   const challenge = req.query["hub.challenge"];
 
-  console.log(`Webhook verification attempt: mode=${mode}, token=${token}, challenge=${challenge}`);
+  console.log(
+    `Webhook verification attempt: mode=${mode}, token=${token}, challenge=${challenge}`
+  );
 
   if (mode && token) {
     if (mode === "subscribe" && token === VERIFY_TOKEN) {
-      console.log('Webhook verified successfully');
+      console.log("Webhook verified successfully");
       res.status(200).send(challenge);
     } else {
-      console.log(`Webhook verification failed: expected token '${VERIFY_TOKEN}', got '${token}'`);
+      console.log(
+        `Webhook verification failed: expected token '${VERIFY_TOKEN}', got '${token}'`
+      );
       res.sendStatus(403);
     }
   } else {
-    console.log('Webhook verification failed: missing mode or token');
+    console.log("Webhook verification failed: missing mode or token");
     res.sendStatus(404);
   }
 });
@@ -5346,124 +5619,164 @@ app.get("/api/facebook-lead-webhook", (req, res) => {
 // Facebook Lead Form Webhook Handler - POST
 app.post("/api/facebook-lead-webhook", async (req, res) => {
   try {
-    console.log("Facebook Lead Webhook received:", JSON.stringify(req.body, null, 2));
-    
+    console.log(
+      "Facebook Lead Webhook received:",
+      JSON.stringify(req.body, null, 2)
+    );
+
     const body = req.body;
-    
+
     // Verify this is a page subscription
-    if (body.object === 'page') {
+    if (body.object === "page") {
       // Process each entry
       for (const entry of body.entry) {
         const changes = entry.changes || [];
-        
+
         for (const change of changes) {
-          if (change.field === 'leadgen') {
+          if (change.field === "leadgen") {
             const leadgenData = change.value;
             const leadId = leadgenData.leadgen_id;
             const formId = leadgenData.form_id;
             const pageId = leadgenData.page_id;
             const adgroupId = leadgenData.adgroup_id;
             const campaignId = leadgenData.campaign_id;
-            
-            console.log(`New lead received: Lead ID: ${leadId}, Form ID: ${formId}`);
-            
+
+            console.log(
+              `New lead received: Lead ID: ${leadId}, Form ID: ${formId}`
+            );
+
             // Skip processing if this is test data from Facebook webhook testing
-            if (leadId === '444444444444' || formId === '444444444444') {
-              console.log('Skipping test webhook data');
+            if (leadId === "444444444444" || formId === "444444444444") {
+              console.log("Skipping test webhook data");
               continue;
             }
-            
+
             try {
               // Get lead details from Facebook API
               const leadDetails = await getLeadDetails(leadId);
-              
+
               if (leadDetails && leadDetails.phone) {
                 // Extract phone number and name
                 const phoneNumber = leadDetails.phone;
-                const name = leadDetails.name || 'New Lead';
-                
-                console.log(`Lead details parsed - Name: ${name}, Phone: ${phoneNumber}`);
-                
+                const name = leadDetails.name || "New Lead";
+
+                console.log(
+                  `Lead details parsed - Name: ${name}, Phone: ${phoneNumber}`
+                );
+
                 // Format phone for WhatsApp
                 const formattedPhone = formatPhoneForWhatsApp(phoneNumber);
                 console.log(`Formatted phone number = ${formattedPhone}`);
-                
+
                 // Get company mapping based on form ID or page ID
                 const companyId = await getCompanyIdForLead(formId, pageId);
-                console.log(`Company ID found for form ${formId}/page ${pageId}: ${companyId}`);
-                
+                console.log(
+                  `Company ID found for form ${formId}/page ${pageId}: ${companyId}`
+                );
+
                 if (companyId) {
                   // Check if company ID is in UUID format, if not, try to find the actual UUID
-                  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+                  const uuidRegex =
+                    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
                   let actualCompanyId = companyId;
-                  
+
                   if (!uuidRegex.test(companyId)) {
-                    console.log(`Company ID ${companyId} is not UUID format, looking up actual company UUID...`);
-                    
+                    console.log(
+                      `Company ID ${companyId} is not UUID format, looking up actual company UUID...`
+                    );
+
                     // Try to find the actual company UUID by looking up the company with this identifier
                     try {
                       const companyLookup = await pool.query(
-                        'SELECT id FROM companies WHERE company_id = $1 OR name = $1 OR id::text = $1 LIMIT 1',
+                        "SELECT id FROM companies WHERE company_id = $1 OR name = $1 OR id::text = $1 LIMIT 1",
                         [companyId]
                       );
-                      
+
                       if (companyLookup.rows.length > 0) {
                         actualCompanyId = companyLookup.rows[0].id;
-                        console.log(`Found actual company UUID: ${actualCompanyId} for identifier: ${companyId}`);
+                        console.log(
+                          `Found actual company UUID: ${actualCompanyId} for identifier: ${companyId}`
+                        );
                       } else {
-                        console.error(`Could not find company UUID for identifier: ${companyId}`);
-                        throw new Error(`Could not find company UUID for identifier: ${companyId}`);
+                        console.error(
+                          `Could not find company UUID for identifier: ${companyId}`
+                        );
+                        throw new Error(
+                          `Could not find company UUID for identifier: ${companyId}`
+                        );
                       }
                     } catch (lookupError) {
-                      console.error(`Error looking up company UUID for ${companyId}:`, lookupError);
-                      throw new Error(`Error looking up company UUID for ${companyId}: ${lookupError.message}`);
+                      console.error(
+                        `Error looking up company UUID for ${companyId}:`,
+                        lookupError
+                      );
+                      throw new Error(
+                        `Error looking up company UUID for ${companyId}: ${lookupError.message}`
+                      );
                     }
                   }
-                  
+
                   // Get company-specific welcome message (use UUID for database)
-                  const welcomeMessage = await getWelcomeMessageForCompany(actualCompanyId, name);
-                  
+                  const welcomeMessage = await getWelcomeMessageForCompany(
+                    actualCompanyId,
+                    name
+                  );
+
                   // Send message using existing v2/messages/text API (use original ID for WhatsApp bot)
                   const messageResponse = await axios.post(
-                    `http://localhost:${port}/api/v2/messages/text/${companyId}/${encodeURIComponent(formattedPhone)}`,
+                    `http://localhost:${port}/api/v2/messages/text/${companyId}/${encodeURIComponent(
+                      formattedPhone
+                    )}`,
                     {
                       message: welcomeMessage,
-                      phoneIndex: 0
+                      phoneIndex: 0,
                     }
                   );
-                  
-                  console.log(`Message sent to lead ${leadId} for company ${companyId} (UUID: ${actualCompanyId}):`, messageResponse.status);
-                  
+
+                  console.log(
+                    `Message sent to lead ${leadId} for company ${companyId} (UUID: ${actualCompanyId}):`,
+                    messageResponse.status
+                  );
+
                   // Store lead in database
-                  await storeLeadInDatabase(leadDetails, formId, pageId, campaignId, adgroupId, companyId);
+                  await storeLeadInDatabase(
+                    leadDetails,
+                    formId,
+                    pageId,
+                    campaignId,
+                    adgroupId,
+                    companyId
+                  );
                 } else {
-                  console.log(`No company mapping found for form ${formId} or page ${pageId}`);
+                  console.log(
+                    `No company mapping found for form ${formId} or page ${pageId}`
+                  );
                 }
-                
               } else {
                 console.log(`No phone number found for lead ${leadId}`);
                 if (leadDetails) {
-                  console.log('Lead details received but no valid phone:', JSON.stringify(leadDetails, null, 2));
+                  console.log(
+                    "Lead details received but no valid phone:",
+                    JSON.stringify(leadDetails, null, 2)
+                  );
                 } else {
-                  console.log('No lead details received from Facebook API');
+                  console.log("No lead details received from Facebook API");
                 }
               }
-              
             } catch (error) {
               console.error(`Error processing lead ${leadId}:`, error);
             }
           }
         }
       }
-      
-      res.status(200).send('EVENT_RECEIVED');
+
+      res.status(200).send("EVENT_RECEIVED");
     } else {
       res.sendStatus(404);
     }
-    
   } catch (error) {
-    console.error('Facebook webhook error:', error);
-    res.status(500).send('Internal Server Error');
+    console.error("Facebook webhook error:", error);
+    res.status(500).send("Internal Server Error");
   }
 });
 
@@ -5471,66 +5784,74 @@ app.post("/api/facebook-lead-webhook", async (req, res) => {
 async function getLeadDetails(leadId) {
   try {
     const accessToken = process.env.FACEBOOK_ACCESS_TOKEN;
-    
+
     if (!accessToken) {
-      console.error('Facebook access token not found in environment variables');
+      console.error("Facebook access token not found in environment variables");
       return null;
     }
-    
-    console.log('Using Facebook access token:', accessToken.substring(0, 10) + '...');
-    
+
+    console.log(
+      "Using Facebook access token:",
+      accessToken.substring(0, 10) + "..."
+    );
+
     const response = await axios.get(
       `https://graph.facebook.com/v18.0/${leadId}?fields=id,created_time,field_data&access_token=${accessToken}`
     );
-    
+
     const leadData = response.data;
-    console.log('Raw lead data from Facebook:', JSON.stringify(leadData, null, 2));
-    
+    console.log(
+      "Raw lead data from Facebook:",
+      JSON.stringify(leadData, null, 2)
+    );
+
     const fieldData = leadData.field_data || [];
-    console.log('Field data extracted:', JSON.stringify(fieldData, null, 2));
-    
+    console.log("Field data extracted:", JSON.stringify(fieldData, null, 2));
+
     // Extract common field names
-    const phoneField = fieldData.find(field => 
-      field.name && (
-        field.name.toLowerCase().includes('phone') ||
-        field.name.toLowerCase().includes('mobile') ||
-        field.name.toLowerCase().includes('contact')
-      )
+    const phoneField = fieldData.find(
+      (field) =>
+        field.name &&
+        (field.name.toLowerCase().includes("phone") ||
+          field.name.toLowerCase().includes("mobile") ||
+          field.name.toLowerCase().includes("contact"))
     );
-    
-    const nameField = fieldData.find(field => 
-      field.name && (
-        field.name.toLowerCase().includes('name') ||
-        field.name.toLowerCase().includes('full_name') ||
-        field.name.toLowerCase().includes('first_name')
-      )
+
+    const nameField = fieldData.find(
+      (field) =>
+        field.name &&
+        (field.name.toLowerCase().includes("name") ||
+          field.name.toLowerCase().includes("full_name") ||
+          field.name.toLowerCase().includes("first_name"))
     );
-    
-    const emailField = fieldData.find(field => 
-      field.name && field.name.toLowerCase().includes('email')
+
+    const emailField = fieldData.find(
+      (field) => field.name && field.name.toLowerCase().includes("email")
     );
-    
+
     return {
       id: leadData.id,
       created_time: leadData.created_time,
       phone: phoneField && phoneField.values ? phoneField.values[0] : null,
       name: nameField && nameField.values ? nameField.values[0] : null,
       email: emailField && emailField.values ? emailField.values[0] : null,
-      raw_data: fieldData
+      raw_data: fieldData,
     };
-    
   } catch (error) {
-    console.error('Error fetching lead details from Facebook:', error);
-    
+    console.error("Error fetching lead details from Facebook:", error);
+
     // Check if it's a token error
     if (error.response && error.response.data && error.response.data.error) {
       const fbError = error.response.data.error;
-      if (fbError.code === 190 || fbError.message.includes('access token')) {
-        console.error('Facebook access token is invalid or expired:', fbError.message);
+      if (fbError.code === 190 || fbError.message.includes("access token")) {
+        console.error(
+          "Facebook access token is invalid or expired:",
+          fbError.message
+        );
         // You could implement token refresh logic here
       }
     }
-    
+
     return null;
   }
 }
@@ -5539,38 +5860,37 @@ async function getLeadDetails(leadId) {
 app.get("/api/facebook-token-status", async (req, res) => {
   try {
     const accessToken = process.env.FACEBOOK_ACCESS_TOKEN;
-    
+
     if (!accessToken) {
       return res.status(400).json({
         success: false,
-        error: 'Facebook access token not configured'
+        error: "Facebook access token not configured",
       });
     }
-    
+
     // Test the token by making a simple API call
     const response = await axios.get(
       `https://graph.facebook.com/v18.0/me?access_token=${accessToken}`
     );
-    
+
     res.json({
       success: true,
-      message: 'Facebook access token is valid',
-      user: response.data
+      message: "Facebook access token is valid",
+      user: response.data,
     });
-    
   } catch (error) {
-    console.error('Facebook token validation error:', error);
-    
-    let errorMessage = 'Unknown error';
+    console.error("Facebook token validation error:", error);
+
+    let errorMessage = "Unknown error";
     if (error.response && error.response.data && error.response.data.error) {
       const fbError = error.response.data.error;
       errorMessage = fbError.message;
     }
-    
+
     res.status(400).json({
       success: false,
       error: errorMessage,
-      details: error.response?.data
+      details: error.response?.data,
     });
   }
 });
@@ -5579,11 +5899,11 @@ app.get("/api/facebook-token-status", async (req, res) => {
 app.get("/api/facebook-form-mappings", async (req, res) => {
   try {
     const { company_id } = req.query;
-    
+
     if (!company_id) {
-      return res.status(400).json({ error: 'company_id is required' });
+      return res.status(400).json({ error: "company_id is required" });
     }
-    
+
     const query = `
       SELECT id, company_id, form_id, form_name, page_id, page_name, 
              welcome_message, is_active, created_at, updated_at
@@ -5591,77 +5911,99 @@ app.get("/api/facebook-form-mappings", async (req, res) => {
       WHERE company_id = $1
       ORDER BY created_at DESC
     `;
-    
+
     const result = await pool.query(query, [company_id]);
     res.json(result.rows);
   } catch (error) {
-    console.error('Error fetching Facebook form mappings:', error);
-    res.status(500).json({ error: 'Failed to fetch form mappings' });
+    console.error("Error fetching Facebook form mappings:", error);
+    res.status(500).json({ error: "Failed to fetch form mappings" });
   }
 });
 
 app.post("/api/facebook-form-mappings", async (req, res) => {
   try {
-    const { company_id, form_id, form_name, page_id, page_name, welcome_message } = req.body;
-    
+    const {
+      company_id,
+      form_id,
+      form_name,
+      page_id,
+      page_name,
+      welcome_message,
+    } = req.body;
+
     const query = `
       INSERT INTO facebook_form_mappings 
       (company_id, form_id, form_name, page_id, page_name, welcome_message)
       VALUES ($1, $2, $3, $4, $5, $6)
       RETURNING *
     `;
-    
-    const result = await pool.query(query, [company_id, form_id, form_name, page_id, page_name, welcome_message]);
-    
+
+    const result = await pool.query(query, [
+      company_id,
+      form_id,
+      form_name,
+      page_id,
+      page_name,
+      welcome_message,
+    ]);
+
     res.json({
       success: true,
-      mapping: result.rows[0]
+      mapping: result.rows[0],
     });
   } catch (error) {
-    console.error('Error creating Facebook form mapping:', error);
-    res.status(500).json({ 
+    console.error("Error creating Facebook form mapping:", error);
+    res.status(500).json({
       success: false,
-      error: 'Failed to create form mapping' 
+      error: "Failed to create form mapping",
     });
   }
 });
 app.put("/api/facebook-form-mappings/:id", async (req, res) => {
   try {
     const { id } = req.params;
-    const { form_name, page_name, welcome_message, is_active, company_id } = req.body;
-    
+    const { form_name, page_name, welcome_message, is_active, company_id } =
+      req.body;
+
     if (!company_id) {
-      return res.status(400).json({ 
+      return res.status(400).json({
         success: false,
-        error: 'company_id is required' 
+        error: "company_id is required",
       });
     }
-    
+
     const query = `
       UPDATE facebook_form_mappings 
       SET form_name = $1, page_name = $2, welcome_message = $3, is_active = $4
       WHERE id = $5 AND company_id = $6
       RETURNING *
     `;
-    
-    const result = await pool.query(query, [form_name, page_name, welcome_message, is_active, id, company_id]);
-    
+
+    const result = await pool.query(query, [
+      form_name,
+      page_name,
+      welcome_message,
+      is_active,
+      id,
+      company_id,
+    ]);
+
     if (result.rows.length === 0) {
-      return res.status(404).json({ 
+      return res.status(404).json({
         success: false,
-        error: 'Form mapping not found or access denied' 
+        error: "Form mapping not found or access denied",
       });
     }
-    
+
     res.json({
       success: true,
-      mapping: result.rows[0]
+      mapping: result.rows[0],
     });
   } catch (error) {
-    console.error('Error updating Facebook form mapping:', error);
-    res.status(500).json({ 
+    console.error("Error updating Facebook form mapping:", error);
+    res.status(500).json({
       success: false,
-      error: 'Failed to update form mapping' 
+      error: "Failed to update form mapping",
     });
   }
 });
@@ -5670,30 +6012,30 @@ app.delete("/api/facebook-form-mappings/:id", async (req, res) => {
   try {
     const { id } = req.params;
     const { company_id } = req.query;
-    
+
     if (!company_id) {
-      return res.status(400).json({ 
+      return res.status(400).json({
         success: false,
-        error: 'company_id is required' 
+        error: "company_id is required",
       });
     }
-    
+
     const query = `DELETE FROM facebook_form_mappings WHERE id = $1 AND company_id = $2`;
     const result = await pool.query(query, [id, company_id]);
-    
+
     if (result.rowCount === 0) {
-      return res.status(404).json({ 
+      return res.status(404).json({
         success: false,
-        error: 'Form mapping not found or access denied' 
+        error: "Form mapping not found or access denied",
       });
     }
-    
+
     res.json({ success: true });
   } catch (error) {
-    console.error('Error deleting Facebook form mapping:', error);
-    res.status(500).json({ 
+    console.error("Error deleting Facebook form mapping:", error);
+    res.status(500).json({
       success: false,
-      error: 'Failed to delete form mapping' 
+      error: "Failed to delete form mapping",
     });
   }
 });
@@ -5702,11 +6044,11 @@ app.delete("/api/facebook-form-mappings/:id", async (req, res) => {
 app.get("/api/facebook-leads", async (req, res) => {
   try {
     const { company_id } = req.query;
-    
+
     if (!company_id) {
-      return res.status(400).json({ error: 'company_id is required' });
+      return res.status(400).json({ error: "company_id is required" });
     }
-    
+
     const query = `
       SELECT fl.*, fm.form_name, fm.page_name
       FROM facebook_leads fl
@@ -5715,12 +6057,12 @@ app.get("/api/facebook-leads", async (req, res) => {
       ORDER BY fl.created_at DESC
       LIMIT 100
     `;
-    
+
     const result = await pool.query(query, [company_id]);
     res.json(result.rows);
   } catch (error) {
-    console.error('Error fetching Facebook leads:', error);
-    res.status(500).json({ error: 'Failed to fetch leads' });
+    console.error("Error fetching Facebook leads:", error);
+    res.status(500).json({ error: "Failed to fetch leads" });
   }
 });
 
@@ -5728,11 +6070,11 @@ app.get("/api/facebook-leads", async (req, res) => {
 app.get("/api/facebook-lead-analytics", async (req, res) => {
   try {
     const { company_id } = req.query;
-    
+
     if (!company_id) {
-      return res.status(400).json({ error: 'company_id is required' });
+      return res.status(400).json({ error: "company_id is required" });
     }
-    
+
     const query = `
       SELECT 
         fl.company_id,
@@ -5754,32 +6096,31 @@ app.get("/api/facebook-lead-analytics", async (req, res) => {
       GROUP BY fl.company_id, COALESCE(fm.form_name, 'Unknown Form'), COALESCE(fm.page_name, 'Unknown Page')
       ORDER BY total_leads DESC
     `;
-    
+
     const result = await pool.query(query, [company_id]);
-    
+
     // If no leads found, return empty analytics with company info
     if (result.rows.length === 0) {
       const emptyAnalytics = {
         company_id: company_id,
-        form_name: 'No Data',
-        page_name: 'No Data',
+        form_name: "No Data",
+        page_name: "No Data",
         total_leads: 0,
         messages_sent: 0,
         leads_today: 0,
         leads_this_week: 0,
         leads_this_month: 0,
-        message_success_rate: 0
+        message_success_rate: 0,
       };
       return res.json([emptyAnalytics]);
     }
-    
+
     res.json(result.rows);
   } catch (error) {
-    console.error('Error fetching Facebook lead analytics:', error);
-    res.status(500).json({ error: 'Failed to fetch analytics' });
+    console.error("Error fetching Facebook lead analytics:", error);
+    res.status(500).json({ error: "Failed to fetch analytics" });
   }
 });
-
 
 // Helper function to get company ID based on form or page
 async function getCompanyIdForLead(formId, pageId) {
@@ -5790,35 +6131,34 @@ async function getCompanyIdForLead(formId, pageId) {
       WHERE form_id = $1 AND is_active = true
       LIMIT 1
     `;
-    
+
     let result = await pool.query(query, [formId]);
-    
+
     if (result.rows.length > 0) {
       return result.rows[0].company_id;
     }
-    
+
     // Fallback to page ID
     query = `
       SELECT company_id FROM facebook_page_mappings 
       WHERE page_id = $1 AND is_active = true
       LIMIT 1
     `;
-    
+
     result = await pool.query(query, [pageId]);
-    
+
     if (result.rows.length > 0) {
       return result.rows[0].company_id;
     }
-    
+
     // Default fallback - use first active company
     query = `SELECT id FROM companies WHERE is_active = true ORDER BY id LIMIT 1`;
     result = await pool.query(query);
-    
-    return result.rows.length > 0 ? result.rows[0].id : '1';
-    
+
+    return result.rows.length > 0 ? result.rows[0].id : "1";
   } catch (error) {
-    console.error('Error getting company ID for lead:', error);
-    return '1'; // Default fallback
+    console.error("Error getting company ID for lead:", error);
+    return "1"; // Default fallback
   }
 }
 
@@ -5829,93 +6169,124 @@ async function getWelcomeMessageForCompany(companyId, leadName) {
       SELECT facebook_welcome_message FROM companies 
       WHERE id = $1
     `;
-    
+
     const result = await pool.query(query, [companyId]);
-    
+
     if (result.rows.length > 0 && result.rows[0].facebook_welcome_message) {
       // Replace placeholders with actual values
       return result.rows[0].facebook_welcome_message
         .replace(/\{name\}/g, leadName)
         .replace(/\{lead_name\}/g, leadName);
     }
-    
-    
+
     // Default message
     return `Hi ${leadName}! 👋\n\nThank you for your interest in our services. We've received your information and will get back to you shortly.\n\nA member of our team will contact you soon to discuss how we can help you.`;
-    
   } catch (error) {
-    console.error('Error getting welcome message:', error);
+    console.error("Error getting welcome message:", error);
     // Return default message
     return `Hi ${leadName}! 👋\n\nThank you for your interest in our services. We've received your information and will get back to you shortly.`;
   }
 }
-async function processLead(leadData, formId, pageId, adId, adGroupId, companyId, welcomeMessage) {
+async function processLead(
+  leadData,
+  formId,
+  pageId,
+  adId,
+  adGroupId,
+  companyId,
+  welcomeMessage
+) {
   try {
     // Extract phone number and name from field_data
     let phone = null;
     let name = null;
     let email = null;
-    
+
     if (leadData.field_data) {
       for (const field of leadData.field_data) {
-        if (field.name === 'phone_number' || field.name === 'phone') {
+        if (field.name === "phone_number" || field.name === "phone") {
           phone = field.values[0];
-        } else if (field.name === 'full_name' || field.name === 'name') {
+        } else if (field.name === "full_name" || field.name === "name") {
           name = field.values[0];
-        } else if (field.name === 'email' || field.name === 'email_address') {
+        } else if (field.name === "email" || field.name === "email_address") {
           email = field.values[0];
         }
       }
     }
-    
+
     if (!phone) {
       console.log(`No phone number found for lead ${leadData.id}`);
       return;
     }
-    
+
     // Format phone number for WhatsApp
     const formattedPhone = formatPhoneForWhatsApp(phone);
-    
+
     // Store lead in database
     const result = await pool.query(
-      'INSERT INTO facebook_leads (facebook_lead_id, form_id, page_id, campaign_id, adgroup_id, company_id, phone, name, email, raw_data, message_sent, message_sent_at, message_status) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING *',
-      [leadData.id, formId, pageId, adId, adGroupId, companyId, phone, name, email, JSON.stringify(leadData), false, null, 'pending']
+      "INSERT INTO facebook_leads (facebook_lead_id, form_id, page_id, campaign_id, adgroup_id, company_id, phone, name, email, raw_data, message_sent, message_sent_at, message_status) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING *",
+      [
+        leadData.id,
+        formId,
+        pageId,
+        adId,
+        adGroupId,
+        companyId,
+        phone,
+        name,
+        email,
+        JSON.stringify(leadData),
+        false,
+        null,
+        "pending",
+      ]
     );
-    
+
     // Send WhatsApp message
-    const message = welcomeMessage.replace('{{name}}', name || 'there');
-    
+    const message = welcomeMessage.replace("{{name}}", name || "there");
+
     try {
-      const response = await axios.post(`http://localhost:8443/api/v2/messages/text/${companyId}/${formattedPhone}`, {
-        message: message,
-        phoneIndex: 0
-      });
-      
+      const response = await axios.post(
+        `http://localhost:8443/api/v2/messages/text/${companyId}/${formattedPhone}`,
+        {
+          message: message,
+          phoneIndex: 0,
+        }
+      );
+
       // Update lead status
       await pool.query(
-        'UPDATE facebook_leads SET message_sent = true, message_sent_at = NOW(), message_status = $1 WHERE id = $2',
-        ['sent', result.rows[0].id]
+        "UPDATE facebook_leads SET message_sent = true, message_sent_at = NOW(), message_status = $1 WHERE id = $2",
+        ["sent", result.rows[0].id]
       );
-      
+
       console.log(`WhatsApp message sent successfully to ${formattedPhone}`);
     } catch (whatsappError) {
-      console.error('Error sending WhatsApp message:', whatsappError);
-      
+      console.error("Error sending WhatsApp message:", whatsappError);
+
       // Update lead status
       await pool.query(
-        'UPDATE facebook_leads SET message_sent = false, message_status = $1 WHERE id = $2',
-        ['failed', result.rows[0].id]
+        "UPDATE facebook_leads SET message_sent = false, message_status = $1 WHERE id = $2",
+        ["failed", result.rows[0].id]
       );
     }
-    
   } catch (error) {
-    console.error('Error processing lead:', error);
+    console.error("Error processing lead:", error);
   }
 }
 // Helper function to store lead in database
-async function storeLeadInDatabase(leadDetails, formId, pageId, campaignId, adgroupId, companyId) {
+async function storeLeadInDatabase(
+  leadDetails,
+  formId,
+  pageId,
+  campaignId,
+  adgroupId,
+  companyId
+) {
   try {
-    console.log(`[DATABASE] Attempting to store lead ${leadDetails.id} for company ${companyId}`);
+    console.log(
+      `[DATABASE] Attempting to store lead ${leadDetails.id} for company ${companyId}`
+    );
     console.log(`[DATABASE] Lead details:`, {
       id: leadDetails.id,
       phone: leadDetails.phone,
@@ -5923,9 +6294,9 @@ async function storeLeadInDatabase(leadDetails, formId, pageId, campaignId, adgr
       email: leadDetails.email,
       formId,
       pageId,
-      companyId
+      companyId,
     });
-    
+
     const query = `
       INSERT INTO facebook_leads (
         facebook_lead_id, form_id, page_id, campaign_id, adgroup_id, company_id,
@@ -5934,7 +6305,7 @@ async function storeLeadInDatabase(leadDetails, formId, pageId, campaignId, adgr
       ON CONFLICT (facebook_lead_id) DO UPDATE SET
         updated_at = NOW()
     `;
-    
+
     const result = await pool.query(query, [
       leadDetails.id,
       formId,
@@ -5946,24 +6317,23 @@ async function storeLeadInDatabase(leadDetails, formId, pageId, campaignId, adgr
       leadDetails.name,
       leadDetails.email,
       JSON.stringify(leadDetails.raw_data),
-      'sent'
+      "sent",
     ]);
-    
-    console.log(`✅ Lead ${leadDetails.id} stored in database for company ${companyId}`);
+
+    console.log(
+      `✅ Lead ${leadDetails.id} stored in database for company ${companyId}`
+    );
     console.log(`[DATABASE] Insert result:`, result.rows[0]);
-    
   } catch (error) {
-    console.error('❌ Error storing lead in database:', error);
-    console.error('❌ Error details:', {
+    console.error("❌ Error storing lead in database:", error);
+    console.error("❌ Error details:", {
       message: error.message,
       code: error.code,
       detail: error.detail,
-      constraint: error.constraint
+      constraint: error.constraint,
     });
   }
 }
-
-
 
 app.put("/api/update-user", async (req, res) => {
   try {
@@ -6392,7 +6762,8 @@ app.post(
           .json({ error: "fileName and companyId are required" });
       }
 
-      const baseUrl = process.env.BASE_URL || "https://bisnesgpt.jutateknologi.com";
+      const baseUrl =
+        process.env.BASE_URL || "https://bisnesgpt.jutateknologi.com";
       const fileUrl = `${baseUrl}/media/files/${companyId}/${req.file.filename}`;
 
       console.log(
@@ -7636,15 +8007,23 @@ app.post("/api/schedule-message/:companyId", async (req, res) => {
           chatIds = [];
         }
       } catch (e) {
-        console.warn("Error normalizing chatIds, falling back to empty array:", e.message);
+        console.warn(
+          "Error normalizing chatIds, falling back to empty array:",
+          e.message
+        );
         chatIds = [];
       }
 
       // Basic validation: accept only typical WA chatId formats like '60123456789@c.us' or '12345@g.us'
       const validChatIdRegex = /^\+?\d+@(?:c\.us|g\.us)$/i;
-      const invalidSamples = chatIds.filter((id) => !validChatIdRegex.test(String(id)));
+      const invalidSamples = chatIds.filter(
+        (id) => !validChatIdRegex.test(String(id))
+      );
       if (invalidSamples.length > 0) {
-        console.warn("Scheduling request contains invalid chatIds (they will be removed):", invalidSamples.slice(0, 10));
+        console.warn(
+          "Scheduling request contains invalid chatIds (they will be removed):",
+          invalidSamples.slice(0, 10)
+        );
         // Remove invalid entries
         chatIds = chatIds.filter((id) => validChatIdRegex.test(String(id)));
       }
@@ -7733,7 +8112,11 @@ app.post("/api/schedule-message/:companyId", async (req, res) => {
 
       // CLEANUP: Remove stale queued jobs that no longer have a corresponding DB row
       try {
-        const queuedJobs = await queue.getJobs(["delayed", "waiting", "active"]);
+        const queuedJobs = await queue.getJobs([
+          "delayed",
+          "waiting",
+          "active",
+        ]);
         for (const qjob of queuedJobs) {
           try {
             const queuedJobId = qjob.id;
@@ -7745,28 +8128,48 @@ app.post("/api/schedule-message/:companyId", async (req, res) => {
             );
 
             if (checkJob.rowCount === 0) {
-              console.log(`Removing stale queued job ${queuedJobId} for company ${companyId} - no DB row found`);
+              console.log(
+                `Removing stale queued job ${queuedJobId} for company ${companyId} - no DB row found`
+              );
               try {
                 await qjob.remove();
-                console.log(`Removed stale job ${queuedJobId} from queue for company ${companyId}`);
+                console.log(
+                  `Removed stale job ${queuedJobId} from queue for company ${companyId}`
+                );
               } catch (rmErr) {
-                console.error(`Failed to remove stale queued job ${queuedJobId} for company ${companyId}:`, rmErr);
+                console.error(
+                  `Failed to remove stale queued job ${queuedJobId} for company ${companyId}:`,
+                  rmErr
+                );
               }
-            } else if (checkJob.rows[0].status !== 'scheduled') {
-              console.log(`Removing queued job ${queuedJobId} for company ${companyId} because DB status is '${checkJob.rows[0].status}'`);
+            } else if (checkJob.rows[0].status !== "scheduled") {
+              console.log(
+                `Removing queued job ${queuedJobId} for company ${companyId} because DB status is '${checkJob.rows[0].status}'`
+              );
               try {
                 await qjob.remove();
-                console.log(`Removed queued job ${queuedJobId} due to status change for company ${companyId}`);
+                console.log(
+                  `Removed queued job ${queuedJobId} due to status change for company ${companyId}`
+                );
               } catch (rmErr) {
-                console.error(`Failed to remove queued job ${queuedJobId} for company ${companyId}:`, rmErr);
+                console.error(
+                  `Failed to remove queued job ${queuedJobId} for company ${companyId}:`,
+                  rmErr
+                );
               }
             }
           } catch (innerErr) {
-            console.error(`Error checking queued job ${qjob.id} for company ${companyId}:`, innerErr);
+            console.error(
+              `Error checking queued job ${qjob.id} for company ${companyId}:`,
+              innerErr
+            );
           }
         }
       } catch (queueErr) {
-        console.error(`Error while cleaning up queued jobs for company ${companyId}:`, queueErr);
+        console.error(
+          `Error while cleaning up queued jobs for company ${companyId}:`,
+          queueErr
+        );
       }
       const batches = [];
 
@@ -9591,7 +9994,7 @@ async function syncContacts(client, companyId, phoneIndex = 0) {
         ]);
 
         // Fetch and insert messages using the same method as addMessageToPostgres
-        const messages = await chat.fetchMessages({limit:200});
+        const messages = await chat.fetchMessages({ limit: 200 });
         let lastMessage = null;
 
         for (const msg of messages) {
@@ -9879,7 +10282,7 @@ async function syncSingleContact(
     const phoneWithoutPlus = contactPhone.startsWith("+")
       ? contactPhone.slice(1)
       : contactPhone;
-    
+
     // Check if contact is a group by querying the contacts table
     let isGroup = false;
     try {
@@ -9888,19 +10291,27 @@ async function syncSingleContact(
         WHERE phone = $1 AND company_id = $2
         LIMIT 1
       `;
-      const contactResult = await sqlDb.query(contactQuery, [phoneWithPlus, companyId]);
-      
+      const contactResult = await sqlDb.query(contactQuery, [
+        phoneWithPlus,
+        companyId,
+      ]);
+
       if (contactResult.rows.length > 0) {
         isGroup = contactResult.rows[0].is_group || false;
       }
     } catch (error) {
-      console.error(`Error checking if contact is group for ${phoneWithPlus}:`, error);
+      console.error(
+        `Error checking if contact is group for ${phoneWithPlus}:`,
+        error
+      );
       // Default to false if query fails
       isGroup = false;
     }
-    
+
     // Set chatId based on whether contact is a group or not
-    const chatId = isGroup ? `${phoneWithoutPlus}@g.us` : `${phoneWithoutPlus}@c.us`;
+    const chatId = isGroup
+      ? `${phoneWithoutPlus}@g.us`
+      : `${phoneWithoutPlus}@c.us`;
 
     try {
       const sync = await client.syncHistory(chatId);
@@ -9942,7 +10353,7 @@ async function syncSingleContact(
       ]);
 
       // Fetch and insert messages using the same method as addMessageToPostgres
-      const messages = await chat.fetchMessages({limit:200}); // Fetch more messages for single contact
+      const messages = await chat.fetchMessages({ limit: 200 }); // Fetch more messages for single contact
       let lastMessage = null;
 
       const totalMessages = messages.length;
@@ -10233,9 +10644,16 @@ async function syncSingleContactName(
   }
 }
 
-async function syncMessagesAndHandleAutoReplies(botName, phoneCount, forceEnabled = false, customHours = null) {
+async function syncMessagesAndHandleAutoReplies(
+  botName,
+  phoneCount,
+  forceEnabled = false,
+  customHours = null
+) {
   console.log(
-    `=== Starting syncMessagesAndHandleAutoReplies for bot ${botName} ${forceEnabled ? '(Manual trigger)' : ''} ===`
+    `=== Starting syncMessagesAndHandleAutoReplies for bot ${botName} ${
+      forceEnabled ? "(Manual trigger)" : ""
+    } ===`
   );
 
   try {
@@ -10248,7 +10666,9 @@ async function syncMessagesAndHandleAutoReplies(botName, phoneCount, forceEnable
       if (customHours) {
         autoReplySettings.autoReplyHours = customHours.toString();
       }
-      console.log(`[AutoReply] Manual trigger - forcing auto-reply enabled for bot ${botName}`);
+      console.log(
+        `[AutoReply] Manual trigger - forcing auto-reply enabled for bot ${botName}`
+      );
     } else if (!autoReplySettings || !autoReplySettings.enabled) {
       console.log(
         `[AutoReply] Auto-reply is disabled for bot ${botName}, skipping auto-reply processing`
@@ -11654,7 +12074,6 @@ async function sendScheduledMessage(message) {
             continue;
           }
 
-
           console.log(`[Company ${companyId}] Message prepared:`, {
             originalLength: messageText?.length,
             processedLength: processedMessageText?.length,
@@ -11909,7 +12328,11 @@ async function sendScheduledMessage(message) {
 async function scheduleAllMessages(specificCompanyId = null) {
   const client = await pool.connect();
   try {
-    console.log(`Scheduling all previous scheduled messages${specificCompanyId ? ` for company ${specificCompanyId}` : ''}...`);
+    console.log(
+      `Scheduling all previous scheduled messages${
+        specificCompanyId ? ` for company ${specificCompanyId}` : ""
+      }...`
+    );
 
     // Build query based on whether we're targeting a specific company
     let companiesQuery, companiesValues;
@@ -11927,7 +12350,7 @@ async function scheduleAllMessages(specificCompanyId = null) {
       `;
       companiesValues = [];
     }
-    
+
     const companiesResult = await client.query(companiesQuery, companiesValues);
 
     for (const companyRow of companiesResult.rows) {
@@ -11958,7 +12381,9 @@ async function scheduleAllMessages(specificCompanyId = null) {
       `;
       const messagesResult = await client.query(messagesQuery, [companyId]);
 
-      console.log(`Found ${messagesResult.rows.length} scheduled messages for company ${companyId}`);
+      console.log(
+        `Found ${messagesResult.rows.length} scheduled messages for company ${companyId}`
+      );
 
       for (const message of messagesResult.rows) {
         const messageId = message.id;
@@ -11972,26 +12397,38 @@ async function scheduleAllMessages(specificCompanyId = null) {
 
         // Check if this is a batch message or a main message
         const isBatch = messageId !== scheduleId;
-        
+
         if (isBatch) {
           // This is a batch message
-          console.log(`Checking batch message ${messageId} for schedule ${scheduleId} with delay ${delay}ms`);
+          console.log(
+            `Checking batch message ${messageId} for schedule ${scheduleId} with delay ${delay}ms`
+          );
           // Verify parent schedule still exists and is scheduled (protect against deleted main rows)
           try {
             const parentCheckQuery = `SELECT id, status FROM scheduled_messages WHERE id = $1 AND company_id = $2 LIMIT 1`;
-            const parentCheck = await client.query(parentCheckQuery, [scheduleId, companyId]);
+            const parentCheck = await client.query(parentCheckQuery, [
+              scheduleId,
+              companyId,
+            ]);
             if (parentCheck.rowCount === 0) {
-              console.log(`Parent schedule ${scheduleId} not found for batch ${messageId} - skipping`);
+              console.log(
+                `Parent schedule ${scheduleId} not found for batch ${messageId} - skipping`
+              );
               continue;
             }
 
             const parentStatus = parentCheck.rows[0].status;
-            if (parentStatus !== 'scheduled') {
-              console.log(`Parent schedule ${scheduleId} status is '${parentStatus}' (not 'scheduled') - skipping batch ${messageId}`);
+            if (parentStatus !== "scheduled") {
+              console.log(
+                `Parent schedule ${scheduleId} status is '${parentStatus}' (not 'scheduled') - skipping batch ${messageId}`
+              );
               continue;
             }
           } catch (checkErr) {
-            console.error(`Error verifying parent schedule ${scheduleId} for batch ${messageId}:`, checkErr);
+            console.error(
+              `Error verifying parent schedule ${scheduleId} for batch ${messageId}:`,
+              checkErr
+            );
             continue;
           }
           // Double-check the batch row still exists and is scheduled. If not, remove any queued job and skip.
@@ -12002,40 +12439,59 @@ async function scheduleAllMessages(specificCompanyId = null) {
             );
 
             if (msgCheck.rowCount === 0) {
-              console.log(`Batch message ${messageId} no longer exists in DB for company ${companyId} - removing queued job (if any) and skipping`);
+              console.log(
+                `Batch message ${messageId} no longer exists in DB for company ${companyId} - removing queued job (if any) and skipping`
+              );
               const existingJob = await queue.getJob(messageId);
               if (existingJob) {
                 try {
                   await existingJob.remove();
-                  console.log(`Removed queued job ${messageId} for company ${companyId} because DB row is gone`);
+                  console.log(
+                    `Removed queued job ${messageId} for company ${companyId} because DB row is gone`
+                  );
                 } catch (rmErr) {
-                  console.error(`Failed to remove queued job ${messageId} for company ${companyId}:`, rmErr);
+                  console.error(
+                    `Failed to remove queued job ${messageId} for company ${companyId}:`,
+                    rmErr
+                  );
                 }
               }
               continue;
             }
 
-            if (msgCheck.rows[0].status !== 'scheduled') {
-              console.log(`Batch message ${messageId} status is '${msgCheck.rows[0].status}' (not 'scheduled') - removing queued job (if any) and skipping`);
+            if (msgCheck.rows[0].status !== "scheduled") {
+              console.log(
+                `Batch message ${messageId} status is '${msgCheck.rows[0].status}' (not 'scheduled') - removing queued job (if any) and skipping`
+              );
               const existingJob = await queue.getJob(messageId);
               if (existingJob) {
                 try {
                   await existingJob.remove();
-                  console.log(`Removed queued job ${messageId} for company ${companyId} because status changed`);
+                  console.log(
+                    `Removed queued job ${messageId} for company ${companyId} because status changed`
+                  );
                 } catch (rmErr) {
-                  console.error(`Failed to remove queued job ${messageId} for company ${companyId}:`, rmErr);
+                  console.error(
+                    `Failed to remove queued job ${messageId} for company ${companyId}:`,
+                    rmErr
+                  );
                 }
               }
               continue;
             }
           } catch (msgErr) {
-            console.error(`Error verifying batch message ${messageId} before scheduling:`, msgErr);
+            console.error(
+              `Error verifying batch message ${messageId} before scheduling:`,
+              msgErr
+            );
             continue;
           }
 
           const existingJob = await queue.getJob(messageId);
           if (!existingJob) {
-            console.log(`Scheduling batch message ${messageId} for schedule ${scheduleId} with delay ${delay}ms`);
+            console.log(
+              `Scheduling batch message ${messageId} for schedule ${scheduleId} with delay ${delay}ms`
+            );
             await queue.add(
               "send-message-batch",
               {
@@ -12052,7 +12508,9 @@ async function scheduleAllMessages(specificCompanyId = null) {
             );
           }
         } else {
-          console.log(`Checking main message ${messageId} with delay ${delay}ms`);
+          console.log(
+            `Checking main message ${messageId} with delay ${delay}ms`
+          );
           const batchesQuery = `
             SELECT COUNT(*) as batch_count FROM scheduled_messages 
             WHERE company_id = $1 
@@ -12060,11 +12518,16 @@ async function scheduleAllMessages(specificCompanyId = null) {
             AND id::text != schedule_id::text
             AND status = 'scheduled'
           `;
-          const batchesResult = await client.query(batchesQuery, [companyId, messageId]);
+          const batchesResult = await client.query(batchesQuery, [
+            companyId,
+            messageId,
+          ]);
           const hasBatches = batchesResult.rows[0].batch_count > 0;
 
           if (!hasBatches) {
-            console.log(`Scheduling main message ${messageId} with delay ${delay}ms`);
+            console.log(
+              `Scheduling main message ${messageId} with delay ${delay}ms`
+            );
             // Double-check the main message still exists and is scheduled. If not, remove queued job and skip.
             try {
               const msgCheck = await client.query(
@@ -12073,34 +12536,51 @@ async function scheduleAllMessages(specificCompanyId = null) {
               );
 
               if (msgCheck.rowCount === 0) {
-                console.log(`Main message ${messageId} no longer exists in DB for company ${companyId} - removing queued job (if any) and skipping`);
+                console.log(
+                  `Main message ${messageId} no longer exists in DB for company ${companyId} - removing queued job (if any) and skipping`
+                );
                 const existingJob = await queue.getJob(messageId);
                 if (existingJob) {
                   try {
                     await existingJob.remove();
-                    console.log(`Removed queued job ${messageId} for company ${companyId} because DB row is gone`);
+                    console.log(
+                      `Removed queued job ${messageId} for company ${companyId} because DB row is gone`
+                    );
                   } catch (rmErr) {
-                    console.error(`Failed to remove queued job ${messageId} for company ${companyId}:`, rmErr);
+                    console.error(
+                      `Failed to remove queued job ${messageId} for company ${companyId}:`,
+                      rmErr
+                    );
                   }
                 }
                 continue;
               }
 
-              if (msgCheck.rows[0].status !== 'scheduled') {
-                console.log(`Main message ${messageId} status is '${msgCheck.rows[0].status}' (not 'scheduled') - removing queued job (if any) and skipping`);
+              if (msgCheck.rows[0].status !== "scheduled") {
+                console.log(
+                  `Main message ${messageId} status is '${msgCheck.rows[0].status}' (not 'scheduled') - removing queued job (if any) and skipping`
+                );
                 const existingJob = await queue.getJob(messageId);
                 if (existingJob) {
                   try {
                     await existingJob.remove();
-                    console.log(`Removed queued job ${messageId} for company ${companyId} because status changed`);
+                    console.log(
+                      `Removed queued job ${messageId} for company ${companyId} because status changed`
+                    );
                   } catch (rmErr) {
-                    console.error(`Failed to remove queued job ${messageId} for company ${companyId}:`, rmErr);
+                    console.error(
+                      `Failed to remove queued job ${messageId} for company ${companyId}:`,
+                      rmErr
+                    );
                   }
                 }
                 continue;
               }
             } catch (msgErr) {
-              console.error(`Error verifying main message ${messageId} before scheduling:`, msgErr);
+              console.error(
+                `Error verifying main message ${messageId} before scheduling:`,
+                msgErr
+              );
               continue;
             }
 
@@ -12125,7 +12605,11 @@ async function scheduleAllMessages(specificCompanyId = null) {
       }
     }
 
-    console.log(`Finished scheduling messages${specificCompanyId ? ` for company ${specificCompanyId}` : ''}`);
+    console.log(
+      `Finished scheduling messages${
+        specificCompanyId ? ` for company ${specificCompanyId}` : ""
+      }`
+    );
   } catch (error) {
     console.error("Error in scheduleAllMessages:", error);
   } finally {
@@ -12153,25 +12637,35 @@ function setupMessageHandler(client, botName, phoneIndex) {
 
       // Filter out status messages before processing
       const chatId = msg.from;
-      if (chatId.includes("status") || chatId.includes("newsletter" ) || chatId.includes("status@broadcast")) {
-        console.log(`🔔 [MESSAGE_HANDLER] ❌ Status message filtered out - skipping processing and broadcast`);
+      if (
+        chatId.includes("status") ||
+        chatId.includes("newsletter") ||
+        chatId.includes("status@broadcast")
+      ) {
+        console.log(
+          `🔔 [MESSAGE_HANDLER] ❌ Status message filtered out - skipping processing and broadcast`
+        );
         console.log(`🔔 [MESSAGE_HANDLER] ===== INCOMING MESSAGE END =====`);
         return;
       }
 
       await handleNewMessagesTemplateWweb(client, msg, botName, phoneIndex);
 
-      // Add broadcast call here
-      const extractedNumberRaw = msg.from
-        .replace(/@c\.us|@g\.us/g, "");
-      const extractedNumber = extractedNumberRaw.startsWith("+")
-        ? extractedNumberRaw
-        : `+${extractedNumberRaw}`;
+      // Add broadcast call here - using safe extraction
+      const extractedNumber = await safeExtractPhoneNumber(msg, client);
+      if (!extractedNumber) {
+        console.log(
+          `🔔 [MESSAGE_HANDLER] ❌ Could not extract phone number, skipping broadcast`
+        );
+        return;
+      }
+
+      const cleanExtractedNumber = extractedNumber.replace("+", "");
       const messageData = {
         chatId: msg.from,
         message: msg.body,
         extractedNumber: extractedNumber,
-        contactId: `${botName}-${extractedNumberRaw}`,
+        contactId: `${botName}-${cleanExtractedNumber}`,
         fromMe: msg.fromMe,
         timestamp: Math.floor(Date.now() / 1000),
         messageType: msg.type,
@@ -12202,39 +12696,27 @@ function setupMessageCreateHandler(client, botName, phoneIndex) {
       if (botName === "049815") {
         console.log(`=== MessageCreateHandler for bot ${botName} ===`);
         console.log("Message details:", msg);
+        const chat = await msg.getChat();
+        console.log("[MessageCreateHandler] Chat details:", chat);
+        const contact = await chat.getContact();
+        console.log("[MessageCreateHandler] Contact details:", contact);
+        console.log(
+          "[MessageCreateHandler] Contact Chat ID:",
+          contact.id._serialized
+        );
       }
       const isFromHuman = msg.fromMe && msg.author;
       if (msg.fromMe) {
-        // Resolve extracted number. Some sends report @lid JIDs (internal IDs) in msg.to
-        // Try to resolve the real chat id via msg.getChat() or msg.getContact() when possible.
-        let extractedNumberRaw = msg.to.split("@")[0];
-        try {
-          if (msg.to.includes("@lid") || (!msg.to.includes("@c.us") && !msg.to.includes("@g.us"))) {
-            const chat = await (msg.getChat ? msg.getChat() : null);
-            if (chat && chat.id && chat.id._serialized) {
-              const resolved = chat.id._serialized;
-              if (resolved && resolved.includes("@")) {
-                extractedNumberRaw = resolved.split("@")[0].replace(/^\+/, "");
-                // update msg.to to the resolved chat id for downstream use
-                msg.to = resolved;
-              }
-            } else if (msg.getContact) {
-              const contact = await msg.getContact().catch(() => null);
-              if (contact && contact.id && contact.id._serialized) {
-                const resolved = contact.id._serialized;
-                extractedNumberRaw = resolved.split("@")[0].replace(/^\+/, "");
-                msg.to = resolved;
-              }
-            }
-          }
-        } catch (e) {
-          console.warn("[MESSAGE_CREATE] Could not resolve @lid chat to real phone:", e.message);
+        const extractedNumber = await safeExtractToPhoneNumber(msg, client);
+        if (!extractedNumber) {
+          console.error(
+            `❌ [MessageCreateHandler] Could not extract phone number from msg.to, skipping`
+          );
+          return;
         }
 
-        const extractedNumber = extractedNumberRaw.startsWith("+")
-          ? extractedNumberRaw
-          : "+" + extractedNumberRaw;
-        const contactID = botName + "-" + extractedNumberRaw;
+        const cleanExtractedNumber = extractedNumber.replace("+", "");
+        const contactID = botName + "-" + cleanExtractedNumber;
         const myNumber = "+" + client.info.wid.user;
         if (extractedNumber === myNumber) {
           return;
@@ -12356,11 +12838,11 @@ function setupMessageCreateHandler(client, botName, phoneIndex) {
           chatId: msg.to,
           message: msg.body,
           extractedNumber: extractedNumber,
-          contactId: `${botName}-${extractedNumberRaw}`,
+          contactId: `${botName}-${cleanExtractedNumber}`,
           fromMe: msg.fromMe,
           timestamp: Math.floor(Date.now() / 1000),
           messageType: msg.type,
-          contactName: extractedNumberRaw,
+          contactName: cleanExtractedNumber,
         };
 
         console.log(
@@ -13631,14 +14113,14 @@ app.delete(
 
 let threads = [];
 
-app.post('/api/ai-followup-builder-save-thread/save', (req, res) => {
+app.post("/api/ai-followup-builder-save-thread/save", (req, res) => {
   try {
     const { threadId, email, messages, templateName } = req.body;
-    
+
     if (!email || !threadId) {
-      return res.status(400).json({ 
+      return res.status(400).json({
         success: false,
-        error: 'Email and threadId are required' 
+        error: "Email and threadId are required",
       });
     }
 
@@ -13648,18 +14130,20 @@ app.post('/api/ai-followup-builder-save-thread/save', (req, res) => {
       threadData: {
         messages: messages || [],
         metadata: {
-          createdAt: new Date().toISOString()
-        }
+          createdAt: new Date().toISOString(),
+        },
       },
-      templateName: templateName || 'Untitled Template',
-      workflowStages: '',
+      templateName: templateName || "Untitled Template",
+      workflowStages: "",
       stageTemplates: [],
       createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString()
+      updatedAt: new Date().toISOString(),
     };
 
     // Check if thread already exists
-    const existingIndex = threads.findIndex(t => t.id === threadId && t.email === email);
+    const existingIndex = threads.findIndex(
+      (t) => t.id === threadId && t.email === email
+    );
     if (existingIndex !== -1) {
       // Update existing thread
       threads[existingIndex] = newThread;
@@ -13670,74 +14154,74 @@ app.post('/api/ai-followup-builder-save-thread/save', (req, res) => {
 
     res.status(201).json({
       success: true,
-      message: 'Thread saved successfully',
+      message: "Thread saved successfully",
       threadId: newThread.id,
       data: {
-        thread: newThread
-      }
+        thread: newThread,
+      },
     });
   } catch (error) {
-    console.error('Error saving thread:', error);
-    res.status(500).json({ 
+    console.error("Error saving thread:", error);
+    res.status(500).json({
       success: false,
-      error: 'Internal server error',
-      message: error.message 
+      error: "Internal server error",
+      message: error.message,
     });
   }
 });
 
-app.get('/api/ai-followup-builder-save-thread/:threadId', (req, res) => {
+app.get("/api/ai-followup-builder-save-thread/:threadId", (req, res) => {
   try {
     const { threadId } = req.params;
     const { email } = req.query;
 
     if (!email) {
-      return res.status(400).json({ 
+      return res.status(400).json({
         success: false,
-        error: 'Email query parameter is required' 
+        error: "Email query parameter is required",
       });
     }
 
-    const thread = threads.find(t => t.id === threadId && t.email === email);
-    
+    const thread = threads.find((t) => t.id === threadId && t.email === email);
+
     if (!thread) {
-      return res.status(404).json({ 
+      return res.status(404).json({
         success: false,
-        error: 'Thread not found' 
+        error: "Thread not found",
       });
     }
 
     res.json({
       success: true,
-      message: 'Thread retrieved successfully',
+      message: "Thread retrieved successfully",
       data: {
         thread,
-        messages: thread.threadData.messages || []
-      }
+        messages: thread.threadData.messages || [],
+      },
     });
   } catch (error) {
-    console.error('Error getting thread:', error);
-    res.status(500).json({ 
+    console.error("Error getting thread:", error);
+    res.status(500).json({
       success: false,
-      error: 'Internal server error',
-      message: error.message 
+      error: "Internal server error",
+      message: error.message,
     });
   }
 });
 
-app.get('/api/ai-followup-builder-save-thread', (req, res) => {
+app.get("/api/ai-followup-builder-save-thread", (req, res) => {
   try {
     const { email } = req.query;
 
     if (!email) {
-      return res.status(400).json({ 
+      return res.status(400).json({
         success: false,
-        error: 'Email query parameter is required' 
+        error: "Email query parameter is required",
       });
     }
 
-    let userThreads = threads.filter(t => t.email === email);
-    
+    let userThreads = threads.filter((t) => t.email === email);
+
     // AUTO-CREATE a new thread if none exist for this user
     if (userThreads.length === 0) {
       const autoThreadId = Date.now().toString();
@@ -13748,66 +14232,68 @@ app.get('/api/ai-followup-builder-save-thread', (req, res) => {
           messages: [],
           metadata: {
             autoCreated: true,
-            createdAt: new Date().toISOString()
-          }
+            createdAt: new Date().toISOString(),
+          },
         },
-        templateName: 'New Follow-up Template',
-        workflowStages: '',
+        templateName: "New Follow-up Template",
+        workflowStages: "",
         stageTemplates: [],
         createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString()
+        updatedAt: new Date().toISOString(),
       };
-      
+
       threads.push(autoThread);
       userThreads = [autoThread];
-      
+
       console.log(`Auto-created new thread for user: ${email}`);
     }
-    
+
     // Transform threads to match frontend expectations
-    const transformedThreads = userThreads.map(t => ({
+    const transformedThreads = userThreads.map((t) => ({
       threadId: t.id,
       templateName: t.templateName,
       lastUpdated: t.updatedAt,
-      messageCount: t.threadData.messages ? t.threadData.messages.length : 0
+      messageCount: t.threadData.messages ? t.threadData.messages.length : 0,
     }));
-    
+
     res.json({
       success: true,
-      message: 'Threads retrieved successfully',
+      message: "Threads retrieved successfully",
       data: {
         threads: transformedThreads,
-        count: transformedThreads.length
-      }
+        count: transformedThreads.length,
+      },
     });
   } catch (error) {
-    console.error('Error getting threads:', error);
-    res.status(500).json({ 
+    console.error("Error getting threads:", error);
+    res.status(500).json({
       success: false,
-      error: 'Internal server error',
-      message: error.message 
+      error: "Internal server error",
+      message: error.message,
     });
   }
 });
 
-app.delete('/api/ai-followup-builder-save-thread/:threadId', (req, res) => {
+app.delete("/api/ai-followup-builder-save-thread/:threadId", (req, res) => {
   try {
     const { threadId } = req.params;
     const { email } = req.query;
 
     if (!email) {
-      return res.status(400).json({ 
+      return res.status(400).json({
         success: false,
-        error: 'Email query parameter is required' 
+        error: "Email query parameter is required",
       });
     }
 
-    const threadIndex = threads.findIndex(t => t.id === threadId && t.email === email);
-    
+    const threadIndex = threads.findIndex(
+      (t) => t.id === threadId && t.email === email
+    );
+
     if (threadIndex === -1) {
-      return res.status(404).json({ 
+      return res.status(404).json({
         success: false,
-        error: 'Thread not found' 
+        error: "Thread not found",
       });
     }
 
@@ -13815,21 +14301,20 @@ app.delete('/api/ai-followup-builder-save-thread/:threadId', (req, res) => {
 
     res.json({
       success: true,
-      message: 'Thread deleted successfully',
+      message: "Thread deleted successfully",
       data: {
-        deletedThread
-      }
+        deletedThread,
+      },
     });
   } catch (error) {
-    console.error('Error deleting thread:', error);
-    res.status(500).json({ 
+    console.error("Error deleting thread:", error);
+    res.status(500).json({
       success: false,
-      error: 'Internal server error',
-      message: error.message 
+      error: "Internal server error",
+      message: error.message,
     });
   }
 });
-
 
 // API 1: Follow-up Brainstorm - analyzes current AI context and suggests improvements
 app.post("/api/followup-brainstorm/", async (req, res) => {
@@ -14011,7 +14496,11 @@ CURRENT AI ASSISTANT INSTRUCTIONS TO ANALYZE:
 ${currentPrompt || "No current AI assistant instructions provided."}
 
 CURRENT FOLLOW-UP TEMPLATES:
-${currentFollowUps ? JSON.stringify(currentFollowUps, null, 2) : "No current follow-up templates provided."}
+${
+  currentFollowUps
+    ? JSON.stringify(currentFollowUps, null, 2)
+    : "No current follow-up templates provided."
+}
 
 USER REQUEST: ${message}
 
@@ -14257,11 +14746,9 @@ app.post("/api/reset-password", async (req, res) => {
   const { phoneNumber, resetCode, newPassword } = req.body;
 
   if (!phoneNumber || !resetCode || !newPassword) {
-    return res
-      .status(400)
-      .json({
-        error: "Phone number, reset code, and new password are required",
-      });
+    return res.status(400).json({
+      error: "Phone number, reset code, and new password are required",
+    });
   }
 
   if (newPassword.length < 6) {
@@ -14483,11 +14970,9 @@ app.post("/api/reset-password", async (req, res) => {
   const { phoneNumber, resetCode, newPassword } = req.body;
 
   if (!phoneNumber || !resetCode || !newPassword) {
-    return res
-      .status(400)
-      .json({
-        error: "Phone number, reset code, and new password are required",
-      });
+    return res.status(400).json({
+      error: "Phone number, reset code, and new password are required",
+    });
   }
 
   if (newPassword.length < 6) {
@@ -14892,7 +15377,7 @@ app.post("/api/payex/webhook", async (req, res) => {
           `SELECT plan FROM companies WHERE company_id = $1`,
           [finalCompanyId]
         );
-        const companyPlan = companyResult.rows[0]?.plan || 'free';
+        const companyPlan = companyResult.rows[0]?.plan || "free";
 
         // Increase AI message quota for the company
         const quotaKey = getQuotaKey(companyPlan);
@@ -15016,7 +15501,7 @@ app.post("/api/payex/webhook", async (req, res) => {
               `SELECT plan FROM companies WHERE company_id = $1`,
               [companyId]
             );
-            const companyPlan = companyResult.rows[0]?.plan || 'free';
+            const companyPlan = companyResult.rows[0]?.plan || "free";
 
             // Update quota
             const quotaKey = getQuotaKey(companyPlan);
@@ -15294,29 +15779,37 @@ app.post("/api/followup-save-templates/", async (req, res) => {
           for (let i = 0; i < template.messages.length; i++) {
             const message = template.messages[i];
             console.log(
-              `Inserting message ${i + 1}: ${message.message ? message.message.substring(0, 50) : 'No message'}...`
+              `Inserting message ${i + 1}: ${
+                message.message
+                  ? message.message.substring(0, 50)
+                  : "No message"
+              }...`
             );
 
             // Handle both old string format and new object format
-            const messageText = typeof message === 'string' ? message : message.message;
-            const messageData = typeof message === 'object' ? message : {
-              message: message,
-              dayNumber: i + 1,
-              sequence: i + 1,
-              delayAfter: {
-                value: 30,
-                unit: "minutes",
-                isInstantaneous: false,
-              },
-              useScheduledTime: false,
-              scheduledTime: "",
-              addTags: [],
-              removeTags: [],
-              specificNumbers: {
-                enabled: false,
-                numbers: [],
-              },
-            };
+            const messageText =
+              typeof message === "string" ? message : message.message;
+            const messageData =
+              typeof message === "object"
+                ? message
+                : {
+                    message: message,
+                    dayNumber: i + 1,
+                    sequence: i + 1,
+                    delayAfter: {
+                      value: 30,
+                      unit: "minutes",
+                      isInstantaneous: false,
+                    },
+                    useScheduledTime: false,
+                    scheduledTime: "",
+                    addTags: [],
+                    removeTags: [],
+                    specificNumbers: {
+                      enabled: false,
+                      numbers: [],
+                    },
+                  };
 
             await sqlClient.query(
               `INSERT INTO public.followup_messages (
@@ -15373,29 +15866,37 @@ app.post("/api/followup-save-templates/", async (req, res) => {
           for (let i = 0; i < template.messages.length; i++) {
             const message = template.messages[i];
             console.log(
-              `Inserting message ${i + 1}: ${message.message ? message.message.substring(0, 50) : 'No message'}...`
+              `Inserting message ${i + 1}: ${
+                message.message
+                  ? message.message.substring(0, 50)
+                  : "No message"
+              }...`
             );
 
             // Handle both old string format and new object format
-            const messageText = typeof message === 'string' ? message : message.message;
-            const messageData = typeof message === 'object' ? message : {
-              message: message,
-              dayNumber: i + 1,
-              sequence: i + 1,
-              delayAfter: {
-                value: 30,
-                unit: "minutes",
-                isInstantaneous: false,
-              },
-              useScheduledTime: false,
-              scheduledTime: "",
-              addTags: [],
-              removeTags: [],
-              specificNumbers: {
-                enabled: false,
-                numbers: [],
-              },
-            };
+            const messageText =
+              typeof message === "string" ? message : message.message;
+            const messageData =
+              typeof message === "object"
+                ? message
+                : {
+                    message: message,
+                    dayNumber: i + 1,
+                    sequence: i + 1,
+                    delayAfter: {
+                      value: 30,
+                      unit: "minutes",
+                      isInstantaneous: false,
+                    },
+                    useScheduledTime: false,
+                    scheduledTime: "",
+                    addTags: [],
+                    removeTags: [],
+                    specificNumbers: {
+                      enabled: false,
+                      numbers: [],
+                    },
+                  };
 
             await sqlClient.query(
               `INSERT INTO public.followup_messages (
@@ -17462,7 +17963,15 @@ async function addMessageToPostgres(
       } catch (error) {
         console.log("Could not get profile picture URL:", error.message);
       }
-      await addNotificationToUser(idSubstring, messageBody, contactName, contactID, msg.from, extractedNumber, profilePicUrl);
+      await addNotificationToUser(
+        idSubstring,
+        messageBody,
+        contactName,
+        contactID,
+        msg.from,
+        extractedNumber,
+        profilePicUrl
+      );
     }
   } catch (error) {
     console.error("PostgreSQL connection error:", error);
@@ -17470,7 +17979,15 @@ async function addMessageToPostgres(
   }
 }
 
-async function addNotificationToUser(companyId, message, contactName, contactId = null, chatId = null, phoneNumber = null, profilePicUrl = null) {
+async function addNotificationToUser(
+  companyId,
+  message,
+  contactName,
+  contactId = null,
+  chatId = null,
+  phoneNumber = null,
+  profilePicUrl = null
+) {
   console.log(`[BOT ${companyId}] Adding notification and sending OneSignal`);
   try {
     const client = await pool.connect();
@@ -17508,7 +18025,7 @@ async function addNotificationToUser(companyId, message, contactName, contactId 
         // Determine notification type based on context
         let notificationType = "company_announcement";
         let additionalData = {
-          company_id: companyId
+          company_id: companyId,
         };
 
         if (contactName && contactId && chatId) {
@@ -17523,13 +18040,13 @@ async function addNotificationToUser(companyId, message, contactName, contactId 
             chat_id: chatId,
             phone: phoneNumber,
             profile_pic_url: profilePicUrl,
-            type: notificationType
+            type: notificationType,
           };
         } else {
           // This is a company announcement
           additionalData = {
             ...additionalData,
-            type: notificationType
+            type: notificationType,
           };
         }
       } catch (onesignalError) {
@@ -17700,13 +18217,40 @@ async function processLocationMessage(msg) {
   };
 }
 
-async function processQuotedMessage(msg, idSubstring) {
+async function processQuotedMessage(msg, idSubstring, client = null) {
   if (!msg.hasQuotedMsg) {
     return null;
   }
 
   const quotedMsg = await msg.getQuotedMessage();
-  const authorNumber = "+" + quotedMsg.from.split("@")[0];
+
+  // Handle @lid case for quoted messages
+  let authorNumber;
+  if (quotedMsg.from && quotedMsg.from.includes("@lid")) {
+    console.log("🔧 [processQuotedMessage] @lid detected in quoted message");
+    if (client) {
+      try {
+        // For quoted messages, we might not be able to get the chat/contact directly
+        // Try to extract from the quoted message's from field pattern
+        authorNumber = "+" + quotedMsg.from.split("@")[0];
+        console.log(
+          "✅ [processQuotedMessage] Extracted quoted author (fallback):",
+          authorNumber
+        );
+      } catch (error) {
+        console.error(
+          "❌ [processQuotedMessage] Error extracting quoted author:",
+          error
+        );
+        authorNumber = quotedMsg.from; // Use as-is as fallback
+      }
+    } else {
+      authorNumber = quotedMsg.from; // Use as-is as fallback
+    }
+  } else {
+    authorNumber = "+" + quotedMsg.from.split("@")[0];
+  }
+
   const authorData = await getContactDataFromDatabaseByPhone(
     authorNumber,
     idSubstring
@@ -18687,15 +19231,44 @@ async function main(reinitialize = false) {
   //   "SELECT * FROM companies WHERE company_id = $1",
   //   ["0145"]
   // );
+  // const companiesPromise = sqlDb.query(
+  //   "SELECT * FROM companies WHERE company_id = $1",
+  //   ["0150"]
+  // );
 
   // WHEN WANT TO INITIALIZE ALL BOTS
   // const companiesPromise = sqlDb.query(
   //   "SELECT * FROM companies WHERE api_url = $1",
   //   ["https://bisnesgpt.jutateknologi.com"]
   // );
-  //const companyIds = ['0145']; 
-  const companyIds = ['022027','0149','058666','0210','0107','0160', '0161', '0377', '063', '079', '092', '399849', '458752', '765943', '088', '296245', '0245', '0210', '0156', '0101', '728219', '0342', '325117', '946386'];
-  const placeholders = companyIds.map((_, i) => `$${i + 1}`).join(', ');
+  //const companyIds = ['0145'];
+  const companyIds = [
+    "0101",
+    "0107",
+    "0149",
+    "0156",
+    "0160",
+    "0161",
+    "0210",
+    "022027",
+    "0245",
+    "0342",
+    "0377",
+    "049815",
+    "058666",
+    "063",
+    "079",
+    "088",
+    "092",
+    "296245",
+    "325117",
+    "399849",
+    "458752",
+    "728219",
+    "765943",
+    "946386",
+  ];
+  const placeholders = companyIds.map((_, i) => `$${i + 1}`).join(", ");
   const query = `SELECT * FROM companies WHERE company_id IN (${placeholders})`;
   const companiesPromise = sqlDb.query(query, companyIds);
 
@@ -18772,8 +19345,8 @@ async function main(reinitialize = false) {
     // Create individual phone tasks from all bot configurations
     const createPhoneTasks = (configs) => {
       const phoneTasks = [];
-      
-      configs.forEach(config => {
+
+      configs.forEach((config) => {
         const phoneCount = config.phoneCount || 1;
         for (let phoneIndex = 0; phoneIndex < phoneCount; phoneIndex++) {
           phoneTasks.push({
@@ -18781,25 +19354,27 @@ async function main(reinitialize = false) {
             phoneIndex: phoneIndex,
             totalPhones: phoneCount,
             isLastPhone: phoneIndex === phoneCount - 1,
-            originalConfig: config
+            originalConfig: config,
           });
         }
       });
-      
+
       return phoneTasks;
     };
 
     const allPhoneTasks = createPhoneTasks(botConfigs);
-    console.log(`Starting phone-based initialization: ${allPhoneTasks.length} total phones from ${botConfigs.length} bots with max ${MAX_CONCURRENT} concurrent phone initializations...`);
-    
+    console.log(
+      `Starting phone-based initialization: ${allPhoneTasks.length} total phones from ${botConfigs.length} bots with max ${MAX_CONCURRENT} concurrent phone initializations...`
+    );
+
     // Group phone tasks by company for tracking
     const phoneTasksByBot = {};
-    allPhoneTasks.forEach(task => {
+    allPhoneTasks.forEach((task) => {
       if (!phoneTasksByBot[task.botName]) {
         phoneTasksByBot[task.botName] = [];
       }
       phoneTasksByBot[task.botName].push(task);
-    });      // Function to initialize mtdcSpreadsheet when bot 0380 is ready
+    }); // Function to initialize mtdcSpreadsheet when bot 0380 is ready
 
     // Enhanced function to get bot status from multiple sources
     const getBotStatus = async (botName) => {
@@ -18807,50 +19382,53 @@ async function main(reinitialize = false) {
         // Check botMap first
         const botData = botMap.get(botName);
         if (botData && Array.isArray(botData)) {
-          const statuses = botData.map(phone => phone?.status || 'unknown');
-          const validStatuses = statuses.filter(s => s && s !== 'unknown');
-          
+          const statuses = botData.map((phone) => phone?.status || "unknown");
+          const validStatuses = statuses.filter((s) => s && s !== "unknown");
+
           // Count status occurrences
           const statusCounts = {
-            ready: statuses.filter(s => s === 'ready').length,
-            qr: statuses.filter(s => s === 'qr').length,
-            authenticated: statuses.filter(s => s === 'authenticated').length,
-            initializing: statuses.filter(s => s === 'initializing').length,
-            error: statuses.filter(s => s === 'error').length,
-            disconnected: statuses.filter(s => s === 'disconnected').length,
-            unknown: statuses.filter(s => !s || s === 'unknown').length
+            ready: statuses.filter((s) => s === "ready").length,
+            qr: statuses.filter((s) => s === "qr").length,
+            authenticated: statuses.filter((s) => s === "authenticated").length,
+            initializing: statuses.filter((s) => s === "initializing").length,
+            error: statuses.filter((s) => s === "error").length,
+            disconnected: statuses.filter((s) => s === "disconnected").length,
+            unknown: statuses.filter((s) => !s || s === "unknown").length,
           };
 
           const totalPhones = botData.length;
           const finalStatePhones = statusCounts.ready + statusCounts.qr; // End states
-          const processingPhones = statusCounts.initializing + statusCounts.authenticated; // Still processing
-          
-          console.log(`📊 Bot ${botName} phones: ${statusCounts.ready}R/${statusCounts.qr}Q/${statusCounts.authenticated}A/${statusCounts.initializing}I (${finalStatePhones}/${totalPhones} in final state)`);
+          const processingPhones =
+            statusCounts.initializing + statusCounts.authenticated; // Still processing
+
+          console.log(
+            `📊 Bot ${botName} phones: ${statusCounts.ready}R/${statusCounts.qr}Q/${statusCounts.authenticated}A/${statusCounts.initializing}I (${finalStatePhones}/${totalPhones} in final state)`
+          );
 
           // Wait for ALL phones to reach final states (ready or qr)
           if (finalStatePhones === totalPhones) {
             // All phones are in final states
             if (statusCounts.ready > 0) {
               // Has at least one ready phone - can proceed with post-init
-              return 'ready';
+              return "ready";
             } else if (statusCounts.qr === totalPhones) {
               // All phones are showing QR - pure QR state
-              return 'qr';
+              return "qr";
             }
           }
-          
+
           // If phones are still processing (initializing/authenticated), keep waiting
           if (processingPhones > 0) {
-            return 'initializing';
+            return "initializing";
           }
-          
+
           // If we have errors or unknown states, handle appropriately
           if (statusCounts.error > 0) {
-            return 'error';
+            return "error";
           }
-          
+
           // Return the most common valid status as fallback
-          return validStatuses[0] || 'unknown';
+          return validStatuses[0] || "unknown";
         }
 
         // Check database as fallback
@@ -18858,10 +19436,10 @@ async function main(reinitialize = false) {
           "SELECT status FROM phone_status WHERE company_id = $1 ORDER BY phone_index LIMIT 1",
           [botName]
         );
-        return result.rows.length > 0 ? result.rows[0].status : 'unknown';
+        return result.rows.length > 0 ? result.rows[0].status : "unknown";
       } catch (error) {
         console.error(`Error getting status for bot ${botName}:`, error);
-        return 'unknown';
+        return "unknown";
       }
     };
 
@@ -18869,38 +19447,50 @@ async function main(reinitialize = false) {
     const shouldProceedWithPostInit = async (botName) => {
       const status = await getBotStatus(botName);
       const botData = botMap.get(botName);
-      
+
       if (botData && Array.isArray(botData)) {
         const statusCounts = {
-          ready: botData.filter(phone => phone?.status === 'ready').length,
-          qr: botData.filter(phone => phone?.status === 'qr').length,
-          initializing: botData.filter(phone => phone?.status === 'initializing').length,
-          authenticated: botData.filter(phone => phone?.status === 'authenticated').length
+          ready: botData.filter((phone) => phone?.status === "ready").length,
+          qr: botData.filter((phone) => phone?.status === "qr").length,
+          initializing: botData.filter(
+            (phone) => phone?.status === "initializing"
+          ).length,
+          authenticated: botData.filter(
+            (phone) => phone?.status === "authenticated"
+          ).length,
         };
-        
+
         const totalPhones = botData.length;
         const finalStatePhones = statusCounts.ready + statusCounts.qr;
         const allInFinalState = finalStatePhones === totalPhones;
-        
+
         // Only proceed if ALL phones are in final state AND at least one is ready
         return allInFinalState && statusCounts.ready > 0;
       }
-      
-      return status === 'ready';
+
+      return status === "ready";
     };
 
     // Function to initialize a single phone with enhanced timeout and status tracking
-    const initializeSinglePhoneWithTimeout = async (phoneTask, retryCount = 0) => {
-      const { botName, phoneIndex, totalPhones, isLastPhone, originalConfig } = phoneTask;
+    const initializeSinglePhoneWithTimeout = async (
+      phoneTask,
+      retryCount = 0
+    ) => {
+      const { botName, phoneIndex, totalPhones, isLastPhone, originalConfig } =
+        phoneTask;
       const startTime = Date.now();
       let statusCheckInterval;
-      let lastStatus = 'unknown';
-      
+      let lastStatus = "unknown";
+
       // Fixed timeout per phone (not dependent on total phone count since we're doing them individually)
       const phoneTimeout = BOT_TIMEOUT;
-        
-      const timeoutPromise = new Promise((_, reject) => 
-        setTimeout(() => reject(new Error(`Phone timeout after ${phoneTimeout/1000}s`)), phoneTimeout)
+
+      const timeoutPromise = new Promise((_, reject) =>
+        setTimeout(
+          () =>
+            reject(new Error(`Phone timeout after ${phoneTimeout / 1000}s`)),
+          phoneTimeout
+        )
       );
 
       // Status monitoring promise for individual phone
@@ -18908,76 +19498,119 @@ async function main(reinitialize = false) {
         statusCheckInterval = setInterval(async () => {
           try {
             const botData = botMap.get(botName);
-            let phoneStatus = 'unknown';
-            let phoneStatusDetails = '';
-            
+            let phoneStatus = "unknown";
+            let phoneStatusDetails = "";
+
             if (botData && Array.isArray(botData) && botData[phoneIndex]) {
-              phoneStatus = botData[phoneIndex].status || 'unknown';
-              
+              phoneStatus = botData[phoneIndex].status || "unknown";
+
               // Get overall bot status for context
               const statusCounts = {
-                ready: botData.filter(p => p?.status === 'ready').length,
-                qr: botData.filter(p => p?.status === 'qr').length,
-                authenticated: botData.filter(p => p?.status === 'authenticated').length,
-                initializing: botData.filter(p => p?.status === 'initializing').length,
-                error: botData.filter(p => p?.status === 'error').length
+                ready: botData.filter((p) => p?.status === "ready").length,
+                qr: botData.filter((p) => p?.status === "qr").length,
+                authenticated: botData.filter(
+                  (p) => p?.status === "authenticated"
+                ).length,
+                initializing: botData.filter(
+                  (p) => p?.status === "initializing"
+                ).length,
+                error: botData.filter((p) => p?.status === "error").length,
               };
-              
+
               const completedPhones = statusCounts.ready + statusCounts.qr;
-              phoneStatusDetails = ` (Bot ${botName}: ${completedPhones}/${totalPhones} phones done - P${phoneIndex + 1}: ${phoneStatus})`;
+              phoneStatusDetails = ` (Bot ${botName}: ${completedPhones}/${totalPhones} phones done - P${
+                phoneIndex + 1
+              }: ${phoneStatus})`;
             }
-            
+
             const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-            
+
             if (phoneStatus !== lastStatus) {
-              console.log(`🔄 Phone ${botName}-P${phoneIndex + 1} status: ${lastStatus} → ${phoneStatus}${phoneStatusDetails} (${elapsed}s)`);
+              console.log(
+                `🔄 Phone ${botName}-P${
+                  phoneIndex + 1
+                } status: ${lastStatus} → ${phoneStatus}${phoneStatusDetails} (${elapsed}s)`
+              );
               lastStatus = phoneStatus;
             }
 
             // Check if this specific phone reached a final state
-            if (phoneStatus === 'ready') {
+            if (phoneStatus === "ready") {
               clearInterval(statusCheckInterval);
-              console.log(`✅ Phone ${botName}-P${phoneIndex + 1} ready${phoneStatusDetails} (${elapsed}s)`);
-              resolve({ status: 'ready', shouldProceedWithPostInit: isLastPhone });
-            } else if (phoneStatus === 'qr') {
+              console.log(
+                `✅ Phone ${botName}-P${
+                  phoneIndex + 1
+                } ready${phoneStatusDetails} (${elapsed}s)`
+              );
+              resolve({
+                status: "ready",
+                shouldProceedWithPostInit: isLastPhone,
+              });
+            } else if (phoneStatus === "qr") {
               clearInterval(statusCheckInterval);
-              console.log(`📱 Phone ${botName}-P${phoneIndex + 1} showing QR${phoneStatusDetails} (${elapsed}s)`);
-              resolve({ status: 'qr', shouldProceedWithPostInit: false });
-            } else if (phoneStatus === 'error') {
+              console.log(
+                `📱 Phone ${botName}-P${
+                  phoneIndex + 1
+                } showing QR${phoneStatusDetails} (${elapsed}s)`
+              );
+              resolve({ status: "qr", shouldProceedWithPostInit: false });
+            } else if (phoneStatus === "error") {
               clearInterval(statusCheckInterval);
-              console.log(`❌ Phone ${botName}-P${phoneIndex + 1} error${phoneStatusDetails} (${elapsed}s)`);
+              console.log(
+                `❌ Phone ${botName}-P${
+                  phoneIndex + 1
+                } error${phoneStatusDetails} (${elapsed}s)`
+              );
               reject(new Error(`Phone ${phoneIndex + 1} error`));
             }
 
             // Check for stuck initialization
-            if (phoneStatus === 'initializing' && elapsed > 60) {
-              console.warn(`⚠️ Phone ${botName}-P${phoneIndex + 1} still initializing after ${elapsed}s${phoneStatusDetails}`);
+            if (phoneStatus === "initializing" && elapsed > 60) {
+              console.warn(
+                `⚠️ Phone ${botName}-P${
+                  phoneIndex + 1
+                } still initializing after ${elapsed}s${phoneStatusDetails}`
+              );
             }
-            
           } catch (error) {
-            console.error(`Error monitoring phone ${botName}-P${phoneIndex + 1}:`, error);
+            console.error(
+              `Error monitoring phone ${botName}-P${phoneIndex + 1}:`,
+              error
+            );
           }
         }, STATUS_CHECK_INTERVAL);
       });
 
       const initPromise = (async () => {
-        console.log(`🚀 Initializing phone ${botName}-P${phoneIndex + 1}/${totalPhones}...`);
-        
+        console.log(
+          `🚀 Initializing phone ${botName}-P${
+            phoneIndex + 1
+          }/${totalPhones}...`
+        );
+
         // Initialize the phone (this will create the bot entry if it doesn't exist)
         if (phoneIndex === 0) {
           // First phone initializes the whole bot
           initializeBot(botName, totalPhones);
         }
-        
+
         // Wait for this specific phone's status resolution
-        const result = await Promise.race([statusMonitorPromise, timeoutPromise]);
-        
-        console.log(`✅ Phone ${botName}-P${phoneIndex + 1} initialization completed with status: ${result.status}`);
-        
+        const result = await Promise.race([
+          statusMonitorPromise,
+          timeoutPromise,
+        ]);
+
+        console.log(
+          `✅ Phone ${botName}-P${
+            phoneIndex + 1
+          } initialization completed with status: ${result.status}`
+        );
+
         // Only proceed with post-init tasks if this is the last phone and bot is ready
         if (result.shouldProceedWithPostInit && isLastPhone) {
-          console.log(`📅 Starting post-initialization tasks for bot ${botName} (all phones complete)`);
-          
+          console.log(
+            `📅 Starting post-initialization tasks for bot ${botName} (all phones complete)`
+          );
 
           scheduleAllMessages(botName);
 
@@ -18986,44 +19619,59 @@ async function main(reinitialize = false) {
 
           // After successful initialization, sync messages and handle auto-replies
           await syncMessagesAndHandleAutoReplies(botName, totalPhones);
-          
+
           console.log(`🎉 All tasks completed for bot ${botName}`);
         }
-                  
+
         return result;
       })();
 
       try {
         const result = await Promise.race([initPromise, timeoutPromise]);
         clearInterval(statusCheckInterval);
-        return { 
-          success: true, 
-          phoneTask, 
-          retryCount, 
+        return {
+          success: true,
+          phoneTask,
+          retryCount,
           status: result.status,
-          completedPostInit: result.shouldProceedWithPostInit
+          completedPostInit: result.shouldProceedWithPostInit,
         };
       } catch (error) {
         clearInterval(statusCheckInterval);
-        console.error(`❌ Phone ${botName}-P${phoneIndex + 1} failed (attempt ${retryCount + 1}/${MAX_RETRIES + 1}):`, error.message);
-        
+        console.error(
+          `❌ Phone ${botName}-P${phoneIndex + 1} failed (attempt ${
+            retryCount + 1
+          }/${MAX_RETRIES + 1}):`,
+          error.message
+        );
+
         // Check if phone got stuck and attempt cleanup
         const botData = botMap.get(botName);
-        if (botData && botData[phoneIndex]?.status === 'initializing') {
-          console.log(`🧹 Attempting cleanup for stuck phone ${botName}-P${phoneIndex + 1}`);
+        if (botData && botData[phoneIndex]?.status === "initializing") {
+          console.log(
+            `🧹 Attempting cleanup for stuck phone ${botName}-P${
+              phoneIndex + 1
+            }`
+          );
           try {
             await safeCleanup(botName, phoneIndex);
           } catch (cleanupError) {
-            console.error(`Error during cleanup for ${botName}-P${phoneIndex + 1}:`, cleanupError);
+            console.error(
+              `Error during cleanup for ${botName}-P${phoneIndex + 1}:`,
+              cleanupError
+            );
           }
         }
-        
-        return { 
-          success: false, 
-          phoneTask, 
-          error: error.message, 
+
+        return {
+          success: false,
+          phoneTask,
+          error: error.message,
           retryCount,
-          status: botData && botData[phoneIndex] ? botData[phoneIndex].status : 'unknown'
+          status:
+            botData && botData[phoneIndex]
+              ? botData[phoneIndex].status
+              : "unknown",
         };
       }
     };
@@ -19032,15 +19680,19 @@ async function main(reinitialize = false) {
     const initializeSingleBotWithTimeout = async (config, retryCount = 0) => {
       const startTime = Date.now();
       let statusCheckInterval;
-      let lastStatus = 'unknown';
-      
+      let lastStatus = "unknown";
+
       // Dynamic timeout based on phone count - multi-phone bots need more time
-      const dynamicTimeout = config.phoneCount > 1 
-        ? BOT_TIMEOUT + (config.phoneCount * 15000) // Extra 15s per additional phone
-        : BOT_TIMEOUT;
-        
-      const timeoutPromise = new Promise((_, reject) => 
-        setTimeout(() => reject(new Error(`Timeout after ${dynamicTimeout/1000}s`)), dynamicTimeout)
+      const dynamicTimeout =
+        config.phoneCount > 1
+          ? BOT_TIMEOUT + config.phoneCount * 15000 // Extra 15s per additional phone
+          : BOT_TIMEOUT;
+
+      const timeoutPromise = new Promise((_, reject) =>
+        setTimeout(
+          () => reject(new Error(`Timeout after ${dynamicTimeout / 1000}s`)),
+          dynamicTimeout
+        )
       );
 
       // Status monitoring promise
@@ -19049,75 +19701,104 @@ async function main(reinitialize = false) {
           try {
             const currentStatus = await getBotStatus(config.botName);
             const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-            
+
             // Get detailed phone status for multi-phone bots
             const botData = botMap.get(config.botName);
-            let phoneStatusDetails = '';
+            let phoneStatusDetails = "";
             let allPhonesInFinalState = false;
-            
+
             if (botData && Array.isArray(botData)) {
               const statusCounts = {
-                ready: botData.filter(p => p?.status === 'ready').length,
-                qr: botData.filter(p => p?.status === 'qr').length,
-                authenticated: botData.filter(p => p?.status === 'authenticated').length,
-                initializing: botData.filter(p => p?.status === 'initializing').length,
-                error: botData.filter(p => p?.status === 'error').length
+                ready: botData.filter((p) => p?.status === "ready").length,
+                qr: botData.filter((p) => p?.status === "qr").length,
+                authenticated: botData.filter(
+                  (p) => p?.status === "authenticated"
+                ).length,
+                initializing: botData.filter(
+                  (p) => p?.status === "initializing"
+                ).length,
+                error: botData.filter((p) => p?.status === "error").length,
               };
-              
+
               const totalPhones = botData.length;
               const finalStatePhones = statusCounts.ready + statusCounts.qr;
               allPhonesInFinalState = finalStatePhones === totalPhones;
-              
+
               phoneStatusDetails = ` (${statusCounts.ready}R/${statusCounts.qr}Q/${statusCounts.authenticated}A/${statusCounts.initializing}I/${statusCounts.error}E - ${finalStatePhones}/${totalPhones} final)`;
             }
-            
+
             if (currentStatus !== lastStatus) {
-              console.log(`🔄 Bot ${config.botName} status changed: ${lastStatus} → ${currentStatus}${phoneStatusDetails} (${elapsed}s)`);
+              console.log(
+                `🔄 Bot ${config.botName} status changed: ${lastStatus} → ${currentStatus}${phoneStatusDetails} (${elapsed}s)`
+              );
               lastStatus = currentStatus;
             }
 
             // Only resolve when ALL phones have reached final states (ready or qr)
-            if (currentStatus === 'ready' && allPhonesInFinalState) {
+            if (currentStatus === "ready" && allPhonesInFinalState) {
               clearInterval(statusCheckInterval);
-              console.log(`✅ Bot ${config.botName} all phones in final state, has ready phones - proceeding with setup${phoneStatusDetails}`);
-              resolve({ status: 'ready', shouldProceedWithPostInit: true });
-            } else if (currentStatus === 'qr' && allPhonesInFinalState) {
+              console.log(
+                `✅ Bot ${config.botName} all phones in final state, has ready phones - proceeding with setup${phoneStatusDetails}`
+              );
+              resolve({ status: "ready", shouldProceedWithPostInit: true });
+            } else if (currentStatus === "qr" && allPhonesInFinalState) {
               clearInterval(statusCheckInterval);
-              console.log(`📱 Bot ${config.botName} all phones in final state, all showing QR - no post-init tasks${phoneStatusDetails}`);
-              resolve({ status: 'qr', shouldProceedWithPostInit: false });
+              console.log(
+                `📱 Bot ${config.botName} all phones in final state, all showing QR - no post-init tasks${phoneStatusDetails}`
+              );
+              resolve({ status: "qr", shouldProceedWithPostInit: false });
             }
 
             // Check for stuck initialization - but be more lenient for multi-phone bots
-            const maxWaitTime = (config.phoneCount && config.phoneCount > 1) ? 75 : 60; // Extra time for multi-phone
-            if (currentStatus === 'initializing' && elapsed > maxWaitTime) {
-              console.warn(`⚠️ Bot ${config.botName} still initializing after ${elapsed}s${phoneStatusDetails}`);
+            const maxWaitTime =
+              config.phoneCount && config.phoneCount > 1 ? 75 : 60; // Extra time for multi-phone
+            if (currentStatus === "initializing" && elapsed > maxWaitTime) {
+              console.warn(
+                `⚠️ Bot ${config.botName} still initializing after ${elapsed}s${phoneStatusDetails}`
+              );
               // Don't reject here, let timeout handle it
             }
-            
+
             // Progress logging for multi-phone bots
-            if (botData && botData.length > 1 && elapsed % 20 < (STATUS_CHECK_INTERVAL/1000)) {
-              console.log(`⏳ Bot ${config.botName} progress${phoneStatusDetails} (${elapsed}s)`);
+            if (
+              botData &&
+              botData.length > 1 &&
+              elapsed % 20 < STATUS_CHECK_INTERVAL / 1000
+            ) {
+              console.log(
+                `⏳ Bot ${config.botName} progress${phoneStatusDetails} (${elapsed}s)`
+              );
             }
           } catch (error) {
-            console.error(`Error monitoring status for ${config.botName}:`, error);
+            console.error(
+              `Error monitoring status for ${config.botName}:`,
+              error
+            );
           }
         }, STATUS_CHECK_INTERVAL);
       });
 
       const initPromise = (async () => {
         console.log(`🚀 Initializing bot ${config.botName}...`);
-        
+
         initializeBot(config.botName, config.phoneCount);
-        
+
         // Wait for either status resolution OR initialization completion, whichever comes first
-        const result = await Promise.race([statusMonitorPromise, timeoutPromise]);
-        
-        console.log(`✅ Bot ${config.botName} initialization completed with status: ${result.status}`);
-        
+        const result = await Promise.race([
+          statusMonitorPromise,
+          timeoutPromise,
+        ]);
+
+        console.log(
+          `✅ Bot ${config.botName} initialization completed with status: ${result.status}`
+        );
+
         // Only proceed with post-init tasks if bot is ready
         if (result.shouldProceedWithPostInit) {
-          console.log(`📅 Starting post-initialization tasks for bot ${config.botName}`);
-          
+          console.log(
+            `📅 Starting post-initialization tasks for bot ${config.botName}`
+          );
+
           if (config.botName === "0380") {
             initializeMtdcSpreadsheet();
           }
@@ -19132,46 +19813,56 @@ async function main(reinitialize = false) {
             config.botName,
             config.phoneCount
           );
-          
+
           console.log(`🎉 All tasks completed for bot ${config.botName}`);
         } else {
-          console.log(`📱 Bot ${config.botName} is in ${result.status} state, skipping post-initialization tasks`);
+          console.log(
+            `📱 Bot ${config.botName} is in ${result.status} state, skipping post-initialization tasks`
+          );
         }
-                  
+
         return result;
       })();
 
       try {
         const result = await Promise.race([initPromise, timeoutPromise]);
         clearInterval(statusCheckInterval);
-        return { 
-          success: true, 
-          config, 
-          retryCount, 
+        return {
+          success: true,
+          config,
+          retryCount,
           status: result.status,
-          completedPostInit: result.shouldProceedWithPostInit
+          completedPostInit: result.shouldProceedWithPostInit,
         };
       } catch (error) {
         clearInterval(statusCheckInterval);
-        console.error(`❌ Bot ${config.botName} failed (attempt ${retryCount + 1}/${MAX_RETRIES + 1}):`, error.message);
-        
+        console.error(
+          `❌ Bot ${config.botName} failed (attempt ${retryCount + 1}/${
+            MAX_RETRIES + 1
+          }):`,
+          error.message
+        );
+
         // Check if bot got stuck and attempt cleanup
         const currentStatus = await getBotStatus(config.botName);
-        if (currentStatus === 'initializing') {
+        if (currentStatus === "initializing") {
           console.log(`🧹 Attempting cleanup for stuck bot ${config.botName}`);
           try {
             await safeCleanup(config.botName, 0); // Cleanup first phone
           } catch (cleanupError) {
-            console.error(`Error during cleanup for ${config.botName}:`, cleanupError);
+            console.error(
+              `Error during cleanup for ${config.botName}:`,
+              cleanupError
+            );
           }
         }
-        
-        return { 
-          success: false, 
-          config, 
-          error: error.message, 
+
+        return {
+          success: false,
+          config,
+          error: error.message,
           retryCount,
-          status: currentStatus
+          status: currentStatus,
         };
       }
     };
@@ -19183,97 +19874,137 @@ async function main(reinitialize = false) {
       const completedPhones = new Map(); // Track completed phones per bot
       const failedPhones = new Map(); // Track failed phones per bot
       let activePhones = new Map(); // Track currently initializing phones
-      
+
       // Initialize tracking maps
-      Object.keys(phoneTasksByBot).forEach(botName => {
+      Object.keys(phoneTasksByBot).forEach((botName) => {
         completedPhones.set(botName, []);
         failedPhones.set(botName, []);
       });
-      
-      const pendingPhones = [...allPhoneTasks.map(task => ({ ...task, retryCount: 0 }))];
+
+      const pendingPhones = [
+        ...allPhoneTasks.map((task) => ({ ...task, retryCount: 0 })),
+      ];
 
       while (pendingPhones.length > 0 || activePhones.size > 0) {
         // Start new phones up to the concurrent limit
         while (activePhones.size < MAX_CONCURRENT && pendingPhones.length > 0) {
           const phoneTask = pendingPhones.shift();
           const phoneId = `${phoneTask.botName}-P${phoneTask.phoneIndex + 1}`;
-          console.log(`🚀 Starting phone ${phoneId} (${activePhones.size + 1}/${MAX_CONCURRENT} concurrent, ${pendingPhones.length} phones remaining)`);
-          
-          const phonePromise = initializeSinglePhoneWithTimeout(phoneTask, phoneTask.retryCount);
+          console.log(
+            `🚀 Starting phone ${phoneId} (${
+              activePhones.size + 1
+            }/${MAX_CONCURRENT} concurrent, ${
+              pendingPhones.length
+            } phones remaining)`
+          );
+
+          const phonePromise = initializeSinglePhoneWithTimeout(
+            phoneTask,
+            phoneTask.retryCount
+          );
           activePhones.set(phoneId, {
             promise: phonePromise,
             task: phoneTask,
-            startTime: Date.now()
+            startTime: Date.now(),
           });
         }
 
         // Wait for at least one phone to complete
         if (activePhones.size > 0) {
-          const activePromises = Array.from(activePhones.entries()).map(([phoneId, phoneData]) => 
-            phoneData.promise.then(result => ({ phoneId, result }))
+          const activePromises = Array.from(activePhones.entries()).map(
+            ([phoneId, phoneData]) =>
+              phoneData.promise.then((result) => ({ phoneId, result }))
           );
 
           const { phoneId, result } = await Promise.race(activePromises);
-          const completionTime = ((Date.now() - activePhones.get(phoneId).startTime) / 1000).toFixed(1);
+          const completionTime = (
+            (Date.now() - activePhones.get(phoneId).startTime) /
+            1000
+          ).toFixed(1);
           const phoneTask = activePhones.get(phoneId).task;
           const { botName, phoneIndex, totalPhones, isLastPhone } = phoneTask;
-          
+
           // Remove completed phone from active tracking
           activePhones.delete(phoneId);
 
           if (result.success) {
             // Track completed phone
             completedPhones.get(botName).push(phoneTask);
-            
+
             const completedCount = completedPhones.get(botName).length;
-            console.log(`✅ Phone ${phoneId} completed with status ${result.status} in ${completionTime}s (Bot ${botName}: ${completedCount}/${totalPhones} phones done)`);
-            
+            console.log(
+              `✅ Phone ${phoneId} completed with status ${result.status} in ${completionTime}s (Bot ${botName}: ${completedCount}/${totalPhones} phones done)`
+            );
+
             // Check if this bot is now complete (all phones processed)
             if (completedCount === totalPhones) {
               const botPhones = completedPhones.get(botName);
-              const readyPhones = botPhones.filter(p => {
+              const readyPhones = botPhones.filter((p) => {
                 const botData = botMap.get(p.botName);
-                return botData && botData[p.phoneIndex] && botData[p.phoneIndex].status === 'ready';
+                return (
+                  botData &&
+                  botData[p.phoneIndex] &&
+                  botData[p.phoneIndex].status === "ready"
+                );
               }).length;
-              
-              const qrPhones = botPhones.filter(p => {
+
+              const qrPhones = botPhones.filter((p) => {
                 const botData = botMap.get(p.botName);
-                return botData && botData[p.phoneIndex] && botData[p.phoneIndex].status === 'qr';
+                return (
+                  botData &&
+                  botData[p.phoneIndex] &&
+                  botData[p.phoneIndex].status === "qr"
+                );
               }).length;
-              
+
               if (readyPhones > 0) {
                 completedBots.add(botName);
-                console.log(`🎉 Bot ${botName} ALL PHONES COMPLETE: ${readyPhones} ready, ${qrPhones} QR - bot operational (${completedBots.size}/${botConfigs.length} bots complete)`);
+                console.log(
+                  `🎉 Bot ${botName} ALL PHONES COMPLETE: ${readyPhones} ready, ${qrPhones} QR - bot operational (${completedBots.size}/${botConfigs.length} bots complete)`
+                );
               } else if (qrPhones === totalPhones) {
                 qrBots.add(botName);
-                console.log(`📱 Bot ${botName} ALL PHONES SHOWING QR: ${qrPhones}/${totalPhones} phones need pairing (${qrBots.size} bots showing QR)`);
+                console.log(
+                  `📱 Bot ${botName} ALL PHONES SHOWING QR: ${qrPhones}/${totalPhones} phones need pairing (${qrBots.size} bots showing QR)`
+                );
               }
             }
-            
           } else {
             // Handle failed phone - send to back of queue for retry
             if (result.retryCount < MAX_RETRIES) {
-              const retryTask = { 
-                ...phoneTask, 
-                retryCount: result.retryCount + 1 
+              const retryTask = {
+                ...phoneTask,
+                retryCount: result.retryCount + 1,
               };
-              console.log(`🔄 Phone ${phoneId} failed (status: ${result.status || 'unknown'}), retry attempt ${retryTask.retryCount + 1}/${MAX_RETRIES + 1}`);
-              
+              console.log(
+                `🔄 Phone ${phoneId} failed (status: ${
+                  result.status || "unknown"
+                }), retry attempt ${retryTask.retryCount + 1}/${
+                  MAX_RETRIES + 1
+                }`
+              );
+
               // Add failed phone to the back of the queue
               pendingPhones.push(retryTask);
             } else {
               // Track permanently failed phone
               failedPhones.get(botName).push(phoneTask);
               const failedCount = failedPhones.get(botName).length;
-              console.log(`❌ Phone ${phoneId} permanently failed after ${MAX_RETRIES + 1} attempts (Bot ${botName}: ${failedCount}/${totalPhones} phones failed)`);
-              
+              console.log(
+                `❌ Phone ${phoneId} permanently failed after ${
+                  MAX_RETRIES + 1
+                } attempts (Bot ${botName}: ${failedCount}/${totalPhones} phones failed)`
+              );
+
               // Check if bot should be marked as failed (all phones processed, none successful)
               const completedCount = completedPhones.get(botName).length;
               const totalProcessed = completedCount + failedCount;
-              
+
               if (totalProcessed === totalPhones && completedCount === 0) {
                 failedBots.add(botName);
-                console.log(`💥 Bot ${botName} COMPLETELY FAILED: all ${totalPhones} phones failed (${failedBots.size} bots failed)`);
+                console.log(
+                  `💥 Bot ${botName} COMPLETELY FAILED: all ${totalPhones} phones failed (${failedBots.size} bots failed)`
+                );
               }
             }
           }
@@ -19283,27 +20014,43 @@ async function main(reinitialize = false) {
       // Final summary
       console.log(`\n🎉 Phone-based bot initialization completed!`);
       console.log(`✅ Ready bots: ${completedBots.size}/${botConfigs.length}`);
-      console.log(`📱 QR bots (awaiting pairing): ${qrBots.size}/${botConfigs.length}`);
-      console.log(`🟢 Total successful: ${completedBots.size + qrBots.size}/${botConfigs.length}`);
-      
+      console.log(
+        `📱 QR bots (awaiting pairing): ${qrBots.size}/${botConfigs.length}`
+      );
+      console.log(
+        `🟢 Total successful: ${completedBots.size + qrBots.size}/${
+          botConfigs.length
+        }`
+      );
+
       if (failedBots.size > 0) {
-        console.log(`❌ Failed bots: ${Array.from(failedBots).join(', ')}`);
+        console.log(`❌ Failed bots: ${Array.from(failedBots).join(", ")}`);
       }
-      
+
       if (qrBots.size > 0) {
-        console.log(`📱 QR bots (scan QR codes to complete setup): ${Array.from(qrBots).join(', ')}`);
+        console.log(
+          `📱 QR bots (scan QR codes to complete setup): ${Array.from(
+            qrBots
+          ).join(", ")}`
+        );
       }
-      
+
       // Detailed phone breakdown
       console.log(`\n📊 Phone breakdown:`);
-      Object.keys(phoneTasksByBot).forEach(botName => {
+      Object.keys(phoneTasksByBot).forEach((botName) => {
         const totalPhones = phoneTasksByBot[botName].length;
         const completed = completedPhones.get(botName).length;
         const failed = failedPhones.get(botName).length;
-        const status = failedBots.has(botName) ? '❌ FAILED' : 
-                      qrBots.has(botName) ? '📱 QR' : 
-                      completedBots.has(botName) ? '✅ READY' : '⏳ PROCESSING';
-        console.log(`  Bot ${botName}: ${completed}/${totalPhones} phones completed, ${failed} failed - ${status}`);
+        const status = failedBots.has(botName)
+          ? "❌ FAILED"
+          : qrBots.has(botName)
+          ? "📱 QR"
+          : completedBots.has(botName)
+          ? "✅ READY"
+          : "⏳ PROCESSING";
+        console.log(
+          `  Bot ${botName}: ${completed}/${totalPhones} phones completed, ${failed} failed - ${status}`
+        );
       });
 
       return {
@@ -19314,9 +20061,8 @@ async function main(reinitialize = false) {
         successful: completedBots.size + qrBots.size,
         readyBots: Array.from(completedBots),
         qrBots: Array.from(qrBots),
-        failedBots: Array.from(failedBots)
+        failedBots: Array.from(failedBots),
       };
-
     } catch (error) {
       console.error("Error during bot cluster initializations:", error.message);
       throw error;
@@ -19337,66 +20083,81 @@ async function main(reinitialize = false) {
 function startBotMonitoringSystem() {
   const MONITORING_INTERVAL = 30000;
   const STUCK_THRESHOLD = 120000;
-  
+
   console.log("🔍 Starting bot monitoring system...");
-  
+
   setInterval(async () => {
     try {
       // Get all bots from botMap
       for (const [botName, botData] of botMap.entries()) {
         if (!Array.isArray(botData)) continue;
-        
+
         for (let phoneIndex = 0; phoneIndex < botData.length; phoneIndex++) {
           const phone = botData[phoneIndex];
           if (!phone) continue;
-          
+
           const currentTime = Date.now();
           const status = phone.status;
           const initStartTime = phone.initializationStartTime;
-          
+
           // Check for stuck initialization
-          if (status === 'initializing' && initStartTime) {
+          if (status === "initializing" && initStartTime) {
             const stuckDuration = currentTime - initStartTime;
-            
+
             if (stuckDuration > STUCK_THRESHOLD) {
-              console.warn(`⚠️ Bot ${botName} Phone ${phoneIndex + 1} stuck in initializing for ${(stuckDuration/1000).toFixed(1)}s - attempting recovery`);
-              
+              console.warn(
+                `⚠️ Bot ${botName} Phone ${
+                  phoneIndex + 1
+                } stuck in initializing for ${(stuckDuration / 1000).toFixed(
+                  1
+                )}s - attempting recovery`
+              );
+
               try {
                 // Update status to indicate recovery attempt
-                botData[phoneIndex].status = 'recovering';
+                botData[phoneIndex].status = "recovering";
                 botMap.set(botName, botData);
-                await updatePhoneStatus(botName, phoneIndex, 'recovering');
-                
+                await updatePhoneStatus(botName, phoneIndex, "recovering");
+
                 // Attempt cleanup and reinitialization
                 await safeCleanup(botName, phoneIndex);
-                
+
                 // Small delay before reinitializing
-                await new Promise(resolve => setTimeout(resolve, 5000));
-                
+                await new Promise((resolve) => setTimeout(resolve, 5000));
+
                 // Reinitialize this specific phone
-                console.log(`🔄 Attempting to reinitialize stuck bot ${botName} Phone ${phoneIndex + 1}`);
+                console.log(
+                  `🔄 Attempting to reinitialize stuck bot ${botName} Phone ${
+                    phoneIndex + 1
+                  }`
+                );
                 await initializeBot(botName, 1, phoneIndex);
-                
               } catch (recoveryError) {
-                console.error(`❌ Failed to recover stuck bot ${botName} Phone ${phoneIndex + 1}:`, recoveryError);
-                botData[phoneIndex].status = 'error';
-                botData[phoneIndex].error = `Recovery failed: ${recoveryError.message}`;
+                console.error(
+                  `❌ Failed to recover stuck bot ${botName} Phone ${
+                    phoneIndex + 1
+                  }:`,
+                  recoveryError
+                );
+                botData[phoneIndex].status = "error";
+                botData[
+                  phoneIndex
+                ].error = `Recovery failed: ${recoveryError.message}`;
                 botMap.set(botName, botData);
-                await updatePhoneStatus(botName, phoneIndex, 'error', { 
+                await updatePhoneStatus(botName, phoneIndex, "error", {
                   error: recoveryError.message,
-                  recoveryAttempted: true
+                  recoveryAttempted: true,
                 });
               }
             }
           }
         }
       }
-      
+
       // Optional: Log monitoring summary every 5 minutes
       if (Date.now() % 300000 < MONITORING_INTERVAL) {
         logBotStatusSummary();
       }
-      
     } catch (monitoringError) {
       console.error("Error in bot monitoring system:", monitoringError);
     }
@@ -19413,27 +20174,29 @@ function logBotStatusSummary() {
     disconnected: 0,
     error: 0,
     recovering: 0,
-    unknown: 0
+    unknown: 0,
   };
-  
+
   let totalBots = 0;
-  
+
   for (const [botName, botData] of botMap.entries()) {
     if (!Array.isArray(botData)) continue;
-    
+
     for (const phone of botData) {
       if (!phone) continue;
       totalBots++;
-      const status = phone.status || 'unknown';
+      const status = phone.status || "unknown";
       summary[status] = (summary[status] || 0) + 1;
     }
   }
-  
-  console.log(`📊 Bot Status Summary (${totalBots} total phones):`, 
+
+  console.log(
+    `📊 Bot Status Summary (${totalBots} total phones):`,
     Object.entries(summary)
       .filter(([_, count]) => count > 0)
       .map(([status, count]) => `${status}: ${count}`)
-      .join(', '));
+      .join(", ")
+  );
 }
 
 // Define the function to initialize automations
@@ -19452,9 +20215,9 @@ function initializeAutomations(botMap) {
 async function scheduleDailyReportForBot(companyId) {
   try {
     console.log(`[${companyId}] Setting up daily report...`);
-    
+
     const sqlClient = await pool.connect();
-    
+
     try {
       // Check if this company should be handled by this server instance
       const companyQuery = `
@@ -19462,18 +20225,22 @@ async function scheduleDailyReportForBot(companyId) {
         FROM public.companies 
         WHERE company_id = $1
       `;
-      
+
       const companyResult = await sqlClient.query(companyQuery, [companyId]);
-      
+
       if (companyResult.rows.length === 0) {
-        console.log(`[${companyId}] Company not found, skipping daily report setup`);
+        console.log(
+          `[${companyId}] Company not found, skipping daily report setup`
+        );
         return;
       }
-      
+
       const apiUrl = companyResult.rows[0].api_url;
-      
+
       if (apiUrl !== process.env.URL) {
-        console.log(`[${companyId}] Company belongs to different server (${apiUrl}), skipping`);
+        console.log(
+          `[${companyId}] Company belongs to different server (${apiUrl}), skipping`
+        );
         return;
       }
 
@@ -19498,7 +20265,7 @@ async function scheduleDailyReportForBot(companyId) {
         const [hours, minutes] = reportTime.split(":");
 
         const cronJobName = `dailyReport_${companyId}`;
-        
+
         // Cancel existing job if any
         if (schedule.scheduledJobs[cronJobName]) {
           schedule.scheduledJobs[cronJobName].cancel();
@@ -19507,8 +20274,7 @@ async function scheduleDailyReportForBot(companyId) {
 
         const now = moment().tz("Asia/Kuala_Lumpur");
         const wasRunToday =
-          lastRun &&
-          moment(lastRun).tz("Asia/Kuala_Lumpur").isSame(now, "day");
+          lastRun && moment(lastRun).tz("Asia/Kuala_Lumpur").isSame(now, "day");
 
         // Check if we need to send the report immediately (if it's past scheduled time and not sent today)
         if (
@@ -19534,18 +20300,20 @@ async function scheduleDailyReportForBot(companyId) {
 
             await sqlClient.query(updateQuery, [now.toISOString(), companyId]);
           } else {
-            console.log(`[${companyId}] No WhatsApp client found for immediate report`);
+            console.log(
+              `[${companyId}] No WhatsApp client found for immediate report`
+            );
           }
         }
 
         // Schedule the recurring daily report
         console.log(`[${companyId}] Scheduling daily report for ${reportTime}`);
-        
+
         schedule.scheduleJob(
           cronJobName,
           {
             rule: `0 ${minutes} ${hours} * * *`,
-            tz: 'Asia/Kuala_Lumpur'
+            tz: "Asia/Kuala_Lumpur",
           },
           async function () {
             console.log(`[${companyId}] Running scheduled daily report`);
@@ -19580,7 +20348,9 @@ async function scheduleDailyReportForBot(companyId) {
                 sqlClientForCron.release();
               }
             } else {
-              console.log(`[${companyId}] No WhatsApp client found for scheduled report`);
+              console.log(
+                `[${companyId}] No WhatsApp client found for scheduled report`
+              );
             }
           }
         );
@@ -19599,22 +20369,28 @@ async function scheduleDailyReportForBot(companyId) {
         schedule.scheduleJob(
           weeklyJobName,
           {
-            rule: '0 0 18 * * 0', // Every Sunday at 18:00 (6 PM)
-            tz: 'Asia/Kuala_Lumpur'
+            rule: "0 0 18 * * 0", // Every Sunday at 18:00 (6 PM)
+            tz: "Asia/Kuala_Lumpur",
           },
           async function () {
-            console.log(`[${companyId}] Running scheduled weekly summary report`);
+            console.log(
+              `[${companyId}] Running scheduled weekly summary report`
+            );
 
             const botData = botMap.get(companyId);
             if (botData && botData[0]?.client) {
               await sendWeeklySummaryReport(botData[0].client, companyId);
             } else {
-              console.log(`[${companyId}] No WhatsApp client found for weekly report`);
+              console.log(
+                `[${companyId}] No WhatsApp client found for weekly report`
+              );
             }
           }
         );
 
-        console.log(`[${companyId}] Weekly report scheduled successfully for Sundays at 18:00`);
+        console.log(
+          `[${companyId}] Weekly report scheduled successfully for Sundays at 18:00`
+        );
       } else {
         console.log(`[${companyId}] Daily reporting not enabled, skipping`);
       }
@@ -19677,13 +20453,13 @@ async function sendDailyContactReport(client, idSubstring, targetDate = null) {
       idSubstring,
       targetDate
     );
-    
+
     // Format new contacts details
-    const newContactsDetails = contacts.map(contact => ({
-      name: contact.contactName || 'No Name',
+    const newContactsDetails = contacts.map((contact) => ({
+      name: contact.contactName || "No Name",
       phone: contact.phoneNumber,
-      addedAt: moment(contact.createdAt).format('h:mm A'),
-      tags: Array.isArray(contact.tags) ? contact.tags.join(', ') : ''
+      addedAt: moment(contact.createdAt).format("h:mm A"),
+      tags: Array.isArray(contact.tags) ? contact.tags.join(", ") : "",
     }));
 
     // If targetDate is provided, use it; otherwise use current date
@@ -19692,35 +20468,45 @@ async function sendDailyContactReport(client, idSubstring, targetDate = null) {
       : moment().tz("Asia/Kuala_Lumpur");
 
     // Get engagement metrics for today
-    const dateStr = reportDate.format('YYYY-MM-DD');
+    const dateStr = reportDate.format("YYYY-MM-DD");
 
     // Get reply rate and conversation stats
-    const replyRateQuery = await sqlClient.query(`
+    const replyRateQuery = await sqlClient.query(
+      `
       SELECT
         COUNT(DISTINCT CASE WHEN from_me = false THEN contact_id END) as replied_count,
         COUNT(DISTINCT CASE WHEN from_me = true THEN contact_id END) as total_contacted
       FROM messages
       WHERE company_id = $1
       AND DATE(timestamp AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Kuala_Lumpur') = $2
-    `, [idSubstring, dateStr]);
+    `,
+      [idSubstring, dateStr]
+    );
 
     const replyStats = replyRateQuery.rows[0];
-    const replyRate = replyStats.total_contacted > 0
-      ? Math.round((replyStats.replied_count / replyStats.total_contacted) * 100)
-      : 0;
+    const replyRate =
+      replyStats.total_contacted > 0
+        ? Math.round(
+            (replyStats.replied_count / replyStats.total_contacted) * 100
+          )
+        : 0;
 
     // Get total AI conversations today
-    const conversationQuery = await sqlClient.query(`
+    const conversationQuery = await sqlClient.query(
+      `
       SELECT COUNT(*) as count
       FROM messages
       WHERE company_id = $1
       AND DATE(timestamp AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Kuala_Lumpur') = $2
-    `, [idSubstring, dateStr]);
+    `,
+      [idSubstring, dateStr]
+    );
 
     const totalMessages = parseInt(conversationQuery.rows[0].count) || 0;
 
     // Find contacts with no reply in 48-72 hours (cold leads needing follow-up)
-    const coldLeadsQuery = await sqlClient.query(`
+    const coldLeadsQuery = await sqlClient.query(
+      `
       SELECT
         c.name as contact_name,
         c.phone,
@@ -19734,74 +20520,120 @@ async function sendDailyContactReport(client, idSubstring, targetDate = null) {
          OR MAX(m.timestamp) IS NULL
       ORDER BY last_message_time ASC NULLS FIRST
       LIMIT 5
-    `, [idSubstring]);
+    `,
+      [idSubstring]
+    );
 
     const coldLeads = coldLeadsQuery.rows;
 
     // Get closed contacts today
-    const closedTodayQuery = await sqlClient.query(`
+    const closedTodayQuery = await sqlClient.query(
+      `
       SELECT COUNT(*) as count
       FROM contacts
       WHERE company_id = $1
       AND tags ? 'closed'
       AND DATE(created_at AT TIME ZONE 'Asia/Kuala_Lumpur') = $2
-    `, [idSubstring, dateStr]);
+    `,
+      [idSubstring, dateStr]
+    );
     const closedToday = parseInt(closedTodayQuery.rows[0].count) || 0;
 
     // Get yesterday's stats for comparison
-    const yesterdayStr = moment(reportDate).subtract(1, 'day').format('YYYY-MM-DD');
-    const yesterdayQuery = await sqlClient.query(`
+    const yesterdayStr = moment(reportDate)
+      .subtract(1, "day")
+      .format("YYYY-MM-DD");
+    const yesterdayQuery = await sqlClient.query(
+      `
       SELECT
         COUNT(DISTINCT contact_id) as leads_yesterday,
         COUNT(DISTINCT CASE WHEN from_me = false THEN contact_id END) as replied_yesterday
       FROM messages
       WHERE company_id = $1
       AND DATE(timestamp AT TIME ZONE 'Asia/Kuala_Lumpur') = $2
-    `, [idSubstring, yesterdayStr]);
+    `,
+      [idSubstring, yesterdayStr]
+    );
 
-    const leadsYesterday = parseInt(yesterdayQuery.rows[0].leads_yesterday) || 0;
-    const repliedYesterday = parseInt(yesterdayQuery.rows[0].replied_yesterday) || 0;
+    const leadsYesterday =
+      parseInt(yesterdayQuery.rows[0].leads_yesterday) || 0;
+    const repliedYesterday =
+      parseInt(yesterdayQuery.rows[0].replied_yesterday) || 0;
 
     // Calculate trends
-    const leadsTrend = leadsYesterday > 0 ? Math.round(((count - leadsYesterday) / leadsYesterday) * 100) : 0;
-    const leadsTrendArrow = leadsTrend > 0 ? '↑' : leadsTrend < 0 ? '↓' : '→';
-    const leadsTrendText = leadsTrend !== 0 ? ` ${leadsTrendArrow} ${leadsTrend > 0 ? '+' : ''}${leadsTrend}%` : '';
+    const leadsTrend =
+      leadsYesterday > 0
+        ? Math.round(((count - leadsYesterday) / leadsYesterday) * 100)
+        : 0;
+    const leadsTrendArrow = leadsTrend > 0 ? "↑" : leadsTrend < 0 ? "↓" : "→";
+    const leadsTrendText =
+      leadsTrend !== 0
+        ? ` ${leadsTrendArrow} ${leadsTrend > 0 ? "+" : ""}${leadsTrend}%`
+        : "";
 
     const repliedToday = parseInt(replyStats.replied_count) || 0;
-    const repliesTrend = repliedYesterday > 0 ? Math.round(((repliedToday - repliedYesterday) / repliedYesterday) * 100) : 0;
-    const repliesTrendArrow = repliesTrend > 0 ? '↑' : repliesTrend < 0 ? '↓' : '→';
-    const repliesTrendText = repliesTrend !== 0 ? ` ${repliesTrendArrow} ${repliesTrend > 0 ? '+' : ''}${repliesTrend}%` : '';
-
+    const repliesTrend =
+      repliedYesterday > 0
+        ? Math.round(
+            ((repliedToday - repliedYesterday) / repliedYesterday) * 100
+          )
+        : 0;
+    const repliesTrendArrow =
+      repliesTrend > 0 ? "↑" : repliesTrend < 0 ? "↓" : "→";
+    const repliesTrendText =
+      repliesTrend !== 0
+        ? ` ${repliesTrendArrow} ${repliesTrend > 0 ? "+" : ""}${repliesTrend}%`
+        : "";
 
     // Format cold leads details
-    const coldLeadsDetails = coldLeads.map(lead => ({
-      name: lead.contact_name || 'No Name',
+    const coldLeadsDetails = coldLeads.map((lead) => ({
+      name: lead.contact_name || "No Name",
       phone: lead.phone,
-      lastContact: lead.last_message_time 
+      lastContact: lead.last_message_time
         ? moment(lead.last_message_time).fromNow()
-        : 'No messages yet',
-      daysSinceLastContact: lead.last_message_time 
-        ? Math.ceil(moment.duration(moment().diff(moment(lead.last_message_time))).asDays())
-        : Math.ceil(moment.duration(moment().diff(moment(lead.contact_created))).asDays()),
-      messageCount: lead.total_messages || 0
+        : "No messages yet",
+      daysSinceLastContact: lead.last_message_time
+        ? Math.ceil(
+            moment
+              .duration(moment().diff(moment(lead.last_message_time)))
+              .asDays()
+          )
+        : Math.ceil(
+            moment
+              .duration(moment().diff(moment(lead.contact_created)))
+              .asDays()
+          ),
+      messageCount: lead.total_messages || 0,
     }));
 
     // Get 7-day context for motivation
-    const sevenDaysAgo = moment(reportDate).subtract(7, 'days').format('YYYY-MM-DD');
-    const weeklyContextQuery = await sqlClient.query(`
+    const sevenDaysAgo = moment(reportDate)
+      .subtract(7, "days")
+      .format("YYYY-MM-DD");
+    const weeklyContextQuery = await sqlClient.query(
+      `
       SELECT COUNT(DISTINCT contact_id) as total_leads_7d
       FROM contacts
       WHERE company_id = $1
       AND DATE(created_at AT TIME ZONE 'Asia/Kuala_Lumpur') >= $2
-    `, [idSubstring, sevenDaysAgo]);
-    const totalLeads7d = parseInt(weeklyContextQuery.rows[0].total_leads_7d) || 0;
+    `,
+      [idSubstring, sevenDaysAgo]
+    );
+    const totalLeads7d =
+      parseInt(weeklyContextQuery.rows[0].total_leads_7d) || 0;
 
     // Generate personalized encouragement/motivation
-    let motivationalMessage = '';
+    let motivationalMessage = "";
     if (count > leadsYesterday && count > 0) {
-      motivationalMessage = `🔥 You're on fire! ${count} leads today is ${leadsTrendText.includes('+') ? 'your best this week' : 'momentum building'}!`;
+      motivationalMessage = `🔥 You're on fire! ${count} leads today is ${
+        leadsTrendText.includes("+")
+          ? "your best this week"
+          : "momentum building"
+      }!`;
     } else if (closedToday > 0) {
-      motivationalMessage = `🎯 ${closedToday} deal${closedToday > 1 ? 's' : ''} closed today — great work converting!`;
+      motivationalMessage = `🎯 ${closedToday} deal${
+        closedToday > 1 ? "s" : ""
+      } closed today — great work converting!`;
     } else if (replyRate > 60) {
       motivationalMessage = `💪 ${replyRate}% response rate — your messaging is working!`;
     } else if (count > 0) {
@@ -19811,35 +20643,51 @@ async function sendDailyContactReport(client, idSubstring, targetDate = null) {
     }
 
     // Actionable alert with context
-    let actionableAlert = '';
+    let actionableAlert = "";
     if (coldLeads.length > 0) {
-      actionableAlert = `⚠️ ${coldLeads.length} lead${coldLeads.length > 1 ? 's' : ''} ${coldLeads.length > 1 ? 'haven\'t' : 'hasn\'t'} been followed up in 48h. Try re-engaging them today 💪\n\n`;
+      actionableAlert = `⚠️ ${coldLeads.length} lead${
+        coldLeads.length > 1 ? "s" : ""
+      } ${
+        coldLeads.length > 1 ? "haven't" : "hasn't"
+      } been followed up in 48h. Try re-engaging them today 💪\n\n`;
     } else if (repliedToday > 0 && closedToday === 0) {
-      actionableAlert = `💡 You have ${repliedToday} engaged lead${repliedToday > 1 ? 's' : ''} — follow up to convert them!\n\n`;
+      actionableAlert = `💡 You have ${repliedToday} engaged lead${
+        repliedToday > 1 ? "s" : ""
+      } — follow up to convert them!\n\n`;
     }
 
     // Format new contacts section for the message
-    let newContactsSection = '';
+    let newContactsSection = "";
     if (newContactsDetails && newContactsDetails.length > 0) {
-      newContactsSection = `\n📌 *New Leads (${count})*:\n` +
+      newContactsSection =
+        `\n📌 *New Leads (${count})*:\n` +
         newContactsDetails
-          .map((contact, index) => 
-            `${index + 1}. ${contact.name} (${contact.phone}) - ${contact.addedAt}` +
-            (contact.tags ? `\n   🏷️ Tags: ${contact.tags}` : '')
+          .map(
+            (contact, index) =>
+              `${index + 1}. ${contact.name} (${contact.phone}) - ${
+                contact.addedAt
+              }` + (contact.tags ? `\n   🏷️ Tags: ${contact.tags}` : "")
           )
-          .join('\n') + '\n\n';
+          .join("\n") +
+        "\n\n";
     }
 
     // Format cold leads details for the message
-    let coldLeadsSection = '';
+    let coldLeadsSection = "";
     if (coldLeadsDetails.length > 0) {
-      coldLeadsSection = `\n❄️ *Cold Leads (${coldLeadsDetails.length}) - Needs Follow-up*:\n` +
+      coldLeadsSection =
+        `\n❄️ *Cold Leads (${coldLeadsDetails.length}) - Needs Follow-up*:\n` +
         coldLeadsDetails
-          .map((lead, index) => 
-            `${index + 1}. ${lead.name} (${lead.phone})\n   ⏱️ Last contact: ${lead.lastContact} (${lead.daysSinceLastContact} days ago)\n` +
-            `   💬 Messages: ${lead.messageCount}`
+          .map(
+            (lead, index) =>
+              `${index + 1}. ${lead.name} (${
+                lead.phone
+              })\n   ⏱️ Last contact: ${lead.lastContact} (${
+                lead.daysSinceLastContact
+              } days ago)\n` + `   💬 Messages: ${lead.messageCount}`
           )
-          .join('\n') + '\n\n';
+          .join("\n") +
+        "\n\n";
     }
 
     const message =
@@ -19848,9 +20696,9 @@ async function sendDailyContactReport(client, idSubstring, targetDate = null) {
       `💬 Replies Received: *${repliedToday}*${repliesTrendText}\n` +
       `✅ Closed Contacts: *${closedToday}*\n` +
       `📈 Response Rate: *${replyRate}%*\n\n` +
-      (newContactsSection || '') +
-      (coldLeadsSection || '') +
-      (actionableAlert || '');
+      (newContactsSection || "") +
+      (coldLeadsSection || "") +
+      (actionableAlert || "");
 
     const settingsQuery = `
       SELECT setting_value->>'groupId' as group_id
@@ -19892,12 +20740,19 @@ async function sendDailyContactReport(client, idSubstring, targetDate = null) {
 // Generate data-driven AI insights from actual conversation patterns
 async function generateDailyAIInsight(companyId, sqlClient) {
   try {
-    const today = moment().tz("Asia/Kuala_Lumpur").format('YYYY-MM-DD');
-    const yesterday = moment().tz("Asia/Kuala_Lumpur").subtract(1, 'day').format('YYYY-MM-DD');
-    const sevenDaysAgo = moment().tz("Asia/Kuala_Lumpur").subtract(7, 'days').format('YYYY-MM-DD');
+    const today = moment().tz("Asia/Kuala_Lumpur").format("YYYY-MM-DD");
+    const yesterday = moment()
+      .tz("Asia/Kuala_Lumpur")
+      .subtract(1, "day")
+      .format("YYYY-MM-DD");
+    const sevenDaysAgo = moment()
+      .tz("Asia/Kuala_Lumpur")
+      .subtract(7, "days")
+      .format("YYYY-MM-DD");
 
     // Get real conversation insights
-    const insightData = await sqlClient.query(`
+    const insightData = await sqlClient.query(
+      `
       WITH today_stats AS (
         SELECT
           COUNT(DISTINCT contact_id) as contacts_today,
@@ -19964,37 +20819,56 @@ async function generateDailyAIInsight(companyId, sqlClient) {
         ct.closed_count,
         (SELECT JSON_AGG(row_to_json(recent_conversation_samples.*)) FROM recent_conversation_samples) as conversation_samples
       FROM today_stats t, yesterday_stats y, week_stats w, closed_today ct
-    `, [companyId, today, yesterday, sevenDaysAgo]);
+    `,
+      [companyId, today, yesterday, sevenDaysAgo]
+    );
 
     const data = insightData.rows[0];
 
     // Calculate trends
-    const leadTrend = data.contacts_yesterday > 0
-      ? Math.round(((data.contacts_today - data.contacts_yesterday) / data.contacts_yesterday) * 100)
-      : 0;
-    const replyRateToday = data.contacts_today > 0
-      ? Math.round((data.replied_today / data.contacts_today) * 100)
-      : 0;
-    const replyRateYesterday = data.contacts_yesterday > 0
-      ? Math.round((data.replied_yesterday / data.contacts_yesterday) * 100)
-      : 0;
+    const leadTrend =
+      data.contacts_yesterday > 0
+        ? Math.round(
+            ((data.contacts_today - data.contacts_yesterday) /
+              data.contacts_yesterday) *
+              100
+          )
+        : 0;
+    const replyRateToday =
+      data.contacts_today > 0
+        ? Math.round((data.replied_today / data.contacts_today) * 100)
+        : 0;
+    const replyRateYesterday =
+      data.contacts_yesterday > 0
+        ? Math.round((data.replied_yesterday / data.contacts_yesterday) * 100)
+        : 0;
 
     // Extract conversation pattern insights
     const conversationSamples = data.conversation_samples || [];
-    const noReplyContacts = conversationSamples.filter(c => c.has_reply === 0);
-    const avgMessagesPerContact = conversationSamples.length > 0
-      ? Math.round(conversationSamples.reduce((sum, c) => sum + c.message_count, 0) / conversationSamples.length)
-      : 0;
+    const noReplyContacts = conversationSamples.filter(
+      (c) => c.has_reply === 0
+    );
+    const avgMessagesPerContact =
+      conversationSamples.length > 0
+        ? Math.round(
+            conversationSamples.reduce((sum, c) => sum + c.message_count, 0) /
+              conversationSamples.length
+          )
+        : 0;
 
     const prompt = `You are a WhatsApp sales performance analyst. Analyze these REAL conversation metrics and provide ONE specific, actionable insight (max 2 sentences).
 
 REAL DATA FROM TODAY:
-- New leads today: ${data.contacts_today} (${leadTrend > 0 ? '+' : ''}${leadTrend}% vs yesterday)
+- New leads today: ${data.contacts_today} (${
+      leadTrend > 0 ? "+" : ""
+    }${leadTrend}% vs yesterday)
 - Reply rate today: ${replyRateToday}% (yesterday: ${replyRateYesterday}%)
 - Total messages exchanged: ${data.messages_today}
 - Deals closed today: ${data.closed_count || 0}
 - Average messages per conversation: ${avgMessagesPerContact}
-- Leads not responding: ${noReplyContacts.length} out of ${conversationSamples.length} recent
+- Leads not responding: ${noReplyContacts.length} out of ${
+      conversationSamples.length
+    } recent
 
 7-DAY TREND:
 - Weekly engagement rate: ${Math.round((data.engagement_rate_week || 0) * 100)}%
@@ -20018,7 +20892,7 @@ Return ONLY ONE specific actionable insight based on the actual numbers above. R
 
     return completion.choices[0].message.content.trim();
   } catch (error) {
-    console.error('Error generating AI insight:', error);
+    console.error("Error generating AI insight:", error);
     return null; // Return null instead of generic advice
   }
 }
@@ -20029,7 +20903,8 @@ async function generateAIWeeklyTip(stats) {
     const engagedLeads = parseInt(stats.engaged_leads) || 0;
     const totalMessages = parseInt(stats.total_messages) || 0;
     const qualifiedLeads = parseInt(stats.qualified_leads) || 0;
-    const engagementRate = totalLeads > 0 ? Math.round((engagedLeads / totalLeads) * 100) : 0;
+    const engagementRate =
+      totalLeads > 0 ? Math.round((engagedLeads / totalLeads) * 100) : 0;
     const dailyAvg = Math.round(totalLeads / 7);
 
     const prompt = `You are a sales performance AI consultant. Based on these WhatsApp lead generation metrics for the past week, provide ONE actionable tip (2-3 sentences max) to improve their sales performance.
@@ -20059,15 +20934,21 @@ Return ONLY the tip as plain text, no formatting, no bullet points. Start direct
 
     return completion.choices[0].message.content.trim();
   } catch (error) {
-    console.error('Error generating AI tip:', error);
+    console.error("Error generating AI tip:", error);
     // Fallback tips based on simple logic
-    const engagementRate = parseInt(stats.total_leads) > 0
-      ? Math.round((parseInt(stats.engaged_leads) / parseInt(stats.total_leads)) * 100)
-      : 0;
+    const engagementRate =
+      parseInt(stats.total_leads) > 0
+        ? Math.round(
+            (parseInt(stats.engaged_leads) / parseInt(stats.total_leads)) * 100
+          )
+        : 0;
 
     if (engagementRate < 40) {
       return "Your engagement rate could be improved. Try personalizing your opening messages with the lead's name and reference their specific needs. Response rates increase 3x with personalized outreach.";
-    } else if (parseInt(stats.qualified_leads) < parseInt(stats.engaged_leads) * 0.3) {
+    } else if (
+      parseInt(stats.qualified_leads) <
+      parseInt(stats.engaged_leads) * 0.3
+    ) {
       return "Focus on qualifying leads earlier in the conversation. Ask specific questions about budget, timeline, and decision-making authority within the first 3 messages to save time and improve conversion rates.";
     } else {
       return "Great engagement! Now focus on speed - leads who receive follow-ups within 5 minutes are 21x more likely to convert. Set up instant auto-replies for common questions to maintain momentum.";
@@ -20080,13 +20961,18 @@ async function sendWeeklySummaryReport(client, idSubstring) {
 
   try {
     const endDate = moment().tz("Asia/Kuala_Lumpur");
-    const startDate = moment(endDate).subtract(7, 'days');
-    const prevWeekStart = moment(startDate).subtract(7, 'days');
+    const startDate = moment(endDate).subtract(7, "days");
+    const prevWeekStart = moment(startDate).subtract(7, "days");
 
-    console.log(`[${idSubstring}] Generating weekly summary for ${startDate.format('DD/MM')} - ${endDate.format('DD/MM/YYYY')}`);
+    console.log(
+      `[${idSubstring}] Generating weekly summary for ${startDate.format(
+        "DD/MM"
+      )} - ${endDate.format("DD/MM/YYYY")}`
+    );
 
     // Get this week's metrics
-    const weeklyQuery = await sqlClient.query(`
+    const weeklyQuery = await sqlClient.query(
+      `
       SELECT
         COUNT(DISTINCT c.contact_id) as total_leads,
         COUNT(DISTINCT CASE WHEN m.from_me = false THEN c.contact_id END) as engaged_leads,
@@ -20096,10 +20982,13 @@ async function sendWeeklySummaryReport(client, idSubstring) {
       LEFT JOIN messages m ON c.contact_id = m.contact_id AND c.company_id = m.company_id
       WHERE c.company_id = $1
       AND c.created_at >= $2::timestamp AND c.created_at < $3::timestamp
-    `, [idSubstring, startDate.toISOString(), endDate.toISOString()]);
+    `,
+      [idSubstring, startDate.toISOString(), endDate.toISOString()]
+    );
 
     // Get last week's metrics for comparison
-    const lastWeekQuery = await sqlClient.query(`
+    const lastWeekQuery = await sqlClient.query(
+      `
       SELECT
         COUNT(DISTINCT c.contact_id) as total_leads,
         COUNT(DISTINCT CASE WHEN m.from_me = false THEN c.contact_id END) as engaged_leads,
@@ -20108,7 +20997,9 @@ async function sendWeeklySummaryReport(client, idSubstring) {
       LEFT JOIN messages m ON c.contact_id = m.contact_id AND c.company_id = m.company_id
       WHERE c.company_id = $1
       AND c.created_at >= $2::timestamp AND c.created_at < $3::timestamp
-    `, [idSubstring, prevWeekStart.toISOString(), startDate.toISOString()]);
+    `,
+      [idSubstring, prevWeekStart.toISOString(), startDate.toISOString()]
+    );
 
     const thisWeek = weeklyQuery.rows[0];
     const lastWeek = lastWeekQuery.rows[0];
@@ -20123,14 +21014,25 @@ async function sendWeeklySummaryReport(client, idSubstring) {
     const lastWeekClosed = parseInt(lastWeek.closed_deals) || 0;
 
     // Calculate trends
-    const leadsTrend = lastWeekLeads > 0 ? Math.round(((totalLeads - lastWeekLeads) / lastWeekLeads) * 100) : 0;
-    const engagedTrend = lastWeekEngaged > 0 ? Math.round(((engagedLeads - lastWeekEngaged) / lastWeekEngaged) * 100) : 0;
-    const closedTrend = lastWeekClosed > 0 ? Math.round(((closedDeals - lastWeekClosed) / lastWeekClosed) * 100) : 0;
+    const leadsTrend =
+      lastWeekLeads > 0
+        ? Math.round(((totalLeads - lastWeekLeads) / lastWeekLeads) * 100)
+        : 0;
+    const engagedTrend =
+      lastWeekEngaged > 0
+        ? Math.round(((engagedLeads - lastWeekEngaged) / lastWeekEngaged) * 100)
+        : 0;
+    const closedTrend =
+      lastWeekClosed > 0
+        ? Math.round(((closedDeals - lastWeekClosed) / lastWeekClosed) * 100)
+        : 0;
 
-    const responseRate = totalLeads > 0 ? Math.round((engagedLeads / totalLeads) * 100) : 0;
+    const responseRate =
+      totalLeads > 0 ? Math.round((engagedLeads / totalLeads) * 100) : 0;
 
     // Engagement insights - best performing day
-    const dailyPerformanceQuery = await sqlClient.query(`
+    const dailyPerformanceQuery = await sqlClient.query(
+      `
       SELECT
         TO_CHAR(DATE(c.created_at AT TIME ZONE 'Asia/Kuala_Lumpur'), 'Day') as day_name,
         COUNT(DISTINCT c.contact_id) as leads_count,
@@ -20142,16 +21044,23 @@ async function sendWeeklySummaryReport(client, idSubstring) {
       GROUP BY day_name, DATE(c.created_at AT TIME ZONE 'Asia/Kuala_Lumpur')
       ORDER BY replied_count DESC
       LIMIT 1
-    `, [idSubstring, startDate.toISOString(), endDate.toISOString()]);
+    `,
+      [idSubstring, startDate.toISOString(), endDate.toISOString()]
+    );
 
     const bestDay = dailyPerformanceQuery.rows[0];
-    const bestDayName = bestDay ? bestDay.day_name.trim() : 'N/A';
-    const bestDayRate = bestDay && parseInt(bestDay.leads_count) > 0
-      ? Math.round((parseInt(bestDay.replied_count) / parseInt(bestDay.leads_count)) * 100)
-      : 0;
+    const bestDayName = bestDay ? bestDay.day_name.trim() : "N/A";
+    const bestDayRate =
+      bestDay && parseInt(bestDay.leads_count) > 0
+        ? Math.round(
+            (parseInt(bestDay.replied_count) / parseInt(bestDay.leads_count)) *
+              100
+          )
+        : 0;
 
     // Cold leads that need re-engagement
-    const coldLeadsQuery = await sqlClient.query(`
+    const coldLeadsQuery = await sqlClient.query(
+      `
       SELECT COUNT(DISTINCT c.contact_id) as cold_count
       FROM contacts c
       LEFT JOIN messages m ON c.contact_id = m.contact_id AND c.company_id = m.company_id
@@ -20161,12 +21070,14 @@ async function sendWeeklySummaryReport(client, idSubstring) {
       GROUP BY c.contact_id
       HAVING MAX(m.timestamp) < NOW() - INTERVAL '48 hours'
          OR MAX(m.timestamp) IS NULL
-    `, [idSubstring, startDate.toISOString(), endDate.toISOString()]);
+    `,
+      [idSubstring, startDate.toISOString(), endDate.toISOString()]
+    );
 
     const coldLeadsCount = coldLeadsQuery.rows.length || 0;
 
     // Performance badges
-    let topMetric = '';
+    let topMetric = "";
     if (closedTrend > 0 && closedTrend >= leadsTrend) {
       topMetric = `🏆 Top Metric: +${closedTrend}% higher conversion this week!`;
     } else if (leadsTrend > 10) {
@@ -20186,31 +21097,45 @@ async function sendWeeklySummaryReport(client, idSubstring) {
       qualified_leads: closedDeals,
       leadsTrend,
       engagedTrend,
-      closedTrend
+      closedTrend,
     };
     const aiInsight = await generateAIWeeklyTip(stats);
 
     // Action suggestions
     let actionSuggestions = `🎯 *Recommended Actions:*\n`;
     if (coldLeadsCount > 0) {
-      actionSuggestions += `Re-engage ${coldLeadsCount} cold lead${coldLeadsCount > 1 ? 's' : ''} from this week.\n`;
+      actionSuggestions += `Re-engage ${coldLeadsCount} cold lead${
+        coldLeadsCount > 1 ? "s" : ""
+      } from this week.\n`;
     }
 
     const message =
-      `📅 *Weekly Report (${startDate.format("DD MMM")}–${endDate.format("DD MMM YYYY")})*\n\n` +
-      `👥 Total Leads: *${totalLeads}*  (${leadsTrend > 0 ? '↑' : leadsTrend < 0 ? '↓' : '→'} ${leadsTrend > 0 ? '+' : ''}${leadsTrend}% from last week)\n` +
-      `💬 Replies: *${engagedLeads}*  (${engagedTrend > 0 ? '↑' : engagedTrend < 0 ? '↓' : '→'} ${engagedTrend > 0 ? '+' : ''}${engagedTrend}%)\n` +
-      `✅ Closed Deals: *${closedDeals}*  (${closedTrend > 0 ? '↑' : closedTrend < 0 ? '↓' : '→'} ${closedTrend > 0 ? '+' : ''}${closedTrend}%)\n` +
+      `📅 *Weekly Report (${startDate.format("DD MMM")}–${endDate.format(
+        "DD MMM YYYY"
+      )})*\n\n` +
+      `👥 Total Leads: *${totalLeads}*  (${
+        leadsTrend > 0 ? "↑" : leadsTrend < 0 ? "↓" : "→"
+      } ${leadsTrend > 0 ? "+" : ""}${leadsTrend}% from last week)\n` +
+      `💬 Replies: *${engagedLeads}*  (${
+        engagedTrend > 0 ? "↑" : engagedTrend < 0 ? "↓" : "→"
+      } ${engagedTrend > 0 ? "+" : ""}${engagedTrend}%)\n` +
+      `✅ Closed Deals: *${closedDeals}*  (${
+        closedTrend > 0 ? "↑" : closedTrend < 0 ? "↓" : "→"
+      } ${closedTrend > 0 ? "+" : ""}${closedTrend}%)\n` +
       `⚡ Response Rate: *${responseRate}%*\n\n` +
       `━━━━━━━━━━━━━━━━━━━━\n` +
       `📈 *Engagement Insights*\n` +
-      (bestDayName !== 'N/A' ? `• Fastest Response Day: ${bestDayName} (${bestDayRate}% reply rate)\n` : '') +
+      (bestDayName !== "N/A"
+        ? `• Fastest Response Day: ${bestDayName} (${bestDayRate}% reply rate)\n`
+        : "") +
       `• Total Conversations: ${totalMessages}\n\n` +
       `🤖 *AI Insight:*\n${aiInsight}\n\n` +
       `━━━━━━━━━━━━━━━━━━━━\n` +
-      topMetric + `\n\n` +
+      topMetric +
+      `\n\n` +
       `━━━━━━━━━━━━━━━━━━━━\n` +
-      actionSuggestions + `\n` +
+      actionSuggestions +
+      `\n` +
       `━━━━━━━━━━━━━━━━━━━━\n`;
 
     // Get group ID from settings (use weeklyReport or fallback to dailyReport)
@@ -20225,13 +21150,18 @@ async function sendWeeklySummaryReport(client, idSubstring) {
     `;
 
     const settingsResult = await sqlClient.query(settingsQuery, [idSubstring]);
-    const groupId = settingsResult.rows.length > 0 ? settingsResult.rows[0].group_id : null;
+    const groupId =
+      settingsResult.rows.length > 0 ? settingsResult.rows[0].group_id : null;
 
     if (groupId) {
       await client.sendMessage(groupId, message);
-      console.log(`Weekly summary sent to group ${groupId} for company ${idSubstring}`);
+      console.log(
+        `Weekly summary sent to group ${groupId} for company ${idSubstring}`
+      );
     } else {
-      console.log(`No group ID configured for weekly report for company ${idSubstring}`);
+      console.log(
+        `No group ID configured for weekly report for company ${idSubstring}`
+      );
     }
 
     return { success: true, message: "Weekly report sent successfully" };
@@ -20247,7 +21177,10 @@ async function getContactsAddedToday(idSubstring, targetDate = null) {
   try {
     // If targetDate is provided, use it; otherwise use today
     const date = targetDate
-      ? moment(targetDate).tz("Asia/Kuala_Lumpur").startOf("day").format("YYYY-MM-DD")
+      ? moment(targetDate)
+          .tz("Asia/Kuala_Lumpur")
+          .startOf("day")
+          .format("YYYY-MM-DD")
       : moment().tz("Asia/Kuala_Lumpur").startOf("day").format("YYYY-MM-DD");
 
     const result = await sql`
@@ -20426,9 +21359,10 @@ async function fetchCompanyConfigSql(companyId) {
       AND setting_key = 'dailyReport'
     `;
     const settingsResult = await sqlDb.query(settingsQuery, [companyId]);
-    const dailyReportSettings = settingsResult.rows.length > 0
-      ? settingsResult.rows[0].setting_value
-      : null;
+    const dailyReportSettings =
+      settingsResult.rows.length > 0
+        ? settingsResult.rows[0].setting_value
+        : null;
 
     const openaiTokenQuery =
       "SELECT config_value FROM system_config WHERE config_key = $1";
@@ -21223,10 +22157,15 @@ app.put("/api/contacts/:contact_id/pinned", async (req, res) => {
 
 // Mass delete contacts endpoint
 app.delete("/api/contacts/mass-delete", async (req, res) => {
-  try {    
+  try {
     const { contactIds, companyId } = req.body;
 
-    if (!companyId || !contactIds || !Array.isArray(contactIds) || contactIds.length === 0) {      
+    if (
+      !companyId ||
+      !contactIds ||
+      !Array.isArray(contactIds) ||
+      contactIds.length === 0
+    ) {
       return res.status(400).json({
         success: false,
         message: "Missing required fields (companyId, contactIds array)",
@@ -21235,8 +22174,8 @@ app.delete("/api/contacts/mass-delete", async (req, res) => {
           contactIds: !!contactIds,
           isArray: Array.isArray(contactIds),
           length: contactIds ? contactIds.length : 0,
-          receivedBody: req.body
-        }
+          receivedBody: req.body,
+        },
       });
     }
 
@@ -21314,7 +22253,6 @@ app.delete("/api/contacts/mass-delete", async (req, res) => {
           } else {
             failures.push({ contactId, reason: "Failed to delete contact" });
           }
-
         } catch (contactError) {
           console.error(`Error deleting contact ${contactId}:`, contactError);
           failures.push({ contactId, reason: contactError.message });
@@ -21330,14 +22268,12 @@ app.delete("/api/contacts/mass-delete", async (req, res) => {
         totalRequested: contactIds.length,
         failures: failures.length > 0 ? failures : undefined,
       });
-
     } catch (error) {
       await safeRollback(client);
       throw error;
     } finally {
       client.release();
     }
-
   } catch (error) {
     console.error("Error in mass delete contacts:", error);
     res.status(500).json({
@@ -22443,14 +23379,22 @@ async function runAssistant(assistantID, threadId) {
 async function checkingStatus(threadId, runId) {
   const runObject = await openai.beta.threads.runs.retrieve(threadId, runId);
   const status = runObject.status;
-  
+
   if (status === "completed") {
     const messagesList = await openai.beta.threads.messages.list(threadId);
     const latestMessage = messagesList.body.data[0].content;
     const answer = latestMessage[0].text.value;
     return answer;
-  } else if (status === "failed" || status === "cancelled" || status === "expired") {
-    throw new Error(`Assistant run ${status}: ${runObject.last_error?.message || 'Unknown error'}`);
+  } else if (
+    status === "failed" ||
+    status === "cancelled" ||
+    status === "expired"
+  ) {
+    throw new Error(
+      `Assistant run ${status}: ${
+        runObject.last_error?.message || "Unknown error"
+      }`
+    );
   }
   // For statuses: queued, in_progress, requires_action - continue polling
   return null;
@@ -22460,7 +23404,7 @@ async function waitForCompletion(threadId, runId) {
   return new Promise((resolve, reject) => {
     const timeout = setTimeout(() => {
       clearInterval(pollingInterval);
-      reject(new Error('Assistant timeout - no response after 5 minutes'));
+      reject(new Error("Assistant timeout - no response after 5 minutes"));
     }, 300000); // 5 minutes timeout
 
     pollingInterval = setInterval(async () => {
@@ -22493,7 +23437,7 @@ app.get("/api/assistant-test/", async (req, res) => {
     const message = req.query.message;
     const email = req.query.email;
     const assistantid = req.query.assistantid;
-    
+
     // Log the request
     console.log("🧪 Assistant Test Request:", {
       message: message ? message.substring(0, 100) + "..." : "No message",
@@ -22526,7 +23470,11 @@ app.get("/api/assistant-test/", async (req, res) => {
     }
 
     // Add user message to thread
-    console.log("📝 Adding user message to thread (length:", message.length, ")");
+    console.log(
+      "📝 Adding user message to thread (length:",
+      message.length,
+      ")"
+    );
     await addMessage(threadID, message);
     console.log("✅ User message added to thread");
 
@@ -25577,7 +26525,10 @@ app.delete(
 
         // Check if we can delete for everyone (only if message is from us or we're admin)
         const deleteForEveryone2 = message.fromMe && deleteForEveryone === true;
-        console.log("Delete message - Delete for everyone:", deleteForEveryone2);
+        console.log(
+          "Delete message - Delete for everyone:",
+          deleteForEveryone2
+        );
 
         await message.delete(deleteForEveryone2);
         console.log("Delete message - Deleted from WhatsApp successfully");
@@ -25830,47 +26781,72 @@ app.post("/api/request-pairing-code/:botName", async (req, res) => {
     : cleanedPhoneNumber;
 
   try {
-    console.log(`Reinitializing bot ${botName} with pairing config for phone ${formattedPhoneNumber}`);
-    
+    console.log(
+      `Reinitializing bot ${botName} with pairing config for phone ${formattedPhoneNumber}`
+    );
+
     // Clean up existing client if any
     const existingBotData = botMap.get(botName);
-    if (existingBotData && existingBotData[phoneIndex] && existingBotData[phoneIndex].client) {
+    if (
+      existingBotData &&
+      existingBotData[phoneIndex] &&
+      existingBotData[phoneIndex].client
+    ) {
       try {
         await existingBotData[phoneIndex].client.destroy();
-        console.log(`Destroyed existing client for ${botName} Phone ${phoneIndex + 1}`);
+        console.log(
+          `Destroyed existing client for ${botName} Phone ${phoneIndex + 1}`
+        );
       } catch (destroyError) {
-        console.warn(`Error destroying existing client: ${destroyError.message}`);
+        console.warn(
+          `Error destroying existing client: ${destroyError.message}`
+        );
       }
     }
 
     // Create pairing configuration
     const pairingConfig = {
-      phoneNumber: formattedPhoneNumber
+      phoneNumber: formattedPhoneNumber,
     };
 
-    console.log(`Starting bot reinitialization with pairing config:`, pairingConfig);
+    console.log(
+      `Starting bot reinitialization with pairing config:`,
+      pairingConfig
+    );
 
     // Reinitialize the bot with pairing configuration
     initializeBot(botName, 1, phoneIndex, pairingConfig);
 
     // Wait a moment for initialization to start
     console.log(`Waiting for initialization to start...`);
-    await new Promise(resolve => setTimeout(resolve, 3000));
+    await new Promise((resolve) => setTimeout(resolve, 3000));
 
     // Get the new client
     const botData = botMap.get(botName);
     if (!botData || !Array.isArray(botData) || !botData[phoneIndex]) {
-      console.error(`Failed to get bot data after reinitialization for ${botName}`);
-      return res.status(500).json({ error: "Failed to reinitialize bot with pairing config" });
+      console.error(
+        `Failed to get bot data after reinitialization for ${botName}`
+      );
+      return res
+        .status(500)
+        .json({ error: "Failed to reinitialize bot with pairing config" });
     }
 
     const { client } = botData[phoneIndex];
     if (!client) {
-      console.error(`Failed to get client after reinitialization for ${botName}`);
-      return res.status(500).json({ error: "WhatsApp client not initialized after reinitialization" });
+      console.error(
+        `Failed to get client after reinitialization for ${botName}`
+      );
+      return res
+        .status(500)
+        .json({
+          error: "WhatsApp client not initialized after reinitialization",
+        });
     }
 
-    console.log(`Client reinitialized successfully for ${botName}, waiting for pairing code...`);
+    console.log(
+      `Client reinitialized successfully for ${botName}, waiting for pairing code...`
+    );
 
     // Wait for the pairing code to appear in the database
     const pairingCodePromise = new Promise((resolve, reject) => {
@@ -25880,7 +26856,11 @@ app.post("/api/request-pairing-code/:botName", async (req, res) => {
 
       const checkForPairingCode = async () => {
         try {
-          console.log(`Checking database for pairing code for ${botName} Phone ${phoneIndex + 1}...`);
+          console.log(
+            `Checking database for pairing code for ${botName} Phone ${
+              phoneIndex + 1
+            }...`
+          );
           const result = await sqlDb.query(
             `SELECT status, metadata FROM phone_status
              WHERE company_id = $1 AND phone_index = $2`,
@@ -25909,13 +26889,15 @@ app.post("/api/request-pairing-code/:botName", async (req, res) => {
 
     // Wait for the pairing code to appear in the database
     const pairingCode = await pairingCodePromise;
-    console.log(`Successfully received pairing code for ${botName}: ${pairingCode}`);
+    console.log(
+      `Successfully received pairing code for ${botName}: ${pairingCode}`
+    );
 
     // Send the pairing code back to the client
-    res.json({ 
+    res.json({
       pairingCode,
       message: `Bot ${botName} reinitialized with pairing config for ${formattedPhoneNumber}`,
-      success: true
+      success: true,
     });
   } catch (error) {
     console.error(`Error requesting pairing code for ${botName}:`, error);
@@ -27145,14 +28127,23 @@ async function pathExists(path) {
   }
 }
 
-async function initializeBot(botName, phoneCount = 1, specificPhoneIndex, pairingConfig = null) {
+async function initializeBot(
+  botName,
+  phoneCount = 1,
+  specificPhoneIndex,
+  pairingConfig = null
+) {
   try {
     console.log(
       `Starting initialization for bot: ${botName} with ${phoneCount} phone(s)${
         specificPhoneIndex !== undefined
           ? `, phone ${specificPhoneIndex + 1}`
           : ""
-      }${pairingConfig ? ` with pairing config for ${pairingConfig.phoneNumber}` : ""}`
+      }${
+        pairingConfig
+          ? ` with pairing config for ${pairingConfig.phoneNumber}`
+          : ""
+      }`
     );
 
     let clients =
@@ -27179,7 +28170,13 @@ async function initializeBot(botName, phoneCount = 1, specificPhoneIndex, pairin
         // Small stagger between starts to prevent resource contention
         await new Promise((resolve) => setTimeout(resolve, i * 2500));
 
-        return initializeWithTimeout(botName, i, clientName, clients, pairingConfig);
+        return initializeWithTimeout(
+          botName,
+          i,
+          clientName,
+          clients,
+          pairingConfig
+        );
       } catch (phoneError) {
         console.error(
           `Error initializing bot ${botName} Phone ${i + 1}:`,
@@ -27284,8 +28281,6 @@ async function updatePhoneStatus(companyId, phoneIndex, status, metadata = {}) {
         ]
       );
     }
-
-   
   } catch (error) {
     console.error(
       `Error updating phone status in SQL for ${companyId} Phone ${phoneIndex}:`,
@@ -27339,7 +28334,13 @@ function startPhoneMonitoring(botName, phoneIndex) {
   monitoringIntervals.set(`${botName}_${phoneIndex}`, intervalId);
 }
 
-async function initializeWithTimeout(botName, phoneIndex, clientName, clients, pairingConfig = null) {
+async function initializeWithTimeout(
+  botName,
+  phoneIndex,
+  clientName,
+  clients,
+  pairingConfig = null
+) {
   return new Promise(async (resolve, reject) => {
     let isResolved = false;
     const sessionDir = path.join(
@@ -27476,10 +28477,21 @@ async function initializeWithTimeout(botName, phoneIndex, clientName, clients, p
           showNotification: true,
           intervalMs: 180000,
         };
-        console.log(`${botName} Phone ${phoneIndex + 1} - Initializing with pairing for ${pairingConfig.phoneNumber}`);
-        console.log(`${botName} Phone ${phoneIndex + 1} - Pairing config applied:`, clientConfig.pairWithPhoneNumber);
+        console.log(
+          `${botName} Phone ${phoneIndex + 1} - Initializing with pairing for ${
+            pairingConfig.phoneNumber
+          }`
+        );
+        console.log(
+          `${botName} Phone ${phoneIndex + 1} - Pairing config applied:`,
+          clientConfig.pairWithPhoneNumber
+        );
       } else {
-        console.log(`${botName} Phone ${phoneIndex + 1} - Initializing without pairing config`);
+        console.log(
+          `${botName} Phone ${
+            phoneIndex + 1
+          } - Initializing without pairing config`
+        );
       }
 
       const client = new Client(clientConfig);
@@ -27527,21 +28539,21 @@ async function initializeWithTimeout(botName, phoneIndex, clientName, clients, p
           clearInterval(checkInitialization);
           const qrCodeData = await qrcode.toDataURL(qr);
           clients[phoneIndex] = {
-        ...clients[phoneIndex],
-        client,
-        status: "qr",
-        qrCode: qrCodeData,
-        initializationStartTime: null,
+            ...clients[phoneIndex],
+            client,
+            status: "qr",
+            qrCode: qrCodeData,
+            initializationStartTime: null,
           };
           botMap.set(botName, clients);
           await updatePhoneStatus(botName, phoneIndex, "qr", {
-        qrCode: qrCodeData,
+            qrCode: qrCodeData,
           });
           broadcastAuthStatus(
-        botName,
-        "qr",
-        qrCodeData,
-        clients.length > 1 ? phoneIndex : undefined
+            botName,
+            "qr",
+            qrCodeData,
+            clients.length > 1 ? phoneIndex : undefined
           );
         } catch (err) {
           console.error("Error generating QR code:", err);
@@ -27551,7 +28563,11 @@ async function initializeWithTimeout(botName, phoneIndex, clientName, clients, p
       client.on("code", async (code) => {
         try {
           clearInterval(checkInitialization);
-          console.log(`${botName} Phone ${phoneIndex + 1} - PAIRING CODE RECEIVED: ${code}`);
+          console.log(
+            `${botName} Phone ${
+              phoneIndex + 1
+            } - PAIRING CODE RECEIVED: ${code}`
+          );
           clients[phoneIndex] = {
             ...clients[phoneIndex],
             client,
@@ -27563,7 +28579,11 @@ async function initializeWithTimeout(botName, phoneIndex, clientName, clients, p
           await updatePhoneStatus(botName, phoneIndex, "pairing_code", {
             pairingCode: code,
           });
-          console.log(`${botName} Phone ${phoneIndex + 1} - Pairing code saved to database: ${code}`);
+          console.log(
+            `${botName} Phone ${
+              phoneIndex + 1
+            } - Pairing code saved to database: ${code}`
+          );
           broadcastAuthStatus(
             botName,
             "pairing_code",
@@ -28351,21 +29371,23 @@ async function performComprehensiveHealthCheck() {
   const healthReport = {
     timestamp: new Date().toISOString(),
     status: "OK",
-    checks: {}
+    checks: {},
   };
 
   // 1. API Health Check
   try {
     const baseUrl = process.env.URL || "http://localhost:3000";
-    const healthResponse = await axios.get(`${baseUrl}/api/health`, { timeout: 5000 });
+    const healthResponse = await axios.get(`${baseUrl}/api/health`, {
+      timeout: 5000,
+    });
     healthReport.checks.apiHealth = {
       status: healthResponse.status === 200 ? "OK" : "FAIL",
-      uptime: healthResponse.data.uptime || 0
+      uptime: healthResponse.data.uptime || 0,
     };
   } catch (error) {
     healthReport.checks.apiHealth = {
       status: "FAIL",
-      error: error.message
+      error: error.message,
     };
     healthReport.status = "DEGRADED";
   }
@@ -28373,19 +29395,23 @@ async function performComprehensiveHealthCheck() {
   // 2. Login API Test
   try {
     const baseUrl = process.env.URL || "http://localhost:3000";
-    const loginResponse = await axios.post(`${baseUrl}/api/login`, {
-      email: "admin@juta.com",
-      password: "123456"
-    }, { timeout: 5000 });
+    const loginResponse = await axios.post(
+      `${baseUrl}/api/login`,
+      {
+        email: "admin@juta.com",
+        password: "123456",
+      },
+      { timeout: 5000 }
+    );
 
     healthReport.checks.loginApi = {
       status: loginResponse.data.success ? "OK" : "FAIL",
-      user: loginResponse.data.user?.email || "N/A"
+      user: loginResponse.data.user?.email || "N/A",
     };
   } catch (error) {
     healthReport.checks.loginApi = {
       status: "FAIL",
-      error: error.message
+      error: error.message,
     };
     healthReport.status = "DEGRADED";
   }
@@ -28394,12 +29420,12 @@ async function performComprehensiveHealthCheck() {
   try {
     await sql`SELECT 1`;
     healthReport.checks.database = {
-      status: "OK"
+      status: "OK",
     };
   } catch (error) {
     healthReport.checks.database = {
       status: "FAIL",
-      error: error.message
+      error: error.message,
     };
     healthReport.status = "CRITICAL";
   }
@@ -28412,20 +29438,20 @@ async function performComprehensiveHealthCheck() {
     status: heapUsedMB > 500 ? "WARNING" : "OK",
     heapUsedMB,
     heapTotalMB,
-    percentage: Math.round((heapUsedMB / heapTotalMB) * 100)
+    percentage: Math.round((heapUsedMB / heapTotalMB) * 100),
   };
 
   // 5. Bot Connections Status
   const botCount = botMap.size;
-  const activeBots = Array.from(botMap.entries())
-    .filter(([_, botData]) => botData && botData[0]?.client)
-    .length;
+  const activeBots = Array.from(botMap.entries()).filter(
+    ([_, botData]) => botData && botData[0]?.client
+  ).length;
 
   healthReport.checks.bots = {
     status: botCount > 0 ? "OK" : "WARNING",
     total: botCount,
     active: activeBots,
-    inactive: botCount - activeBots
+    inactive: botCount - activeBots,
   };
 
   // 6. System Uptime
@@ -28435,7 +29461,7 @@ async function performComprehensiveHealthCheck() {
     status: "OK",
     hours: uptimeHours,
     minutes: uptimeMinutes,
-    totalSeconds: Math.floor(process.uptime())
+    totalSeconds: Math.floor(process.uptime()),
   };
 
   return healthReport;
@@ -28451,7 +29477,9 @@ async function sendHealthReportToGroup() {
     const botData = botMap.get(companyId);
 
     if (!botData || !botData[0]?.client) {
-      console.error(`[Health Report] No WhatsApp client found for company ${companyId}`);
+      console.error(
+        `[Health Report] No WhatsApp client found for company ${companyId}`
+      );
       return;
     }
 
@@ -28459,17 +29487,25 @@ async function sendHealthReportToGroup() {
     const healthReport = await performComprehensiveHealthCheck();
 
     // Format message
-    const statusEmoji = healthReport.status === "OK" ? "✅" :
-                       healthReport.status === "DEGRADED" ? "⚠️" : "❌";
+    const statusEmoji =
+      healthReport.status === "OK"
+        ? "✅"
+        : healthReport.status === "DEGRADED"
+        ? "⚠️"
+        : "❌";
 
     let message = `${statusEmoji} *Hourly Server Health Report*\n\n`;
-    message += `🕐 *Time:* ${moment().tz("Asia/Kuala_Lumpur").format("DD/MM/YYYY HH:mm:ss")}\n`;
+    message += `🕐 *Time:* ${moment()
+      .tz("Asia/Kuala_Lumpur")
+      .format("DD/MM/YYYY HH:mm:ss")}\n`;
     message += `📊 *Overall Status:* ${healthReport.status}\n\n`;
 
     // API Health
     message += `🌐 *API Health:* ${healthReport.checks.apiHealth.status}\n`;
     if (healthReport.checks.apiHealth.uptime) {
-      const uptimeHours = Math.floor(healthReport.checks.apiHealth.uptime / 3600);
+      const uptimeHours = Math.floor(
+        healthReport.checks.apiHealth.uptime / 3600
+      );
       message += `   Uptime: ${uptimeHours}h\n`;
     }
     if (healthReport.checks.apiHealth.error) {
@@ -28513,16 +29549,17 @@ async function sendHealthReportToGroup() {
     // Send message
     await botData[0].client.sendMessage(groupId, message);
 
-    console.log(`[Health Report] Successfully sent to group ${groupId} for company ${companyId}`);
+    console.log(
+      `[Health Report] Successfully sent to group ${groupId} for company ${companyId}`
+    );
 
     // Log to system
     logger.logEvent("HEALTH_REPORT", "Hourly health report sent", healthReport);
-
   } catch (error) {
     console.error("[Health Report] Error sending health report:", error);
     logger.logEvent("HEALTH_REPORT_ERROR", "Failed to send health report", {
       error: error.message,
-      stack: error.stack
+      stack: error.stack,
     });
   }
 }
@@ -28587,32 +29624,64 @@ app.get(
           id: batch.id,
           ...batch,
           chat_ids: batch.chat_ids
-            ? safeJsonParse(batch.chat_ids, [], `chat_ids for batch ${batch.id}`)
+            ? safeJsonParse(
+                batch.chat_ids,
+                [],
+                `chat_ids for batch ${batch.id}`
+              )
             : [],
           messages: batch.messages
-            ? safeJsonParse(batch.messages, [], `messages for batch ${batch.id}`)
+            ? safeJsonParse(
+                batch.messages,
+                [],
+                `messages for batch ${batch.id}`
+              )
             : [],
           message_delays: batch.message_delays
-            ? safeJsonParse(batch.message_delays, null, `message_delays for batch ${batch.id}`)
+            ? safeJsonParse(
+                batch.message_delays,
+                null,
+                `message_delays for batch ${batch.id}`
+              )
             : null,
           active_hours: batch.active_hours
-            ? safeJsonParse(batch.active_hours, null, `active_hours for batch ${batch.id}`)
+            ? safeJsonParse(
+                batch.active_hours,
+                null,
+                `active_hours for batch ${batch.id}`
+              )
             : null,
         }));
 
         const parsedMessageData = {
           ...messageData,
           chat_ids: messageData.chat_ids
-            ? safeJsonParse(messageData.chat_ids, [], `chat_ids for message ${messageId}`)
+            ? safeJsonParse(
+                messageData.chat_ids,
+                [],
+                `chat_ids for message ${messageId}`
+              )
             : [],
           messages: messageData.messages
-            ? safeJsonParse(messageData.messages, [], `messages for message ${messageId}`)
+            ? safeJsonParse(
+                messageData.messages,
+                [],
+                `messages for message ${messageId}`
+              )
             : [],
           message_delays: messageData.message_delays
-            ? safeJsonParse(messageData.message_delays, null, `message_delays for message ${messageId}`)
+            ? safeJsonParse(
+                messageData.message_delays,
+                null,
+                `message_delays for message ${messageId}`
+              )
             : null,
           active_hours: messageData.active_hours
-            ? safeJsonParse(messageData.active_hours, null, `active_hours for message ${messageId}`)
+            ? safeJsonParse(
+                messageData.active_hours,
+                null,
+                `active_hours for message ${messageId}`
+              )
             : null,
         };
 
@@ -28793,17 +29862,25 @@ app.post("/api/requeue-scheduled-messages", async (req, res) => {
     const messagesFound = result.rowCount;
     const companies = [...new Set(result.rows.map((r) => r.company_id))];
     const companiesProcessed = companies.length;
-    const lastScheduledTime = result.rows.length > 0 ? result.rows[result.rows.length - 1].scheduled_time : null;
+    const lastScheduledTime =
+      result.rows.length > 0
+        ? result.rows[result.rows.length - 1].scheduled_time
+        : null;
 
     // Re-run the scheduler to (re)create queue jobs
     try {
       await scheduleAllMessages();
     } catch (schedErr) {
-      console.error('Error scheduling messages during requeue endpoint:', schedErr);
+      console.error(
+        "Error scheduling messages during requeue endpoint:",
+        schedErr
+      );
       // continue to return partial info
     }
 
-    const totalTimeSpan = lastScheduledTime ? (new Date(lastScheduledTime).getTime() - Date.now()) : 0;
+    const totalTimeSpan = lastScheduledTime
+      ? new Date(lastScheduledTime).getTime() - Date.now()
+      : 0;
 
     res.json({
       messagesRequeued: messagesFound,
@@ -28820,8 +29897,13 @@ app.post("/api/requeue-scheduled-messages", async (req, res) => {
       errors: [],
     });
   } catch (error) {
-    console.error('Error in requeue-scheduled-messages endpoint:', error);
-    res.status(500).json({ error: 'Failed to requeue scheduled messages', details: error.message });
+    console.error("Error in requeue-scheduled-messages endpoint:", error);
+    res
+      .status(500)
+      .json({
+        error: "Failed to requeue scheduled messages",
+        details: error.message,
+      });
   } finally {
     client.release();
   }
@@ -28859,7 +29941,7 @@ app.post("/api/queue/cleanup-stale", async (req, res) => {
               [jobId, botId]
             );
 
-            if (q.rowCount === 0 || q.rows[0].status !== 'scheduled') {
+            if (q.rowCount === 0 || q.rows[0].status !== "scheduled") {
               try {
                 await job.remove();
                 summary.bots[botId].removed += 1;
@@ -28882,7 +29964,11 @@ app.post("/api/queue/cleanup-stale", async (req, res) => {
         summary.errors.push(msg);
       } finally {
         if (client) {
-          try { client.release(); } catch (e) { /* ignore */ }
+          try {
+            client.release();
+          } catch (e) {
+            /* ignore */
+          }
           client = null;
         }
       }
@@ -28894,7 +29980,11 @@ app.post("/api/queue/cleanup-stale", async (req, res) => {
     res.status(500).json({ success: false, error: error.message, summary });
   } finally {
     if (client) {
-      try { client.release(); } catch (e) { /* ignore */ }
+      try {
+        client.release();
+      } catch (e) {
+        /* ignore */
+      }
     }
   }
 });
@@ -28902,7 +29992,10 @@ app.post("/api/queue/cleanup-stale", async (req, res) => {
 // Company-specific cleanup: remove stale queued jobs for a single company
 app.post("/api/queue/cleanup-stale/:companyId", async (req, res) => {
   const { companyId } = req.params;
-  if (!companyId) return res.status(400).json({ success: false, error: 'companyId required' });
+  if (!companyId)
+    return res
+      .status(400)
+      .json({ success: false, error: "companyId required" });
 
   const summary = { companyId, checked: 0, removed: 0, errors: [] };
   let client = null;
@@ -28924,7 +30017,7 @@ app.post("/api/queue/cleanup-stale/:companyId", async (req, res) => {
           [jobId, companyId]
         );
 
-        if (q.rowCount === 0 || q.rows[0].status !== 'scheduled') {
+        if (q.rowCount === 0 || q.rows[0].status !== "scheduled") {
           try {
             await job.remove();
             summary.removed += 1;
@@ -28943,17 +30036,26 @@ app.post("/api/queue/cleanup-stale/:companyId", async (req, res) => {
 
     res.json({ success: true, summary });
   } catch (error) {
-    console.error(`Error during company-specific cleanup for ${companyId}:`, error);
+    console.error(
+      `Error during company-specific cleanup for ${companyId}:`,
+      error
+    );
     res.status(500).json({ success: false, error: error.message, summary });
   } finally {
-    if (client) try { client.release(); } catch (e) {}
+    if (client)
+      try {
+        client.release();
+      } catch (e) {}
   }
 });
 
 // Company-specific requeue: run scheduler only for given company
-app.post('/api/queue/requeue/:companyId', async (req, res) => {
+app.post("/api/queue/requeue/:companyId", async (req, res) => {
   const { companyId } = req.params;
-  if (!companyId) return res.status(400).json({ success: false, error: 'companyId required' });
+  if (!companyId)
+    return res
+      .status(400)
+      .json({ success: false, error: "companyId required" });
 
   try {
     // First cleanup stale jobs for this company to avoid duplicates
@@ -28968,17 +30070,28 @@ app.post('/api/queue/requeue/:companyId', async (req, res) => {
               `SELECT id, status FROM scheduled_messages WHERE id = $1 AND company_id = $2 LIMIT 1`,
               [job.id, companyId]
             );
-            if (q.rowCount === 0 || q.rows[0].status !== 'scheduled') {
-              try { await job.remove(); } catch (e) { /* ignore */ }
+            if (q.rowCount === 0 || q.rows[0].status !== "scheduled") {
+              try {
+                await job.remove();
+              } catch (e) {
+                /* ignore */
+              }
             }
-          } catch (e) { /* ignore per-job errors */ }
+          } catch (e) {
+            /* ignore per-job errors */
+          }
         }
-      } finally { client.release(); }
+      } finally {
+        client.release();
+      }
     })();
 
     // Then schedule messages only for this company
     await scheduleAllMessages(companyId);
-    res.json({ success: true, message: `Requeue requested for company ${companyId}` });
+    res.json({
+      success: true,
+      message: `Requeue requested for company ${companyId}`,
+    });
   } catch (error) {
     console.error(`Error requeueing for company ${companyId}:`, error);
     res.status(500).json({ success: false, error: error.message });
@@ -29201,7 +30314,7 @@ app.get("/api/user-config", async (req, res) => {
     const usageFeatures = ["aiMessages", "blastedMessages"];
     for (const feature of usageFeatures) {
       let featureResult;
-      
+
       if (isLifetimePlan) {
         // For free plan: get lifetime usage
         featureResult = await sqlDb.query(
@@ -29216,7 +30329,7 @@ app.get("/api/user-config", async (req, res) => {
         const year = now.getFullYear();
         const month = (now.getMonth() + 1).toString().padStart(2, "0");
         const monthlyKey = `${year}-${month}`;
-        
+
         featureResult = await sqlDb.query(
           `SELECT SUM(usage_count) AS total_usage
            FROM usage_logs
@@ -29660,12 +30773,12 @@ app.get("/api/company-data", async (req, res) => {
 app.get("/api/messages", async (req, res) => {
   try {
     const { chatId, companyId } = req.query;
-    console.log(
-      "Fetching messages for chatId:",
-      chatId,
-      "companyId:",
-      companyId
-    );
+    // console.log(
+    //   "Fetching messages for chatId:",
+    //   chatId,
+    //   "companyId:",
+    //   companyId
+    // );
     const result = await sqlDb.query(
       `SELECT m.id, m.message_id, m.company_id, m.contact_id, m.thread_id, 
              m.customer_phone, m.content, m.message_type, m.media_url, m.timestamp,
@@ -29690,16 +30803,6 @@ app.get("/api/messages", async (req, res) => {
 app.get("/api/message-pages", async (req, res) => {
   try {
     const { chatId, companyId, limit = 50, offset = 0 } = req.query;
-    console.log(
-      "Fetching paginated messages for chatId:",
-      chatId,
-      "companyId:",
-      companyId,
-      "limit:",
-      limit,
-      "offset:",
-      offset
-    );
     if (!chatId || !companyId) {
       return res.status(400).json({ error: "Missing chatId or companyId" });
     }
@@ -32291,7 +33394,7 @@ app.post("/api/google-calendar/create-event", async (req, res) => {
 app.get("/api/users/analytics", async (req, res) => {
   try {
     const client = await pool.connect();
-    
+
     try {
       // Check if tables exist and get users
       let users = [];
@@ -32312,7 +33415,7 @@ app.get("/api/users/analytics", async (req, res) => {
           WHERE u.active = true
           ORDER BY u.created_at DESC
         `;
-        
+
         const usersResult = await client.query(usersQuery);
         users = usersResult.rows;
       } catch (error) {
@@ -32328,7 +33431,7 @@ app.get("/api/users/analytics", async (req, res) => {
             created_at: new Date(),
             company_name: "Example Company",
             company_phone: "+1234567890",
-            company_email: "contact@example.com"
+            company_email: "contact@example.com",
           },
           {
             email: "user@example.com",
@@ -32339,8 +33442,8 @@ app.get("/api/users/analytics", async (req, res) => {
             created_at: new Date(Date.now() - 86400000), // 1 day ago
             company_name: "Test Company",
             company_phone: "+0987654321",
-            company_email: "test@example.com"
-          }
+            company_email: "test@example.com",
+          },
         ];
       }
 
@@ -32354,9 +33457,9 @@ app.get("/api/users/analytics", async (req, res) => {
           FROM contacts 
           GROUP BY company_id
         `;
-        
+
         const contactCountsResult = await client.query(contactCountsQuery);
-        contactCountsResult.rows.forEach(row => {
+        contactCountsResult.rows.forEach((row) => {
           contactCounts[row.company_id] = parseInt(row.contact_count);
         });
       } catch (error) {
@@ -32369,8 +33472,8 @@ app.get("/api/users/analytics", async (req, res) => {
       // Get AI response usage for each company
       const aiUsage = {};
       try {
-              // First try to get AI-specific usage
-      const aiUsageQuery = `
+        // First try to get AI-specific usage
+        const aiUsageQuery = `
         SELECT
           company_id,
           SUM(usage_count) as total_ai_responses
@@ -32378,13 +33481,13 @@ app.get("/api/users/analytics", async (req, res) => {
         WHERE feature = 'aiMessages' OR feature = 'ai_response' OR feature LIKE '%ai%' OR feature LIKE '%response%'
         GROUP BY company_id
       `;
-        
+
         const aiUsageResult = await client.query(aiUsageQuery);
         console.log("AI Usage Query Result:", aiUsageResult.rows);
-        aiUsageResult.rows.forEach(row => {
+        aiUsageResult.rows.forEach((row) => {
           aiUsage[row.company_id] = parseInt(row.total_ai_responses) || 0;
         });
-        
+
         // If no AI usage found, try a broader query for any usage
         if (Object.keys(aiUsage).length === 0) {
           console.log("No AI usage found, trying broader query...");
@@ -32395,10 +33498,10 @@ app.get("/api/users/analytics", async (req, res) => {
             FROM usage_logs 
             GROUP BY company_id
           `;
-          
+
           const broaderResult = await client.query(broaderQuery);
           console.log("Broader Usage Query Result:", broaderResult.rows);
-          broaderResult.rows.forEach(row => {
+          broaderResult.rows.forEach((row) => {
             aiUsage[row.company_id] = parseInt(row.total_usage) || 0;
           });
         }
@@ -32422,47 +33525,53 @@ app.get("/api/users/analytics", async (req, res) => {
           FROM phone_status 
           ORDER BY company_id, phone_index
         `;
-        
+
         const phoneStatusResult = await client.query(phoneStatusQuery);
-        phoneStatusResult.rows.forEach(row => {
+        phoneStatusResult.rows.forEach((row) => {
           if (!phoneStatus[row.company_id]) {
             phoneStatus[row.company_id] = [];
           }
           phoneStatus[row.company_id].push({
             phoneIndex: row.phone_index,
             status: row.status,
-            updatedAt: row.updated_at
+            updatedAt: row.updated_at,
           });
         });
       } catch (error) {
         console.log("Phone status table might not exist, using mock data");
         // Mock phone status data
-        phoneStatus["001"] = [{ phoneIndex: 0, status: "active", updatedAt: new Date() }];
-        phoneStatus["002"] = [{ phoneIndex: 0, status: "pending", updatedAt: new Date() }];
+        phoneStatus["001"] = [
+          { phoneIndex: 0, status: "active", updatedAt: new Date() },
+        ];
+        phoneStatus["002"] = [
+          { phoneIndex: 0, status: "pending", updatedAt: new Date() },
+        ];
       }
 
       // Combine all data
-      const enrichedUsers = users.map(user => {
+      const enrichedUsers = users.map((user) => {
         const contactCount = contactCounts[user.company_id] || 0;
         const aiResponseCount = aiUsage[user.company_id] || 0;
         const phoneStatuses = phoneStatus[user.company_id] || [];
-        
+
         // Determine overall phone status
-        let overallPhoneStatus = 'unknown';
+        let overallPhoneStatus = "unknown";
         if (phoneStatuses.length > 0) {
-          const activePhones = phoneStatuses.filter(p => p.status === 'active');
+          const activePhones = phoneStatuses.filter(
+            (p) => p.status === "active"
+          );
           if (activePhones.length > 0) {
-            overallPhoneStatus = 'active';
-          } else if (phoneStatuses.some(p => p.status === 'pending')) {
-            overallPhoneStatus = 'pending';
+            overallPhoneStatus = "active";
+          } else if (phoneStatuses.some((p) => p.status === "pending")) {
+            overallPhoneStatus = "pending";
           } else {
-            overallPhoneStatus = 'inactive';
+            overallPhoneStatus = "inactive";
           }
         }
 
         return {
           email: user.email,
-          name: user.name || user.email?.split('@')[0] || 'Unknown User',
+          name: user.name || user.email?.split("@")[0] || "Unknown User",
           role: user.role,
           active: user.active,
           companyId: user.company_id,
@@ -32473,17 +33582,24 @@ app.get("/api/users/analytics", async (req, res) => {
           contactCount: contactCount,
           aiResponseCount: aiResponseCount,
           phoneStatus: overallPhoneStatus,
-          phoneStatuses: phoneStatuses
+          phoneStatuses: phoneStatuses,
         };
       });
 
       // Calculate statistics
       const totalUsers = users.length;
-      const totalCompanies = new Set(users.map(u => u.company_id)).size;
-      const activeUsers = users.filter(u => u.active).length;
-      const totalContacts = Object.values(contactCounts).reduce((sum, count) => sum + count, 0);
-      const totalAIResponses = Object.values(aiUsage).reduce((sum, count) => sum + count, 0);
-      const avgContactsPerUser = totalUsers > 0 ? Math.round(totalContacts / totalUsers) : 0;
+      const totalCompanies = new Set(users.map((u) => u.company_id)).size;
+      const activeUsers = users.filter((u) => u.active).length;
+      const totalContacts = Object.values(contactCounts).reduce(
+        (sum, count) => sum + count,
+        0
+      );
+      const totalAIResponses = Object.values(aiUsage).reduce(
+        (sum, count) => sum + count,
+        0
+      );
+      const avgContactsPerUser =
+        totalUsers > 0 ? Math.round(totalContacts / totalUsers) : 0;
 
       res.json({
         success: true,
@@ -32494,10 +33610,9 @@ app.get("/api/users/analytics", async (req, res) => {
           activeUsers,
           totalContacts,
           totalAIResponses,
-          avgContactsPerUser
-        }
+          avgContactsPerUser,
+        },
       });
-
     } finally {
       client.release();
     }
@@ -32505,7 +33620,7 @@ app.get("/api/users/analytics", async (req, res) => {
     console.error("Error fetching user analytics:", error);
     res.status(500).json({
       success: false,
-      error: "Failed to fetch user analytics"
+      error: "Failed to fetch user analytics",
     });
   }
 });
@@ -32515,7 +33630,7 @@ app.get("/api/users/analytics/company/:companyId", async (req, res) => {
   try {
     const { companyId } = req.params;
     const client = await pool.connect();
-    
+
     try {
       // Get company details
       const companyQuery = `
@@ -32528,14 +33643,14 @@ app.get("/api/users/analytics/company/:companyId", async (req, res) => {
         FROM companies 
         WHERE company_id = $1
       `;
-      
+
       const companyResult = await client.query(companyQuery, [companyId]);
       const company = companyResult.rows[0];
 
       if (!company) {
         return res.status(404).json({
           success: false,
-          error: "Company not found"
+          error: "Company not found",
         });
       }
 
@@ -32551,7 +33666,7 @@ app.get("/api/users/analytics/company/:companyId", async (req, res) => {
         WHERE company_id = $1 AND active = true
         ORDER BY created_at DESC
       `;
-      
+
       const usersResult = await client.query(usersQuery, [companyId]);
       const users = usersResult.rows;
 
@@ -32561,8 +33676,10 @@ app.get("/api/users/analytics/company/:companyId", async (req, res) => {
         FROM contacts 
         WHERE company_id = $1
       `;
-      
-      const contactCountResult = await client.query(contactCountQuery, [companyId]);
+
+      const contactCountResult = await client.query(contactCountQuery, [
+        companyId,
+      ]);
       const contactCount = parseInt(contactCountResult.rows[0].contact_count);
 
       // Get AI response usage
@@ -32573,7 +33690,7 @@ app.get("/api/users/analytics/company/:companyId", async (req, res) => {
         FROM usage_logs 
         WHERE company_id = $1 AND feature = 'ai_response'
       `;
-      
+
       const aiUsageResult = await client.query(aiUsageQuery, [companyId]);
       const aiUsage = aiUsageResult.rows[0];
 
@@ -32588,8 +33705,10 @@ app.get("/api/users/analytics/company/:companyId", async (req, res) => {
         WHERE company_id = $1
         ORDER BY phone_index
       `;
-      
-      const phoneStatusResult = await client.query(phoneStatusQuery, [companyId]);
+
+      const phoneStatusResult = await client.query(phoneStatusQuery, [
+        companyId,
+      ]);
       const phoneStatuses = phoneStatusResult.rows;
 
       // Get recent activity (last 30 days)
@@ -32603,8 +33722,10 @@ app.get("/api/users/analytics/company/:companyId", async (req, res) => {
         AND date >= NOW() - INTERVAL '30 days'
         ORDER BY date DESC
       `;
-      
-      const recentActivityResult = await client.query(recentActivityQuery, [companyId]);
+
+      const recentActivityResult = await client.query(recentActivityQuery, [
+        companyId,
+      ]);
       const recentActivity = recentActivityResult.rows;
 
       res.json({
@@ -32616,10 +33737,9 @@ app.get("/api/users/analytics/company/:companyId", async (req, res) => {
           aiResponseCount: parseInt(aiUsage.total_ai_responses) || 0,
           usageDays: parseInt(aiUsage.usage_days) || 0,
           phoneStatuses: phoneStatuses,
-          recentActivity: recentActivity
-        }
+          recentActivity: recentActivity,
+        },
       });
-
     } finally {
       client.release();
     }
@@ -32627,7 +33747,7 @@ app.get("/api/users/analytics/company/:companyId", async (req, res) => {
     console.error("Error fetching company analytics:", error);
     res.status(500).json({
       success: false,
-      error: "Failed to fetch company analytics"
+      error: "Failed to fetch company analytics",
     });
   }
 });
@@ -32636,7 +33756,7 @@ app.get("/api/users/analytics/company/:companyId", async (req, res) => {
 app.get("/api/users", async (req, res) => {
   try {
     const client = await pool.connect();
-    
+
     try {
       let users = [];
       try {
@@ -32656,7 +33776,7 @@ app.get("/api/users", async (req, res) => {
           WHERE u.active = true
           ORDER BY u.created_at DESC
         `;
-        
+
         const usersResult = await client.query(usersQuery);
         users = usersResult.rows;
       } catch (error) {
@@ -32672,7 +33792,7 @@ app.get("/api/users", async (req, res) => {
             created_at: new Date(),
             company_name: "Example Company",
             company_phone: "+1234567890",
-            company_email: "contact@example.com"
+            company_email: "contact@example.com",
           },
           {
             email: "user@example.com",
@@ -32683,7 +33803,7 @@ app.get("/api/users", async (req, res) => {
             created_at: new Date(Date.now() - 86400000), // 1 day ago
             company_name: "Test Company",
             company_phone: "+0987654321",
-            company_email: "test@example.com"
+            company_email: "test@example.com",
           },
           {
             email: "manager@example.com",
@@ -32694,16 +33814,15 @@ app.get("/api/users", async (req, res) => {
             created_at: new Date(Date.now() - 172800000), // 2 days ago
             company_name: "Manager Corp",
             company_phone: "+1122334455",
-            company_email: "manager@example.com"
-          }
+            company_email: "manager@example.com",
+          },
         ];
       }
 
       res.json({
         success: true,
-        users: users
+        users: users,
       });
-
     } finally {
       client.release();
     }
@@ -32711,7 +33830,7 @@ app.get("/api/users", async (req, res) => {
     console.error("Error fetching users:", error);
     res.status(500).json({
       success: false,
-      error: "Failed to fetch users"
+      error: "Failed to fetch users",
     });
   }
 });
@@ -32720,7 +33839,7 @@ app.get("/api/users", async (req, res) => {
 app.get("/api/companies", async (req, res) => {
   try {
     const client = await pool.connect();
-    
+
     try {
       let companies = [];
       try {
@@ -32738,7 +33857,7 @@ app.get("/api/companies", async (req, res) => {
           FROM companies 
           ORDER BY created_at DESC
         `;
-        
+
         const companiesResult = await client.query(companiesQuery);
         companies = companiesResult.rows;
       } catch (error) {
@@ -32752,7 +33871,7 @@ app.get("/api/companies", async (req, res) => {
             phone: "+1234567890",
             status: "active",
             enabled: true,
-            created_at: new Date()
+            created_at: new Date(),
           },
           {
             company_id: "002",
@@ -32761,7 +33880,7 @@ app.get("/api/companies", async (req, res) => {
             phone: "+0987654321",
             status: "active",
             enabled: true,
-            created_at: new Date(Date.now() - 86400000) // 1 day ago
+            created_at: new Date(Date.now() - 86400000), // 1 day ago
           },
           {
             company_id: "003",
@@ -32770,16 +33889,15 @@ app.get("/api/companies", async (req, res) => {
             phone: "+1122334455",
             status: "active",
             enabled: true,
-            created_at: new Date(Date.now() - 172800000) // 2 days ago
-          }
+            created_at: new Date(Date.now() - 172800000), // 2 days ago
+          },
         ];
       }
 
       res.json({
         success: true,
-        companies: companies
+        companies: companies,
       });
-
     } finally {
       client.release();
     }
@@ -32787,7 +33905,7 @@ app.get("/api/companies", async (req, res) => {
     console.error("Error fetching companies:", error);
     res.status(500).json({
       success: false,
-      error: "Failed to fetch companies"
+      error: "Failed to fetch companies",
     });
   }
 });
@@ -32821,13 +33939,13 @@ app.get("/api/financial/monthly-data", async (req, res) => {
 
     res.json({
       success: true,
-      data: monthlyData
+      data: monthlyData,
     });
   } catch (error) {
     console.error("Error fetching monthly financial data:", error);
     res.status(500).json({
       success: false,
-      error: "Failed to fetch monthly financial data"
+      error: "Failed to fetch monthly financial data",
     });
   }
 });
@@ -32836,28 +33954,30 @@ app.get("/api/financial/monthly-data", async (req, res) => {
 app.get("/api/financial/income-sources", async (req, res) => {
   try {
     const { month, year } = req.query;
-    
+
     let query = sql`SELECT * FROM income_sources`;
-    
+
     if (month && year) {
-      query = sql`SELECT * FROM income_sources WHERE month = ${month} AND year = ${parseInt(year)}`;
+      query = sql`SELECT * FROM income_sources WHERE month = ${month} AND year = ${parseInt(
+        year
+      )}`;
     } else if (year) {
       query = sql`SELECT * FROM income_sources WHERE year = ${parseInt(year)}`;
     }
-    
+
     query = sql`${query} ORDER BY amount DESC`;
-    
+
     const incomeSources = await query;
 
     res.json({
       success: true,
-      data: incomeSources
+      data: incomeSources,
     });
   } catch (error) {
     console.error("Error fetching income sources:", error);
     res.status(500).json({
       success: false,
-      error: "Failed to fetch income sources"
+      error: "Failed to fetch income sources",
     });
   }
 });
@@ -32866,32 +33986,36 @@ app.get("/api/financial/income-sources", async (req, res) => {
 app.get("/api/financial/expense-categories", async (req, res) => {
   try {
     const { month, year, category } = req.query;
-    
+
     let query = sql`SELECT * FROM expense_categories`;
-    
+
     if (month && year) {
-      query = sql`SELECT * FROM expense_categories WHERE month = ${month} AND year = ${parseInt(year)}`;
+      query = sql`SELECT * FROM expense_categories WHERE month = ${month} AND year = ${parseInt(
+        year
+      )}`;
     } else if (year) {
-      query = sql`SELECT * FROM expense_categories WHERE year = ${parseInt(year)}`;
+      query = sql`SELECT * FROM expense_categories WHERE year = ${parseInt(
+        year
+      )}`;
     }
-    
+
     if (category) {
       query = sql`${query} AND category = ${category}`;
     }
-    
+
     query = sql`${query} ORDER BY amount DESC`;
-    
+
     const expenseCategories = await query;
 
     res.json({
       success: true,
-      data: expenseCategories
+      data: expenseCategories,
     });
   } catch (error) {
     console.error("Error fetching expense categories:", error);
     res.status(500).json({
       success: false,
-      error: "Failed to fetch expense categories"
+      error: "Failed to fetch expense categories",
     });
   }
 });
@@ -32900,7 +34024,7 @@ app.get("/api/financial/expense-categories", async (req, res) => {
 app.get("/api/financial/summary", async (req, res) => {
   try {
     const { year } = req.query;
-    
+
     let query = sql`
       SELECT 
         SUM(total_income) as total_income,
@@ -32909,13 +34033,13 @@ app.get("/api/financial/summary", async (req, res) => {
         COUNT(*) as months_count
       FROM monthly_financial_data
     `;
-    
+
     if (year) {
       query = sql`${query} WHERE year = ${parseInt(year)}`;
     }
-    
+
     const summary = await query;
-    
+
     // Get yearly breakdown
     const yearlyBreakdown = await sql`
       SELECT 
@@ -32932,13 +34056,13 @@ app.get("/api/financial/summary", async (req, res) => {
     res.json({
       success: true,
       summary: summary[0],
-      yearlyBreakdown: yearlyBreakdown
+      yearlyBreakdown: yearlyBreakdown,
     });
   } catch (error) {
     console.error("Error fetching financial summary:", error);
     res.status(500).json({
       success: false,
-      error: "Failed to fetch financial summary"
+      error: "Failed to fetch financial summary",
     });
   }
 });
@@ -32947,7 +34071,7 @@ app.get("/api/financial/summary", async (req, res) => {
 app.get("/api/financial/categories-summary", async (req, res) => {
   try {
     const { year } = req.query;
-    
+
     let query = sql`
       SELECT 
         category,
@@ -32955,24 +34079,24 @@ app.get("/api/financial/categories-summary", async (req, res) => {
         COUNT(*) as item_count
       FROM expense_categories
     `;
-    
+
     if (year) {
       query = sql`${query} WHERE year = ${parseInt(year)}`;
     }
-    
+
     query = sql`${query} GROUP BY category ORDER BY total_amount DESC`;
-    
+
     const categoriesSummary = await query;
 
     res.json({
       success: true,
-      data: categoriesSummary
+      data: categoriesSummary,
     });
   } catch (error) {
     console.error("Error fetching categories summary:", error);
     res.status(500).json({
       success: false,
-      error: "Failed to fetch categories summary"
+      error: "Failed to fetch categories summary",
     });
   }
 });
@@ -32981,13 +34105,15 @@ app.get("/api/financial/categories-summary", async (req, res) => {
 app.post("/api/financial/add-entry", async (req, res) => {
   try {
     const { type, month, year, name, amount, category, description } = req.body;
-    
-    if (type === 'income') {
+
+    if (type === "income") {
       await sql`
         INSERT INTO income_sources (month, year, source_name, amount, description)
-        VALUES (${month}, ${parseInt(year)}, ${name}, ${parseFloat(amount)}, ${description || ''})
+        VALUES (${month}, ${parseInt(year)}, ${name}, ${parseFloat(amount)}, ${
+        description || ""
+      })
       `;
-      
+
       // Update monthly totals
       await sql`
         UPDATE monthly_financial_data 
@@ -32996,12 +34122,14 @@ app.post("/api/financial/add-entry", async (req, res) => {
             updated_at = CURRENT_TIMESTAMP
         WHERE month = ${month} AND year = ${parseInt(year)}
       `;
-    } else if (type === 'expense') {
+    } else if (type === "expense") {
       await sql`
         INSERT INTO expense_categories (month, year, category, item_name, amount, description)
-        VALUES (${month}, ${parseInt(year)}, ${category}, ${name}, ${parseFloat(amount)}, ${description || ''})
+        VALUES (${month}, ${parseInt(year)}, ${category}, ${name}, ${parseFloat(
+        amount
+      )}, ${description || ""})
       `;
-      
+
       // Update monthly totals
       await sql`
         UPDATE monthly_financial_data 
@@ -33014,13 +34142,13 @@ app.post("/api/financial/add-entry", async (req, res) => {
 
     res.json({
       success: true,
-      message: "Entry added successfully"
+      message: "Entry added successfully",
     });
   } catch (error) {
     console.error("Error adding financial entry:", error);
     res.status(500).json({
       success: false,
-      error: "Failed to add financial entry"
+      error: "Failed to add financial entry",
     });
   }
 });
@@ -33051,13 +34179,13 @@ app.get("/api/client-analytics", async (req, res) => {
 
     res.json({
       success: true,
-      data: analytics
+      data: analytics,
     });
   } catch (error) {
     console.error("Error fetching client analytics:", error);
     res.status(500).json({
       success: false,
-      error: "Failed to fetch client analytics"
+      error: "Failed to fetch client analytics",
     });
   }
 });
@@ -33066,7 +34194,7 @@ app.get("/api/client-analytics", async (req, res) => {
 app.get("/api/client-invoices", async (req, res) => {
   try {
     const { status, company_id } = req.query;
-    
+
     let query = sql`
       SELECT 
         id,
@@ -33085,7 +34213,7 @@ app.get("/api/client-invoices", async (req, res) => {
         updated_at
       FROM client_invoices
     `;
-    
+
     const conditions = [];
     if (status) {
       conditions.push(sql`status = ${status}`);
@@ -33093,7 +34221,7 @@ app.get("/api/client-invoices", async (req, res) => {
     if (company_id) {
       conditions.push(sql`company_id = ${company_id}`);
     }
-    
+
     if (conditions.length > 0) {
       query = sql`
         SELECT 
@@ -33141,13 +34269,13 @@ app.get("/api/client-invoices", async (req, res) => {
 
     res.json({
       success: true,
-      data: invoices
+      data: invoices,
     });
   } catch (error) {
     console.error("Error fetching client invoices:", error);
     res.status(500).json({
       success: false,
-      error: "Failed to fetch client invoices"
+      error: "Failed to fetch client invoices",
     });
   }
 });
@@ -33155,26 +34283,29 @@ app.get("/api/client-invoices", async (req, res) => {
 // POST /api/client-invoices - Create new client invoice
 app.post("/api/client-invoices", async (req, res) => {
   try {
-    const { 
-      company_id, 
-      client_name, 
-      amount, 
-      description, 
-      due_date, 
-      service_type = 'AI Bot Service' 
+    const {
+      company_id,
+      client_name,
+      amount,
+      description,
+      due_date,
+      service_type = "AI Bot Service",
     } = req.body;
 
     // Validate required fields
     if (!company_id || !client_name || !amount || !due_date) {
       return res.status(400).json({
         success: false,
-        error: "Missing required fields: company_id, client_name, amount, due_date"
+        error:
+          "Missing required fields: company_id, client_name, amount, due_date",
       });
     }
 
     // Generate unique invoice ID and number
     const invoiceId = uuidv4();
-    const invoiceNumber = `INV-${new Date().getFullYear()}-${String(Date.now()).slice(-6)}`;
+    const invoiceNumber = `INV-${new Date().getFullYear()}-${String(
+      Date.now()
+    ).slice(-6)}`;
 
     // Insert new invoice
     const result = await sql`
@@ -33195,7 +34326,7 @@ app.post("/api/client-invoices", async (req, res) => {
         ${company_id},
         ${client_name},
         ${parseFloat(amount)},
-        ${description || ''},
+        ${description || ""},
         ${due_date},
         ${service_type},
         ${invoiceNumber},
@@ -33208,13 +34339,13 @@ app.post("/api/client-invoices", async (req, res) => {
     res.json({
       success: true,
       data: result[0],
-      message: "Invoice created successfully"
+      message: "Invoice created successfully",
     });
   } catch (error) {
     console.error("Error creating client invoice:", error);
     res.status(500).json({
       success: false,
-      error: "Failed to create invoice"
+      error: "Failed to create invoice",
     });
   }
 });
@@ -33248,7 +34379,7 @@ app.put("/api/client-invoices/:id", async (req, res) => {
     if (updates.length === 0) {
       return res.status(400).json({
         success: false,
-        error: "No fields to update"
+        error: "No fields to update",
       });
     }
 
@@ -33265,12 +34396,12 @@ app.put("/api/client-invoices/:id", async (req, res) => {
     if (result.length === 0) {
       return res.status(404).json({
         success: false,
-        error: "Invoice not found"
+        error: "Invoice not found",
       });
     }
 
     // If marking as paid, create payment record
-    if (status === 'paid' && paid_date) {
+    if (status === "paid" && paid_date) {
       const paymentId = uuidv4();
       await sql`
         INSERT INTO client_payments (
@@ -33295,13 +34426,13 @@ app.put("/api/client-invoices/:id", async (req, res) => {
     res.json({
       success: true,
       data: result[0],
-      message: "Invoice updated successfully"
+      message: "Invoice updated successfully",
     });
   } catch (error) {
     console.error("Error updating client invoice:", error);
     res.status(500).json({
       success: false,
-      error: "Failed to update invoice"
+      error: "Failed to update invoice",
     });
   }
 });
@@ -33310,7 +34441,7 @@ app.put("/api/client-invoices/:id", async (req, res) => {
 app.get("/api/client-payments", async (req, res) => {
   try {
     const { company_id, invoice_id } = req.query;
-    
+
     let query = sql`
       SELECT 
         cp.id,
@@ -33328,7 +34459,7 @@ app.get("/api/client-payments", async (req, res) => {
       FROM client_payments cp
       LEFT JOIN client_invoices ci ON cp.invoice_id = ci.invoice_id
     `;
-    
+
     const conditions = [];
     if (company_id) {
       conditions.push(sql`cp.company_id = ${company_id}`);
@@ -33336,7 +34467,7 @@ app.get("/api/client-payments", async (req, res) => {
     if (invoice_id) {
       conditions.push(sql`cp.invoice_id = ${invoice_id}`);
     }
-    
+
     if (conditions.length > 0) {
       query = sql`
         SELECT 
@@ -33382,13 +34513,13 @@ app.get("/api/client-payments", async (req, res) => {
 
     res.json({
       success: true,
-      data: payments
+      data: payments,
     });
   } catch (error) {
     console.error("Error fetching client payments:", error);
     res.status(500).json({
       success: false,
-      error: "Failed to fetch client payments"
+      error: "Failed to fetch client payments",
     });
   }
 });
@@ -33428,14 +34559,14 @@ app.get("/api/client-analytics/summary", async (req, res) => {
       data: {
         ...summary[0],
         ...recentPayments[0],
-        ...pendingInvoices[0]
-      }
+        ...pendingInvoices[0],
+      },
     });
   } catch (error) {
     console.error("Error fetching client analytics summary:", error);
     res.status(500).json({
       success: false,
-      error: "Failed to fetch client analytics summary"
+      error: "Failed to fetch client analytics summary",
     });
   }
 });
@@ -33443,7 +34574,7 @@ app.get("/api/client-analytics/summary", async (req, res) => {
 app.get("/api/contacts", async (req, res) => {
   try {
     const client = await pool.connect();
-    
+
     try {
       // Query real contacts from database
       const contactsQuery = `
@@ -33458,14 +34589,13 @@ app.get("/api/contacts", async (req, res) => {
         FROM contacts 
         ORDER BY created_at DESC
       `;
-      
+
       const contactsResult = await client.query(contactsQuery);
-      
+
       res.json({
         success: true,
-        data: contactsResult.rows
+        data: contactsResult.rows,
       });
-
     } finally {
       client.release();
     }
@@ -33473,7 +34603,7 @@ app.get("/api/contacts", async (req, res) => {
     console.error("Error fetching contacts:", error);
     res.status(500).json({
       success: false,
-      error: "Failed to fetch contacts"
+      error: "Failed to fetch contacts",
     });
   }
 });
@@ -33482,7 +34612,7 @@ app.get("/api/contacts", async (req, res) => {
 app.get("/api/messages", async (req, res) => {
   try {
     const client = await pool.connect();
-    
+
     try {
       // Query real messages from database
       const messagesQuery = `
@@ -33501,14 +34631,13 @@ app.get("/api/messages", async (req, res) => {
         ORDER BY timestamp DESC
         LIMIT 100
       `;
-      
+
       const messagesResult = await client.query(messagesQuery);
-      
+
       res.json({
         success: true,
-        data: messagesResult.rows
+        data: messagesResult.rows,
       });
-
     } finally {
       client.release();
     }
@@ -33516,7 +34645,7 @@ app.get("/api/messages", async (req, res) => {
     console.error("Error fetching messages:", error);
     res.status(500).json({
       success: false,
-      error: "Failed to fetch messages"
+      error: "Failed to fetch messages",
     });
   }
 });
@@ -33525,7 +34654,7 @@ app.get("/api/messages", async (req, res) => {
 app.get("/api/employees", async (req, res) => {
   try {
     const client = await pool.connect();
-    
+
     try {
       // Query real employees from database
       const employeesQuery = `
@@ -33543,14 +34672,13 @@ app.get("/api/employees", async (req, res) => {
         WHERE u.role IN ('employee', 'manager', 'admin')
         ORDER BY u.created_at DESC
       `;
-      
+
       const employeesResult = await client.query(employeesQuery);
-      
+
       res.json({
         success: true,
-        data: employeesResult.rows
+        data: employeesResult.rows,
       });
-
     } finally {
       client.release();
     }
@@ -33558,7 +34686,7 @@ app.get("/api/employees", async (req, res) => {
     console.error("Error fetching employees:", error);
     res.status(500).json({
       success: false,
-      error: "Failed to fetch employees"
+      error: "Failed to fetch employees",
     });
   }
 });
@@ -33567,7 +34695,7 @@ app.get("/api/employees", async (req, res) => {
 app.get("/api/feedback", async (req, res) => {
   try {
     const client = await pool.connect();
-    
+
     try {
       // Query real feedback from database
       const feedbackQuery = `
@@ -33584,14 +34712,13 @@ app.get("/api/feedback", async (req, res) => {
         FROM feedback 
         ORDER BY created_at DESC
       `;
-      
+
       const feedbackResult = await client.query(feedbackQuery);
-      
+
       res.json({
         success: true,
-        data: feedbackResult.rows
+        data: feedbackResult.rows,
       });
-
     } finally {
       client.release();
     }
@@ -33599,7 +34726,7 @@ app.get("/api/feedback", async (req, res) => {
     console.error("Error fetching feedback:", error);
     res.status(500).json({
       success: false,
-      error: "Failed to fetch feedback"
+      error: "Failed to fetch feedback",
     });
   }
 });
@@ -33608,7 +34735,7 @@ app.get("/api/feedback", async (req, res) => {
 app.get("/api/notifications", async (req, res) => {
   try {
     const client = await pool.connect();
-    
+
     try {
       // Query real notifications from database
       const notificationsQuery = `
@@ -33626,14 +34753,13 @@ app.get("/api/notifications", async (req, res) => {
         FROM notifications 
         ORDER BY created_at DESC
       `;
-      
+
       const notificationsResult = await client.query(notificationsQuery);
-      
+
       res.json({
         success: true,
-        data: notificationsResult.rows
+        data: notificationsResult.rows,
       });
-
     } finally {
       client.release();
     }
@@ -33641,7 +34767,7 @@ app.get("/api/notifications", async (req, res) => {
     console.error("Error fetching notifications:", error);
     res.status(500).json({
       success: false,
-      error: "Failed to fetch notifications"
+      error: "Failed to fetch notifications",
     });
   }
 });
@@ -33650,7 +34776,7 @@ app.get("/api/notifications", async (req, res) => {
 app.get("/api/usage-logs", async (req, res) => {
   try {
     const client = await pool.connect();
-    
+
     try {
       // Query real usage logs from database
       const usageLogsQuery = `
@@ -33671,14 +34797,13 @@ app.get("/api/usage-logs", async (req, res) => {
         ORDER BY timestamp DESC
         LIMIT 200
       `;
-      
+
       const usageLogsResult = await client.query(usageLogsQuery);
-      
+
       res.json({
         success: true,
-        data: usageLogsResult.rows
+        data: usageLogsResult.rows,
       });
-
     } finally {
       client.release();
     }
@@ -33686,7 +34811,7 @@ app.get("/api/usage-logs", async (req, res) => {
     console.error("Error fetching usage logs:", error);
     res.status(500).json({
       success: false,
-      error: "Failed to fetch usage logs"
+      error: "Failed to fetch usage logs",
     });
   }
 });
@@ -33695,7 +34820,7 @@ app.get("/api/usage-logs", async (req, res) => {
 app.get("/api/dashboard/top-users", async (req, res) => {
   try {
     const client = await pool.connect();
-    
+
     try {
       // Query top contact users
       const topContactUsersQuery = `
@@ -33765,18 +34890,23 @@ app.get("/api/dashboard/top-users", async (req, res) => {
         WHERE timestamp >= NOW() - INTERVAL '30 days'
       `;
 
-      const [topContactUsersResult, topAiUsersResult, topOverallUsersResult, summaryResult] = await Promise.all([
+      const [
+        topContactUsersResult,
+        topAiUsersResult,
+        topOverallUsersResult,
+        summaryResult,
+      ] = await Promise.all([
         client.query(topContactUsersQuery),
         client.query(topAiUsersQuery),
         client.query(topOverallUsersQuery),
-        client.query(summaryQuery)
+        client.query(summaryQuery),
       ]);
 
       const summary = summaryResult.rows[0] || {
         total_active_users: 0,
         avg_session_duration: 0,
         total_ai_messages_generated: 0,
-        total_contact_interactions: 0
+        total_contact_interactions: 0,
       };
 
       res.json({
@@ -33791,11 +34921,10 @@ app.get("/api/dashboard/top-users", async (req, res) => {
             totalAiMessagesGenerated: summary.total_ai_messages_generated,
             totalContactInteractions: summary.total_contact_interactions,
             mostActiveHour: "10:00-11:00", // Could be calculated from data
-            peakUsageDay: "Tuesday" // Could be calculated from data
-          }
-        }
+            peakUsageDay: "Tuesday", // Could be calculated from data
+          },
+        },
       });
-
     } finally {
       client.release();
     }
@@ -33803,11 +34932,10 @@ app.get("/api/dashboard/top-users", async (req, res) => {
     console.error("Error fetching top users:", error);
     res.status(500).json({
       success: false,
-      error: "Failed to fetch top users data"
+      error: "Failed to fetch top users data",
     });
   }
 });
-
 
 // ======================
 // BOOKING SLOTS API

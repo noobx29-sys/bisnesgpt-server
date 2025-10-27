@@ -21,7 +21,7 @@ const db = admin.firestore();
 const { doc, collection, query, where, getDocs } = db;
 const pdf = require("pdf-parse");
 const { fromPath } = require("pdf2pic");
-const { Poppler } = require('node-poppler');
+const { Poppler } = require("node-poppler");
 const SKCSpreadsheet = require("../spreadsheet/SKCSpreadsheet");
 const CarCareSpreadsheet = require("../blast/bookingCarCareGroup");
 const ConvertAPI = require("convertapi");
@@ -30,6 +30,132 @@ const { neon, neonConfig } = require("@neondatabase/serverless");
 const { Pool } = require("pg");
 const mime = require("mime-types");
 const FormData = require("form-data");
+
+// Utility function to safely extract phone number with @lid failsafe
+async function safeExtractPhoneNumber(msg, client = null) {
+  try {
+    let phoneNumber;
+
+    // Check if it's a @lid case
+    if (msg.from && msg.from.includes("@lid")) {
+      console.log(
+        "🔧 [safeExtractPhoneNumber] @lid detected, using chat/contact method"
+      );
+
+      if (!client) {
+        console.error(
+          "❌ [safeExtractPhoneNumber] Client required for @lid extraction but not provided"
+        );
+        return null;
+      }
+
+      try {
+        const chat = await msg.getChat();
+        const contact = await chat.getContact();
+
+        if (contact && contact.id && contact.id._serialized) {
+          // Extract phone number from contact.id._serialized
+          phoneNumber = contact.id._serialized.split("@")[0];
+          console.log(
+            "✅ [safeExtractPhoneNumber] Extracted from contact:",
+            phoneNumber
+          );
+        } else {
+          console.error(
+            "❌ [safeExtractPhoneNumber] Could not get contact info from chat"
+          );
+          return null;
+        }
+      } catch (error) {
+        console.error(
+          "❌ [safeExtractPhoneNumber] Error getting chat/contact for @lid:",
+          error
+        );
+        return null;
+      }
+    } else {
+      // Standard extraction method
+      phoneNumber = msg.from.split("@")[0];
+      console.log(
+        "✅ [safeExtractPhoneNumber] Standard extraction:",
+        phoneNumber
+      );
+    }
+
+    // Add + prefix if not present
+    if (phoneNumber && !phoneNumber.startsWith("+")) {
+      phoneNumber = "+" + phoneNumber;
+    }
+
+    return phoneNumber;
+  } catch (error) {
+    console.error("❌ [safeExtractPhoneNumber] Unexpected error:", error);
+    return null;
+  }
+}
+
+// Utility function to safely extract "to" phone number with @lid failsafe
+async function safeExtractToPhoneNumber(msg, client = null) {
+  try {
+    let phoneNumber;
+
+    // Check if it's a @lid case
+    if (msg.to && msg.to.includes("@lid")) {
+      console.log(
+        '🔧 [safeExtractToPhoneNumber] @lid detected in "to", using chat/contact method'
+      );
+
+      if (!client) {
+        console.error(
+          "❌ [safeExtractToPhoneNumber] Client required for @lid extraction but not provided"
+        );
+        return null;
+      }
+
+      try {
+        const chat = await msg.getChat();
+        const contact = await chat.getContact();
+
+        if (contact && contact.id && contact.id._serialized) {
+          // Extract phone number from contact.id._serialized
+          phoneNumber = contact.id._serialized.split("@")[0];
+          console.log(
+            "✅ [safeExtractToPhoneNumber] Extracted from contact:",
+            phoneNumber
+          );
+        } else {
+          console.error(
+            "❌ [safeExtractToPhoneNumber] Could not get contact info from chat"
+          );
+          return null;
+        }
+      } catch (error) {
+        console.error(
+          "❌ [safeExtractToPhoneNumber] Error getting chat/contact for @lid:",
+          error
+        );
+        return null;
+      }
+    } else {
+      // Standard extraction method
+      phoneNumber = msg.to.split("@")[0];
+      console.log(
+        "✅ [safeExtractToPhoneNumber] Standard extraction:",
+        phoneNumber
+      );
+    }
+
+    // Add + prefix if not present
+    if (phoneNumber && !phoneNumber.startsWith("+")) {
+      phoneNumber = "+" + phoneNumber;
+    }
+
+    return phoneNumber;
+  } catch (error) {
+    console.error("❌ [safeExtractToPhoneNumber] Unexpected error:", error);
+    return null;
+  }
+}
 const { ids } = require("googleapis/build/src/apis/ids/index.js");
 
 // Configure Neon for WebSocket pooling
@@ -566,9 +692,17 @@ async function customWait(milliseconds) {
 const ONESIGNAL_CONFIG = {
   appId: process.env.ONESIGNAL_APP_ID || "8df2a641-209a-4a29-bca9-4bc57fe78a31",
   apiKey: process.env.ONESIGNAL_API_KEY,
-  apiUrl: "https://api.onesignal.com/api/v1/notifications"
+  apiUrl: "https://api.onesignal.com/api/v1/notifications",
 };
-async function addNotificationToUser(companyId, message, contactName, contactId = null, chatId = null, phoneNumber = null, profilePicUrl = null) {
+async function addNotificationToUser(
+  companyId,
+  message,
+  contactName,
+  contactId = null,
+  chatId = null,
+  phoneNumber = null,
+  profilePicUrl = null
+) {
   console.log("Adding notification and sending OneSignal");
   console.log("📱 addNotificationToUser parameters:");
   console.log("   companyId:", companyId);
@@ -614,7 +748,7 @@ async function addNotificationToUser(companyId, message, contactName, contactId 
         // Determine notification type based on context
         let notificationType = "company_announcement";
         let additionalData = {
-          company_id: companyId
+          company_id: companyId,
         };
 
         if (contactName && contactId && chatId) {
@@ -629,38 +763,49 @@ async function addNotificationToUser(companyId, message, contactName, contactId 
             chat_id: chatId,
             phone: phoneNumber,
             profile_pic_url: profilePicUrl,
-            type: notificationType
+            type: notificationType,
           };
         } else {
           // This is a company announcement
           additionalData = {
             ...additionalData,
-            type: notificationType
+            type: notificationType,
           };
         }
 
         console.log("📤 Sending to OneSignal with data:");
-        console.log("   additionalData:", JSON.stringify(additionalData, null, 2));
-        
+        console.log(
+          "   additionalData:",
+          JSON.stringify(additionalData, null, 2)
+        );
+
         // Create the main notification payload for OneSignal
         const notificationPayload = {
           // Core notification data
           ...additionalData,
-          
+
           // Profile picture fields - these go directly to OneSignal
-          large_icon: isValidProfilePicUrl(profilePicUrl) ? getOptimizedNotificationIcon(profilePicUrl) : null,
-          big_picture: isValidProfilePicUrl(profilePicUrl) ? getOptimizedNotificationIcon(profilePicUrl) : null,
+          large_icon: isValidProfilePicUrl(profilePicUrl)
+            ? getOptimizedNotificationIcon(profilePicUrl)
+            : null,
+          big_picture: isValidProfilePicUrl(profilePicUrl)
+            ? getOptimizedNotificationIcon(profilePicUrl)
+            : null,
           small_icon: "ic_launcher",
-          
+
           // Android-specific enhancements
           android_accent_color: "FF2196F3",
           android_led_color: "FF2196F3",
-          
+
           // iOS-specific profile picture support
-          ios_attachments: isValidProfilePicUrl(profilePicUrl) ? { id1: getOptimizedNotificationIcon(profilePicUrl) } : null,
-          
+          ios_attachments: isValidProfilePicUrl(profilePicUrl)
+            ? { id1: getOptimizedNotificationIcon(profilePicUrl) }
+            : null,
+
           // Additional profile picture fields for better compatibility
-          chrome_web_image: isValidProfilePicUrl(profilePicUrl) ? getOptimizedNotificationIcon(profilePicUrl) : null,
+          chrome_web_image: isValidProfilePicUrl(profilePicUrl)
+            ? getOptimizedNotificationIcon(profilePicUrl)
+            : null,
         };
 
         console.log("📸 Notification payload with profile picture:");
@@ -670,9 +815,18 @@ async function addNotificationToUser(companyId, message, contactName, contactId 
         console.log("   Big Picture:", notificationPayload.big_picture);
         console.log("   Small Icon:", notificationPayload.small_icon);
         console.log("   iOS Attachments:", notificationPayload.ios_attachments);
-        console.log("   Chrome Web Image:", notificationPayload.chrome_web_image);
-        console.log("   Android Accent Color:", notificationPayload.android_accent_color);
-        console.log("   Android LED Color:", notificationPayload.android_led_color);
+        console.log(
+          "   Chrome Web Image:",
+          notificationPayload.chrome_web_image
+        );
+        console.log(
+          "   Android Accent Color:",
+          notificationPayload.android_accent_color
+        );
+        console.log(
+          "   Android LED Color:",
+          notificationPayload.android_led_color
+        );
 
         try {
           // Try to send with profile picture first
@@ -682,10 +836,15 @@ async function addNotificationToUser(companyId, message, contactName, contactId 
             notificationText,
             notificationPayload
           );
-          console.log(`✅ OneSignal notification sent to company: ${companyId} with type: ${notificationType}`);
+          console.log(
+            `✅ OneSignal notification sent to company: ${companyId} with type: ${notificationType}`
+          );
         } catch (onesignalError) {
-          console.error("❌ Failed to send OneSignal notification with profile picture:", onesignalError.message);
-          
+          console.error(
+            "❌ Failed to send OneSignal notification with profile picture:",
+            onesignalError.message
+          );
+
           // Fallback: Try without profile picture
           try {
             console.log("🔄 Retrying without profile picture...");
@@ -693,20 +852,25 @@ async function addNotificationToUser(companyId, message, contactName, contactId 
               ...additionalData,
               small_icon: "ic_launcher",
               android_accent_color: "FF2196F3",
-              android_led_color: "FF2196F3"
+              android_led_color: "FF2196F3",
             };
-            
+
             await sendOneSignalNotification(
               companyId,
               contactName || "Company Announcement",
               notificationText,
               fallbackPayload
             );
-            console.log(`✅ OneSignal notification sent successfully without profile picture`);
+            console.log(
+              `✅ OneSignal notification sent successfully without profile picture`
+            );
           } catch (fallbackError) {
-            console.error("❌ Failed to send OneSignal notification even without profile picture:", fallbackError.message);
+            console.error(
+              "❌ Failed to send OneSignal notification even without profile picture:",
+              fallbackError.message
+            );
           }
-          
+
           // Continue with database operations even if OneSignal fails
         }
       } catch (error) {
@@ -747,10 +911,14 @@ async function addNotificationToUser(companyId, message, contactName, contactId 
 }
 function getOptimizedNotificationIcon(profilePicUrl) {
   // Check if profile picture URL is valid and accessible
-  if (profilePicUrl && profilePicUrl.startsWith('http') && profilePicUrl.includes('whatsapp.net')) {
+  if (
+    profilePicUrl &&
+    profilePicUrl.startsWith("http") &&
+    profilePicUrl.includes("whatsapp.net")
+  ) {
     // WhatsApp profile pictures are usually reliable, use them
     console.log("📸 Using WhatsApp profile picture URL");
-    
+
     // Ensure URL is properly encoded for OneSignal
     try {
       const encodedUrl = encodeURI(profilePicUrl);
@@ -760,7 +928,7 @@ function getOptimizedNotificationIcon(profilePicUrl) {
       console.log("📸 Error encoding profile picture URL:", error.message);
       return profilePicUrl; // Return original if encoding fails
     }
-  } else if (profilePicUrl && profilePicUrl.startsWith('http')) {
+  } else if (profilePicUrl && profilePicUrl.startsWith("http")) {
     // Other HTTP URLs - use them but log for monitoring
     console.log("📸 Using external profile picture URL:", profilePicUrl);
     return profilePicUrl;
@@ -772,13 +940,15 @@ function getOptimizedNotificationIcon(profilePicUrl) {
 }
 // Helper function to validate and optimize profile picture URLs for notifications
 function isValidProfilePicUrl(url) {
-  if (!url || typeof url !== 'string') return false;
-  
+  if (!url || typeof url !== "string") return false;
+
   try {
     const urlObj = new URL(url);
-    return urlObj.protocol === 'https:' && 
-           urlObj.hostname.includes('whatsapp.net') &&
-           urlObj.pathname.includes('.jpg');
+    return (
+      urlObj.protocol === "https:" &&
+      urlObj.hostname.includes("whatsapp.net") &&
+      urlObj.pathname.includes(".jpg")
+    );
   } catch (error) {
     console.log("📸 Invalid profile picture URL format:", url);
     return false;
@@ -800,25 +970,25 @@ async function sendOneSignalNotification(companyId, title, message, data = {}) {
       app_id: ONESIGNAL_CONFIG.appId,
       target_channel: "push",
       name: "Company Notification",
-      headings: { "en": title },
-      contents: { "en": message },
+      headings: { en: title },
+      contents: { en: message },
       include_external_user_ids: [companyId], // Target all users in the company
-      
+
       // Profile picture support for rich notifications (OneSignal best practices)
-      large_icon: data.large_icon || null,  // Profile picture (right side) - OneSignal auto-scales
-      big_picture: data.big_picture || null,  // Full-size profile picture when expanded
-      small_icon: data.small_icon || "ic_launcher",  // App icon (left side, status bar)
-      
+      large_icon: data.large_icon || null, // Profile picture (right side) - OneSignal auto-scales
+      big_picture: data.big_picture || null, // Full-size profile picture when expanded
+      small_icon: data.small_icon || "ic_launcher", // App icon (left side, status bar)
+
       // Android-specific enhancements
       android_accent_color: data.android_accent_color || "FF2196F3",
       android_led_color: data.android_led_color || "FF2196F3",
-      
+
       // iOS-specific profile picture support
       ios_attachments: data.ios_attachments || null,
-      
+
       // Additional profile picture fields for better compatibility
       chrome_web_image: data.chrome_web_image || null,
-      
+
       data: {
         type: "company_message",
         company_id: companyId,
@@ -830,41 +1000,51 @@ async function sendOneSignalNotification(companyId, title, message, data = {}) {
         chat_id: data.chat_id,
         phone: data.phone,
         profile_pic_url: data.profile_pic_url,
-        type: data.type
-      }
+        type: data.type,
+      },
     };
 
-            console.log("📤 OneSignal request body:", JSON.stringify(requestBody, null, 2));
-        console.log("📸 Profile picture fields:");
-        console.log("   large_icon:", requestBody.large_icon);
-        console.log("   big_picture:", requestBody.big_picture);
-        console.log("   small_icon:", requestBody.small_icon);
-        console.log("   ios_attachments:", requestBody.ios_attachments);
-        console.log("   chrome_web_image:", requestBody.chrome_web_image);
+    console.log(
+      "📤 OneSignal request body:",
+      JSON.stringify(requestBody, null, 2)
+    );
+    console.log("📸 Profile picture fields:");
+    console.log("   large_icon:", requestBody.large_icon);
+    console.log("   big_picture:", requestBody.big_picture);
+    console.log("   small_icon:", requestBody.small_icon);
+    console.log("   ios_attachments:", requestBody.ios_attachments);
+    console.log("   chrome_web_image:", requestBody.chrome_web_image);
 
     // Use axios instead of fetch since fetch is not available in this Node.js version
-    const axios = require('axios');
-    
+    const axios = require("axios");
+
     const response = await axios({
-      method: 'POST',
+      method: "POST",
       url: ONESIGNAL_CONFIG.apiUrl,
       headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Basic ${ONESIGNAL_CONFIG.apiKey}`
+        "Content-Type": "application/json",
+        Authorization: `Basic ${ONESIGNAL_CONFIG.apiKey}`,
       },
-      data: requestBody
+      data: requestBody,
     });
 
     console.log("📤 OneSignal response status:", response.status);
     console.log("📤 OneSignal response headers:", response.headers);
     console.log("📤 OneSignal response body:", response.data);
-    
+
     if (response.status >= 200 && response.status < 300) {
-      console.log(`✅ OneSignal notification sent successfully:`, response.data);
+      console.log(
+        `✅ OneSignal notification sent successfully:`,
+        response.data
+      );
       return response.data;
     } else {
       console.error(`❌ OneSignal API error:`, response.data);
-      throw new Error(`OneSignal API error: ${response.data.errors?.join(', ') || 'Unknown error'}`);
+      throw new Error(
+        `OneSignal API error: ${
+          response.data.errors?.join(", ") || "Unknown error"
+        }`
+      );
     }
   } catch (error) {
     console.error("❌ Error sending OneSignal notification:", error);
@@ -3512,7 +3692,7 @@ async function prepareContactData(
   } catch (err) {
     contact = await client.getContactById(msg.from);
   }
-  const extractedNumber = "+" + msg.from.split("@")[0];
+  const extractedNumber = await safeExtractPhoneNumber(msg, client);
 
   const contactTags = contactData?.tags || [];
   const profilePicUrl = await getProfilePicUrl(contact);
@@ -4399,9 +4579,11 @@ async function updateContactInDatabase(idSubstring, phoneNumber, contactData) {
 }
 
 async function getFollowUpTemplatesForNewContacts(companyId) {
-  console.log(`Fetching follow-up templates for new contacts for company ${companyId}...`);
+  console.log(
+    `Fetching follow-up templates for new contacts for company ${companyId}...`
+  );
   const sqlClient = await pool.connect();
-  
+
   try {
     const result = await sqlClient.query(
       `SELECT * FROM public.followup_templates 
@@ -4413,7 +4595,10 @@ async function getFollowUpTemplatesForNewContacts(companyId) {
     );
     return result.rows;
   } catch (error) {
-    console.error('Error fetching follow-up templates for new contacts:', error);
+    console.error(
+      "Error fetching follow-up templates for new contacts:",
+      error
+    );
     return [];
   } finally {
     await safeRelease(sqlClient);
@@ -4491,26 +4676,36 @@ async function createContactInDatabase(idSubstring, contactData) {
       try {
         const templates = await getFollowUpTemplatesForNewContacts(idSubstring);
         if (templates.length > 0) {
-          console.log(`Found ${templates.length} follow-up templates for new contacts`);
-          
+          console.log(
+            `Found ${templates.length} follow-up templates for new contacts`
+          );
+
           for (const template of templates) {
             try {
               await callFollowUpAPI(
-                'startTemplate',
+                "startTemplate",
                 contactData.phone,
-                contactData.name || 'New Contact',
+                contactData.name || "New Contact",
                 0, // phoneIndex
                 template.template_id,
                 idSubstring
               );
-              console.log(`Triggered follow-up template "${template.name}" for new contact ${contactData.phone}`);
+              console.log(
+                `Triggered follow-up template "${template.name}" for new contact ${contactData.phone}`
+              );
             } catch (error) {
-              console.error(`Error triggering follow-up template "${template.name}":`, error);
+              console.error(
+                `Error triggering follow-up template "${template.name}":`,
+                error
+              );
             }
           }
         }
       } catch (error) {
-        console.error('Error processing follow-up templates for new contact:', error);
+        console.error(
+          "Error processing follow-up templates for new contact:",
+          error
+        );
       }
     })();
 
@@ -4578,6 +4773,7 @@ async function logContactCreationAttempt(
 async function processImmediateActions(client, msg, botName, phoneIndex) {
   const idSubstring = botName;
   const chatId = msg.from;
+  const chat = await msg.getChat();
   let contact;
   try {
     contact = await chat.getContact();
@@ -4588,7 +4784,7 @@ async function processImmediateActions(client, msg, botName, phoneIndex) {
     `�� [IMMEDIATE_ACTIONS] Processing immediate actions for bot companyID ${botName} for chatId ${chatId}`
   );
   const messageBody = msg.body;
-  const extractedNumber = "+" + msg.from.split("@")[0];
+  const extractedNumber = await safeExtractPhoneNumber(msg, client);
   console.log(`�� [IMMEDIATE_ACTIONS] Extracted number: ${extractedNumber}`);
   const contactID =
     idSubstring +
@@ -4703,8 +4899,10 @@ async function processImmediateActions(client, msg, botName, phoneIndex) {
     if (msg.fromMe) {
       console.log(`�� [IMMEDIATE_ACTIONS] Processing message from me`);
       if (idSubstring === "0128") {
-        const firebaseDC = "+" + msg.to.split("@")[0];
-        await addTagToPostgres(firebaseDC, "stop bot", idSubstring);
+        const firebaseDC = await safeExtractToPhoneNumber(msg, client);
+        if (firebaseDC) {
+          await addTagToPostgres(firebaseDC, "stop bot", idSubstring);
+        }
       }
       await handleOpenAIMyMessage(msg.body, threadID);
       return;
@@ -5153,13 +5351,19 @@ async function processMessage(
       name: msg.notifyName,
     };
 
-    const extractedNumber = "+" + sender.to.split("@")[0];
+    const extractedNumber = await safeExtractPhoneNumber(msg, client);
 
     if (msg.fromMe) {
       console.log(msg);
       if (idSubstring === "0128") {
-        const contactIDDC = msg.to.split("@")[0];
-        await addTagToPostgres(contactIDDC, "stop bot", idSubstring);
+        const contactIDDC = await safeExtractToPhoneNumber(msg, client);
+        if (contactIDDC) {
+          await addTagToPostgres(
+            contactIDDC.replace("+", ""),
+            "stop bot",
+            idSubstring
+          );
+        }
       }
       return;
     }
@@ -5173,11 +5377,12 @@ async function processMessage(
     try {
       const incomingContactName = contactData?.name || extractedNumber;
       const messageBody = msg.body || "New message received";
-      
+
       // Get contact ID and chat ID for the notification
-      const contactID = contactData?.contact_id || `${idSubstring}-${extractedNumber.slice(1)}`;
+      const contactID =
+        contactData?.contact_id || `${idSubstring}-${extractedNumber.slice(1)}`;
       const chatID = msg.from; // This is the WhatsApp chat ID
-      
+
       // Get profile picture URL if available
       let profilePicUrl = null;
       try {
@@ -5186,19 +5391,24 @@ async function processMessage(
       } catch (error) {
         console.log("Could not get profile picture URL:", error.message);
       }
-      
+
       await addNotificationToUser(
-        idSubstring,           // companyId
-        messageBody,           // message
-        incomingContactName,   // contactName
-        contactID,             // contactId
-        chatID,                // chatId
-        extractedNumber,       // phoneNumberf
-        profilePicUrl          // profilePicUrl
+        idSubstring, // companyId
+        messageBody, // message
+        incomingContactName, // contactName
+        contactID, // contactId
+        chatID, // chatId
+        extractedNumber, // phoneNumberf
+        profilePicUrl // profilePicUrl
       );
-      console.log(`OneSignal notification sent for incoming message from ${incomingContactName}`);
+      console.log(
+        `OneSignal notification sent for incoming message from ${incomingContactName}`
+      );
     } catch (notificationError) {
-      console.error("Error sending OneSignal notification for incoming message:", notificationError);
+      console.error(
+        "Error sending OneSignal notification for incoming message:",
+        notificationError
+      );
       // Continue processing even if notification fails
     }
 
@@ -5520,23 +5730,20 @@ async function processMessage(
   }
 }
 
-
-
-
 async function checkMessageQuotaLimit(companyID) {
   // Get company plan for quota calculation first
   const companyResult = await pool.query(
     `SELECT plan FROM companies WHERE company_id = $1`,
     [companyID]
   );
-  const companyPlan = companyResult.rows[0]?.plan || 'free';
+  const companyPlan = companyResult.rows[0]?.plan || "free";
   const planBasedQuota = getPlanBasedQuota(companyPlan);
   const quotaKey = getQuotaKey(companyPlan);
   const isLifetimePlan = !isMonthlyResetPlan(companyPlan);
 
   let messageUsage = {};
   const feature = "aiMessages";
-  
+
   // Get usage based on plan type
   let featureResult;
   if (isLifetimePlan) {
@@ -5553,7 +5760,7 @@ async function checkMessageQuotaLimit(companyID) {
     const year = now.getFullYear();
     const month = (now.getMonth() + 1).toString().padStart(2, "0");
     const monthlyKey = `${year}-${month}`;
-    
+
     featureResult = await pool.query(
       `SELECT SUM(usage_count) AS total_usage
        FROM usage_logs
@@ -5562,9 +5769,12 @@ async function checkMessageQuotaLimit(companyID) {
       [companyID, feature, monthlyKey]
     );
   }
-  
+
   messageUsage[feature] = featureResult.rows[0]?.total_usage || 0;
-  console.log(`AI message usage data (${isLifetimePlan ? 'lifetime' : 'monthly'}):`, messageUsage);
+  console.log(
+    `AI message usage data (${isLifetimePlan ? "lifetime" : "monthly"}):`,
+    messageUsage
+  );
 
   let usageQuota = {};
   const settingKey = "quotaAIMessage";
@@ -5615,11 +5825,11 @@ async function checkMessageQuotaLimit(companyID) {
 // Helper function to get plan-based quota amounts
 function getPlanBasedQuota(plan) {
   switch (plan?.toLowerCase()) {
-    case 'free':
+    case "free":
       return 100;
-    case 'premium':
+    case "premium":
       return 5000;
-    case 'enterprise':
+    case "enterprise":
       return 20000;
     default:
       return 100; // Default to free plan quota
@@ -5629,7 +5839,7 @@ function getPlanBasedQuota(plan) {
 // Helper function to check if plan uses monthly reset
 function isMonthlyResetPlan(plan) {
   const planLower = plan?.toLowerCase();
-  return planLower === 'premium' || planLower === 'enterprise';
+  return planLower === "premium" || planLower === "enterprise";
 }
 
 // Helper function to get quota key (monthly for paid plans, lifetime for free)
@@ -5640,10 +5850,9 @@ function getQuotaKey(plan) {
     const month = (now.getMonth() + 1).toString().padStart(2, "0");
     return `${year}-${month}`;
   } else {
-    return 'lifetime'; // Free plan uses lifetime quota
+    return "lifetime"; // Free plan uses lifetime quota
   }
 }
-
 
 async function getContactDataFromDatabaseByPhone(phoneNumber, idSubstring) {
   try {
@@ -5901,17 +6110,25 @@ async function addMessageToPostgres(
       throw error;
     } finally {
       await safeRelease(client);
-            // Get profile picture URL for the contact
-            let profilePicUrl = null;
-            try {
-              const chat = await msg.getChat();
-              const contact = await chat.getContact();
-              profilePicUrl = await getProfilePicUrl(contact);
-              console.log("Profile picture URL:", profilePicUrl);
-            } catch (error) {
-              console.log("Could not get profile picture URL:", error.message);
-            }
-            await addNotificationToUser(idSubstring, messageBody, contactName, contactID, msg.from, extractedNumber, profilePicUrl);
+      // Get profile picture URL for the contact
+      let profilePicUrl = null;
+      try {
+        const chat = await msg.getChat();
+        const contact = await chat.getContact();
+        profilePicUrl = await getProfilePicUrl(contact);
+        console.log("Profile picture URL:", profilePicUrl);
+      } catch (error) {
+        console.log("Could not get profile picture URL:", error.message);
+      }
+      await addNotificationToUser(
+        idSubstring,
+        messageBody,
+        contactName,
+        contactID,
+        msg.from,
+        extractedNumber,
+        profilePicUrl
+      );
     }
   } catch (error) {
     console.error("PostgreSQL connection error:", error);
@@ -7646,22 +7863,24 @@ async function handlePDFMessagePoppler(
 
     for (let i = 1; i <= pagesToProcess; i++) {
       console.log(`[PDF] Processing page ${i} of ${pagesToProcess}...`);
-      
+
       // Try different naming patterns that poppler might use
       let imagePath = `${outputPrefix}-${i}.png`;
-      
+
       // Check if image file exists
       try {
         await fs.promises.access(imagePath);
       } catch {
-        console.log(`[PDF] Image for page ${i} not found, trying alternative naming...`);
+        console.log(
+          `[PDF] Image for page ${i} not found, trying alternative naming...`
+        );
         // Try alternative naming patterns
         const altPaths = [
           `${outputPrefix}_${i}.png`,
-          `${outputPrefix}-${String(i).padStart(3, '0')}.png`,
+          `${outputPrefix}-${String(i).padStart(3, "0")}.png`,
           `${outputPrefix}${i}.png`,
         ];
-        
+
         let found = false;
         for (const altPath of altPaths) {
           try {
@@ -7673,7 +7892,7 @@ async function handlePDFMessagePoppler(
             // Continue trying
           }
         }
-        
+
         if (!found) {
           console.error(`[PDF] Could not find converted image for page ${i}`);
           continue; // Skip this page but continue with others
@@ -7685,7 +7904,9 @@ async function handlePDFMessagePoppler(
       // Convert image to base64
       const imageBuffer = await fs.promises.readFile(imagePath);
       const base64Image = imageBuffer.toString("base64");
-      console.log(`[PDF] Page ${i} image loaded, base64 length: ${base64Image.length}`);
+      console.log(
+        `[PDF] Page ${i} image loaded, base64 length: ${base64Image.length}`
+      );
 
       // Analyze image using GPT-4-mini
       console.log(`[PDF] Sending page ${i} to OpenAI for analysis...`);
@@ -7742,7 +7963,9 @@ Also describe what type of document this appears to be (form, invoice, letter, e
 
       // Add page analysis to results
       const pageAnalysis = response.choices[0].message.content;
-      console.log(`[PDF] Page ${i} analysis received, length: ${pageAnalysis.length}`);
+      console.log(
+        `[PDF] Page ${i} analysis received, length: ${pageAnalysis.length}`
+      );
       allPagesAnalysis.push(`Page ${i}: ${pageAnalysis}`);
 
       // Clean up temporary image file
@@ -7763,7 +7986,6 @@ Also describe what type of document this appears to be (form, invoice, letter, e
     console.log("[PDF] Combined analysis completed");
 
     return `[PDF Content Analysis: ${combinedAnalysis}]`;
-
   } catch (error) {
     console.error("[PDF] Error processing PDF:", error);
     if (error && typeof error === "object") {
@@ -7784,12 +8006,12 @@ Also describe what type of document this appears to be (form, invoice, letter, e
           console.error("[PDF] Error deleting PDF file:", error);
         }
       }
-      
+
       // Clean up any remaining image files
       try {
         const files = await fs.promises.readdir(tempDir);
         for (const file of files) {
-          if (file.includes('pdf_page_') && file.endsWith('.png')) {
+          if (file.includes("pdf_page_") && file.endsWith(".png")) {
             try {
               await fs.promises.unlink(path.join(tempDir, file));
             } catch (error) {
@@ -8923,7 +9145,7 @@ async function processAudioMessage(msg) {
   if (msg.type !== "audio" && msg.type !== "ptt") {
     return null;
   }
-  
+
   const media = await msg.downloadMedia();
 
   return {
@@ -11195,7 +11417,7 @@ async function getCustomFieldsFromDatabase(idSubstring, phoneNumber) {
 async function getAvailableEvents(idSubstring) {
   try {
     console.log(`Fetching available events for company: ${idSubstring}`);
-    
+
     const eventsResult = await sql`
       SELECT name, slug, start_date, end_date, location, description
       FROM public.events 
@@ -11207,39 +11429,40 @@ async function getAvailableEvents(idSubstring) {
     if (eventsResult.length === 0) {
       return JSON.stringify({
         success: false,
-        message: "No active events found for this company"
+        message: "No active events found for this company",
       });
     }
 
-    const events = eventsResult.map(event => ({
+    const events = eventsResult.map((event) => ({
       name: event.name,
       slug: event.slug,
       startDate: event.start_date,
       endDate: event.end_date,
       location: event.location,
-      description: event.description
+      description: event.description,
     }));
 
     return JSON.stringify({
       success: true,
       events: events,
-      totalEvents: events.length
+      totalEvents: events.length,
     });
-
   } catch (error) {
     console.error("Error fetching available events:", error);
     return JSON.stringify({
       success: false,
       error: "Failed to fetch available events",
-      details: error.message
+      details: error.message,
     });
   }
 }
 
 async function setAttendance(idSubstring, eventName, phoneNumber) {
   try {
-    console.log(`Setting attendance for event: ${eventName}, participant: ${phoneNumber}`);
-    
+    console.log(
+      `Setting attendance for event: ${eventName}, participant: ${phoneNumber}`
+    );
+
     // First, try exact match (case-insensitive)
     let eventResult = await sql`
       SELECT id, slug, name
@@ -11252,12 +11475,14 @@ async function setAttendance(idSubstring, eventName, phoneNumber) {
 
     // If no exact match, try fuzzy matching with LIKE/includes
     if (eventResult.length === 0) {
-      console.log(`No exact match found for "${eventName}", trying fuzzy matching...`);
-      
+      console.log(
+        `No exact match found for "${eventName}", trying fuzzy matching...`
+      );
+
       eventResult = await sql`
         SELECT id, slug, name
         FROM public.events 
-        WHERE LOWER(name) LIKE LOWER(${'%' + eventName + '%'})
+        WHERE LOWER(name) LIKE LOWER(${"%" + eventName + "%"})
         AND company_id = ${idSubstring}
         AND is_active = true
         ORDER BY LENGTH(name) ASC
@@ -11266,8 +11491,10 @@ async function setAttendance(idSubstring, eventName, phoneNumber) {
 
       // If still no match, get all available events to show user
       if (eventResult.length === 0) {
-        console.log(`No fuzzy match found for "${eventName}", fetching all available events...`);
-        
+        console.log(
+          `No fuzzy match found for "${eventName}", fetching all available events...`
+        );
+
         const allEventsResult = await sql`
           SELECT name, slug, start_date, end_date, location
           FROM public.events 
@@ -11276,40 +11503,40 @@ async function setAttendance(idSubstring, eventName, phoneNumber) {
           ORDER BY start_date ASC
         `;
 
-        const availableEvents = allEventsResult.map(event => ({
+        const availableEvents = allEventsResult.map((event) => ({
           name: event.name,
           startDate: event.start_date,
           endDate: event.end_date,
-          location: event.location
+          location: event.location,
         }));
 
         return JSON.stringify({
           success: false,
           error: `No event found matching "${eventName}"`,
           message: "Please specify the exact event name from the list below:",
-          availableEvents: availableEvents
+          availableEvents: availableEvents,
         });
       }
 
       // If multiple fuzzy matches found, ask user to be more specific
       if (eventResult.length > 1) {
-        const matchedEvents = eventResult.map(event => ({
+        const matchedEvents = eventResult.map((event) => ({
           name: event.name,
-          id: event.id
+          id: event.id,
         }));
 
         return JSON.stringify({
           success: false,
           error: `Multiple events found matching "${eventName}"`,
           message: "Please specify which event you mean:",
-          matchedEvents: matchedEvents
+          matchedEvents: matchedEvents,
         });
       }
     }
 
     const event = eventResult[0];
     console.log(`Found event: ${event.name} (ID: ${event.id})`);
-    
+
     // Check if attendance record already exists
     const existingAttendance = await sql`
       SELECT id 
@@ -11323,7 +11550,7 @@ async function setAttendance(idSubstring, eventName, phoneNumber) {
     if (existingAttendance.length > 0) {
       return JSON.stringify({
         success: false,
-        message: `Attendance already recorded for ${phoneNumber} at event "${event.name}"`
+        message: `Attendance already recorded for ${phoneNumber} at event "${event.name}"`,
       });
     }
 
@@ -11345,22 +11572,23 @@ async function setAttendance(idSubstring, eventName, phoneNumber) {
       RETURNING id, confirmed_at
     `;
 
-    console.log(`Successfully recorded attendance for ${phoneNumber} at event "${event.name}"`);
-    
+    console.log(
+      `Successfully recorded attendance for ${phoneNumber} at event "${event.name}"`
+    );
+
     return JSON.stringify({
       success: true,
       message: `Attendance confirmed for ${phoneNumber} at event "${event.name}"`,
       attendanceId: attendanceResult[0].id,
       confirmedAt: attendanceResult[0].confirmed_at,
-      eventName: event.name
+      eventName: event.name,
     });
-
   } catch (error) {
     console.error("Error setting attendance:", error);
     return JSON.stringify({
       success: false,
       error: "Failed to record attendance",
-      details: error.message
+      details: error.message,
     });
   }
 }
@@ -12462,7 +12690,10 @@ async function handleToolCalls(
             output: JSON.stringify(result),
           });
         } catch (error) {
-          console.error("Error in handleToolCalls for scheduleFollowUp:", error);
+          console.error(
+            "Error in handleToolCalls for scheduleFollowUp:",
+            error
+          );
           toolOutputs.push({
             tool_call_id: toolCall.id,
             output: JSON.stringify({ error: error.message }),
@@ -12483,7 +12714,10 @@ async function handleToolCalls(
             output: JSON.stringify(result),
           });
         } catch (error) {
-          console.error("Error in handleToolCalls for assignContactToSequence:", error);
+          console.error(
+            "Error in handleToolCalls for assignContactToSequence:",
+            error
+          );
           toolOutputs.push({
             tool_call_id: toolCall.id,
             output: JSON.stringify({ error: error.message }),
@@ -12503,7 +12737,10 @@ async function handleToolCalls(
             output: JSON.stringify(result),
           });
         } catch (error) {
-          console.error("Error in handleToolCalls for pauseFollowUpSequence:", error);
+          console.error(
+            "Error in handleToolCalls for pauseFollowUpSequence:",
+            error
+          );
           toolOutputs.push({
             tool_call_id: toolCall.id,
             output: JSON.stringify({ error: error.message }),
@@ -12525,7 +12762,10 @@ async function handleToolCalls(
             output: JSON.stringify(result),
           });
         } catch (error) {
-          console.error("Error in handleToolCalls for updateFollowUpStatus:", error);
+          console.error(
+            "Error in handleToolCalls for updateFollowUpStatus:",
+            error
+          );
           toolOutputs.push({
             tool_call_id: toolCall.id,
             output: JSON.stringify({ error: error.message }),
@@ -12539,14 +12779,17 @@ async function handleToolCalls(
           const result = calculateDateDifference(
             args.startDate,
             args.endDate,
-            args.unit || 'days'
+            args.unit || "days"
           );
           toolOutputs.push({
             tool_call_id: toolCall.id,
             output: JSON.stringify(result),
           });
         } catch (error) {
-          console.error("Error in handleToolCalls for calculateDateDifference:", error);
+          console.error(
+            "Error in handleToolCalls for calculateDateDifference:",
+            error
+          );
           toolOutputs.push({
             tool_call_id: toolCall.id,
             output: JSON.stringify({ error: error.message }),
@@ -12559,8 +12802,8 @@ async function handleToolCalls(
           const args = JSON.parse(toolCall.function.arguments);
           const result = formatDate(
             args.date,
-            args.format || 'YYYY-MM-DD',
-            args.timezone || 'Asia/Kuala_Lumpur'
+            args.format || "YYYY-MM-DD",
+            args.timezone || "Asia/Kuala_Lumpur"
           );
           toolOutputs.push({
             tool_call_id: toolCall.id,
@@ -12614,7 +12857,7 @@ async function handleToolCalls(
           const result = await exportData(
             idSubstring,
             args.dataType,
-            args.format || 'csv',
+            args.format || "csv",
             args.filters
           );
           toolOutputs.push({
@@ -12637,7 +12880,7 @@ async function handleToolCalls(
             idSubstring,
             args.dataType,
             args.fileUrl,
-            args.format || 'csv'
+            args.format || "csv"
           );
           toolOutputs.push({
             tool_call_id: toolCall.id,
@@ -12659,14 +12902,17 @@ async function handleToolCalls(
             idSubstring,
             args.recipient,
             args.message,
-            args.type || 'info'
+            args.type || "info"
           );
           toolOutputs.push({
             tool_call_id: toolCall.id,
             output: JSON.stringify(result),
           });
         } catch (error) {
-          console.error("Error in handleToolCalls for sendNotification:", error);
+          console.error(
+            "Error in handleToolCalls for sendNotification:",
+            error
+          );
           toolOutputs.push({
             tool_call_id: toolCall.id,
             output: JSON.stringify({ error: error.message }),
@@ -12689,7 +12935,10 @@ async function handleToolCalls(
             output: JSON.stringify(result),
           });
         } catch (error) {
-          console.error("Error in handleToolCalls for sendWhatsAppMessage:", error);
+          console.error(
+            "Error in handleToolCalls for sendWhatsAppMessage:",
+            error
+          );
           toolOutputs.push({
             tool_call_id: toolCall.id,
             output: JSON.stringify({ error: error.message }),
@@ -14201,26 +14450,28 @@ async function handleOpenAIAssistant(
       type: "function",
       function: {
         name: "scheduleFollowUp",
-        description: "Schedule follow-up messages to contacts at specific times",
+        description:
+          "Schedule follow-up messages to contacts at specific times",
         parameters: {
           type: "object",
           properties: {
             contactPhone: {
               type: "string",
-              description: "Phone number of the contact to follow up with"
+              description: "Phone number of the contact to follow up with",
             },
             templateId: {
               type: "string",
-              description: "ID of the follow-up template to use"
+              description: "ID of the follow-up template to use",
             },
             delayHours: {
               type: "number",
-              description: "Number of hours to delay the follow-up (default: 24)"
-            }
+              description:
+                "Number of hours to delay the follow-up (default: 24)",
+            },
           },
-          required: ["contactPhone", "templateId"]
-        }
-      }
+          required: ["contactPhone", "templateId"],
+        },
+      },
     },
     {
       type: "function",
@@ -14232,16 +14483,16 @@ async function handleOpenAIAssistant(
           properties: {
             contactPhone: {
               type: "string",
-              description: "Phone number of the contact to assign"
+              description: "Phone number of the contact to assign",
             },
             sequenceId: {
               type: "string",
-              description: "ID of the follow-up sequence to assign contact to"
-            }
+              description: "ID of the follow-up sequence to assign contact to",
+            },
           },
-          required: ["contactPhone", "sequenceId"]
-        }
-      }
+          required: ["contactPhone", "sequenceId"],
+        },
+      },
     },
     {
       type: "function",
@@ -14253,12 +14504,12 @@ async function handleOpenAIAssistant(
           properties: {
             sequenceId: {
               type: "string",
-              description: "ID of the sequence to pause"
-            }
+              description: "ID of the sequence to pause",
+            },
           },
-          required: ["sequenceId"]
-        }
-      }
+          required: ["sequenceId"],
+        },
+      },
     },
     {
       type: "function",
@@ -14270,20 +14521,20 @@ async function handleOpenAIAssistant(
           properties: {
             followUpId: {
               type: "string",
-              description: "ID of the follow-up to update"
+              description: "ID of the follow-up to update",
             },
             status: {
               type: "string",
-              description: "New status (scheduled, sent, completed, failed)"
+              description: "New status (scheduled, sent, completed, failed)",
             },
             notes: {
               type: "string",
-              description: "Optional notes about the follow-up"
-            }
+              description: "Optional notes about the follow-up",
+            },
           },
-          required: ["followUpId", "status"]
-        }
-      }
+          required: ["followUpId", "status"],
+        },
+      },
     },
     {
       type: "function",
@@ -14295,21 +14546,22 @@ async function handleOpenAIAssistant(
           properties: {
             startDate: {
               type: "string",
-              description: "Start date in ISO format or any valid date format"
+              description: "Start date in ISO format or any valid date format",
             },
             endDate: {
               type: "string",
-              description: "End date in ISO format or any valid date format"
+              description: "End date in ISO format or any valid date format",
             },
             unit: {
               type: "string",
-              description: "Unit of measurement (days, hours, minutes, weeks, months, years)",
-              enum: ["days", "hours", "minutes", "weeks", "months", "years"]
-            }
+              description:
+                "Unit of measurement (days, hours, minutes, weeks, months, years)",
+              enum: ["days", "hours", "minutes", "weeks", "months", "years"],
+            },
           },
-          required: ["startDate", "endDate"]
-        }
-      }
+          required: ["startDate", "endDate"],
+        },
+      },
     },
     {
       type: "function",
@@ -14321,20 +14573,21 @@ async function handleOpenAIAssistant(
           properties: {
             date: {
               type: "string",
-              description: "Date to format in any valid date format"
+              description: "Date to format in any valid date format",
             },
             format: {
               type: "string",
-              description: "Desired format (e.g., YYYY-MM-DD, DD/MM/YYYY, etc.)"
+              description:
+                "Desired format (e.g., YYYY-MM-DD, DD/MM/YYYY, etc.)",
             },
             timezone: {
               type: "string",
-              description: "Target timezone (default: Asia/Kuala_Lumpur)"
-            }
+              description: "Target timezone (default: Asia/Kuala_Lumpur)",
+            },
           },
-          required: ["date"]
-        }
-      }
+          required: ["date"],
+        },
+      },
     },
     {
       type: "function",
@@ -14344,9 +14597,9 @@ async function handleOpenAIAssistant(
         parameters: {
           type: "object",
           properties: {},
-          required: []
-        }
-      }
+          required: [],
+        },
+      },
     },
     {
       type: "function",
@@ -14358,12 +14611,12 @@ async function handleOpenAIAssistant(
           properties: {
             email: {
               type: "string",
-              description: "Email address to validate"
-            }
+              description: "Email address to validate",
+            },
           },
-          required: ["email"]
-        }
-      }
+          required: ["email"],
+        },
+      },
     },
     {
       type: "function",
@@ -14375,22 +14628,29 @@ async function handleOpenAIAssistant(
           properties: {
             dataType: {
               type: "string",
-              description: "Type of data to export (contacts, tasks, followups, etc.)",
-              enum: ["contacts", "tasks", "followups", "appointments", "messages"]
+              description:
+                "Type of data to export (contacts, tasks, followups, etc.)",
+              enum: [
+                "contacts",
+                "tasks",
+                "followups",
+                "appointments",
+                "messages",
+              ],
             },
             format: {
               type: "string",
               description: "Export format (csv, json, xlsx)",
-              enum: ["csv", "json", "xlsx"]
+              enum: ["csv", "json", "xlsx"],
             },
             filters: {
               type: "object",
-              description: "Optional filters to apply to the data"
-            }
+              description: "Optional filters to apply to the data",
+            },
           },
-          required: ["dataType"]
-        }
-      }
+          required: ["dataType"],
+        },
+      },
     },
     {
       type: "function",
@@ -14403,21 +14663,21 @@ async function handleOpenAIAssistant(
             dataType: {
               type: "string",
               description: "Type of data to import (contacts, tasks, etc.)",
-              enum: ["contacts", "tasks", "followups", "appointments"]
+              enum: ["contacts", "tasks", "followups", "appointments"],
             },
             fileUrl: {
               type: "string",
-              description: "URL or path to the file to import"
+              description: "URL or path to the file to import",
             },
             format: {
               type: "string",
               description: "File format (csv, json, xlsx)",
-              enum: ["csv", "json", "xlsx"]
-            }
+              enum: ["csv", "json", "xlsx"],
+            },
           },
-          required: ["dataType", "fileUrl"]
-        }
-      }
+          required: ["dataType", "fileUrl"],
+        },
+      },
     },
     {
       type: "function",
@@ -14429,142 +14689,155 @@ async function handleOpenAIAssistant(
           properties: {
             recipient: {
               type: "string",
-              description: "Recipient of the notification (phone number, email, or group ID)"
+              description:
+                "Recipient of the notification (phone number, email, or group ID)",
             },
             message: {
               type: "string",
-              description: "Notification message content"
+              description: "Notification message content",
             },
             type: {
               type: "string",
               description: "Notification type (info, warning, error, success)",
-              enum: ["info", "warning", "error", "success"]
-            }
+              enum: ["info", "warning", "error", "success"],
+            },
           },
-          required: ["recipient", "message"]
-        }
-      }
+          required: ["recipient", "message"],
+        },
+      },
     },
     {
       type: "function",
       function: {
         name: "sendWhatsAppMessage",
-        description: "Send a WhatsApp message to any contact using their contact_id or phone number",
+        description:
+          "Send a WhatsApp message to any contact using their contact_id or phone number",
         parameters: {
           type: "object",
           properties: {
             contactId: {
               type: "string",
-              description: "Contact ID (e.g., '0128-60123456789') or phone number (e.g., '+60123456789' or '60123456789')"
+              description:
+                "Contact ID (e.g., '0128-60123456789') or phone number (e.g., '+60123456789' or '60123456789')",
             },
             message: {
               type: "string",
-              description: "Message content to send"
+              description: "Message content to send",
             },
             quotedMessageId: {
               type: "string",
-              description: "Optional message ID to reply to"
+              description: "Optional message ID to reply to",
             },
             phoneIndex: {
               type: "number",
-              description: "Phone index to use for sending (default: 0)"
-            }
+              description: "Phone index to use for sending (default: 0)",
+            },
           },
-          required: ["contactId", "message"]
-        }
-      }
+          required: ["contactId", "message"],
+        },
+      },
     },
     {
       type: "function",
       function: {
         name: "scheduleMessage",
-        description: "Schedule WhatsApp messages to be sent at a specific time to the current user or specified contacts. AI can intelligently decide optimal settings for batching, delays, and timing based on context. When contactIds is not provided, it will automatically schedule the message to the current user the AI is talking to.",
+        description:
+          "Schedule WhatsApp messages to be sent at a specific time to the current user or specified contacts. AI can intelligently decide optimal settings for batching, delays, and timing based on context. When contactIds is not provided, it will automatically schedule the message to the current user the AI is talking to.",
         parameters: {
           type: "object",
           properties: {
             contactIds: {
               type: "array",
               items: { type: "string" },
-              description: "Optional array of contact IDs or phone numbers to send to. If not provided, will automatically use the current user's contact ID."
+              description:
+                "Optional array of contact IDs or phone numbers to send to. If not provided, will automatically use the current user's contact ID.",
             },
             message: {
               type: "string",
-              description: "Message content to send"
+              description: "Message content to send",
             },
             scheduledTime: {
               type: "string",
-              description: "When to send the message in ISO format (e.g., '2024-01-15T10:00:00+08:00')"
+              description:
+                "When to send the message in ISO format (e.g., '2024-01-15T10:00:00+08:00')",
             },
             mediaUrl: {
               type: "string",
-              description: "Optional URL of media file to send (image, video, audio)"
+              description:
+                "Optional URL of media file to send (image, video, audio)",
             },
             documentUrl: {
               type: "string",
-              description: "Optional URL of document file to send"
+              description: "Optional URL of document file to send",
             },
             fileName: {
               type: "string",
-              description: "Optional filename for document"
+              description: "Optional filename for document",
             },
             caption: {
               type: "string",
-              description: "Optional caption for media or document"
+              description: "Optional caption for media or document",
             },
             batchQuantity: {
               type: "number",
-              description: "Number of contacts per batch (AI will decide optimal size if not specified)"
+              description:
+                "Number of contacts per batch (AI will decide optimal size if not specified)",
             },
             repeatInterval: {
               type: "number",
-              description: "Interval between batches in specified units"
+              description: "Interval between batches in specified units",
             },
             repeatUnit: {
               type: "string",
               description: "Unit for repeat interval (minutes, hours, days)",
-              enum: ["minutes", "hours", "days"]
+              enum: ["minutes", "hours", "days"],
             },
             minDelay: {
               type: "number",
-              description: "Minimum delay between individual messages in seconds (AI will decide if not specified)"
+              description:
+                "Minimum delay between individual messages in seconds (AI will decide if not specified)",
             },
             maxDelay: {
-              type: "number", 
-              description: "Maximum delay between individual messages in seconds (AI will decide if not specified)"
+              type: "number",
+              description:
+                "Maximum delay between individual messages in seconds (AI will decide if not specified)",
             },
             infiniteLoop: {
               type: "boolean",
-              description: "Whether to repeat the message infinitely (default: false)"
+              description:
+                "Whether to repeat the message infinitely (default: false)",
             },
             activateSleep: {
               type: "boolean",
-              description: "Whether to activate sleep mode after certain messages (default: false)"
+              description:
+                "Whether to activate sleep mode after certain messages (default: false)",
             },
             sleepAfterMessages: {
               type: "number",
-              description: "Number of messages to send before sleeping"
+              description: "Number of messages to send before sleeping",
             },
             sleepDuration: {
               type: "number",
-              description: "Duration to sleep in minutes"
+              description: "Duration to sleep in minutes",
             },
             activeHours: {
               type: "object",
-              description: "Active hours to send messages (e.g., {start: '09:00', end: '17:00'})"
+              description:
+                "Active hours to send messages (e.g., {start: '09:00', end: '17:00'})",
             },
             phoneIndex: {
               type: "number",
-              description: "Phone index to use for sending (default: 0)"
+              description: "Phone index to use for sending (default: 0)",
             },
             templateId: {
               type: "string",
-              description: "Optional template ID to use"
-            }
+              description: "Optional template ID to use",
+            },
           },
-          required: ["scheduledTime"]
-        }
-      }
-    }
+          required: ["scheduledTime"],
+        },
+      },
+    },
   ];
 
   const answer = await runAssistant(
