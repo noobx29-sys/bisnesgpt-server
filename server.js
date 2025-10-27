@@ -1,4 +1,4 @@
-// ======================
+﻿// ======================
 // 1. CORE IMPORTS
 // ======================
 
@@ -354,7 +354,23 @@ const createQueueAndWorker = (botId) => {
           ]);
 
           if (batchResult.rowCount === 0) {
-            throw new Error(`Batch ${batchId} not found in database`);
+            // Gracefully handle missing batch row: rollback and skip this job
+            console.warn(
+              `Bot ${botId} - Batch ${batchId} not found in database, rolling back and skipping job`
+            );
+            try {
+              await safeRollback(client);
+            } catch (rbErr) {
+              console.error(
+                `Bot ${botId} - Error during rollback for missing batch ${batchId}:`,
+                rbErr
+              );
+            }
+
+            return {
+              skipped: true,
+              reason: `Batch ${batchId} not found in database`,
+            };
           }
 
           const batchData = batchResult.rows[0];
@@ -476,7 +492,9 @@ const createQueueAndWorker = (botId) => {
             SELECT COUNT(*) as pending_count,
             (SELECT status FROM scheduled_messages WHERE id = $1::uuid) as main_status
             FROM scheduled_messages 
-            WHERE schedule_id = $1
+            -- schedule_id column is stored as text/character varying in some schemas
+            -- ensure we compare like-types: cast the parameter to text when comparing
+            WHERE schedule_id = $1::text
             AND company_id = $2 
             AND status != 'sent'
             AND id != $1::uuid
@@ -7597,7 +7615,39 @@ app.post("/api/schedule-message/:companyId", async (req, res) => {
       const multipleContactIds =
         isMultiple && contactIds.length > 0 ? contactIds : null;
 
-      const chatIds = scheduledMessage.chatIds || [];
+      // Normalize and validate chatIds coming from the client
+      let chatIds = [];
+      const rawChatIds = scheduledMessage.chatIds || [];
+
+      try {
+        if (typeof rawChatIds === "string") {
+          // Try to parse JSON string
+          try {
+            chatIds = JSON.parse(rawChatIds);
+          } catch (e) {
+            // Not JSON - treat as single value
+            chatIds = [rawChatIds];
+          }
+        } else if (Array.isArray(rawChatIds)) {
+          chatIds = rawChatIds;
+        } else if (rawChatIds) {
+          chatIds = [rawChatIds];
+        } else {
+          chatIds = [];
+        }
+      } catch (e) {
+        console.warn("Error normalizing chatIds, falling back to empty array:", e.message);
+        chatIds = [];
+      }
+
+      // Basic validation: accept only typical WA chatId formats like '60123456789@c.us' or '12345@g.us'
+      const validChatIdRegex = /^\+?\d+@(?:c\.us|g\.us)$/i;
+      const invalidSamples = chatIds.filter((id) => !validChatIdRegex.test(String(id)));
+      if (invalidSamples.length > 0) {
+        console.warn("Scheduling request contains invalid chatIds (they will be removed):", invalidSamples.slice(0, 10));
+        // Remove invalid entries
+        chatIds = chatIds.filter((id) => validChatIdRegex.test(String(id)));
+      }
 
       // Calculate batching based on CONTACTS (not messages)
       const totalContacts = contactIds.length;
@@ -7680,6 +7730,44 @@ app.post("/api/schedule-message/:companyId", async (req, res) => {
       ]);
 
       const queue = getQueueForBot(companyId);
+
+      // CLEANUP: Remove stale queued jobs that no longer have a corresponding DB row
+      try {
+        const queuedJobs = await queue.getJobs(["delayed", "waiting", "active"]);
+        for (const qjob of queuedJobs) {
+          try {
+            const queuedJobId = qjob.id;
+            if (!queuedJobId) continue;
+
+            const checkJob = await client.query(
+              `SELECT id, status FROM scheduled_messages WHERE id = $1 AND company_id = $2 LIMIT 1`,
+              [queuedJobId, companyId]
+            );
+
+            if (checkJob.rowCount === 0) {
+              console.log(`Removing stale queued job ${queuedJobId} for company ${companyId} - no DB row found`);
+              try {
+                await qjob.remove();
+                console.log(`Removed stale job ${queuedJobId} from queue for company ${companyId}`);
+              } catch (rmErr) {
+                console.error(`Failed to remove stale queued job ${queuedJobId} for company ${companyId}:`, rmErr);
+              }
+            } else if (checkJob.rows[0].status !== 'scheduled') {
+              console.log(`Removing queued job ${queuedJobId} for company ${companyId} because DB status is '${checkJob.rows[0].status}'`);
+              try {
+                await qjob.remove();
+                console.log(`Removed queued job ${queuedJobId} due to status change for company ${companyId}`);
+              } catch (rmErr) {
+                console.error(`Failed to remove queued job ${queuedJobId} for company ${companyId}:`, rmErr);
+              }
+            }
+          } catch (innerErr) {
+            console.error(`Error checking queued job ${qjob.id} for company ${companyId}:`, innerErr);
+          }
+        }
+      } catch (queueErr) {
+        console.error(`Error while cleaning up queued jobs for company ${companyId}:`, queueErr);
+      }
       const batches = [];
 
       // Create batches if there are multiple contacts requiring batching
@@ -7922,7 +8010,7 @@ app.put("/api/schedule-message/:companyId/:messageId", async (req, res) => {
 
         // Get all batch IDs associated with this message
         const batchesQuery =
-          "SELECT id FROM scheduled_messages WHERE (id::text = $1::text OR schedule_id = $1) AND company_id = $2";
+          "SELECT id FROM scheduled_messages WHERE (id::text = $1::text OR schedule_id::text = $1::text) AND company_id = $2";
         const batchesResult = await client.query(batchesQuery, [
           messageId,
           companyId,
@@ -7990,7 +8078,7 @@ app.delete("/api/schedule-message/:companyId/:messageId", async (req, res) => {
       await client.query("BEGIN");
 
       const checkQuery =
-        "SELECT id FROM scheduled_messages WHERE schedule_id = $1 AND company_id = $2";
+        "SELECT id FROM scheduled_messages WHERE schedule_id::text = $1::text AND company_id = $2";
       const checkResult = await client.query(checkQuery, [
         messageId,
         companyId,
@@ -8005,7 +8093,7 @@ app.delete("/api/schedule-message/:companyId/:messageId", async (req, res) => {
 
       // First, get all batch IDs associated with this message for queue job removal
       const getBatchesQuery =
-        "SELECT id FROM scheduled_messages WHERE (id::text = $1::text OR schedule_id = $1) AND company_id = $2";
+        "SELECT id FROM scheduled_messages WHERE (id::text = $1::text OR schedule_id::text = $1::text) AND company_id = $2";
       const batchesResult = await client.query(getBatchesQuery, [
         messageId,
         companyId,
@@ -8015,7 +8103,7 @@ app.delete("/api/schedule-message/:companyId/:messageId", async (req, res) => {
 
       // Delete the message records from database
       const deleteQuery =
-        "DELETE FROM scheduled_messages WHERE (id::text = $1::text OR schedule_id = $1) AND company_id = $2";
+        "DELETE FROM scheduled_messages WHERE (id::text = $1::text OR schedule_id::text = $1::text) AND company_id = $2";
       const deleteResult = await client.query(deleteQuery, [
         messageId,
         companyId,
@@ -8209,7 +8297,7 @@ app.post(
         SET 
           status = 'stopped',
           stopped_at = NOW()
-        WHERE schedule_id = $1 
+        WHERE schedule_id::text = $1::text 
           AND company_id = $2
           AND status = 'scheduled'
       `;
@@ -11559,12 +11647,13 @@ async function sendScheduledMessage(message) {
 
           if (sentCheck.rowCount > 0) {
             console.log(
-              `[Company ${companyId}] Message already sent to ${chatId}, skipping...`
+              `[Company ${companyId}] Skipping message - already sent`
             );
             totalMessagesSkipped++;
             currentMessageIndex++;
             continue;
           }
+
 
           console.log(`[Company ${companyId}] Message prepared:`, {
             originalLength: messageText?.length,
@@ -11887,6 +11976,63 @@ async function scheduleAllMessages(specificCompanyId = null) {
         if (isBatch) {
           // This is a batch message
           console.log(`Checking batch message ${messageId} for schedule ${scheduleId} with delay ${delay}ms`);
+          // Verify parent schedule still exists and is scheduled (protect against deleted main rows)
+          try {
+            const parentCheckQuery = `SELECT id, status FROM scheduled_messages WHERE id = $1 AND company_id = $2 LIMIT 1`;
+            const parentCheck = await client.query(parentCheckQuery, [scheduleId, companyId]);
+            if (parentCheck.rowCount === 0) {
+              console.log(`Parent schedule ${scheduleId} not found for batch ${messageId} - skipping`);
+              continue;
+            }
+
+            const parentStatus = parentCheck.rows[0].status;
+            if (parentStatus !== 'scheduled') {
+              console.log(`Parent schedule ${scheduleId} status is '${parentStatus}' (not 'scheduled') - skipping batch ${messageId}`);
+              continue;
+            }
+          } catch (checkErr) {
+            console.error(`Error verifying parent schedule ${scheduleId} for batch ${messageId}:`, checkErr);
+            continue;
+          }
+          // Double-check the batch row still exists and is scheduled. If not, remove any queued job and skip.
+          try {
+            const msgCheck = await client.query(
+              `SELECT id, status FROM scheduled_messages WHERE id = $1 AND company_id = $2 LIMIT 1`,
+              [messageId, companyId]
+            );
+
+            if (msgCheck.rowCount === 0) {
+              console.log(`Batch message ${messageId} no longer exists in DB for company ${companyId} - removing queued job (if any) and skipping`);
+              const existingJob = await queue.getJob(messageId);
+              if (existingJob) {
+                try {
+                  await existingJob.remove();
+                  console.log(`Removed queued job ${messageId} for company ${companyId} because DB row is gone`);
+                } catch (rmErr) {
+                  console.error(`Failed to remove queued job ${messageId} for company ${companyId}:`, rmErr);
+                }
+              }
+              continue;
+            }
+
+            if (msgCheck.rows[0].status !== 'scheduled') {
+              console.log(`Batch message ${messageId} status is '${msgCheck.rows[0].status}' (not 'scheduled') - removing queued job (if any) and skipping`);
+              const existingJob = await queue.getJob(messageId);
+              if (existingJob) {
+                try {
+                  await existingJob.remove();
+                  console.log(`Removed queued job ${messageId} for company ${companyId} because status changed`);
+                } catch (rmErr) {
+                  console.error(`Failed to remove queued job ${messageId} for company ${companyId}:`, rmErr);
+                }
+              }
+              continue;
+            }
+          } catch (msgErr) {
+            console.error(`Error verifying batch message ${messageId} before scheduling:`, msgErr);
+            continue;
+          }
+
           const existingJob = await queue.getJob(messageId);
           if (!existingJob) {
             console.log(`Scheduling batch message ${messageId} for schedule ${scheduleId} with delay ${delay}ms`);
@@ -11919,6 +12065,45 @@ async function scheduleAllMessages(specificCompanyId = null) {
 
           if (!hasBatches) {
             console.log(`Scheduling main message ${messageId} with delay ${delay}ms`);
+            // Double-check the main message still exists and is scheduled. If not, remove queued job and skip.
+            try {
+              const msgCheck = await client.query(
+                `SELECT id, status FROM scheduled_messages WHERE id = $1 AND company_id = $2 LIMIT 1`,
+                [messageId, companyId]
+              );
+
+              if (msgCheck.rowCount === 0) {
+                console.log(`Main message ${messageId} no longer exists in DB for company ${companyId} - removing queued job (if any) and skipping`);
+                const existingJob = await queue.getJob(messageId);
+                if (existingJob) {
+                  try {
+                    await existingJob.remove();
+                    console.log(`Removed queued job ${messageId} for company ${companyId} because DB row is gone`);
+                  } catch (rmErr) {
+                    console.error(`Failed to remove queued job ${messageId} for company ${companyId}:`, rmErr);
+                  }
+                }
+                continue;
+              }
+
+              if (msgCheck.rows[0].status !== 'scheduled') {
+                console.log(`Main message ${messageId} status is '${msgCheck.rows[0].status}' (not 'scheduled') - removing queued job (if any) and skipping`);
+                const existingJob = await queue.getJob(messageId);
+                if (existingJob) {
+                  try {
+                    await existingJob.remove();
+                    console.log(`Removed queued job ${messageId} for company ${companyId} because status changed`);
+                  } catch (rmErr) {
+                    console.error(`Failed to remove queued job ${messageId} for company ${companyId}:`, rmErr);
+                  }
+                }
+                continue;
+              }
+            } catch (msgErr) {
+              console.error(`Error verifying main message ${messageId} before scheduling:`, msgErr);
+              continue;
+            }
+
             const existingJob = await queue.getJob(messageId);
             if (!existingJob) {
               await queue.add(
@@ -11977,18 +12162,20 @@ function setupMessageHandler(client, botName, phoneIndex) {
       await handleNewMessagesTemplateWweb(client, msg, botName, phoneIndex);
 
       // Add broadcast call here
-      const extractedNumber = msg.from
-        .replace("@c.us", "")
-        .replace("@g.us", "");
+      const extractedNumberRaw = msg.from
+        .replace(/@c\.us|@g\.us/g, "");
+      const extractedNumber = extractedNumberRaw.startsWith("+")
+        ? extractedNumberRaw
+        : `+${extractedNumberRaw}`;
       const messageData = {
         chatId: msg.from,
         message: msg.body,
-        extractedNumber: `+${extractedNumber}`,
-        contactId: `${botName}-${extractedNumber}`,
+        extractedNumber: extractedNumber,
+        contactId: `${botName}-${extractedNumberRaw}`,
         fromMe: msg.fromMe,
         timestamp: Math.floor(Date.now() / 1000),
         messageType: msg.type,
-        contactName: msg.notifyName || extractedNumber,
+        contactName: msg.notifyName || extractedNumberRaw,
       };
 
       console.log(
@@ -12012,10 +12199,42 @@ function setupMessageCreateHandler(client, botName, phoneIndex) {
     broadcastBotActivity(botName, true);
     try {
       console.log("My WhatsApp number:", client.info.wid.user);
+      if (botName === "049815") {
+        console.log(`=== MessageCreateHandler for bot ${botName} ===`);
+        console.log("Message details:", msg);
+      }
       const isFromHuman = msg.fromMe && msg.author;
       if (msg.fromMe) {
-        const extractedNumber = "+" + msg.to.split("@")[0];
-        const contactID = botName + "-" + msg.to.split("@")[0];
+        // Resolve extracted number. Some sends report @lid JIDs (internal IDs) in msg.to
+        // Try to resolve the real chat id via msg.getChat() or msg.getContact() when possible.
+        let extractedNumberRaw = msg.to.split("@")[0];
+        try {
+          if (msg.to.includes("@lid") || (!msg.to.includes("@c.us") && !msg.to.includes("@g.us"))) {
+            const chat = await (msg.getChat ? msg.getChat() : null);
+            if (chat && chat.id && chat.id._serialized) {
+              const resolved = chat.id._serialized;
+              if (resolved && resolved.includes("@")) {
+                extractedNumberRaw = resolved.split("@")[0].replace(/^\+/, "");
+                // update msg.to to the resolved chat id for downstream use
+                msg.to = resolved;
+              }
+            } else if (msg.getContact) {
+              const contact = await msg.getContact().catch(() => null);
+              if (contact && contact.id && contact.id._serialized) {
+                const resolved = contact.id._serialized;
+                extractedNumberRaw = resolved.split("@")[0].replace(/^\+/, "");
+                msg.to = resolved;
+              }
+            }
+          }
+        } catch (e) {
+          console.warn("[MESSAGE_CREATE] Could not resolve @lid chat to real phone:", e.message);
+        }
+
+        const extractedNumber = extractedNumberRaw.startsWith("+")
+          ? extractedNumberRaw
+          : "+" + extractedNumberRaw;
+        const contactID = botName + "-" + extractedNumberRaw;
         const myNumber = "+" + client.info.wid.user;
         if (extractedNumber === myNumber) {
           return;
@@ -12136,12 +12355,12 @@ function setupMessageCreateHandler(client, botName, phoneIndex) {
         const messageData = {
           chatId: msg.to,
           message: msg.body,
-          extractedNumber: `+${extractedNumber}`,
-          contactId: `${botName}-${extractedNumber}`,
+          extractedNumber: extractedNumber,
+          contactId: `${botName}-${extractedNumberRaw}`,
           fromMe: msg.fromMe,
           timestamp: Math.floor(Date.now() / 1000),
           messageType: msg.type,
-          contactName: extractedNumber,
+          contactName: extractedNumberRaw,
         };
 
         console.log(
@@ -18419,8 +18638,45 @@ app.get("/api/companies/:companyId/contacts/multi-phone", async (req, res) => {
 });
 
 async function obiliterateAllJobs() {
-  await messageQueue.obliterate({ force: true });
-  console.log("Queue cleared successfully");
+  try {
+    console.log("Starting obliterate of all queues...");
+
+    // Clear the global message queue if present
+    try {
+      await messageQueue.obliterate({ force: true });
+      console.log("Global messageQueue obliterated");
+    } catch (err) {
+      console.error("Error obliterating global messageQueue:", err);
+    }
+
+    // Clear per-bot queues and stop workers gracefully
+    for (const [botId, queue] of botQueues.entries()) {
+      try {
+        const worker = botWorkers.get(botId);
+        if (worker) {
+          try {
+            await worker.close();
+            console.log(`Worker closed for bot ${botId}`);
+          } catch (werr) {
+            console.error(`Error closing worker for bot ${botId}:`, werr);
+          }
+        }
+
+        try {
+          await queue.obliterate({ force: true });
+          console.log(`Queue obliterated for bot ${botId}`);
+        } catch (qerr) {
+          console.error(`Error obliterating queue for bot ${botId}:`, qerr);
+        }
+      } catch (err) {
+        console.error(`Error during cleanup for bot ${botId}:`, err);
+      }
+    }
+
+    console.log("All queues cleared successfully");
+  } catch (error) {
+    console.error("Error in obiliterateAllJobs:", error);
+  }
 }
 
 async function main(reinitialize = false) {
@@ -18438,7 +18694,7 @@ async function main(reinitialize = false) {
   //   ["https://bisnesgpt.jutateknologi.com"]
   // );
   //const companyIds = ['0145']; 
-  const companyIds = ['022027','0149','058666','0210','0107','0160', '0161', '0377', '063', '079', '092', '399849', '458752', '765943', '088', '296245', '0245', '0210', '0156', '0101', '728219', '0342', '049815', '325117', '946386'];
+  const companyIds = ['022027','0149','058666','0210','0107','0160', '0161', '0377', '063', '079', '092', '399849', '458752', '765943', '088', '296245', '0245', '0210', '0156', '0101', '728219', '0342', '325117', '946386'];
   const placeholders = companyIds.map((_, i) => `$${i + 1}`).join(', ');
   const query = `SELECT * FROM companies WHERE company_id IN (${placeholders})`;
   const companiesPromise = sqlDb.query(query, companyIds);
@@ -18544,20 +18800,6 @@ async function main(reinitialize = false) {
       }
       phoneTasksByBot[task.botName].push(task);
     });      // Function to initialize mtdcSpreadsheet when bot 0380 is ready
-    const initializeMtdcSpreadsheet = async () => {
-      try {
-        console.log(
-          "Bot 0380 successfully initialized, starting mtdcSpreadsheet automation..."
-        );
-        const automationInstances = {
-          mtdcSpreadsheet: new mtdcSpreadsheet(botMap),
-        };
-        await automationInstances.mtdcSpreadsheet.initialize();
-        console.log("mtdcSpreadsheet automation initialized successfully");
-      } catch (error) {
-        console.error("Error initializing mtdcSpreadsheet automation:", error);
-      }
-    };
 
     // Enhanced function to get bot status from multiple sources
     const getBotStatus = async (botName) => {
@@ -18736,9 +18978,6 @@ async function main(reinitialize = false) {
         if (result.shouldProceedWithPostInit && isLastPhone) {
           console.log(`📅 Starting post-initialization tasks for bot ${botName} (all phones complete)`);
           
-          if (botName === "0380") {
-            initializeMtdcSpreadsheet();
-          }
 
           scheduleAllMessages(botName);
 
@@ -28318,7 +28557,7 @@ app.get(
       try {
         const messageQuery = `
           SELECT * FROM scheduled_messages 
-          WHERE id = $1 AND company_id = $2
+          WHERE id::text = $1::text AND company_id = $2
           LIMIT 1
         `;
         const messageResult = await client.query(messageQuery, [
@@ -28334,9 +28573,9 @@ app.get(
 
         const batchesQuery = `
           SELECT * FROM scheduled_messages 
-          WHERE schedule_id = $1 
+          WHERE schedule_id::text = $1::text 
             AND company_id = $2
-            AND id != $1
+            AND id::text != $1::text
           ORDER BY batch_index ASC
         `;
         const batchesResult = await client.query(batchesQuery, [
@@ -28347,25 +28586,33 @@ app.get(
         const batches = batchesResult.rows.map((batch) => ({
           id: batch.id,
           ...batch,
-          chat_ids: batch.chat_ids ? JSON.parse(batch.chat_ids) : [],
+          chat_ids: batch.chat_ids
+            ? safeJsonParse(batch.chat_ids, [], `chat_ids for batch ${batch.id}`)
+            : [],
+          messages: batch.messages
+            ? safeJsonParse(batch.messages, [], `messages for batch ${batch.id}`)
+            : [],
           message_delays: batch.message_delays
-            ? JSON.parse(batch.message_delays)
+            ? safeJsonParse(batch.message_delays, null, `message_delays for batch ${batch.id}`)
             : null,
           active_hours: batch.active_hours
-            ? JSON.parse(batch.active_hours)
+            ? safeJsonParse(batch.active_hours, null, `active_hours for batch ${batch.id}`)
             : null,
         }));
 
         const parsedMessageData = {
           ...messageData,
           chat_ids: messageData.chat_ids
-            ? JSON.parse(messageData.chat_ids)
+            ? safeJsonParse(messageData.chat_ids, [], `chat_ids for message ${messageId}`)
+            : [],
+          messages: messageData.messages
+            ? safeJsonParse(messageData.messages, [], `messages for message ${messageId}`)
             : [],
           message_delays: messageData.message_delays
-            ? JSON.parse(messageData.message_delays)
+            ? safeJsonParse(messageData.message_delays, null, `message_delays for message ${messageId}`)
             : null,
           active_hours: messageData.active_hours
-            ? JSON.parse(messageData.active_hours)
+            ? safeJsonParse(messageData.active_hours, null, `active_hours for message ${messageId}`)
             : null,
         };
 
@@ -28527,6 +28774,214 @@ app.post("/api/queue/force-process", async (req, res) => {
   } catch (error) {
     console.error("Force processing error:", error);
     res.status(500).json({ error: "Failed to force process queues" });
+  }
+});
+
+// Endpoint to requeue scheduled messages (used by the queue UI)
+app.post("/api/requeue-scheduled-messages", async (req, res) => {
+  const startTime = Date.now();
+  const client = await pool.connect();
+  try {
+    // Find scheduled messages that are still scheduled and in the future
+    const findQuery = `
+      SELECT id, company_id, scheduled_time FROM scheduled_messages
+      WHERE status = 'scheduled' AND scheduled_time > NOW()
+      ORDER BY scheduled_time ASC
+    `;
+    const result = await client.query(findQuery);
+
+    const messagesFound = result.rowCount;
+    const companies = [...new Set(result.rows.map((r) => r.company_id))];
+    const companiesProcessed = companies.length;
+    const lastScheduledTime = result.rows.length > 0 ? result.rows[result.rows.length - 1].scheduled_time : null;
+
+    // Re-run the scheduler to (re)create queue jobs
+    try {
+      await scheduleAllMessages();
+    } catch (schedErr) {
+      console.error('Error scheduling messages during requeue endpoint:', schedErr);
+      // continue to return partial info
+    }
+
+    const totalTimeSpan = lastScheduledTime ? (new Date(lastScheduledTime).getTime() - Date.now()) : 0;
+
+    res.json({
+      messagesRequeued: messagesFound,
+      companiesProcessed,
+      messagesSkipped: {
+        tooOld: 0,
+        outsideTimeWindow: 0,
+      },
+      schedulingSummary: {
+        totalTimeSpan,
+        startTime,
+        lastScheduledTime,
+      },
+      errors: [],
+    });
+  } catch (error) {
+    console.error('Error in requeue-scheduled-messages endpoint:', error);
+    res.status(500).json({ error: 'Failed to requeue scheduled messages', details: error.message });
+  } finally {
+    client.release();
+  }
+});
+
+// Admin endpoint: cleanup stale queued jobs across all bot queues
+app.post("/api/queue/cleanup-stale", async (req, res) => {
+  const summary = {
+    totalBots: 0,
+    bots: {},
+    totalRemoved: 0,
+    errors: [],
+  };
+
+  let client = null;
+  try {
+    for (const [botId, queue] of botQueues.entries()) {
+      summary.totalBots += 1;
+      summary.bots[botId] = { checked: 0, removed: 0 };
+
+      // get DB connection for checks
+      client = await pool.connect();
+
+      try {
+        const jobs = await queue.getJobs(["delayed", "waiting", "active"]);
+        summary.bots[botId].checked = jobs.length;
+
+        for (const job of jobs) {
+          try {
+            const jobId = job.id;
+            if (!jobId) continue;
+
+            const q = await client.query(
+              `SELECT id, status FROM scheduled_messages WHERE id = $1 AND company_id = $2 LIMIT 1`,
+              [jobId, botId]
+            );
+
+            if (q.rowCount === 0 || q.rows[0].status !== 'scheduled') {
+              try {
+                await job.remove();
+                summary.bots[botId].removed += 1;
+                summary.totalRemoved += 1;
+              } catch (rmErr) {
+                const msg = `Failed to remove job ${jobId} on bot ${botId}: ${rmErr.message}`;
+                console.error(msg, rmErr);
+                summary.errors.push(msg);
+              }
+            }
+          } catch (jobErr) {
+            const msg = `Error checking job ${job?.id} on bot ${botId}: ${jobErr.message}`;
+            console.error(msg, jobErr);
+            summary.errors.push(msg);
+          }
+        }
+      } catch (queueErr) {
+        const msg = `Error accessing jobs for bot ${botId}: ${queueErr.message}`;
+        console.error(msg, queueErr);
+        summary.errors.push(msg);
+      } finally {
+        if (client) {
+          try { client.release(); } catch (e) { /* ignore */ }
+          client = null;
+        }
+      }
+    }
+
+    res.json({ success: true, summary });
+  } catch (error) {
+    console.error("Error during cleanup-stale endpoint:", error);
+    res.status(500).json({ success: false, error: error.message, summary });
+  } finally {
+    if (client) {
+      try { client.release(); } catch (e) { /* ignore */ }
+    }
+  }
+});
+
+// Company-specific cleanup: remove stale queued jobs for a single company
+app.post("/api/queue/cleanup-stale/:companyId", async (req, res) => {
+  const { companyId } = req.params;
+  if (!companyId) return res.status(400).json({ success: false, error: 'companyId required' });
+
+  const summary = { companyId, checked: 0, removed: 0, errors: [] };
+  let client = null;
+
+  try {
+    const queue = getQueueForBot(companyId);
+    client = await pool.connect();
+
+    const jobs = await queue.getJobs(["delayed", "waiting", "active"]);
+    summary.checked = jobs.length;
+
+    for (const job of jobs) {
+      try {
+        const jobId = job.id;
+        if (!jobId) continue;
+
+        const q = await client.query(
+          `SELECT id, status FROM scheduled_messages WHERE id = $1 AND company_id = $2 LIMIT 1`,
+          [jobId, companyId]
+        );
+
+        if (q.rowCount === 0 || q.rows[0].status !== 'scheduled') {
+          try {
+            await job.remove();
+            summary.removed += 1;
+          } catch (rmErr) {
+            const msg = `Failed to remove job ${jobId}: ${rmErr.message}`;
+            console.error(msg, rmErr);
+            summary.errors.push(msg);
+          }
+        }
+      } catch (jobErr) {
+        const msg = `Error checking job ${job?.id}: ${jobErr.message}`;
+        console.error(msg, jobErr);
+        summary.errors.push(msg);
+      }
+    }
+
+    res.json({ success: true, summary });
+  } catch (error) {
+    console.error(`Error during company-specific cleanup for ${companyId}:`, error);
+    res.status(500).json({ success: false, error: error.message, summary });
+  } finally {
+    if (client) try { client.release(); } catch (e) {}
+  }
+});
+
+// Company-specific requeue: run scheduler only for given company
+app.post('/api/queue/requeue/:companyId', async (req, res) => {
+  const { companyId } = req.params;
+  if (!companyId) return res.status(400).json({ success: false, error: 'companyId required' });
+
+  try {
+    // First cleanup stale jobs for this company to avoid duplicates
+    await (async () => {
+      const queue = getQueueForBot(companyId);
+      const client = await pool.connect();
+      try {
+        const jobs = await queue.getJobs(["delayed", "waiting", "active"]);
+        for (const job of jobs) {
+          try {
+            const q = await client.query(
+              `SELECT id, status FROM scheduled_messages WHERE id = $1 AND company_id = $2 LIMIT 1`,
+              [job.id, companyId]
+            );
+            if (q.rowCount === 0 || q.rows[0].status !== 'scheduled') {
+              try { await job.remove(); } catch (e) { /* ignore */ }
+            }
+          } catch (e) { /* ignore per-job errors */ }
+        }
+      } finally { client.release(); }
+    })();
+
+    // Then schedule messages only for this company
+    await scheduleAllMessages(companyId);
+    res.json({ success: true, message: `Requeue requested for company ${companyId}` });
+  } catch (error) {
+    console.error(`Error requeueing for company ${companyId}:`, error);
+    res.status(500).json({ success: false, error: error.message });
   }
 });
 

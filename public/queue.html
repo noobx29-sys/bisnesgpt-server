@@ -498,6 +498,16 @@
     </div>
 
     <script>
+        // Utility to escape HTML for safe debug rendering
+        function escapeHtml(str) {
+            if (str === null || str === undefined) return '';
+            return String(str)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;');
+        }
         async function refreshData() {
             try {
                 const response = await fetch('/api/queue/diagnose');
@@ -546,6 +556,12 @@
                                         <div class="stat-label">Failed</div>
                                         <div class="stat-value">${queueData.counts.failed}</div>
                                     </div>
+                                </div>
+
+                                <!-- Control buttons (company-specific) -->
+                                <div style="margin-bottom:8px; display:flex; gap:8px;">
+                                    <button class="btn btn-sm btn-warning" onclick="cleanupCompany('${botId}')">Cleanup Company</button>
+                                    <button class="btn btn-sm btn-primary" onclick="requeueCompany('${botId}')">Requeue Company</button>
                                 </div>
 
                                 <!-- Tabs Navigation -->
@@ -799,6 +815,15 @@ ${data.errors.length > 0 ? '\nErrors encountered: ' + data.errors.length : ''}`;
                     dateDisplay = new Date(job.processedOn).toLocaleString();
             }
 
+            // Helper to escape single quotes and backslashes for use inside single-quoted onclick attributes
+            function escapeAttr(val) {
+                if (val === null || val === undefined) return '';
+                return String(val).replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\n/g, ' ').replace(/\r/g, ' ');
+            }
+
+            const companyEsc = escapeAttr(job.data.companyId || '');
+            const messageEsc = escapeAttr(job.data.messageId || '');
+
             return `
                 <div class="job-item ${type}">
                     <div class="job-header">
@@ -816,14 +841,14 @@ ${data.errors.length > 0 ? '\nErrors encountered: ' + data.errors.length : ''}`;
                                 `<span class="failure-time">Failed: ${dateDisplay}</span>` : ''
                             }
                             ${type === 'delayed' || type === 'active' ? 
-                                `<button class="btn btn-danger btn-sm" onclick="cancelJob('${job.data.companyId}', '${job.data.messageId}')">
+                                `<button class="btn btn-danger btn-sm" onclick="cancelJob('${companyEsc}', '${messageEsc}')">
                                     Cancel Job
                                 </button>` : ''
                             }
                         </div>
                     </div>
                     <div class="job-details">
-                        <button class="btn-toggle" onclick="toggleDetails(this, '${job.data.companyId}', '${job.data.messageId}')">
+                        <button class="btn-toggle" onclick="toggleDetails(this, '${companyEsc}', '${messageEsc}')">
                             Show Details
                         </button>
                         <div class="details-content hidden"></div>
@@ -863,23 +888,109 @@ ${data.errors.length > 0 ? '\nErrors encountered: ' + data.errors.length : ''}`;
                 try {
                     const details = await fetchMessageDetails(companyId, messageId);
                     if (details) {
-                        let messagesHtml = '';
-                        if (details.batches && details.batches.length > 0) {
-                            messagesHtml = details.batches.map(batch => `
-                                <div class="batch-section">
-                                    <h6>Batch ${batch.batchIndex + 1} of ${batch.batchQuantity}</h6>
-                                    ${batch.messages?.map(msg => `
-                                        <div class="message-item">
-                                            <div class="message-header">
-                                                <span class="chat-id">Chat ID: ${msg.chatId}</span>
-                                                ${msg.delay ? `<span class="delay">Delay: ${msg.delay}s</span>` : ''}
-                                            </div>
-                                            <div class="message-content">${msg.message}</div>
-                                        </div>
-                                    `).join('') || 'No messages in batch'}
-                                </div>
-                            `).join('');
+                        // Normalize scheduled time (support different shapes)
+                        let scheduledTimeMs = null;
+                        const sched = details.scheduledTime || details.scheduled_time || details.scheduledTime;
+                        if (sched) {
+                            if (typeof sched === 'object' && sched !== null && ('seconds' in sched)) {
+                                scheduledTimeMs = Number(sched.seconds) * 1000;
+                            } else if (typeof sched === 'string' || typeof sched === 'number') {
+                                scheduledTimeMs = new Date(sched).getTime();
+                            } else if (sched instanceof Object && sched.toISOString) {
+                                scheduledTimeMs = new Date(sched).getTime();
+                            }
                         }
+
+                        const scheduledTimeDisplay = scheduledTimeMs ? new Date(scheduledTimeMs).toLocaleString() : 'N/A';
+
+                        // Normalize some config flags
+                        const infiniteLoop = details.infinite_loop ?? details.infiniteLoop ?? false;
+                        const activeHours = details.active_hours ?? details.activeHours ?? null;
+                        const minDelay = details.min_delay ?? details.minDelay ?? null;
+                        const maxDelay = details.max_delay ?? details.maxDelay ?? null;
+
+                        // Normalize batches/messages and render safely
+                        let messagesHtml = '';
+                        const batches = Array.isArray(details.batches) ? details.batches : [];
+                        // If there are no batches, fall back to main details.messages (single-message scheduling)
+                        if (batches.length === 0) {
+                            let mainMsgs = details.messages || details.messages_json || details.messages_array || [];
+                            if (typeof mainMsgs === 'string') {
+                                try { mainMsgs = JSON.parse(mainMsgs); } catch (e) { mainMsgs = []; }
+                            }
+                            if (Array.isArray(mainMsgs) && mainMsgs.length > 0) {
+                                messagesHtml = mainMsgs.map(msg => `
+                                    <div class="message-item">
+                                        <div class="message-header">
+                                            <span class="chat-id">Chat ID: ${msg.chatId ?? msg.chat_id ?? details.chat_ids?.[0] ?? 'N/A'}</span>
+                                            ${msg.delay ? `<span class="delay">Delay: ${msg.delay}s</span>` : ''}
+                                        </div>
+                                        <div class="message-content">${msg.caption ?? msg.message ?? msg.message_content ?? ''}</div>
+                                    </div>
+                                `).join('');
+                            }
+                            // Fallbacks: if no structured messages, show direct message fields
+                            if (!messagesHtml || messagesHtml.trim() === '') {
+                                const fallbackText = details.caption ?? details.message ?? details.message_content ?? details.body ?? '';
+                                if (fallbackText) {
+                                    messagesHtml = `<div class="message-item"><div class="message-content">${fallbackText}</div></div>`;
+                                }
+                            }
+                        } else {
+                            messagesHtml = batches
+                                .map((batch, idx) => {
+                                    const batchIndex = batch.batch_index ?? batch.batchIndex ?? idx;
+                                    const batchQuantity = batch.batch_quantity ?? batch.batchQuantity ?? batches.length;
+                                    let msgs = batch.messages || batch.messages_json || batch.messages_array || [];
+                                    if (typeof msgs === 'string') {
+                                        try {
+                                            msgs = JSON.parse(msgs);
+                                        } catch (e) {
+                                            msgs = [];
+                                        }
+                                    }
+
+                                    const msgsHtml = Array.isArray(msgs) && msgs.length > 0
+                                        ? msgs.map(msg => `
+                                            <div class="message-item">
+                                                <div class="message-header">
+                                                    <span class="chat-id">Chat ID: ${msg.chatId ?? msg.chat_id ?? 'N/A'}</span>
+                                                    ${msg.delay ? `<span class="delay">Delay: ${msg.delay}s</span>` : ''}
+                                                </div>
+                                                <div class="message-content">${msg.caption ?? msg.message ?? msg.message_content ?? ''}</div>
+                                            </div>
+                                        `).join('')
+                                        : 'No messages in batch';
+
+                                    // If no structured messages in batch, try batch-level message fields
+                                    if ((!Array.isArray(msgs) || msgs.length === 0) && (batch.caption ?? batch.message ?? batch.message_content)) {
+                                                                const btext = batch.caption ?? batch.message ?? batch.message_content;
+                                        msgsHtml = `<div class="message-item"><div class="message-content">${btext}</div></div>`;
+                                    }
+
+                                    // Extract batch contact ids if present
+                                    let batchContactIds = batch.contact_ids ?? batch.contactIds ?? batch.contactIdsArray ?? null;
+                                    if (typeof batchContactIds === 'string') {
+                                        try { batchContactIds = JSON.parse(batchContactIds); } catch (e) { batchContactIds = [batchContactIds]; }
+                                    }
+                                    const batchContactDisplay = Array.isArray(batchContactIds) ? batchContactIds.slice(0,5).join(', ') + (batchContactIds.length > 5 ? ' (and more...)' : '') : (batchContactIds ? String(batchContactIds) : 'N/A');
+
+                                    return `
+                                        <div class="batch-section">
+                                            <h6>Batch ${batchIndex + 1} of ${batchQuantity}</h6>
+                                            <div class="detail-item">
+                                                <span class="detail-label">Batch Contacts:</span>
+                                                <span class="detail-value">${batchContactDisplay}</span>
+                                            </div>
+                                            ${msgsHtml}
+                                        </div>
+                                    `;
+                                })
+                                .join('');
+                            }
+
+                        // Extract contact ids
+                        const mainContactId = details.contact_id ?? details.contactId ?? details.contactIdFormatted ?? null;
 
                         detailsContent.innerHTML = `
                             <div class="details-content">
@@ -888,26 +999,30 @@ ${data.errors.length > 0 ? '\nErrors encountered: ' + data.errors.length : ''}`;
                                     <div class="detail-grid">
                                         <div class="detail-item">
                                             <span class="detail-label">Status:</span>
-                                            <span class="detail-value status-badge ${details.status}">${details.status}</span>
+                                            <span class="detail-value status-badge ${details.status ?? ''}">${details.status ?? 'unknown'}</span>
+                                        </div>
+                                        <div class="detail-item">
+                                            <span class="detail-label">Contact ID:</span>
+                                            <span class="detail-value">${mainContactId ?? 'N/A'}</span>
                                         </div>
                                         <div class="detail-item">
                                             <span class="detail-label">Scheduled Time:</span>
-                                            <span class="detail-value">${new Date(details.scheduledTime.seconds * 1000).toLocaleString()}</span>
+                                            <span class="detail-value">${scheduledTimeDisplay}</span>
                                         </div>
                                         <div class="detail-item">
                                             <span class="detail-label">Infinite Loop:</span>
-                                            <span class="detail-value">${details.infiniteLoop ? 'Yes' : 'No'}</span>
+                                            <span class="detail-value">${infiniteLoop ? 'Yes' : 'No'}</span>
                                         </div>
-                                        ${details.activeHours ? `
+                                        ${activeHours ? `
                                             <div class="detail-item">
                                                 <span class="detail-label">Active Hours:</span>
-                                                <span class="detail-value">${details.activeHours.start} - ${details.activeHours.end}</span>
+                                                <span class="detail-value">${activeHours.start ?? activeHours.start_time ?? ''} - ${activeHours.end ?? activeHours.end_time ?? ''}</span>
                                             </div>
                                         ` : ''}
-                                        ${details.minDelay ? `
+                                        ${minDelay ? `
                                             <div class="detail-item">
                                                 <span class="detail-label">Delay Range:</span>
-                                                <span class="detail-value">${details.minDelay}s - ${details.maxDelay}s</span>
+                                                <span class="detail-value">${minDelay}s - ${maxDelay ?? ''}s</span>
                                             </div>
                                         ` : ''}
                                     </div>
@@ -917,6 +1032,10 @@ ${data.errors.length > 0 ? '\nErrors encountered: ' + data.errors.length : ''}`;
                                     <div class="messages-container">
                                         ${messagesHtml || 'No messages found'}
                                     </div>
+                                </div>
+                                <div class="details-section">
+                                    <h5>Raw details (debug)</h5>
+                                    <pre style="max-height:200px;overflow:auto;background:#0b1220;color:#d1d5db;padding:8px;border-radius:6px;">${escapeHtml(JSON.stringify(details, null, 2))}</pre>
                                 </div>
                             </div>
                         `;
@@ -959,6 +1078,45 @@ ${data.errors.length > 0 ? '\nErrors encountered: ' + data.errors.length : ''}`;
             } catch (error) {
                 console.error('Error cancelling job:', error);
                 alert('Failed to cancel job. Check console for details.');
+            }
+        }
+
+        // Company-specific cleanup: remove stale queued jobs for a single company
+        async function cleanupCompany(companyId) {
+            if (!companyId) return alert('Company ID required');
+            if (!confirm(`Cleanup queued jobs for company ${companyId}? This will remove queued jobs that no longer exist in DB or are not scheduled.`)) return;
+            try {
+                const response = await fetch(`/api/queue/cleanup-stale/${companyId}`, { method: 'POST' });
+                const data = await response.json();
+                if (data.success) {
+                    const removed = data.summary?.removed ?? 0;
+                    alert(`Cleanup complete for ${companyId}. Removed ${removed} jobs.`);
+                    refreshData();
+                } else {
+                    alert(`Cleanup failed: ${data.error || 'unknown error'}`);
+                }
+            } catch (error) {
+                console.error('Error running cleanupCompany:', error);
+                alert('Cleanup failed. See console for details.');
+            }
+        }
+
+        // Company-specific requeue: cleanup then schedule for a single company
+        async function requeueCompany(companyId) {
+            if (!companyId) return alert('Company ID required');
+            if (!confirm(`Requeue scheduled messages for company ${companyId}? This will cleanup stale jobs then reschedule messages for this company.`)) return;
+            try {
+                const response = await fetch(`/api/queue/requeue/${companyId}`, { method: 'POST' });
+                const data = await response.json();
+                if (data.success) {
+                    alert(`Requeue requested for ${companyId}`);
+                    refreshData();
+                } else {
+                    alert(`Requeue failed: ${data.error || 'unknown error'}`);
+                }
+            } catch (error) {
+                console.error('Error running requeueCompany:', error);
+                alert('Requeue failed. See console for details.');
             }
         }
 
