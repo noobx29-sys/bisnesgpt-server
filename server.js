@@ -9953,6 +9953,21 @@ app.post("/api/sync-firebase-to-neon/:companyId", async (req, res) => {
     res.status(500).json({ success: false, error: error.message });
   }
 });
+async function getProfilePicUrl(contact) {
+  if (!contact.getProfilePicUrl) {
+    return "";
+  }
+
+  try {
+    return (await contact.getProfilePicUrl()) || "";
+  } catch (error) {
+    console.error(
+      `Error getting profile picture URL for ${contact.id.user}:`,
+      error
+    );
+    return "";
+  }
+}
 async function syncContacts(client, companyId, phoneIndex = 0) {
   try {
     const chats = await client.getChats();
@@ -9966,7 +9981,7 @@ async function syncContacts(client, companyId, phoneIndex = 0) {
         const contactPhone = contact.id.user;
         const contactID = `${companyId}-${contactPhone}`;
 
-        const profilePicUrl = await contact.getProfilePicUrl();
+        const profilePicUrl = await getProfilePicUrl(contact);
 
         // Upsert contact
         const contactQuery = `
@@ -10175,7 +10190,7 @@ async function syncContactNames(client, companyId, phoneIndex = 0) {
         const contactPhone = contact.id.user;
         const contactID = `${companyId}-${contactPhone}`;
 
-        const profilePicUrl = await contact.getProfilePicUrl();
+        const profilePicUrl = await getProfilePicUrl(contact);
 
         const potentialName =
           contact.name || contact.pushname || contact.shortName || contactPhone;
@@ -10324,7 +10339,7 @@ async function syncSingleContact(
       const contact = await chat.getContact();
       const contactID = `${companyId}-${phoneWithoutPlus}`;
 
-      const profilePicUrl = await contact.getProfilePicUrl();
+      const profilePicUrl = await getProfilePicUrl(contact);
 
       // Upsert contact
       const contactQuery = `
@@ -10560,7 +10575,7 @@ async function syncSingleContactName(
       const contact = await chat.getContact();
       const contactID = `${companyId}-${phoneWithoutPlus}`;
 
-      const profilePicUrl = await contact.getProfilePicUrl();
+      const profilePicUrl = await getProfilePicUrl(contact);
       const potentialName =
         contact.name || contact.pushname || contact.shortName || phoneWithPlus;
 
@@ -18554,7 +18569,7 @@ async function saveContactWithRateLimit(
 
     // Fetch profile picture URL
     try {
-      contactData.profilePicUrl = (await contact.getProfilePicUrl()) || "";
+      contactData.profilePicUrl = (await getProfilePicUrl(contact)) || "";
     } catch (error) {
       console.error(
         `Error getting profile picture URL for ${contact.id.user}:`,

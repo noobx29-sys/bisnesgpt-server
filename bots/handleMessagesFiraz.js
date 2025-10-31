@@ -157,6 +157,7 @@ async function safeExtractToPhoneNumber(msg, client = null) {
   }
 }
 const { ids } = require("googleapis/build/src/apis/ids/index.js");
+const { report } = require("process");
 
 // Configure Neon for WebSocket pooling
 neonConfig.webSocketConstructor = require("ws");
@@ -6754,6 +6755,55 @@ async function handleSpecialCases({
         "+120363325228671809"
       );
       await addTagToPostgres(extractedNumber, "stop bot", idSubstring);
+    }
+  }
+
+  // Handle JobBuilder case (765943)
+  if (idSubstring == "765943") {
+    // Handle company hiring inquiries
+    if (part.includes("24-48 hours")) {
+      const { reportMessage, contactInfo } = await generateSpecialReportRecruitment(
+        threadID,
+        companyConfig.assistantId,
+        contactName,
+        extractedNumber,
+        "hiring_company"
+      );
+      console.log("=== [Special Cases] JobBuilder Hiring Company Report ===");
+      console.log(reportMessage);
+      
+      const sentMessage = await client.sendMessage(
+        "60167557780@c.us",
+        reportMessage
+      );
+      await addMessageToPostgres(
+        sentMessage,
+        idSubstring,
+        "+60167557780"
+      );
+    }
+
+    // Handle job seeker inquiries
+    if (part.includes("processed accordingly")) {
+      const { reportMessage, contactInfo } = await generateSpecialReportRecruitment(
+        threadID,
+        companyConfig.assistantId,
+        contactName,
+        extractedNumber,
+        "job_seeker"
+      );
+      console.log("=== [Special Cases] JobBuilder Job Seeker Report ===");
+      console.log(reportMessage);
+      
+      const sentMessage = await client.sendMessage(
+        "60167557780@c.us",
+        reportMessage
+      );
+      await addMessageToPostgres(
+        sentMessage,
+        idSubstring,
+        "+60167557780"
+      );
     }
   }
 
@@ -14999,6 +15049,190 @@ async function fetchConfigFromDatabase(idSubstring, phoneIndex) {
     if (sqlClient) {
       await safeRelease(sqlClient);
     }
+  }
+}
+
+// Recruitment Company Functions
+async function generateSpecialReportRecruitment(threadID, assistantId, contactName, extractedNumber, reportType) {
+  try {
+    let reportInstruction;
+    
+    if (reportType === "hiring_company") {
+      reportInstruction = `Please generate a report in the following format for a company that is hiring:
+
+New Hiring Company Registration
+
+Company Details:
+- Company Name: [Extract from conversation]
+- PIC Name: [Extract from conversation]
+- Position: [Extract from conversation - list all positions mentioned]
+- Headcount: [Extract from conversation - specify number for each position]
+- Work Location: [Extract from conversation]
+- Salary Range: [Extract from conversation or "Please specify" if not mentioned]
+- Onboarding Timeline: [Extract from conversation]
+- Total Employees: [Extract from conversation]
+
+Contact Information:
+- Phone Number: ${extractedNumber}
+- Email: [Extract from conversation]
+- Additional Contact Details: [Extract any other contact information]
+
+Additional Requirements:
+[Extract any specific requirements, qualifications, or preferences mentioned]
+
+Fill in the information in square brackets with the relevant details from our conversation. If any information is not available, leave it blank or indicate "Not specified".`;
+
+    } else if (reportType === "job_seeker") {
+      reportInstruction = `Please generate a report in the following format for a job seeker:
+
+New Job Seeker Registration
+
+Personal Information:
+1. Full name: [Extract from conversation]
+2. Email: [Extract from conversation]
+3. Resume: [Check if resume was sent - indicate "sent" or "not received"]
+4. What kind of job are you currently looking for: [Extract from conversation]
+5. What is your preferred job location: [Extract from conversation]
+6. Do you have a preferred industry or company type you want to work in: [Extract from conversation]
+7. Are you currently employed, serving notice, or have you resigned: [Extract from conversation]
+8. If you have a previous job, may I know the actual reason why you left your previous company: [Extract from conversation]
+9. Could you share your expected salary range for this role: [Extract from conversation]
+10. Is your expected salary still negotiable: [Extract from conversation]
+11. Could you briefly tell us about your past working experience: [Extract from conversation]
+
+Contact Information:
+- Phone Number: ${extractedNumber}
+- Name: ${contactName}
+
+Additional Notes:
+[Extract any other relevant information mentioned during the conversation]
+
+Fill in the information in square brackets with the relevant details from our conversation. If any information is not available, leave it blank or indicate "Not specified".`;
+    }
+
+    var response = await openai.beta.threads.messages.create(threadID, {
+      role: "user",
+      content: reportInstruction,
+    });
+
+    var assistantResponse = await openai.beta.threads.runs.create(threadID, {
+      assistant_id: assistantId,
+    });
+
+    // Wait for the assistant to complete the task
+    let runStatus;
+    do {
+      await new Promise((resolve) => setTimeout(resolve, 1000)); // Wait for 1 second
+      runStatus = await openai.beta.threads.runs.retrieve(
+        threadID,
+        assistantResponse.id
+      );
+    } while (runStatus.status !== "completed");
+
+    // Retrieve the assistant's response
+    var messages = await openai.beta.threads.messages.list(threadID);
+    var reportMessage = messages.data[0].content[0].text.value;
+
+    var contactInfo = extractContactInfoRecruitment(reportMessage, reportType);
+
+    return { reportMessage, contactInfo };
+  } catch (error) {
+    console.error("Error generating recruitment report:", error);
+    return { reportMessage: "Error generating report", contactInfo: null };
+  }
+}
+
+function extractContactInfoRecruitment(reportMessage, reportType) {
+  const contactInfo = {
+    reportType: reportType,
+    name: "",
+    phone: "",
+    email: "",
+    company: "",
+    position: "",
+    location: "",
+    salary: "",
+    additionalInfo: ""
+  };
+
+  try {
+    if (reportType === "hiring_company") {
+      // Extract company information
+      const companyMatch = reportMessage.match(/Company Name:\s*(.+)/i);
+      if (companyMatch) contactInfo.company = companyMatch[1].trim();
+
+      const picMatch = reportMessage.match(/PIC Name:\s*(.+)/i);
+      if (picMatch) contactInfo.name = picMatch[1].trim();
+
+      const positionMatch = reportMessage.match(/Position:\s*(.+)/i);
+      if (positionMatch) contactInfo.position = positionMatch[1].trim();
+
+      const locationMatch = reportMessage.match(/Work Location:\s*(.+)/i);
+      if (locationMatch) contactInfo.location = locationMatch[1].trim();
+
+      const salaryMatch = reportMessage.match(/Salary Range:\s*(.+)/i);
+      if (salaryMatch) contactInfo.salary = salaryMatch[1].trim();
+
+    } else if (reportType === "job_seeker") {
+      // Extract job seeker information
+      const nameMatch = reportMessage.match(/Full name:\s*(.+)/i);
+      if (nameMatch) contactInfo.name = nameMatch[1].trim();
+
+      const jobMatch = reportMessage.match(/What kind of job are you currently looking for:\s*(.+)/i);
+      if (jobMatch) contactInfo.position = jobMatch[1].trim();
+
+      const locationMatch = reportMessage.match(/What is your preferred job location:\s*(.+)/i);
+      if (locationMatch) contactInfo.location = locationMatch[1].trim();
+
+      const salaryMatch = reportMessage.match(/Could you share your expected salary range for this role:\s*(.+)/i);
+      if (salaryMatch) contactInfo.salary = salaryMatch[1].trim();
+    }
+
+    // Extract common information
+    const emailMatch = reportMessage.match(/Email:\s*(.+)/i);
+    if (emailMatch) contactInfo.email = emailMatch[1].trim();
+
+    const phoneMatch = reportMessage.match(/Phone Number:\s*(.+)/i);
+    if (phoneMatch) contactInfo.phone = phoneMatch[1].trim();
+
+  } catch (error) {
+    console.error("Error extracting contact info:", error);
+  }
+
+  return contactInfo;
+}
+
+async function sendFeedbackToGroupRecruitment(
+  client,
+  feedback,
+  customerName,
+  customerPhone,
+  idSubstring,
+  reportType
+) {
+  try {
+    const typeLabel = reportType === "hiring_company" ? "Hiring Company" : "Job Seeker";
+    const feedbackMessage =
+      `*New ${typeLabel} Feedback*\n\n` +
+      `👤 Customer: ${customerName}\n` +
+      `📱 Phone: ${customerPhone}\n` +
+      `💬 Feedback: ${feedback}\n\n` +
+      `📋 Type: ${typeLabel}\n` +
+      `🕒 Time: ${new Date().toLocaleString()}\n` +
+      `🆔 ID: ${idSubstring}`;
+
+    // Send to recruitment group (you'll need to update this with the actual group ID)
+    const sentMessage = await client.sendMessage(
+      "RECRUITMENT_GROUP_ID@g.us", // Replace with actual recruitment group ID
+      feedbackMessage
+    );
+
+    console.log("Recruitment feedback sent successfully");
+
+    return sentMessage;
+  } catch (error) {
+    console.error("Error sending recruitment feedback:", error);
+    throw error;
   }
 }
 
