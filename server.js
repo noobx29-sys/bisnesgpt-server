@@ -12669,7 +12669,7 @@ function setupMessageHandler(client, botName, phoneIndex) {
         fromMe: msg.fromMe,
         timestamp: Math.floor(Date.now() / 1000),
         messageType: msg.type,
-        contactName: msg.notifyName || extractedNumberRaw,
+        contactName: msg.notifyName || cleanExtractedNumber,
       };
 
       console.log(
