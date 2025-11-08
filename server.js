@@ -7950,6 +7950,33 @@ app.post("/api/schedule-message/:companyId", async (req, res) => {
   });
 
   try {
+    // Validate and normalize active hours if provided
+    let activeHoursStart = null;
+    let activeHoursEnd = null;
+
+    if (scheduledMessage.activeHours) {
+      const start = scheduledMessage.activeHours.start;
+      const end = scheduledMessage.activeHours.end;
+
+      // Validate active hours
+      const validation = validateActiveHours(start, end);
+      if (!validation.valid) {
+        return res.status(400).json({
+          success: false,
+          error: validation.error
+        });
+      }
+
+      // Normalize time format (ensure HH:MM with leading zeros)
+      activeHoursStart = normalizeTimeFormat(start);
+      activeHoursEnd = normalizeTimeFormat(end);
+
+      console.log("Active hours validated:", {
+        start: activeHoursStart,
+        end: activeHoursEnd
+      });
+    }
+
     const client = await pool.connect();
 
     try {
@@ -8062,9 +8089,10 @@ app.post("/api/schedule-message/:companyId", async (req, res) => {
           scheduled_time, status, created_at, chat_id, phone_index, is_media,
           document_url, file_name, caption, chat_ids, batch_quantity, repeat_interval,
           repeat_unit, message_delays, infinite_loop, min_delay, max_delay, activate_sleep,
-          sleep_after_messages, sleep_duration, active_hours, from_me, messages, template_id
+          sleep_after_messages, sleep_duration, active_hours, from_me, messages, template_id,
+          active_hours_start, active_hours_end
         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, 
-          $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32)
+          $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34)
       `;
       const scheduledTime = toPgTimestamp(scheduledMessage.scheduledTime);
       await client.query(mainMessageQuery, [
@@ -8106,6 +8134,8 @@ app.post("/api/schedule-message/:companyId", async (req, res) => {
           ? JSON.stringify(scheduledMessage.messages)
           : null,
         scheduledMessage.template_id || null,
+        activeHoursStart,
+        activeHoursEnd,
       ]);
 
       const queue = getQueueForBot(companyId);
@@ -8226,8 +8256,8 @@ app.post("/api/schedule-message/:companyId", async (req, res) => {
             id, schedule_id, company_id, scheduled_time, status, created_at,
             batch_index, chat_ids, phone_index, from_me, message_content, media_url, document_url, file_name, caption,
             messages, min_delay, max_delay, infinite_loop, repeat_interval, repeat_unit, active_hours,
-            multiple, contact_id, contact_ids
-          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25)
+            multiple, contact_id, contact_ids, active_hours_start, active_hours_end
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27)
         `;
           await client.query(batchQuery, [
             batchId,
@@ -8257,6 +8287,8 @@ app.post("/api/schedule-message/:companyId", async (req, res) => {
             isMultiple, // Use the defined variable
             null, // For batches, contact_id is always null
             JSON.stringify(batchContactIds), // Store the batch contacts in contact_ids
+            activeHoursStart,
+            activeHoursEnd,
           ]);
           batches.push({ id: batchId, scheduledTime: batchScheduledTime });
         }
@@ -8331,6 +8363,33 @@ app.put("/api/schedule-message/:companyId/:messageId", async (req, res) => {
   console.log("Updated message body:", updatedMessage);
 
   try {
+    // Validate and normalize active hours if provided
+    let activeHoursStart = null;
+    let activeHoursEnd = null;
+
+    if (updatedMessage.activeHours) {
+      const start = updatedMessage.activeHours.start;
+      const end = updatedMessage.activeHours.end;
+
+      // Validate active hours
+      const validation = validateActiveHours(start, end);
+      if (!validation.valid) {
+        return res.status(400).json({
+          success: false,
+          error: validation.error
+        });
+      }
+
+      // Normalize time format (ensure HH:MM with leading zeros)
+      activeHoursStart = normalizeTimeFormat(start);
+      activeHoursEnd = normalizeTimeFormat(end);
+
+      console.log("Active hours validated for update:", {
+        start: activeHoursStart,
+        end: activeHoursEnd
+      });
+    }
+
     const client = await getDatabaseConnection();
 
     if (!client) {
@@ -8374,8 +8433,10 @@ app.put("/api/schedule-message/:companyId/:messageId", async (req, res) => {
           document_url = $4,
           file_name = $5,
           caption = $6,
-          status = $7
-        WHERE (id::text = $8::text OR schedule_id::text = $8::text) AND company_id = $9
+          status = $7,
+          active_hours_start = $8,
+          active_hours_end = $9
+        WHERE (id::text = $10::text OR schedule_id::text = $10::text) AND company_id = $11
       `;
 
       const isMediaMessage = Boolean(
@@ -8396,6 +8457,8 @@ app.put("/api/schedule-message/:companyId/:messageId", async (req, res) => {
         updatedMessage.fileName || null,
         messageCaption,
         updatedMessage.status || "scheduled",
+        activeHoursStart,
+        activeHoursEnd,
         messageId,
         companyId,
       ]);
@@ -11237,6 +11300,104 @@ function getMillisecondsForUnit(unit) {
   }
 }
 
+// ======================
+// ACTIVE HOURS VALIDATION HELPERS
+// ======================
+
+/**
+ * Validates time format (HH:MM in 24-hour format)
+ * @param {string} time - Time string to validate
+ * @returns {boolean} - True if valid format
+ */
+function validateTimeFormat(time) {
+  const timeRegex = /^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/;
+  return timeRegex.test(time);
+}
+
+/**
+ * Validates active hours constraints
+ * @param {string} start - Start time in HH:MM format
+ * @param {string} end - End time in HH:MM format
+ * @returns {object} - { valid: boolean, error: string }
+ */
+function validateActiveHours(start, end) {
+  // Check if both are provided
+  if ((start && !end) || (!start && end)) {
+    return {
+      valid: false,
+      error: "Both start and end times must be provided for active hours"
+    };
+  }
+
+  // If neither provided, that's valid (no active hours restriction)
+  if (!start && !end) {
+    return { valid: true };
+  }
+
+  // Validate format
+  if (!validateTimeFormat(start)) {
+    return {
+      valid: false,
+      error: "Invalid start time format. Use HH:MM (24-hour format, e.g., 09:00)"
+    };
+  }
+
+  if (!validateTimeFormat(end)) {
+    return {
+      valid: false,
+      error: "Invalid end time format. Use HH:MM (24-hour format, e.g., 17:00)"
+    };
+  }
+
+  // Check if start is before end (for same-day ranges only)
+  if (start >= end) {
+    return {
+      valid: false,
+      error: "Start time must be before end time. Overnight ranges are not supported."
+    };
+  }
+
+  return { valid: true };
+}
+
+/**
+ * Checks if current time is within active hours
+ * @param {object} message - Message object with active_hours_start and active_hours_end
+ * @returns {boolean} - True if within active hours or no active hours set
+ */
+function isWithinActiveHours(message) {
+  // If no active hours set, always return true (backwards compatible)
+  if (!message.active_hours_start || !message.active_hours_end) {
+    return true;
+  }
+
+  const now = new Date();
+  const currentTime = now.toTimeString().slice(0, 5); // "HH:MM" format
+
+  const startTime = message.active_hours_start;
+  const endTime = message.active_hours_end;
+
+  // Compare times as strings (works for HH:MM format)
+  return currentTime >= startTime && currentTime <= endTime;
+}
+
+/**
+ * Normalizes time format to HH:MM (ensures 2 digits for hours)
+ * @param {string} time - Time string
+ * @returns {string} - Normalized time string
+ */
+function normalizeTimeFormat(time) {
+  if (!time) return null;
+  
+  const parts = time.split(':');
+  if (parts.length !== 2) return null;
+  
+  const hours = parts[0].padStart(2, '0');
+  const minutes = parts[1].padStart(2, '0');
+  
+  return `${hours}:${minutes}`;
+}
+
 // Store queues and workers
 const botQueues = new Map();
 const botWorkers = new Map();
@@ -11697,54 +11858,35 @@ async function sendScheduledMessage(message) {
         return processedMessage;
       };
 
-      const isWithinActiveHours = () => {
-        if (!message.active_hours) {
+      const isWithinActiveHoursLocal = () => {
+        // Check using the new active_hours_start and active_hours_end columns
+        if (!message.active_hours_start || !message.active_hours_end) {
           console.log(
-            `[Company ${companyId}] No active hours set, always active`
+            `[Company ${companyId}] No active hours set (using columns), always active`
           );
           return true;
         }
 
         try {
-          const activeHours = safeJsonParse(
-            message.active_hours,
-            null,
-            `active_hours for company ${companyId}`
-          );
-          if (!activeHours) {
-            console.log(
-              `[Company ${companyId}] No active hours parsed, assuming active`
-            );
-            return true;
-          }
-
           const now = new Date();
-          const currentHour = now.getHours();
-          const currentMinute = now.getMinutes();
-          const currentTime = currentHour * 60 + currentMinute;
+          const currentTime = now.toTimeString().slice(0, 5); // "HH:MM" format
 
-          const startTime = activeHours.start
-            ? parseInt(activeHours.start.split(":")[0]) * 60 +
-              parseInt(activeHours.start.split(":")[1])
-            : 0;
-          const endTime = activeHours.end
-            ? parseInt(activeHours.end.split(":")[0]) * 60 +
-              parseInt(activeHours.end.split(":")[1])
-            : 1440;
+          const startTime = message.active_hours_start;
+          const endTime = message.active_hours_end;
 
           const isActive = currentTime >= startTime && currentTime <= endTime;
 
-          console.log(`[Company ${companyId}] Active hours check:`, {
-            currentTime: `${currentHour}:${currentMinute}`,
-            startTime: activeHours.start,
-            endTime: activeHours.end,
+          console.log(`[Company ${companyId}] Active hours check (using columns):`, {
+            currentTime: currentTime,
+            startTime: startTime,
+            endTime: endTime,
             isActive: isActive,
           });
 
           return isActive;
         } catch (e) {
           console.warn(
-            `[Company ${companyId}] Error parsing active hours, assuming active:`,
+            `[Company ${companyId}] Error checking active hours, assuming active:`,
             e
           );
           return true;
@@ -11811,9 +11953,9 @@ async function sendScheduledMessage(message) {
           const loopStartTime = Date.now();
 
           // Check if we're within active hours
-          if (!isWithinActiveHours()) {
+          if (!isWithinActiveHoursLocal()) {
             console.log(
-              `[Company ${companyId}] Outside active hours, waiting 10 minutes...`
+              `[Company ${companyId}] Outside active hours (${message.active_hours_start} - ${message.active_hours_end}), waiting 10 minutes...`
             );
             await new Promise((resolve) => setTimeout(resolve, 600000));
             continue;
@@ -17487,7 +17629,9 @@ app.get("/api/scheduled-messages", async (req, res) => {
         created_at,
         sent_at,
         phone_index,
-        from_me
+        from_me,
+        active_hours_start,
+        active_hours_end
       FROM scheduled_messages 
       WHERE company_id = $1
       AND id::text = schedule_id
@@ -17537,6 +17681,10 @@ app.get("/api/scheduled-messages", async (req, res) => {
         sentAt: row.sent_at,
         phoneIndex: row.phone_index,
         fromMe: row.from_me,
+        activeHours: row.active_hours_start && row.active_hours_end ? {
+          start: row.active_hours_start,
+          end: row.active_hours_end
+        } : null,
       };
     });
 
@@ -17610,7 +17758,9 @@ app.get("/api/scheduled-messages/contact", async (req, res) => {
         created_at,
         sent_at,
         phone_index,
-        from_me
+        from_me,
+        active_hours_start,
+        active_hours_end
       FROM scheduled_messages 
       WHERE company_id = $1
       AND id::text = schedule_id
@@ -17660,6 +17810,10 @@ app.get("/api/scheduled-messages/contact", async (req, res) => {
         sentAt: row.sent_at,
         phoneIndex: row.phone_index,
         fromMe: row.from_me,
+        activeHours: row.active_hours_start && row.active_hours_end ? {
+          start: row.active_hours_start,
+          end: row.active_hours_end
+        } : null,
       };
     });
 
