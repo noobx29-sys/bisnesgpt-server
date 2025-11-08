@@ -1293,6 +1293,292 @@ Fill in the information in square brackets with the relevant details from our co
   }
 }
 
+// Generate a concise report for company 058666 with required sales fields
+async function generateSpecialReport058666(
+  threadID,
+  assistantId,
+  contactName,
+  extractedNumber
+) {
+  try {
+    const currentDate = new Date().toISOString().split("T")[0]; // Format: YYYY-MM-DD
+    const reportInstruction = `Sila hasilkan satu laporan dalam format berikut berdasarkan perbualan kita, dalam Bahasa Melayu:
+
+Borang Baru Telah Dihantar
+
+Butiran Prospek:
+Tarikh: ${currentDate}
+Nama: ${contactName}
+Nombor Telefon: ${extractedNumber}
+Lokasi: [Ekstrak dari perbualan]
+Produk Diminati (cth: pintu, tingkap, sebutharga rumah penuh): [Ekstrak dari perbualan]
+Jenis Servis (Supply Only atau Supply and Install, untuk tingkap): [Ekstrak dari perbualan]
+Jenis Pintu atau Tingkap Spesifik (cth: folding, majestic, casement, dll): [Ekstrak dari perbualan]
+Keperluan Saiz Custom (jika ada): [Ekstrak dari perbualan]
+
+Isikan maklumat dalam kurungan dengan butiran yang berkaitan dari perbualan. Jika tiada maklumat, biarkan kosong. Jangan ubah medan Tarikh.`;
+
+    await openai.beta.threads.messages.create(threadID, {
+      role: "user",
+      content: reportInstruction,
+    });
+
+    const assistantResponse = await openai.beta.threads.runs.create(threadID, {
+      assistant_id: assistantId,
+    });
+
+    // Wait for the assistant to complete the task
+    let runStatus;
+    do {
+      await new Promise((resolve) => setTimeout(resolve, 1000)); // Wait for 1 second
+      runStatus = await openai.beta.threads.runs.retrieve(
+        threadID,
+        assistantResponse.id
+      );
+    } while (runStatus.status !== "completed");
+
+    // Retrieve the assistant's response
+    const messages = await openai.beta.threads.messages.list(threadID);
+    const reportMessage = messages.data[0].content[0].text.value;
+
+    // You can implement extractContactInfo058666 if you want to parse the fields
+    // For now, just return the report message
+    return { reportMessage };
+  } catch (error) {
+    console.error("Error generating special report:", error);
+    return "Error generating report";
+  }
+}
+
+function extractContactInfo058666(reportMessage) {
+  const lines = (reportMessage || "").split(/\r?\n/).map((l) => l.trim());
+  const fields = {
+    Nama: "",
+    Lokasi: "",
+    MinatProduk: "",
+    JenisPerkhidmatan: "",
+    JenisSpesifik: "",
+    KeperluanSaiz: "",
+  };
+
+  lines.forEach((line) => {
+    if (!line.includes(":")) return;
+    const idx = line.indexOf(":");
+    const key = line.substring(0, idx).trim();
+    const value = line.substring(idx + 1).trim();
+
+    // handle Malay labels and English fallbacks
+    switch (key.toLowerCase()) {
+      case "nama":
+      case "name":
+        fields.Nama = value;
+        break;
+      case "lokasi":
+      case "location":
+        fields.Lokasi = value;
+        break;
+      case "minat produk (contoh: pintu, tingkap, sebut harga rumah penuh)":
+      case "minat produk":
+      case "product interest (e.g., doors, windows, full house quotation)":
+      case "product interest":
+        fields.MinatProduk = value;
+        break;
+      case "jenis perkhidmatan (supply only atau supply and install, untuk tingkap)":
+      case "jenis perkhidmatan":
+      case "type of service (supply only or supply and install, for windows)":
+      case "type of service":
+        fields.JenisPerkhidmatan = value;
+        break;
+      case "jenis pintu/tingkap spesifik (contoh: folding, majestic, casement, dsb)":
+      case "jenis pintu/tingkap spesifik":
+      case "specific door or window type (e.g., folding, majestic, casement, etc.)":
+      case "specific door or window type":
+        fields.JenisSpesifik = value;
+        break;
+      case "keperluan saiz kustom (jika berkenaan)":
+      case "keperluan saiz kustom":
+      case "custom size requirement (if applicable)":
+      case "custom size requirement":
+        fields.KeperluanSaiz = value;
+        break;
+      case "nombor telefon":
+      case "phone number":
+        // ignore
+        break;
+    }
+  });
+
+  return fields;
+}
+
+// AI assignment and notification for company 058666
+async function handleAIAsssignResponses058666({
+  threadID,
+  assistantId,
+  contactName,
+  extractedNumber,
+  client,
+  idSubstring,
+  phoneIndex = 0,
+  msg,
+}) {
+  // Generate special report
+  const { reportMessage, contactInfo } = await generateSpecialReport058666(
+    threadID,
+    assistantId,
+    contactName,
+    extractedNumber
+  );
+
+  // Choose employee with least assignments this month (fair/round-robin)
+  const sqlClient = await pool.connect();
+  try {
+    const now = new Date();
+    const month = now.toLocaleString("default", { month: "short" });
+    const year = now.getFullYear();
+    const monthKey = `${month}-${year}`; // Format: "Nov-2025"
+
+    // First, get assignment counts from actual assignments table for this month
+    const q = `
+      SELECT e.*, 
+             COALESCE(COUNT(a.assignment_id), 0) AS assignments_count
+      FROM public.employees e
+      LEFT JOIN assignments a
+        ON a.employee_id = e.employee_id 
+        AND a.company_id = e.company_id
+        AND a.month_key = $1
+        AND a.status = 'active'
+      WHERE e.company_id = $2 
+        AND e.active = true 
+        AND e.email != 'admin@juta.com'
+      GROUP BY e.id, e.employee_id, e.company_id, e.name, e.email, e.role, 
+               e.current_index, e.last_updated, e.created_at, e.active, 
+               e.assigned_contacts, e.phone_number, e.phone_access, 
+               e.weightages, e.company, e.image_url, e.notes, 
+               e.quota_leads, e.view_employees, e.invoice_number, e.emp_group
+      ORDER BY assignments_count ASC, e.id ASC
+      LIMIT 1
+    `;
+
+    const res = await sqlClient.query(q, [monthKey, idSubstring]);
+    if (!res.rows || res.rows.length === 0) {
+      console.log("No active employees found for company", idSubstring);
+      return;
+    }
+
+    const employee = res.rows[0];
+    console.log("Selected employee for assignment:", {
+      id: employee.id,
+      employee_id: employee.employee_id,
+      name: employee.name,
+      phone_number: employee.phone_number,
+      assignments_count: employee.assignments_count
+    });
+
+    // Add tags and create assignment records (using employee.employee_id for foreign key)
+    try {
+      // Add employee name tag
+      console.log(`[058666] Adding employee tag: ${employee.name} to contact: ${extractedNumber}`);
+      await addTagToPostgres(extractedNumber, employee.name, idSubstring);
+      console.log(`[058666] Employee tag added successfully`);
+      
+      // Add "stop bot" tag
+      console.log(`[058666] Adding "stop bot" tag to contact: ${extractedNumber}`);
+      await addTagToPostgres(extractedNumber, "stop bot", idSubstring);
+      console.log(`[058666] "stop bot" tag added successfully`);
+      
+      // Get contact from database
+      const contactQuery = `
+        SELECT contact_id FROM contacts 
+        WHERE company_id = $1 AND phone_number = $2
+      `;
+      const contactResult = await sqlClient.query(contactQuery, [
+        idSubstring,
+        extractedNumber,
+      ]);
+
+      if (contactResult.rows.length > 0) {
+        const contactId = contactResult.rows[0].contact_id;
+        const assignmentId = `${idSubstring}-${contactId}-${employee.employee_id}-${Date.now()}`;
+
+        // Create assignment record (using employee.employee_id to match foreign key constraint)
+        const assignmentInsertQuery = `
+          INSERT INTO assignments (
+            assignment_id, company_id, employee_id, contact_id, 
+            assigned_at, status, month_key, assignment_type, 
+            phone_index, weightage_used, employee_role
+          ) VALUES ($1, $2, $3, $4, CURRENT_TIMESTAMP, 'active', $5, 'auto_bot', $6, 1, $7)
+        `;
+
+        await sqlClient.query(assignmentInsertQuery, [
+          assignmentId,
+          idSubstring,
+          employee.employee_id, // Use employee_id for foreign key
+          contactId,
+          monthKey,
+          phoneIndex,
+          "Sales",
+        ]);
+
+        console.log(`[058666] Assignment record created with employee_id: ${employee.employee_id}`);
+
+        // Update employee's assigned_contacts count
+        const employeeUpdateQuery = `
+          UPDATE employees
+          SET assigned_contacts = COALESCE(assigned_contacts, 0) + 1
+          WHERE company_id = $1 AND id = $2
+        `;
+
+        await sqlClient.query(employeeUpdateQuery, [idSubstring, employee.id]);
+
+        // Update monthly assignments (uses employee.id)
+        const monthlyAssignmentUpsertQuery = `
+          INSERT INTO employee_monthly_assignments (employee_id, company_id, month_key, assignments_count, last_updated)
+          VALUES ($1, $2, $3, 1, CURRENT_TIMESTAMP)
+          ON CONFLICT (employee_id, month_key) DO UPDATE
+          SET assignments_count = employee_monthly_assignments.assignments_count + 1,
+              last_updated = CURRENT_TIMESTAMP
+        `;
+
+        await sqlClient.query(monthlyAssignmentUpsertQuery, [
+          employee.id, // Use id for monthly assignments
+          idSubstring,
+          monthKey,
+        ]);
+
+        console.log(`[058666] Assignment complete for employee: ${employee.name}`);
+      }
+    } catch (err) {
+      console.error("[058666] Error creating assignment:", err);
+    }
+
+    // Send the generated report to employee via WhatsApp (instead of generic assignment message)
+    const employeePhone = employee.phone_number || employee.phone || "";
+    if (employeePhone) {
+      const employeeId = employeePhone.replace(/\D/g, "") + "@c.us";
+      try {
+        const sent = await client.sendMessage(employeeId, reportMessage);
+        console.log(`Sent AI-generated report to employee ${employee.name} (${employeePhone})`);
+        // Log message to Postgres for record
+        try {
+          await addMessageToPostgres(sent, idSubstring, employeePhone);
+        } catch (err) {
+          console.error("Failed to log sent report to Postgres:", err);
+        }
+      } catch (err) {
+        console.error("Failed to send report message to employee:", err);
+      }
+    } else {
+      console.log("Assigned employee has no phone number to receive report", employee);
+    }
+  } catch (error) {
+    console.error("Error in handleAIAsssignResponses:", error);
+  } finally {
+    await safeRelease(sqlClient);
+  }
+}
+
+
 async function insertSpreadsheetMTDC(reportMessage) {
   try {
     const auth = new google.auth.GoogleAuth({
@@ -4066,6 +4352,12 @@ async function handleAIAssignResponses({
   console.log(`[ASSIGNMENT DEBUG] Keyword Source: ${keywordSource}`);
   console.log(`[ASSIGNMENT DEBUG] Phone Index: ${phoneIndex}`);
 
+  // Skip AI assignment for company 058666 with "team sale" - let handleSpecialCases handle it
+  if (idSubstring === "058666" && message.toLowerCase().includes("team sale")) {
+    console.log(`[ASSIGNMENT DEBUG] Skipping AI assignment for 058666 team sale - will be handled by handleSpecialCases`);
+    return;
+  }
+
   console.log(
     `[ASSIGNMENT DEBUG] Fetching AI assign responses for Company ${idSubstring}`
   );
@@ -6514,7 +6806,26 @@ async function handleSpecialCases({
     );
     await addTagToPostgres(extractedNumber, empName, idSubstring);
   }
-
+if (idSubstring === "058666") {
+  if (part.toLowerCase().includes("team sale")) {
+      // Stop the bot for this contact and perform AI-driven assignment & reporting
+      await addTagToPostgres(extractedNumber, "stop bot", idSubstring);
+      try {
+        await handleAIAsssignResponses058666({
+          threadID,
+          assistantId: companyConfig.assistantId,
+          contactName,
+          extractedNumber,
+          client,
+          idSubstring,
+          phoneIndex,
+          msg,
+        });
+      } catch (err) {
+        console.error("Error in AI assign handler for 058666:", err);
+      }
+    }
+  }
   // Handle 0128 bot triggers
   if (idSubstring === "0128") {
     if (
@@ -6760,8 +7071,36 @@ async function handleSpecialCases({
 
   // Handle JobBuilder case (765943)
   if (idSubstring == "765943") {
+    // Helper function to check if message contains hiring company triggers (English, Chinese, Malay)
+    const isHiringCompanyTrigger = (text) => {
+      const lowerText = text.toLowerCase();
+      return (
+        lowerText.includes("24-48 hours") ||
+        lowerText.includes("24-48 jam") || // Malay
+        lowerText.includes("24-48小时") || // Chinese Simplified
+        lowerText.includes("24-48小時") || // Chinese Traditional
+        lowerText.includes("dalam 24-48 jam") || // Malay variation
+        lowerText.includes("二十四至四十八小时") || // Chinese variation
+        lowerText.includes("二十四至四十八小時") // Chinese Traditional variation
+      );
+    };
+
+    // Helper function to check if message contains job seeker triggers (English, Chinese, Malay)
+    const isJobSeekerTrigger = (text) => {
+      const lowerText = text.toLowerCase();
+      return (
+        lowerText.includes("processed accordingly") ||
+        lowerText.includes("diproses dengan sewajarnya") || // Malay
+        lowerText.includes("akan diproses") || // Malay variation
+        lowerText.includes("相应处理") || // Chinese Simplified
+        lowerText.includes("相應處理") || // Chinese Traditional
+        lowerText.includes("按照程序处理") || // Chinese variation
+        lowerText.includes("按照程序處理") // Chinese Traditional variation
+      );
+    };
+
     // Handle company hiring inquiries
-    if (part.includes("24-48 hours")) {
+    if (isHiringCompanyTrigger(part)) {
       const { reportMessage, contactInfo } = await generateSpecialReportRecruitment(
         threadID,
         companyConfig.assistantId,
@@ -6784,7 +7123,7 @@ async function handleSpecialCases({
     }
 
     // Handle job seeker inquiries
-    if (part.includes("processed accordingly")) {
+    if (isJobSeekerTrigger(part)) {
       const { reportMessage, contactInfo } = await generateSpecialReportRecruitment(
         threadID,
         companyConfig.assistantId,
@@ -10302,7 +10641,8 @@ async function assignToEmployee(
   client,
   idSubstring,
   triggerKeyword = "",
-  phoneIndex = 0
+  phoneIndex = 0,
+  skipMessage = false
 ) {
   console.log(`[ASSIGN_TO_EMPLOYEE DEBUG] Starting assignment for employee:`, {
     employee: employee,
@@ -10377,15 +10717,19 @@ Kindly login to the CRM software to continue.
 
 Thank you.`;
 
-    console.log(
-      `[ASSIGN_TO_EMPLOYEE DEBUG] Sending message to employee: ${employeeID}`
-    );
-    console.log(`[ASSIGN_TO_EMPLOYEE DEBUG] Message content:`, message);
+    if (!skipMessage) {
+      console.log(
+        `[ASSIGN_TO_EMPLOYEE DEBUG] Sending message to employee: ${employeeID}`
+      );
+      console.log(`[ASSIGN_TO_EMPLOYEE DEBUG] Message content:`, message);
 
-    // Send WhatsApp message to employee
-    await client.sendMessage(employeeID, message);
+      // Send WhatsApp message to employee
+      await client.sendMessage(employeeID, message);
 
-    console.log(`[ASSIGN_TO_EMPLOYEE DEBUG] Message sent successfully`);
+      console.log(`[ASSIGN_TO_EMPLOYEE DEBUG] Message sent successfully`);
+    } else {
+      console.log(`[ASSIGN_TO_EMPLOYEE DEBUG] Skipping generic assignment message (AI handler will send custom report)`);
+    }
 
     // Add employee name as tag to contact
     await addTagToPostgres(contactID, employee.name, idSubstring);

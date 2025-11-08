@@ -19265,7 +19265,7 @@ async function main(reinitialize = false) {
     "0160",
     "0161",
     "0210",
-    "022027",
+    "621275",
     "0245",
     "0342",
     "0377",
@@ -19351,7 +19351,7 @@ async function main(reinitialize = false) {
       return;
     }
 
-    const MAX_CONCURRENT = 3;
+    const MAX_CONCURRENT = 10;
     const BOT_TIMEOUT = 120000;
     const RETRY_DELAY = 5000;
     const MAX_RETRIES = 3;
