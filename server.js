@@ -12779,6 +12779,33 @@ const { broadcastNewMessageToCompany } = require("./utils/broadcast");
 const {
   handleNewMessagesTemplateWweb,
 } = require("./bots/handleMessagesFiraz.js");
+const { handleBotFlowMessage } = require("./botFlowHandler");
+
+/**
+ * Gets the operating mode for a company (ai or bot)
+ * @param {string} companyId - Company identifier
+ * @returns {Promise<string>} 'ai' or 'bot'
+ */
+async function getCompanyMode(companyId) {
+  try {
+    const result = await pool.query(
+      'SELECT bot_mode FROM companies WHERE company_id = $1',
+      [companyId]
+    );
+    
+    if (result.rows.length === 0) {
+      console.log(`🔔 [MESSAGE_HANDLER] Company ${companyId} not found, defaulting to AI mode`);
+      return 'ai';
+    }
+    
+    const mode = result.rows[0].bot_mode || 'ai';
+    console.log(`🔔 [MESSAGE_HANDLER] Company ${companyId} mode: ${mode.toUpperCase()}`);
+    return mode;
+  } catch (error) {
+    console.error('🔔 [MESSAGE_HANDLER] Error getting company mode:', error);
+    return 'ai'; // Default to AI mode on error
+  }
+}
 
 function setupMessageHandler(client, botName, phoneIndex) {
   client.on("message", async (msg) => {
@@ -12806,7 +12833,18 @@ function setupMessageHandler(client, botName, phoneIndex) {
         return;
       }
 
-      await handleNewMessagesTemplateWweb(client, msg, botName, phoneIndex);
+      // Check if company is using Bot Mode or AI Mode
+      const companyMode = await getCompanyMode(botName);
+      
+      if (companyMode === 'bot') {
+        // Use Bot Flow Handler
+        console.log(`🔔 [MESSAGE_HANDLER] 🤖 Using BOT MODE - executing flow`);
+        await handleBotFlowMessage(client, msg, botName, phoneIndex);
+      } else {
+        // Use existing AI Handler
+        console.log(`🔔 [MESSAGE_HANDLER] 🧠 Using AI MODE - processing with AI`);
+        await handleNewMessagesTemplateWweb(client, msg, botName, phoneIndex);
+      }
 
       // Add broadcast call here - using safe extraction
       const extractedNumber = await safeExtractPhoneNumber(msg, client);
@@ -19410,7 +19448,7 @@ async function main(reinitialize = false) {
   //   "SELECT * FROM companies WHERE api_url = $1",
   //   ["https://bisnesgpt.jutateknologi.com"]
   // );
-  //const companyIds = ['0145'];
+ // const companyIds = ['0145'];
   const companyIds = [
     "0101",
     "0107",
@@ -19437,9 +19475,9 @@ async function main(reinitialize = false) {
     "765943",
     "946386",
   ];
-  const placeholders = companyIds.map((_, i) => `$${i + 1}`).join(", ");
-  const query = `SELECT * FROM companies WHERE company_id IN (${placeholders})`;
-  const companiesPromise = sqlDb.query(query, companyIds);
+  // const placeholders = companyIds.map((_, i) => `$${i + 1}`).join(", ");
+  // const query = `SELECT * FROM companies WHERE company_id IN (${placeholders})`;
+  // const companiesPromise = sqlDb.query(query, companyIds);
 
   // 2. If reinitializing, start cleanup early
   const cleanupPromise = reinitialize
@@ -35774,6 +35812,339 @@ app.post("/api/booking-slots/public/book", async (req, res) => {
     res.status(500).json({
       success: false,
       error: "Failed to create booking",
+    });
+  }
+});
+
+// ======================
+// BOT MODE API ENDPOINTS
+// ======================
+
+/**
+ * GET /api/bot-flow
+ * Loads a bot flow for a specific company
+ * Query params: companyId
+ */
+app.get('/api/bot-flow', async (req, res) => {
+  try {
+    const { companyId } = req.query;
+    
+    if (!companyId) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'companyId is required' 
+      });
+    }
+    
+    console.log(`📡 [API] Loading bot flow for company: ${companyId}`);
+    
+    const result = await pool.query(
+      'SELECT * FROM bot_flows WHERE company_id = $1',
+      [companyId]
+    );
+    
+    if (result.rows.length === 0) {
+      console.log(`📡 [API] No bot flow found for company: ${companyId}`);
+      return res.json({ 
+        success: true,
+        flow: null 
+      });
+    }
+    
+    const flow = result.rows[0];
+    console.log(`📡 [API] ✅ Bot flow loaded: "${flow.name}" (${flow.nodes.length} nodes)`);
+    
+    res.json({ 
+      success: true,
+      flow: {
+        id: flow.id,
+        companyId: flow.company_id,
+        name: flow.name,
+        nodes: flow.nodes,
+        edges: flow.edges,
+        createdAt: flow.created_at,
+        updatedAt: flow.updated_at,
+      }
+    });
+  } catch (error) {
+    console.error('📡 [API] ❌ Error loading bot flow:', error);
+    res.status(500).json({ 
+      success: false,
+      error: 'Failed to load bot flow',
+      details: error.message 
+    });
+  }
+});
+
+/**
+ * POST /api/bot-flow
+ * Saves or updates a bot flow for a company
+ * Body: { companyId, name, nodes, edges }
+ */
+app.post('/api/bot-flow', async (req, res) => {
+  try {
+    const { companyId, name, nodes, edges } = req.body;
+    
+    // Validation
+    if (!companyId || !name || !nodes || !edges) {
+      return res.status(400).json({ 
+        success: false,
+        error: 'Missing required fields: companyId, name, nodes, edges' 
+      });
+    }
+    
+    if (!Array.isArray(nodes) || !Array.isArray(edges)) {
+      return res.status(400).json({ 
+        success: false,
+        error: 'nodes and edges must be arrays' 
+      });
+    }
+    
+    console.log(`📡 [API] Saving bot flow for company: ${companyId}`);
+    console.log(`📡 [API] Flow name: "${name}"`);
+    console.log(`📡 [API] Nodes: ${nodes.length}, Edges: ${edges.length}`);
+    
+    // Check if flow exists
+    const existing = await pool.query(
+      'SELECT id FROM bot_flows WHERE company_id = $1',
+      [companyId]
+    );
+    
+    if (existing.rows.length > 0) {
+      // Update existing flow
+      console.log(`📡 [API] Updating existing flow (ID: ${existing.rows[0].id})`);
+      await pool.query(
+        `UPDATE bot_flows 
+         SET name = $1, nodes = $2, edges = $3, updated_at = NOW()
+         WHERE company_id = $4`,
+        [name, JSON.stringify(nodes), JSON.stringify(edges), companyId]
+      );
+    } else {
+      // Insert new flow
+      console.log(`📡 [API] Creating new flow`);
+      await pool.query(
+        `INSERT INTO bot_flows (company_id, name, nodes, edges)
+         VALUES ($1, $2, $3, $4)`,
+        [companyId, name, JSON.stringify(nodes), JSON.stringify(edges)]
+      );
+    }
+    
+    console.log(`📡 [API] ✅ Bot flow saved successfully`);
+    res.json({ 
+      success: true,
+      message: 'Bot flow saved successfully'
+    });
+  } catch (error) {
+    console.error('📡 [API] ❌ Error saving bot flow:', error);
+    res.status(500).json({ 
+      success: false,
+      error: 'Failed to save bot flow',
+      details: error.message 
+    });
+  }
+});
+
+/**
+ * POST /api/company-mode
+ * Updates the operating mode for a company (ai or bot)
+ * Body: { companyId, mode }
+ */
+app.post('/api/company-mode', async (req, res) => {
+  try {
+    const { companyId, mode } = req.body;
+    
+    // Validation
+    if (!companyId) {
+      return res.status(400).json({ 
+        success: false,
+        error: 'companyId is required' 
+      });
+    }
+    
+    if (!mode || !['ai', 'bot'].includes(mode)) {
+      return res.status(400).json({ 
+        success: false,
+        error: 'mode must be either "ai" or "bot"' 
+      });
+    }
+    
+    console.log(`📡 [API] Setting company ${companyId} mode to: ${mode.toUpperCase()}`);
+    
+    // Update company mode
+    const result = await pool.query(
+      'UPDATE companies SET bot_mode = $1 WHERE company_id = $2 RETURNING company_id',
+      [mode, companyId]
+    );
+    
+    if (result.rows.length === 0) {
+      console.log(`📡 [API] ⚠️ Company ${companyId} not found`);
+      return res.status(404).json({ 
+        success: false,
+        error: 'Company not found' 
+      });
+    }
+    
+    console.log(`📡 [API] ✅ Company mode updated successfully`);
+    res.json({ 
+      success: true,
+      message: `Company mode set to ${mode}`,
+      companyId,
+      mode
+    });
+  } catch (error) {
+    console.error('📡 [API] ❌ Error updating company mode:', error);
+    res.status(500).json({ 
+      success: false,
+      error: 'Failed to update company mode',
+      details: error.message 
+    });
+  }
+});
+
+/**
+ * GET /api/company-mode
+ * Gets the current operating mode for a company
+ * Query params: companyId
+ */
+app.get('/api/company-mode', async (req, res) => {
+  try {
+    const { companyId } = req.query;
+    
+    if (!companyId) {
+      return res.status(400).json({ 
+        success: false,
+        error: 'companyId is required' 
+      });
+    }
+    
+    console.log(`📡 [API] Getting mode for company: ${companyId}`);
+    
+    const result = await pool.query(
+      'SELECT bot_mode FROM companies WHERE company_id = $1',
+      [companyId]
+    );
+    
+    if (result.rows.length === 0) {
+      console.log(`📡 [API] ⚠️ Company ${companyId} not found`);
+      return res.status(404).json({ 
+        success: false,
+        error: 'Company not found' 
+      });
+    }
+    
+    const mode = result.rows[0].bot_mode || 'ai';
+    console.log(`📡 [API] ✅ Company mode: ${mode.toUpperCase()}`);
+    
+    res.json({ 
+      success: true,
+      companyId,
+      mode
+    });
+  } catch (error) {
+    console.error('📡 [API] ❌ Error getting company mode:', error);
+    res.status(500).json({ 
+      success: false,
+      error: 'Failed to get company mode',
+      details: error.message 
+    });
+  }
+});
+
+/**
+ * GET /api/bot-flow-executions
+ * Gets execution history for a company's bot flows (for analytics/debugging)
+ * Query params: companyId, limit (optional, default 50)
+ */
+app.get('/api/bot-flow-executions', async (req, res) => {
+  try {
+    const { companyId, limit = 50 } = req.query;
+    
+    if (!companyId) {
+      return res.status(400).json({ 
+        success: false,
+        error: 'companyId is required' 
+      });
+    }
+    
+    console.log(`📡 [API] Loading execution history for company: ${companyId}`);
+    
+    const result = await pool.query(
+      `SELECT * FROM bot_flow_executions 
+       WHERE company_id = $1 
+       ORDER BY started_at DESC 
+       LIMIT $2`,
+      [companyId, parseInt(limit)]
+    );
+    
+    console.log(`📡 [API] ✅ Found ${result.rows.length} execution(s)`);
+    
+    res.json({ 
+      success: true,
+      executions: result.rows.map(row => ({
+        id: row.id,
+        companyId: row.company_id,
+        contactId: row.contact_id,
+        flowId: row.flow_id,
+        startedAt: row.started_at,
+        completedAt: row.completed_at,
+        status: row.status,
+        errorMessage: row.error_message,
+        nodesExecuted: row.nodes_executed,
+        variablesFinal: row.variables_final,
+      }))
+    });
+  } catch (error) {
+    console.error('📡 [API] ❌ Error loading execution history:', error);
+    res.status(500).json({ 
+      success: false,
+      error: 'Failed to load execution history',
+      details: error.message 
+    });
+  }
+});
+
+/**
+ * DELETE /api/bot-flow
+ * Deletes a bot flow for a company
+ * Query params: companyId
+ */
+app.delete('/api/bot-flow', async (req, res) => {
+  try {
+    const { companyId } = req.query;
+    
+    if (!companyId) {
+      return res.status(400).json({ 
+        success: false,
+        error: 'companyId is required' 
+      });
+    }
+    
+    console.log(`📡 [API] Deleting bot flow for company: ${companyId}`);
+    
+    const result = await pool.query(
+      'DELETE FROM bot_flows WHERE company_id = $1 RETURNING id',
+      [companyId]
+    );
+    
+    if (result.rows.length === 0) {
+      console.log(`📡 [API] ⚠️ No bot flow found to delete`);
+      return res.status(404).json({ 
+        success: false,
+        error: 'Bot flow not found' 
+      });
+    }
+    
+    console.log(`📡 [API] ✅ Bot flow deleted successfully`);
+    res.json({ 
+      success: true,
+      message: 'Bot flow deleted successfully'
+    });
+  } catch (error) {
+    console.error('📡 [API] ❌ Error deleting bot flow:', error);
+    res.status(500).json({ 
+      success: false,
+      error: 'Failed to delete bot flow',
+      details: error.message 
     });
   }
 });

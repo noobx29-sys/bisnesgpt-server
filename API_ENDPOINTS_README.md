@@ -281,6 +281,23 @@ The test script will:
 - UUID generation for unique identifiers
 - Environment variables for database configuration
 
+## Recent Updates
+
+### Active Hours for Scheduled Messages (January 2025)
+The scheduled messages feature now supports restricting message sending to specific hours of the day.
+
+**Documentation:**
+- **Implementation Guide**: See `ACTIVE_HOURS_IMPLEMENTATION.md` for technical details
+- **Frontend Integration**: See `ACTIVE_HOURS_FRONTEND_GUIDE.md` for API usage
+- **Deployment**: See `ACTIVE_HOURS_DEPLOYMENT.md` for deployment instructions
+- **Summary**: See `ACTIVE_HOURS_SUMMARY.md` for overview
+
+**Key Changes:**
+- Added `active_hours_start` and `active_hours_end` columns to `scheduled_messages` table
+- Updated POST/PUT `/api/schedule-message/:companyId` to accept optional `activeHours` parameter
+- Updated GET `/api/scheduled-messages` to return `activeHours` in response
+- Messages outside active hours wait until the specified time window
+
 ## Environment Variables
 
 Ensure these environment variables are set:
