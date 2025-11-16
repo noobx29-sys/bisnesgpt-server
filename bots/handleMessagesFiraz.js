@@ -8297,17 +8297,79 @@ async function handlePDFMessagePoppler(
         `[PDF] Page ${i} image loaded, base64 length: ${base64Image.length}`
       );
 
-      // Analyze image using GPT-4-mini
+      // Analyze image using GPT-4-mini with company-specific extraction
       console.log(`[PDF] Sending page ${i} to OpenAI for analysis...`);
-      const response = await openai.chat.completions.create({
-        model: "gpt-4.1-mini",
-        messages: [
-          {
-            role: "user",
-            content: [
-              {
-                type: "text",
-                text: `Please extract and analyze ALL text and data from this PDF page with high accuracy. Focus on:
+      
+      // Special prompt for Job Builder (765943) resume extraction
+      let extractionPrompt;
+      if (idSubstring === "765943") {
+        extractionPrompt = `You are analyzing a RESUME/CV document. Extract ALL information with EXTREME ACCURACY, paying special attention to:
+
+**CRITICAL FIELDS (Job Builder Resume):**
+1. **Email Address:** 
+   - Extract the COMPLETE email address with 100% accuracy
+   - Format: username@domain.com
+   - Double-check EVERY CHARACTER (no typos allowed)
+   - Look in header, contact section, or anywhere on the page
+   - Example: john.doe@gmail.com, johndoe123@yahoo.com
+
+2. **Full Name:**
+   - Extract complete first name and last name
+   - Include middle name if present
+
+3. **Phone Number:**
+   - Include country code and full number
+   - Format: +60123456789 or similar
+
+4. **Skills (VERY IMPORTANT):**
+   - List ALL technical skills mentioned (programming languages, frameworks, tools, software)
+   - List ALL soft skills (communication, leadership, teamwork, etc.)
+   - Format as a comma-separated list
+   - Examples: "Full Stack Developer, Web Developer, React Developer, Frontend Developer"
+   - Or: "JavaScript, Python, React, Node.js, HTML, CSS, SQL, Git"
+
+5. **Work Experience/Employment History (VERY IMPORTANT):**
+   - Extract EVERY job position with:
+     * Job Title / Position
+     * Company Name
+     * Duration (start date - end date or "Present")
+     * Key responsibilities and achievements (bullet points)
+   - Format clearly for each position
+   - Example format:
+     Position: Senior Developer
+     Company: ABC Tech Sdn Bhd
+     Duration: Jan 2020 - Present
+     Responsibilities: Led team of 5, developed web applications, etc.
+
+6. **Education:**
+   - Degrees, certifications, schools attended
+   - Graduation years
+
+7. **Summary/Profile:**
+   - Professional summary or career objective if present
+
+**OUTPUT FORMAT:**
+Organize the extracted data with clear section headers:
+
+EMAIL: [exact email address]
+FULL NAME: [complete name]
+PHONE: [full phone number]
+
+SKILLS:
+[List all skills found - technical and soft skills]
+
+WORK EXPERIENCE:
+[Each position with company, title, duration, responsibilities]
+
+EDUCATION:
+[Degrees and schools]
+
+PROFILE/SUMMARY:
+[Career objective or professional summary if present]
+
+Be thorough and accurate. If any field is not found on this page, write "Not found on this page".`;
+      } else {
+        extractionPrompt = `Please extract and analyze ALL text and data from this PDF page with high accuracy. Focus on:
 
 1. **Contact Information:**
    - Full names (first and last names)
@@ -8336,7 +8398,18 @@ async function handlePDFMessagePoppler(
 
 Provide the extracted information in a structured format with clear labels. Be especially careful with email addresses - verify each character and ensure proper formatting (name@domain.com). If uncertain about any character in an email, mention the uncertainty.
 
-Also describe what type of document this appears to be (form, invoice, letter, etc.).`,
+Also describe what type of document this appears to be (form, invoice, letter, etc.).`;
+      }
+      
+      const response = await openai.chat.completions.create({
+        model: "gpt-4.1-mini",
+        messages: [
+          {
+            role: "user",
+            content: [
+              {
+                type: "text",
+                text: extractionPrompt,
               },
               {
                 type: "image_url",
@@ -8347,7 +8420,7 @@ Also describe what type of document this appears to be (form, invoice, letter, e
             ],
           },
         ],
-        max_tokens: 700,
+        max_tokens: 1000,
       });
 
       // Add page analysis to results
@@ -15432,17 +15505,19 @@ Fill in the information in square brackets with the relevant details from our co
 New Job Seeker Registration
 
 Personal Information:
-1. Full name: [Extract from conversation]
-2. Email: [Extract from conversation]
+1. Full name: [Extract from conversation OR from resume/PDF if provided]
+2. Email: [Extract from conversation OR from resume/PDF if provided - MUST extract if resume was uploaded]
 3. Resume: [Check if resume was sent - indicate "sent" or "not received"]
-4. What kind of job are you currently looking for: [Extract from conversation]
-5. What is your preferred job location: [Extract from conversation]
-6. Do you have a preferred industry or company type you want to work in: [Extract from conversation]
-7. Are you currently employed, serving notice, or have you resigned: [Extract from conversation]
-8. If you have a previous job, may I know the actual reason why you left your previous company: [Extract from conversation]
-9. Could you share your expected salary range for this role: [Extract from conversation]
-10. Is your expected salary still negotiable: [Extract from conversation]
-11. Could you briefly tell us about your past working experience: [Extract from conversation]
+4. Skills: [Extract ALL skills from resume/PDF if provided - include technical skills like programming languages, software, tools AND position titles like "Full Stack Developer, Web Developer" etc.]
+5. Experiences: [Extract ALL work experience from resume/PDF if provided - include job titles, company names, durations, and key responsibilities for EACH position]
+6. What kind of job are you currently looking for: [Extract from conversation]
+7. What is your preferred job location: [Extract from conversation]
+8. Do you have a preferred industry or company type you want to work in: [Extract from conversation]
+9. Are you currently employed, serving notice, or have you resigned: [Extract from conversation]
+10. If you have a previous job, may I know the actual reason why you left your previous company: [Extract from conversation]
+11. Could you share your expected salary range for this role: [Extract from conversation]
+12. Is your expected salary still negotiable: [Extract from conversation]
+13. Could you briefly tell us about your past working experience: [Extract from conversation OR use the experiences extracted from resume]
 
 Contact Information:
 - Phone Number: ${extractedNumber}
@@ -15451,7 +15526,12 @@ Contact Information:
 Additional Notes:
 [Extract any other relevant information mentioned during the conversation]
 
-Fill in the information in square brackets with the relevant details from our conversation. If any information is not available, leave it blank or indicate "Not specified".`;
+IMPORTANT INSTRUCTIONS:
+- If a resume/PDF was uploaded, make sure to extract the Email, Skills, and Experiences from the PDF content analysis
+- For Skills: List BOTH position titles (e.g., "Full Stack Developer, React Developer") AND technical skills (e.g., "JavaScript, Python, React, Node.js")
+- For Experiences: Include complete work history with job title, company name, duration, and responsibilities for each position
+- If the information is in the PDF analysis but not explicitly mentioned in conversation, still extract it from the PDF
+- Fill in the information in square brackets with the relevant details from our conversation AND/OR the resume. If any information is not available, leave it blank or indicate "Not specified".`;
     }
 
     var response = await openai.beta.threads.messages.create(threadID, {
