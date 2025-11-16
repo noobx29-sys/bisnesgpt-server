@@ -11955,10 +11955,54 @@ async function sendScheduledMessage(message) {
           // Check if we're within active hours
           if (!isWithinActiveHoursLocal()) {
             console.log(
-              `[Company ${companyId}] Outside active hours (${message.active_hours_start} - ${message.active_hours_end}), waiting 10 minutes...`
+              `[Company ${companyId}] ⏰ Outside active hours (${message.active_hours_start} - ${message.active_hours_end})`
             );
-            await new Promise((resolve) => setTimeout(resolve, 600000));
-            continue;
+            
+            // Calculate next check time (10 minutes from now)
+            const nextCheckDelay = 10 * 60 * 1000; // 10 minutes
+            
+            console.log(
+              `[Company ${companyId}] 🔄 Rescheduling job to check again in 10 minutes...`
+            );
+            
+            // Get the queue for this company
+            const queue = getQueueForBot(companyId);
+            
+            // Determine if this is a batch or single message
+            const isBatch = message.id !== message.schedule_id;
+            
+            // Reschedule the job
+            await queue.add(
+              isBatch ? "send-message-batch" : "send-single-message",
+              isBatch 
+                ? {
+                    companyId,
+                    messageId: message.schedule_id,
+                    batchId: message.id,
+                  }
+                : {
+                    companyId,
+                    messageId: message.id,
+                  },
+              {
+                removeOnComplete: false,
+                removeOnFail: false,
+                delay: nextCheckDelay,
+                jobId: message.id, // Use same jobId to replace existing job
+              }
+            );
+            
+            console.log(
+              `[Company ${companyId}] ✅ Job rescheduled successfully. Exiting current job.`
+            );
+            
+            // Return success to complete this job and let the rescheduled one take over
+            return {
+              success: true,
+              rescheduled: true,
+              reason: "Outside active hours",
+              nextCheck: new Date(Date.now() + nextCheckDelay).toISOString()
+            };
           }
 
           // Add rate limiting check
@@ -12486,7 +12530,7 @@ async function scheduleAllMessages(specificCompanyId = null) {
   const client = await pool.connect();
   try {
     console.log(
-      `Scheduling all previous scheduled messages${
+      `🔄 Scheduling all previous scheduled messages${
         specificCompanyId ? ` for company ${specificCompanyId}` : ""
       }...`
     );
@@ -12509,6 +12553,7 @@ async function scheduleAllMessages(specificCompanyId = null) {
     }
 
     const companiesResult = await client.query(companiesQuery, companiesValues);
+    console.log(`📋 Found ${companiesResult.rows.length} companies with scheduled messages`);
 
     for (const companyRow of companiesResult.rows) {
       const companyId = companyRow.company_id;
@@ -12522,11 +12567,17 @@ async function scheduleAllMessages(specificCompanyId = null) {
         const companyApiUrl = apiUrlResult.rows[0]?.api_url;
 
         if (companyApiUrl !== "https://bisnesgpt.jutateknologi.com") {
+          console.log(`⏭️ Skipping company ${companyId} - different API URL`);
           continue;
         }
       }
 
+      console.log(`🤖 Initializing queue and worker for company ${companyId}...`);
       const queue = getQueueForBot(companyId);
+      
+      // Verify queue is ready
+      await queue.waitUntilReady();
+      console.log(`✅ Queue ready for company ${companyId}`);
 
       // Get all scheduled messages that need to be processed
       const messagesQuery = `
@@ -12539,8 +12590,24 @@ async function scheduleAllMessages(specificCompanyId = null) {
       const messagesResult = await client.query(messagesQuery, [companyId]);
 
       console.log(
-        `Found ${messagesResult.rows.length} scheduled messages for company ${companyId}`
+        `📨 Found ${messagesResult.rows.length} scheduled messages for company ${companyId} (scheduled_time > NOW())`
       );
+      
+      // Also log how many are in the past (for debugging)
+      const pastMessagesQuery = `
+        SELECT COUNT(*) as past_count FROM scheduled_messages
+        WHERE company_id = $1
+        AND status = 'scheduled'
+        AND scheduled_time <= NOW()
+      `;
+      const pastMessagesResult = await client.query(pastMessagesQuery, [companyId]);
+      const pastCount = pastMessagesResult.rows[0]?.past_count || 0;
+      
+      if (pastCount > 0) {
+        console.log(
+          `⚠️ Warning: ${pastCount} scheduled messages for company ${companyId} have scheduled_time in the past (these will NOT be rescheduled)`
+        );
+      }
 
       for (const message of messagesResult.rows) {
         const messageId = message.id;
@@ -12549,6 +12616,7 @@ async function scheduleAllMessages(specificCompanyId = null) {
 
         // Skip if scheduled time has already passed
         if (delay < 0) {
+          console.log(`⏭️ Skipping message ${messageId} - scheduled time has passed (delay: ${delay}ms)`);
           continue;
         }
 
@@ -12558,7 +12626,7 @@ async function scheduleAllMessages(specificCompanyId = null) {
         if (isBatch) {
           // This is a batch message
           console.log(
-            `Checking batch message ${messageId} for schedule ${scheduleId} with delay ${delay}ms`
+            `📦 Checking batch message ${messageId} for schedule ${scheduleId} (delay: ${Math.round(delay/1000)}s)`
           );
           // Verify parent schedule still exists and is scheduled (protect against deleted main rows)
           try {
@@ -12779,33 +12847,6 @@ const { broadcastNewMessageToCompany } = require("./utils/broadcast");
 const {
   handleNewMessagesTemplateWweb,
 } = require("./bots/handleMessagesFiraz.js");
-const { handleBotFlowMessage } = require("./botFlowHandler");
-
-/**
- * Gets the operating mode for a company (ai or bot)
- * @param {string} companyId - Company identifier
- * @returns {Promise<string>} 'ai' or 'bot'
- */
-async function getCompanyMode(companyId) {
-  try {
-    const result = await pool.query(
-      'SELECT bot_mode FROM companies WHERE company_id = $1',
-      [companyId]
-    );
-    
-    if (result.rows.length === 0) {
-      console.log(`🔔 [MESSAGE_HANDLER] Company ${companyId} not found, defaulting to AI mode`);
-      return 'ai';
-    }
-    
-    const mode = result.rows[0].bot_mode || 'ai';
-    console.log(`🔔 [MESSAGE_HANDLER] Company ${companyId} mode: ${mode.toUpperCase()}`);
-    return mode;
-  } catch (error) {
-    console.error('🔔 [MESSAGE_HANDLER] Error getting company mode:', error);
-    return 'ai'; // Default to AI mode on error
-  }
-}
 
 function setupMessageHandler(client, botName, phoneIndex) {
   client.on("message", async (msg) => {
@@ -12833,18 +12874,7 @@ function setupMessageHandler(client, botName, phoneIndex) {
         return;
       }
 
-      // Check if company is using Bot Mode or AI Mode
-      const companyMode = await getCompanyMode(botName);
-      
-      if (companyMode === 'bot') {
-        // Use Bot Flow Handler
-        console.log(`🔔 [MESSAGE_HANDLER] 🤖 Using BOT MODE - executing flow`);
-        await handleBotFlowMessage(client, msg, botName, phoneIndex);
-      } else {
-        // Use existing AI Handler
-        console.log(`🔔 [MESSAGE_HANDLER] 🧠 Using AI MODE - processing with AI`);
-        await handleNewMessagesTemplateWweb(client, msg, botName, phoneIndex);
-      }
+      await handleNewMessagesTemplateWweb(client, msg, botName, phoneIndex);
 
       // Add broadcast call here - using safe extraction
       const extractedNumber = await safeExtractPhoneNumber(msg, client);
@@ -13058,6 +13088,7 @@ function setupMessageCreateHandler(client, botName, phoneIndex) {
             "0119",
             "0102",
             "0156",
+            "058666"
           ].includes(companyId)
         ) {
           await sqlDb.query(
@@ -19448,7 +19479,7 @@ async function main(reinitialize = false) {
   //   "SELECT * FROM companies WHERE api_url = $1",
   //   ["https://bisnesgpt.jutateknologi.com"]
   // );
- // const companyIds = ['0145'];
+  //const companyIds = ['0145'];
   const companyIds = [
     "0101",
     "0107",
@@ -19473,11 +19504,12 @@ async function main(reinitialize = false) {
     "458752",
     "728219",
     "765943",
+    "621275",
     "946386",
   ];
-  // const placeholders = companyIds.map((_, i) => `$${i + 1}`).join(", ");
-  // const query = `SELECT * FROM companies WHERE company_id IN (${placeholders})`;
-  // const companiesPromise = sqlDb.query(query, companyIds);
+  const placeholders = companyIds.map((_, i) => `$${i + 1}`).join(", ");
+  const query = `SELECT * FROM companies WHERE company_id IN (${placeholders})`;
+  const companiesPromise = sqlDb.query(query, companyIds);
 
   // 2. If reinitializing, start cleanup early
   const cleanupPromise = reinitialize
@@ -24707,6 +24739,282 @@ app.get("/api/bot-status/:companyId", async (req, res) => {
     res.status(500).json({ error: "Failed to get status" });
   }
 });
+
+// ======================
+// PHONE MANAGEMENT ENDPOINTS
+// ======================
+
+// POST /api/companies/{companyId}/phones/add - Add a new phone to company
+app.post("/api/companies/:companyId/phones/add", async (req, res) => {
+  const { companyId } = req.params;
+  
+  console.log(`=== Add Phone Request for Company: ${companyId} ===`);
+
+  try {
+    // Get current company data
+    const companyData = await sqlDb.getRow(
+      "SELECT * FROM companies WHERE company_id = $1",
+      [companyId]
+    );
+
+    if (!companyData) {
+      return res.status(404).json({
+        success: false,
+        error: "Company not found"
+      });
+    }
+
+    const currentPhoneCount = companyData.phone_count || 1;
+    const maxPhones = getMaxPhonesByPlan(companyData.plan);
+
+    // Validate phone count limits
+    if (currentPhoneCount >= maxPhones) {
+      return res.status(400).json({
+        success: false,
+        error: `Maximum phone limit reached for ${companyData.plan || 'free'} plan (${maxPhones} phones)`,
+        currentPhoneCount,
+        maxPhones,
+        plan: companyData.plan
+      });
+    }
+
+    const newPhoneCount = currentPhoneCount + 1;
+    const newPhoneIndex = currentPhoneCount; // 0-based index
+
+    // Update phone count in database
+    await sqlDb.query(
+      "UPDATE companies SET phone_count = $1, updated_at = CURRENT_TIMESTAMP WHERE company_id = $2",
+      [newPhoneCount, companyId]
+    );
+
+    console.log(`Updated phone count for ${companyId}: ${currentPhoneCount} -> ${newPhoneCount}`);
+
+    // Send immediate response
+    res.json({
+      success: true,
+      message: `Phone ${newPhoneIndex + 1} added successfully. Initialization in progress.`,
+      companyId,
+      previousPhoneCount: currentPhoneCount,
+      newPhoneCount,
+      newPhoneIndex,
+      status: "initializing"
+    });
+
+    // Initialize the new phone in background
+    console.log(`Initializing new phone ${newPhoneIndex} for company ${companyId}...`);
+    
+    try {
+      await initializeBot(companyId, newPhoneCount, newPhoneIndex);
+      console.log(`Successfully initialized phone ${newPhoneIndex} for company ${companyId}`);
+    } catch (initError) {
+      console.error(`Error initializing new phone for ${companyId}:`, initError);
+      // Don't fail the request - just log the error
+    }
+
+  } catch (error) {
+    console.error(`Error adding phone for company ${companyId}:`, error);
+    res.status(500).json({
+      success: false,
+      error: "Failed to add phone",
+      details: error.message
+    });
+  }
+});
+
+// DELETE /api/companies/{companyId}/phones/{phoneIndex} - Remove a phone from company
+app.delete("/api/companies/:companyId/phones/:phoneIndex", async (req, res) => {
+  const { companyId, phoneIndex } = req.params;
+  const phoneIndexNum = parseInt(phoneIndex, 10);
+  
+  console.log(`=== Remove Phone Request for Company: ${companyId}, Phone: ${phoneIndexNum} ===`);
+
+  try {
+    // Validate phoneIndex
+    if (isNaN(phoneIndexNum) || phoneIndexNum < 0) {
+      return res.status(400).json({
+        success: false,
+        error: "Invalid phone index"
+      });
+    }
+
+    // Get current company data
+    const companyData = await sqlDb.getRow(
+      "SELECT * FROM companies WHERE company_id = $1",
+      [companyId]
+    );
+
+    if (!companyData) {
+      return res.status(404).json({
+        success: false,
+        error: "Company not found"
+      });
+    }
+
+    const currentPhoneCount = companyData.phone_count || 1;
+
+    // Validate removal constraints
+    if (currentPhoneCount <= 1) {
+      return res.status(400).json({
+        success: false,
+        error: "Cannot remove phone - company must have at least 1 phone",
+        currentPhoneCount
+      });
+    }
+
+    if (phoneIndexNum >= currentPhoneCount) {
+      return res.status(400).json({
+        success: false,
+        error: `Phone index ${phoneIndexNum} does not exist (company has ${currentPhoneCount} phones)`,
+        currentPhoneCount
+      });
+    }
+
+    // Don't allow removing phone 0 to maintain consistency
+    if (phoneIndexNum === 0) {
+      return res.status(400).json({
+        success: false,
+        error: "Cannot remove primary phone (index 0). Remove other phones first.",
+        suggestion: "Remove phones with higher indexes first, then recreate the company if needed."
+      });
+    }
+
+    // Disconnect and destroy the phone client
+    const botData = botMap.get(companyId);
+    if (botData && Array.isArray(botData) && botData[phoneIndexNum]) {
+      try {
+        if (botData[phoneIndexNum].client) {
+          await destroyClient(botData[phoneIndexNum].client);
+          console.log(`Destroyed client for ${companyId} phone ${phoneIndexNum}`);
+        }
+        
+        // Remove the phone from botMap
+        botData.splice(phoneIndexNum, 1);
+        botMap.set(companyId, botData);
+        
+      } catch (destroyError) {
+        console.error(`Error destroying client for ${companyId} phone ${phoneIndexNum}:`, destroyError);
+        // Continue with removal even if client destruction fails
+      }
+    }
+
+    const newPhoneCount = currentPhoneCount - 1;
+
+    // Update phone count in database
+    await sqlDb.query(
+      "UPDATE companies SET phone_count = $1, updated_at = CURRENT_TIMESTAMP WHERE company_id = $2",
+      [newPhoneCount, companyId]
+    );
+
+    console.log(`Updated phone count for ${companyId}: ${currentPhoneCount} -> ${newPhoneCount}`);
+
+    res.json({
+      success: true,
+      message: `Phone ${phoneIndexNum + 1} removed successfully`,
+      companyId,
+      removedPhoneIndex: phoneIndexNum,
+      previousPhoneCount: currentPhoneCount,
+      newPhoneCount
+    });
+
+  } catch (error) {
+    console.error(`Error removing phone ${phoneIndexNum} for company ${companyId}:`, error);
+    res.status(500).json({
+      success: false,
+      error: "Failed to remove phone",
+      details: error.message
+    });
+  }
+});
+
+// GET /api/companies/{companyId}/phones - Get phone information for company
+app.get("/api/companies/:companyId/phones", async (req, res) => {
+  const { companyId } = req.params;
+  
+  try {
+    // Get company data
+    const companyData = await sqlDb.getRow(
+      "SELECT * FROM companies WHERE company_id = $1",
+      [companyId]
+    );
+
+    if (!companyData) {
+      return res.status(404).json({
+        success: false,
+        error: "Company not found"
+      });
+    }
+
+    const phoneCount = companyData.phone_count || 1;
+    const maxPhones = getMaxPhonesByPlan(companyData.plan);
+    const botData = botMap.get(companyId);
+
+    // Build phone status array
+    const phones = [];
+    for (let i = 0; i < phoneCount; i++) {
+      let phoneStatus = "disconnected";
+      let phoneInfo = null;
+      let qrCode = null;
+
+      if (botData && botData[i]) {
+        phoneStatus = botData[i].status || "unknown";
+        qrCode = botData[i].qrCode;
+        
+        if (botData[i].client) {
+          try {
+            const info = await botData[i].client.info;
+            phoneInfo = info?.wid?.user || null;
+          } catch (err) {
+            console.error(`Error getting info for ${companyId} phone ${i}:`, err);
+          }
+        }
+      }
+
+      phones.push({
+        phoneIndex: i,
+        status: phoneStatus,
+        phoneInfo,
+        qrCode,
+        canRemove: i > 0 && phoneCount > 1 // Can't remove phone 0 or if only 1 phone
+      });
+    }
+
+    res.json({
+      success: true,
+      companyId,
+      phoneCount,
+      maxPhones,
+      plan: companyData.plan,
+      canAddPhone: phoneCount < maxPhones,
+      phones
+    });
+
+  } catch (error) {
+    console.error(`Error getting phones for company ${companyId}:`, error);
+    res.status(500).json({
+      success: false,
+      error: "Failed to get phone information",
+      details: error.message
+    });
+  }
+});
+
+// Helper function to get max phones by plan
+function getMaxPhonesByPlan(plan) {
+  switch (plan?.toLowerCase()) {
+    case 'free':
+    case 'trial':
+      return 1;
+    case 'premium':
+    case 'starter':
+      return 3;
+    case 'business':
+      return 5;
+    case 'enterprise':
+      return 10;
+    default:
+      return 1; // Default to free plan limit
+  }
+}
 
 // GET /api/ai-responses - Fetch all AI responses for a company
 app.get("/api/ai-responses", async (req, res) => {
@@ -35812,339 +36120,6 @@ app.post("/api/booking-slots/public/book", async (req, res) => {
     res.status(500).json({
       success: false,
       error: "Failed to create booking",
-    });
-  }
-});
-
-// ======================
-// BOT MODE API ENDPOINTS
-// ======================
-
-/**
- * GET /api/bot-flow
- * Loads a bot flow for a specific company
- * Query params: companyId
- */
-app.get('/api/bot-flow', async (req, res) => {
-  try {
-    const { companyId } = req.query;
-    
-    if (!companyId) {
-      return res.status(400).json({ 
-        success: false, 
-        error: 'companyId is required' 
-      });
-    }
-    
-    console.log(`📡 [API] Loading bot flow for company: ${companyId}`);
-    
-    const result = await pool.query(
-      'SELECT * FROM bot_flows WHERE company_id = $1',
-      [companyId]
-    );
-    
-    if (result.rows.length === 0) {
-      console.log(`📡 [API] No bot flow found for company: ${companyId}`);
-      return res.json({ 
-        success: true,
-        flow: null 
-      });
-    }
-    
-    const flow = result.rows[0];
-    console.log(`📡 [API] ✅ Bot flow loaded: "${flow.name}" (${flow.nodes.length} nodes)`);
-    
-    res.json({ 
-      success: true,
-      flow: {
-        id: flow.id,
-        companyId: flow.company_id,
-        name: flow.name,
-        nodes: flow.nodes,
-        edges: flow.edges,
-        createdAt: flow.created_at,
-        updatedAt: flow.updated_at,
-      }
-    });
-  } catch (error) {
-    console.error('📡 [API] ❌ Error loading bot flow:', error);
-    res.status(500).json({ 
-      success: false,
-      error: 'Failed to load bot flow',
-      details: error.message 
-    });
-  }
-});
-
-/**
- * POST /api/bot-flow
- * Saves or updates a bot flow for a company
- * Body: { companyId, name, nodes, edges }
- */
-app.post('/api/bot-flow', async (req, res) => {
-  try {
-    const { companyId, name, nodes, edges } = req.body;
-    
-    // Validation
-    if (!companyId || !name || !nodes || !edges) {
-      return res.status(400).json({ 
-        success: false,
-        error: 'Missing required fields: companyId, name, nodes, edges' 
-      });
-    }
-    
-    if (!Array.isArray(nodes) || !Array.isArray(edges)) {
-      return res.status(400).json({ 
-        success: false,
-        error: 'nodes and edges must be arrays' 
-      });
-    }
-    
-    console.log(`📡 [API] Saving bot flow for company: ${companyId}`);
-    console.log(`📡 [API] Flow name: "${name}"`);
-    console.log(`📡 [API] Nodes: ${nodes.length}, Edges: ${edges.length}`);
-    
-    // Check if flow exists
-    const existing = await pool.query(
-      'SELECT id FROM bot_flows WHERE company_id = $1',
-      [companyId]
-    );
-    
-    if (existing.rows.length > 0) {
-      // Update existing flow
-      console.log(`📡 [API] Updating existing flow (ID: ${existing.rows[0].id})`);
-      await pool.query(
-        `UPDATE bot_flows 
-         SET name = $1, nodes = $2, edges = $3, updated_at = NOW()
-         WHERE company_id = $4`,
-        [name, JSON.stringify(nodes), JSON.stringify(edges), companyId]
-      );
-    } else {
-      // Insert new flow
-      console.log(`📡 [API] Creating new flow`);
-      await pool.query(
-        `INSERT INTO bot_flows (company_id, name, nodes, edges)
-         VALUES ($1, $2, $3, $4)`,
-        [companyId, name, JSON.stringify(nodes), JSON.stringify(edges)]
-      );
-    }
-    
-    console.log(`📡 [API] ✅ Bot flow saved successfully`);
-    res.json({ 
-      success: true,
-      message: 'Bot flow saved successfully'
-    });
-  } catch (error) {
-    console.error('📡 [API] ❌ Error saving bot flow:', error);
-    res.status(500).json({ 
-      success: false,
-      error: 'Failed to save bot flow',
-      details: error.message 
-    });
-  }
-});
-
-/**
- * POST /api/company-mode
- * Updates the operating mode for a company (ai or bot)
- * Body: { companyId, mode }
- */
-app.post('/api/company-mode', async (req, res) => {
-  try {
-    const { companyId, mode } = req.body;
-    
-    // Validation
-    if (!companyId) {
-      return res.status(400).json({ 
-        success: false,
-        error: 'companyId is required' 
-      });
-    }
-    
-    if (!mode || !['ai', 'bot'].includes(mode)) {
-      return res.status(400).json({ 
-        success: false,
-        error: 'mode must be either "ai" or "bot"' 
-      });
-    }
-    
-    console.log(`📡 [API] Setting company ${companyId} mode to: ${mode.toUpperCase()}`);
-    
-    // Update company mode
-    const result = await pool.query(
-      'UPDATE companies SET bot_mode = $1 WHERE company_id = $2 RETURNING company_id',
-      [mode, companyId]
-    );
-    
-    if (result.rows.length === 0) {
-      console.log(`📡 [API] ⚠️ Company ${companyId} not found`);
-      return res.status(404).json({ 
-        success: false,
-        error: 'Company not found' 
-      });
-    }
-    
-    console.log(`📡 [API] ✅ Company mode updated successfully`);
-    res.json({ 
-      success: true,
-      message: `Company mode set to ${mode}`,
-      companyId,
-      mode
-    });
-  } catch (error) {
-    console.error('📡 [API] ❌ Error updating company mode:', error);
-    res.status(500).json({ 
-      success: false,
-      error: 'Failed to update company mode',
-      details: error.message 
-    });
-  }
-});
-
-/**
- * GET /api/company-mode
- * Gets the current operating mode for a company
- * Query params: companyId
- */
-app.get('/api/company-mode', async (req, res) => {
-  try {
-    const { companyId } = req.query;
-    
-    if (!companyId) {
-      return res.status(400).json({ 
-        success: false,
-        error: 'companyId is required' 
-      });
-    }
-    
-    console.log(`📡 [API] Getting mode for company: ${companyId}`);
-    
-    const result = await pool.query(
-      'SELECT bot_mode FROM companies WHERE company_id = $1',
-      [companyId]
-    );
-    
-    if (result.rows.length === 0) {
-      console.log(`📡 [API] ⚠️ Company ${companyId} not found`);
-      return res.status(404).json({ 
-        success: false,
-        error: 'Company not found' 
-      });
-    }
-    
-    const mode = result.rows[0].bot_mode || 'ai';
-    console.log(`📡 [API] ✅ Company mode: ${mode.toUpperCase()}`);
-    
-    res.json({ 
-      success: true,
-      companyId,
-      mode
-    });
-  } catch (error) {
-    console.error('📡 [API] ❌ Error getting company mode:', error);
-    res.status(500).json({ 
-      success: false,
-      error: 'Failed to get company mode',
-      details: error.message 
-    });
-  }
-});
-
-/**
- * GET /api/bot-flow-executions
- * Gets execution history for a company's bot flows (for analytics/debugging)
- * Query params: companyId, limit (optional, default 50)
- */
-app.get('/api/bot-flow-executions', async (req, res) => {
-  try {
-    const { companyId, limit = 50 } = req.query;
-    
-    if (!companyId) {
-      return res.status(400).json({ 
-        success: false,
-        error: 'companyId is required' 
-      });
-    }
-    
-    console.log(`📡 [API] Loading execution history for company: ${companyId}`);
-    
-    const result = await pool.query(
-      `SELECT * FROM bot_flow_executions 
-       WHERE company_id = $1 
-       ORDER BY started_at DESC 
-       LIMIT $2`,
-      [companyId, parseInt(limit)]
-    );
-    
-    console.log(`📡 [API] ✅ Found ${result.rows.length} execution(s)`);
-    
-    res.json({ 
-      success: true,
-      executions: result.rows.map(row => ({
-        id: row.id,
-        companyId: row.company_id,
-        contactId: row.contact_id,
-        flowId: row.flow_id,
-        startedAt: row.started_at,
-        completedAt: row.completed_at,
-        status: row.status,
-        errorMessage: row.error_message,
-        nodesExecuted: row.nodes_executed,
-        variablesFinal: row.variables_final,
-      }))
-    });
-  } catch (error) {
-    console.error('📡 [API] ❌ Error loading execution history:', error);
-    res.status(500).json({ 
-      success: false,
-      error: 'Failed to load execution history',
-      details: error.message 
-    });
-  }
-});
-
-/**
- * DELETE /api/bot-flow
- * Deletes a bot flow for a company
- * Query params: companyId
- */
-app.delete('/api/bot-flow', async (req, res) => {
-  try {
-    const { companyId } = req.query;
-    
-    if (!companyId) {
-      return res.status(400).json({ 
-        success: false,
-        error: 'companyId is required' 
-      });
-    }
-    
-    console.log(`📡 [API] Deleting bot flow for company: ${companyId}`);
-    
-    const result = await pool.query(
-      'DELETE FROM bot_flows WHERE company_id = $1 RETURNING id',
-      [companyId]
-    );
-    
-    if (result.rows.length === 0) {
-      console.log(`📡 [API] ⚠️ No bot flow found to delete`);
-      return res.status(404).json({ 
-        success: false,
-        error: 'Bot flow not found' 
-      });
-    }
-    
-    console.log(`📡 [API] ✅ Bot flow deleted successfully`);
-    res.json({ 
-      success: true,
-      message: 'Bot flow deleted successfully'
-    });
-  } catch (error) {
-    console.error('📡 [API] ❌ Error deleting bot flow:', error);
-    res.status(500).json({ 
-      success: false,
-      error: 'Failed to delete bot flow',
-      details: error.message 
     });
   }
 });
