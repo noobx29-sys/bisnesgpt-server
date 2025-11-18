@@ -7144,6 +7144,33 @@ if (idSubstring === "058666") {
         "+60167557780"
       );
     }
+
+    // Handle general team notifications (contact updates, important info, referrals, etc.)
+    if (
+      part.toLowerCase().includes("informed the team") ||
+      part.toLowerCase().includes("notified the team") ||
+      part.toLowerCase().includes("i have informed") ||
+      part.toLowerCase().includes("i have notified")
+    ) {
+      const { reportMessage, notificationInfo } = await generateTeamNotificationReport(
+        threadID,
+        companyConfig.assistantId,
+        contactName,
+        extractedNumber
+      );
+      console.log("=== [Special Cases] JobBuilder Team Notification Report ===");
+      console.log(reportMessage);
+      
+      const sentMessage = await client.sendMessage(
+        "60167557780@c.us",
+        reportMessage
+      );
+      await addMessageToPostgres(
+        sentMessage,
+        idSubstring,
+        "+60167557780"
+      );
+    }
   }
 
   async function saveSpecialCaseEduville(contactInfo) {
@@ -15624,6 +15651,122 @@ function extractContactInfoRecruitment(reportMessage, reportType) {
   }
 
   return contactInfo;
+}
+
+async function generateTeamNotificationReport(threadID, assistantId, contactName, extractedNumber) {
+  try {
+    const reportInstruction = `Please generate a comprehensive team notification report based on our conversation:
+
+Team Notification Report
+
+Contact Information:
+- Name: ${contactName}
+- Phone Number: ${extractedNumber}
+- Previous Company: [Extract if mentioned - for job changes]
+- New Company: [Extract if mentioned - for job changes]
+- Current Status: [Extract from conversation - e.g., "No longer at company", "Moved to new role", "Providing update", "Making referral"]
+
+Notification Type:
+[Identify the type: Contact Update, Job Change, Referral, Important Information, Request, Complaint, Feedback, or Other]
+
+Main Message/Update:
+[Summarize the key information the contact wants to communicate to the team]
+
+Referral Information (if applicable):
+- Referred Person Name: [Extract if provided]
+- Referred Person Contact: [Extract if provided]
+- Referred Person Position/Role: [Extract if provided]
+- Referred Person Company: [Extract if provided]
+
+Action Required:
+[What action, if any, should the team take based on this notification]
+
+Urgency Level:
+[Low/Medium/High - based on context]
+
+Additional Context:
+[Any other relevant details from the conversation that the team should know]
+
+Fill in the information in square brackets with the relevant details from our conversation. If any information is not available, indicate "Not specified".`;
+
+    var response = await openai.beta.threads.messages.create(threadID, {
+      role: "user",
+      content: reportInstruction,
+    });
+
+    var assistantResponse = await openai.beta.threads.runs.create(threadID, {
+      assistant_id: assistantId,
+    });
+
+    // Wait for the assistant to complete the task
+    let runStatus;
+    do {
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+      runStatus = await openai.beta.threads.runs.retrieve(
+        threadID,
+        assistantResponse.id
+      );
+    } while (runStatus.status !== "completed");
+
+    // Retrieve the assistant's response
+    var messages = await openai.beta.threads.messages.list(threadID);
+    var reportMessage = messages.data[0].content[0].text.value;
+
+    var notificationInfo = extractTeamNotificationInfo(reportMessage);
+
+    return { reportMessage, notificationInfo };
+  } catch (error) {
+    console.error("Error generating team notification report:", error);
+    return { reportMessage: "Error generating report", notificationInfo: null };
+  }
+}
+
+function extractTeamNotificationInfo(reportMessage) {
+  const notificationInfo = {
+    name: "",
+    phone: "",
+    notificationType: "",
+    previousCompany: "",
+    newCompany: "",
+    referredPersonName: "",
+    referredPersonContact: "",
+    urgencyLevel: "",
+    actionRequired: "",
+  };
+
+  try {
+    const nameMatch = reportMessage.match(/- Name:\s*(.+)/i);
+    if (nameMatch) notificationInfo.name = nameMatch[1].trim();
+
+    const phoneMatch = reportMessage.match(/- Phone Number:\s*(.+)/i);
+    if (phoneMatch) notificationInfo.phone = phoneMatch[1].trim();
+
+    const typeMatch = reportMessage.match(/Notification Type:\s*\[?(.+?)\]?/i);
+    if (typeMatch) notificationInfo.notificationType = typeMatch[1].trim();
+
+    const prevCompanyMatch = reportMessage.match(/- Previous Company:\s*(.+)/i);
+    if (prevCompanyMatch) notificationInfo.previousCompany = prevCompanyMatch[1].trim();
+
+    const newCompanyMatch = reportMessage.match(/- New Company:\s*(.+)/i);
+    if (newCompanyMatch) notificationInfo.newCompany = newCompanyMatch[1].trim();
+
+    const referredNameMatch = reportMessage.match(/- Referred Person Name:\s*(.+)/i);
+    if (referredNameMatch) notificationInfo.referredPersonName = referredNameMatch[1].trim();
+
+    const referredContactMatch = reportMessage.match(/- Referred Person Contact:\s*(.+)/i);
+    if (referredContactMatch) notificationInfo.referredPersonContact = referredContactMatch[1].trim();
+
+    const urgencyMatch = reportMessage.match(/Urgency Level:\s*\[?(.+?)\]?/i);
+    if (urgencyMatch) notificationInfo.urgencyLevel = urgencyMatch[1].trim();
+
+    const actionMatch = reportMessage.match(/Action Required:\s*\[(.+?)\]/i);
+    if (actionMatch) notificationInfo.actionRequired = actionMatch[1].trim();
+
+  } catch (error) {
+    console.error("Error extracting team notification info:", error);
+  }
+
+  return notificationInfo;
 }
 
 async function sendFeedbackToGroupRecruitment(
