@@ -5629,6 +5629,9 @@ async function processMessage(
   const idSubstring = botName;
   const chatId = msg.from;
   try {
+    // Log message type for debugging, especially for Meta ads notifications
+    console.log(`[MESSAGE TYPE DEBUG] Company: ${botName}, Type: ${msg.type}, Body: ${msg.body?.substring(0, 50)}...`);
+    
     // Initial fetch of config
     const companyConfig = await fetchConfigFromDatabase(
       idSubstring,
@@ -6546,6 +6549,10 @@ async function handleMessageByType({
       extractedNumber,
       phoneIndex
     );
+  } else if (msg.type === "notification" || msg.type === "notification_template" || msg.type === "broadcast_notification") {
+    // Handle Meta ads notification messages - these contain regular text in msg.body
+    console.log(`Meta ads notification message detected (type: ${msg.type})`);
+    return null; // Return null to process as regular text message with combinedMessage
   }
   return null;
 }
