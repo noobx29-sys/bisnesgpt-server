@@ -3770,28 +3770,66 @@ wss.on("connection", (ws, req) => {
 
           if (data.password === ADMIN_PASSWORD) {
             try {
-              // Execute PM2 restart command
+              // Execute git pull first, then PM2 restart
               const { exec } = require("child_process");
-              exec("pm2 restart all", (error, stdout, stderr) => {
-                if (error) {
-                  console.error("Restart error:", error);
+              
+              ws.send(
+                JSON.stringify({
+                  type: "restart",
+                  success: true,
+                  message: "🔄 Pulling latest code from git...",
+                  stage: "git_pull"
+                })
+              );
+
+              exec("git pull origin master", { cwd: __dirname }, (gitError, gitStdout, gitStderr) => {
+                if (gitError) {
+                  console.error("Git pull error:", gitError);
                   ws.send(
                     JSON.stringify({
                       type: "restart",
                       success: false,
-                      message: `Restart failed: ${error.message}`,
+                      message: `Git pull failed: ${gitError.message}\n${gitStderr}`,
+                      stage: "git_pull_failed"
                     })
                   );
-                } else {
-                  console.log("PM2 restart successful:", stdout);
-                  ws.send(
-                    JSON.stringify({
-                      type: "restart",
-                      success: true,
-                      message: "Server restart initiated successfully",
-                    })
-                  );
+                  return;
                 }
+                
+                console.log("Git pull successful:", gitStdout);
+                ws.send(
+                  JSON.stringify({
+                    type: "restart",
+                    success: true,
+                    message: `✅ Git pull successful\n${gitStdout}\n\n🔄 Restarting PM2...`,
+                    stage: "pm2_restart"
+                  })
+                );
+
+                // Now restart PM2
+                exec("pm2 restart all", (error, stdout, stderr) => {
+                  if (error) {
+                    console.error("PM2 restart error:", error);
+                    ws.send(
+                      JSON.stringify({
+                        type: "restart",
+                        success: false,
+                        message: `PM2 restart failed: ${error.message}`,
+                        stage: "pm2_failed"
+                      })
+                    );
+                  } else {
+                    console.log("PM2 restart successful:", stdout);
+                    ws.send(
+                      JSON.stringify({
+                        type: "restart",
+                        success: true,
+                        message: "✅ Server restarted successfully!\n\n" + gitStdout + "\n" + stdout,
+                        stage: "complete"
+                      })
+                    );
+                  }
+                });
               });
             } catch (error) {
               ws.send(
@@ -3799,6 +3837,7 @@ wss.on("connection", (ws, req) => {
                   type: "restart",
                   success: false,
                   message: `Restart failed: ${error.message}`,
+                  stage: "error"
                 })
               );
             }
@@ -12851,6 +12890,12 @@ const {
 function setupMessageHandler(client, botName, phoneIndex) {
   client.on("message", async (msg) => {
     try {
+      // Validate message object
+      if (!msg) {
+        console.error(`🔔 [MESSAGE_HANDLER] ❌ Received null/undefined message for bot ${botName}`);
+        return;
+      }
+
       console.log(`🔔 [MESSAGE_HANDLER] ===== INCOMING MESSAGE =====`);
       console.log(`🔔 [MESSAGE_HANDLER] Bot: ${botName}`);
       console.log(`🔔 [MESSAGE_HANDLER] From: ${msg.from}`);
@@ -12858,7 +12903,7 @@ function setupMessageHandler(client, botName, phoneIndex) {
       console.log(`🔔 [MESSAGE_HANDLER] Type: ${msg.type}`);
       console.log(`🔔 [MESSAGE_HANDLER] From Me: ${msg.fromMe}`);
       console.log(`🔔 [MESSAGE_HANDLER] Timestamp: ${msg.timestamp}`);
-      console.log(`🔔 [MESSAGE_HANDLER] ID: ${msg.id._serialized}`);
+      console.log(`🔔 [MESSAGE_HANDLER] ID: ${msg.id?._serialized || 'No ID'}`);
 
       // Filter out status messages before processing
       const chatId = msg.from;
@@ -12909,6 +12954,10 @@ function setupMessageHandler(client, botName, phoneIndex) {
         `🔔 [MESSAGE_HANDLER] ❌ Error in message handling:`,
         error
       );
+      console.error(`🔔 [MESSAGE_HANDLER] Error message:`, error?.message || 'No message');
+      console.error(`🔔 [MESSAGE_HANDLER] Error stack:`, error?.stack || 'No stack trace');
+      console.error(`🔔 [MESSAGE_HANDLER] Error type:`, typeof error);
+      console.error(`🔔 [MESSAGE_HANDLER] Error keys:`, Object.keys(error || {}));
     }
   });
 }
@@ -19544,10 +19593,23 @@ async function main(reinitialize = false) {
 
   // 5. Process company data and sort naturally
   const botConfigs = companiesResult.rows
-    .map((row) => ({
-      botName: row.company_id,
-      phoneCount: row.phone_count || 1,
-    }))
+    .map((row) => {
+      // Validate phone configuration
+      const phoneNumbers = row.phone_numbers || [];
+      const phoneCount = row.phone_count || phoneNumbers.length || 0;
+      
+      // Log warning for companies with no phones
+      if (phoneCount === 0 || phoneNumbers.length === 0) {
+        console.warn(`⚠️ [BOT_INIT] Company ${row.company_id} (${row.name}) has no phone numbers configured - skipping initialization`);
+        return null;
+      }
+
+      return {
+        botName: row.company_id,
+        phoneCount: phoneCount,
+      };
+    })
+    .filter(config => config !== null) // Remove null entries (companies with no phones)
     // Add natural sorting for botName
     .sort((a, b) => {
       // Convert botNames to numbers if possible for proper numeric sorting
@@ -19565,7 +19627,7 @@ async function main(reinitialize = false) {
     });
 
   console.log(
-    `Found ${botConfigs.length} bots to initialize (excluding EC2 instances)`
+    `Found ${botConfigs.length} bots to initialize (excluding EC2 instances and companies without phones)`
   );
 
   // 6. Initialize bots in sequential clusters

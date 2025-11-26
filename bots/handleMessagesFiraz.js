@@ -3870,81 +3870,96 @@ const DEFAULT_BUFFER_TIME = 30000;
 const messageBuffers = new Map();
 
 async function handleNewMessagesTemplateWweb(client, msg, botName, phoneIndex) {
-  console.log("Handling new message for bot companyID " + botName);
-
-  const idSubstring = botName;
-  const chatId = msg.from;
-  if (chatId.includes("status")) {
-    return;
-  }
-
-  await processImmediateActions(client, msg, idSubstring, phoneIndex);
-
-  let bufferTime = DEFAULT_BUFFER_TIME;
   try {
-    const sqlClient = await pool.connect();
-    try {
-      const settingResult = await sqlClient.query(
-        `SELECT setting_value->>'value' as ai_delay 
-         FROM public.settings 
-         WHERE company_id = $1 
-         AND setting_type = 'messaging' 
-         AND setting_key = 'aiDelay'`,
-        [idSubstring]
-      );
+    console.log("Handling new message for bot companyID " + botName);
 
-      if (settingResult.rows.length > 0 && settingResult.rows[0].ai_delay) {
-        bufferTime = (parseInt(settingResult.rows[0].ai_delay) || 30) * 1000;
-      } else {
-        const companyResult = await sqlClient.query(
-          `SELECT profile->>'aiDelay' as ai_delay 
-           FROM public.companies 
-           WHERE company_id = $1`,
+    // Additional validation for company 088
+    if (botName === "088") {
+      console.log(`[DEBUG-088] Message object keys:`, Object.keys(msg || {}));
+      console.log(`[DEBUG-088] msg.from:`, msg?.from);
+      console.log(`[DEBUG-088] msg.body:`, msg?.body);
+      console.log(`[DEBUG-088] msg.type:`, msg?.type);
+    }
+
+    const idSubstring = botName;
+    const chatId = msg.from;
+    if (chatId.includes("status")) {
+      return;
+    }
+
+    await processImmediateActions(client, msg, idSubstring, phoneIndex);
+
+    let bufferTime = DEFAULT_BUFFER_TIME;
+    try {
+      const sqlClient = await pool.connect();
+      try {
+        const settingResult = await sqlClient.query(
+          `SELECT setting_value->>'value' as ai_delay 
+           FROM public.settings 
+           WHERE company_id = $1 
+           AND setting_type = 'messaging' 
+           AND setting_key = 'aiDelay'`,
           [idSubstring]
         );
 
-        if (companyResult.rows.length > 0 && companyResult.rows[0].ai_delay) {
-          bufferTime = (parseInt(companyResult.rows[0].ai_delay) || 30) * 1000;
+        if (settingResult.rows.length > 0 && settingResult.rows[0].ai_delay) {
+          bufferTime = (parseInt(settingResult.rows[0].ai_delay) || 30) * 1000;
+        } else {
+          const companyResult = await sqlClient.query(
+            `SELECT profile->>'aiDelay' as ai_delay 
+             FROM public.companies 
+             WHERE company_id = $1`,
+            [idSubstring]
+          );
+
+          if (companyResult.rows.length > 0 && companyResult.rows[0].ai_delay) {
+            bufferTime = (parseInt(companyResult.rows[0].ai_delay) || 30) * 1000;
+          }
         }
+      } finally {
+        await safeRelease(sqlClient);
       }
-    } finally {
-      await safeRelease(sqlClient);
+    } catch (error) {
+      console.error("Error fetching buffer time from PostgreSQL:", error);
     }
+
+    // Create a unique buffer key that includes both chatId and botName to prevent cross-bot interference
+    const bufferKey = `${chatId}_${botName}`;
+
+    if (!messageBuffers.has(bufferKey)) {
+      messageBuffers.set(bufferKey, {
+        messages: [],
+        timer: null,
+      });
+    }
+
+    const finalBufferTime = botName === "0144" ? 5000 : bufferTime;
+    const buffer = messageBuffers.get(bufferKey);
+
+    if (buffer.timer) {
+      clearTimeout(buffer.timer);
+    }
+
+    if (msg.type === "ptt") {
+      console.log("Voice message detected");
+      const media = await msg.downloadMedia();
+      const transcription = await transcribeAudio(media.data);
+      msg.body = transcription;
+      buffer.messages.push(msg);
+    } else {
+      buffer.messages.push(msg);
+    }
+
+    buffer.timer = setTimeout(
+      () => processBufferedMessages(client, bufferKey, botName, phoneIndex),
+      finalBufferTime
+    );
   } catch (error) {
-    console.error("Error fetching buffer time from PostgreSQL:", error);
+    console.error(`[handleNewMessagesTemplateWweb] Error for bot ${botName}:`, error);
+    console.error(`[handleNewMessagesTemplateWweb] Error message:`, error?.message || 'No message');
+    console.error(`[handleNewMessagesTemplateWweb] Error stack:`, error?.stack || 'No stack');
+    throw error; // Re-throw so parent handler can catch it
   }
-
-  // Create a unique buffer key that includes both chatId and botName to prevent cross-bot interference
-  const bufferKey = `${chatId}_${botName}`;
-
-  if (!messageBuffers.has(bufferKey)) {
-    messageBuffers.set(bufferKey, {
-      messages: [],
-      timer: null,
-    });
-  }
-
-  const finalBufferTime = botName === "0144" ? 5000 : bufferTime;
-  const buffer = messageBuffers.get(bufferKey);
-
-  if (buffer.timer) {
-    clearTimeout(buffer.timer);
-  }
-
-  if (msg.type === "ptt") {
-    console.log("Voice message detected");
-    const media = await msg.downloadMedia();
-    const transcription = await transcribeAudio(media.data);
-    msg.body = transcription;
-    buffer.messages.push(msg);
-  } else {
-    buffer.messages.push(msg);
-  }
-
-  buffer.timer = setTimeout(
-    () => processBufferedMessages(client, bufferKey, botName, phoneIndex),
-    finalBufferTime
-  );
 }
 
 async function getProfilePicUrl(contact) {
@@ -5599,23 +5614,29 @@ async function mtdcConfirmAttendance(
 }
 
 async function processBufferedMessages(client, bufferKey, botName, phoneIndex) {
-  const buffer = messageBuffers.get(bufferKey);
-  if (!buffer || buffer.messages.length === 0) return;
+  try {
+    const buffer = messageBuffers.get(bufferKey);
+    if (!buffer || buffer.messages.length === 0) return;
 
-  const messages = buffer.messages;
-  messageBuffers.delete(bufferKey); // Clear the buffer
+    const messages = buffer.messages;
+    messageBuffers.delete(bufferKey); // Clear the buffer
 
-  // Combine all message bodies
-  const combinedMessage = messages.map((m) => m.body).join(" ");
+    // Combine all message bodies
+    const combinedMessage = messages.map((m) => m.body).join(" ");
 
-  // Process the combined message
-  await processMessage(
-    client,
-    messages[0],
-    botName,
-    phoneIndex,
-    combinedMessage
-  );
+    // Process the combined message
+    await processMessage(
+      client,
+      messages[0],
+      botName,
+      phoneIndex,
+      combinedMessage
+    );
+  } catch (error) {
+    console.error(`[processBufferedMessages] Error for bot ${botName}:`, error);
+    console.error(`[processBufferedMessages] Error message:`, error?.message || 'No message');
+    console.error(`[processBufferedMessages] Error stack:`, error?.stack || 'No stack');
+  }
 }
 
 // Add this enhanced logging to your processMessage function
@@ -6021,7 +6042,10 @@ async function processMessage(
     await chat.markUnread();
     console.log("Response sent.");
   } catch (e) {
-    console.error("Error:", e.message);
+    console.error(`[processMessage] Error for bot ${botName}:`, e);
+    console.error(`[processMessage] Error message:`, e?.message || 'No message');
+    console.error(`[processMessage] Error stack:`, e?.stack || 'No stack');
+    console.error(`[processMessage] Error type:`, typeof e);
     return e.message;
   }
 }
