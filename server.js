@@ -19550,6 +19550,7 @@ async function main(reinitialize = false) {
     "296245",
     "325117",
     "399849",
+    '920072',
     "458752",
     "728219",
     "765943",
@@ -19594,22 +19595,14 @@ async function main(reinitialize = false) {
   // 5. Process company data and sort naturally
   const botConfigs = companiesResult.rows
     .map((row) => {
-      // Validate phone configuration
       const phoneNumbers = row.phone_numbers || [];
       const phoneCount = row.phone_count || phoneNumbers.length || 0;
-      
-      // Log warning for companies with no phones
-      if (phoneCount === 0 || phoneNumbers.length === 0) {
-        console.warn(`⚠️ [BOT_INIT] Company ${row.company_id} (${row.name}) has no phone numbers configured - skipping initialization`);
-        return null;
-      }
 
       return {
         botName: row.company_id,
         phoneCount: phoneCount,
       };
     })
-    .filter(config => config !== null) // Remove null entries (companies with no phones)
     // Add natural sorting for botName
     .sort((a, b) => {
       // Convert botNames to numbers if possible for proper numeric sorting
@@ -19627,7 +19620,7 @@ async function main(reinitialize = false) {
     });
 
   console.log(
-    `Found ${botConfigs.length} bots to initialize (excluding EC2 instances and companies without phones)`
+    `Found ${botConfigs.length} bots to initialize (excluding EC2 instances)`
   );
 
   // 6. Initialize bots in sequential clusters
