@@ -7166,13 +7166,13 @@ if (idSubstring === "058666") {
       console.log(reportMessage);
       
       const sentMessage = await client.sendMessage(
-        "60167557780@c.us",
+        "120363028469517905@g.us",
         reportMessage
       );
       await addMessageToPostgres(
         sentMessage,
         idSubstring,
-        "+60167557780"
+        "+120363028469517905"
       );
     }
 
@@ -14806,13 +14806,13 @@ async function handleOpenAIAssistant(
       function: {
         name: "sendFeedbackToGroupNewTown",
         description:
-          "Send customer feedback to a designated group when customer provide feedback or when you detect a customer is unhappy",
+          "Send customer feedback to a designated group when customer provides feedback, mentions delivery locations (like Sutera, GC, etc.), requests gas delivery, or when you detect a customer is unhappy. Use this for ANY customer communication that the team should know about, including delivery requests, complaints, compliments, or location-specific inquiries.",
         parameters: {
           type: "object",
           properties: {
             feedback: {
               type: "string",
-              description: "The feedback message from the customer",
+              description: "The feedback message from the customer, including delivery requests, locations mentioned, or any other relevant information",
             },
             customerName: {
               type: "string",

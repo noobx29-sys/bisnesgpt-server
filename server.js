@@ -7260,8 +7260,8 @@ app.post(
 
       // Create user in database
       await sqlDb.query(
-        `INSERT INTO users (user_id, company_id, email, phone, role, active, created_at, password) 
-         VALUES ($1, $2, $3, $4, $5, $6, CURRENT_TIMESTAMP, $7)`,
+        `INSERT INTO users (user_id, company_id, email, phone, role, active, created_at, password, stopbot) 
+         VALUES ($1, $2, $3, $4, $5, $6, CURRENT_TIMESTAMP, $7, $8)`,
         [
           userId,
           userData.companyId,
@@ -7270,6 +7270,7 @@ app.post(
           userData.role,
           true,
           userData.password,
+          false,
         ]
       );
 
