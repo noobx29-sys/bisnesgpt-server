@@ -67,6 +67,7 @@ const {
   handleNewMessagesPersonalAssistant,
 } = require("./bots/handleMessagesPersonalAssistant.js");
 const { handleTagFollowUp } = require("./blast/tag.js");
+const dialog360 = require("./services/whatsapp/dialog360");
 
 // Import logging system
 const ServerLogger = require("./logger");
@@ -80,6 +81,7 @@ const attendanceRecordsRouter = require("./routes/attendanceRecords");
 const feedbackResponsesRouter = require("./routes/feedbackResponse");
 const mtdcSpreadsheet = require("./spreadsheet/mtdcSpreadsheet.js");
 const certificatesRouter = require("./routes/certificates");
+const contactSyncRouter = require("./routes/contactSync");
 
 // Initialize logger
 const logger = new ServerLogger();
@@ -930,6 +932,9 @@ const messageQueue = new Queue("scheduled-messages", { connection });
 
 const app = express();
 const server = createServer(app);
+
+// Make botMap available to routes via app.locals
+app.locals.botMap = botMap;
 
 // CORS Configuration - Define whitelist before WebSocket server
 const whitelist = [
@@ -3039,6 +3044,9 @@ app.use("/api/certificates", certificatesRouter);
 // Lead Analytics Routes
 const leadAnalyticsRouter = require("./routes/leadAnalytics");
 app.use("/api/lead-analytics", leadAnalyticsRouter);
+
+// Contact Sync Routes
+app.use("/api/sync", contactSyncRouter);
 // Read specific log file
 app.get("/api/logs/read/:filename", async (req, res) => {
   try {
@@ -3201,6 +3209,42 @@ global.botMap = botMap;
 global.pool = pool;
 global.safeRelease = safeRelease;
 const autoReplyChecker = require("./auto-reply-script.js");
+
+// ============================================
+// 360DIALOG WHATSAPP OFFICIAL API ENDPOINTS
+// ============================================
+
+// Onboard a new 360dialog channel
+app.post("/api/whatsapp/360dialog/onboard", async (req, res) => {
+  try {
+    const { companyId, phoneIndex, clientId, channelId } = req.body;
+
+    if (!companyId || phoneIndex === undefined || !clientId || !channelId) {
+      return res.status(400).json({
+        success: false,
+        error: "Missing required fields: companyId, phoneIndex, clientId, channelId"
+      });
+    }
+
+    const result = await dialog360.onboard(companyId, phoneIndex, clientId, channelId);
+    res.json(result);
+  } catch (error) {
+    console.error("[360dialog] Onboard error:", error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Webhook endpoint for 360dialog events
+app.post("/webhook/360dialog", async (req, res) => {
+  // Respond immediately to acknowledge receipt
+  res.sendStatus(200);
+
+  try {
+    await dialog360.handleWebhook(req.body);
+  } catch (error) {
+    console.error("[360dialog] Webhook error:", error);
+  }
+});
 
 // ============================================
 // AUTO-REPLY MANAGEMENT ENDPOINTS
@@ -19531,32 +19575,8 @@ async function main(reinitialize = false) {
   // );
   //const companyIds = ['0145'];
   const companyIds = [
-    "0101",
-    "0107",
-    "0149",
-    "0156",
-    "0160",
-    "0161",
-    "0210",
-    "621275",
-    "0245",
-    "0342",
-    "0377",
-    "049815",
-    "058666",
-    "063",
-    "079",
-    "088",
-    "092",
-    "296245",
-    "325117",
-    "399849",
-    '920072',
-    "458752",
-    "728219",
-    "765943",
-    "621275",
-    "946386",
+    "0103",
+
   ];
   const placeholders = companyIds.map((_, i) => `$${i + 1}`).join(", ");
   const query = `SELECT * FROM companies WHERE company_id IN (${placeholders})`;
@@ -29180,6 +29200,27 @@ async function initializeWithTimeout(
       client.on("ready", async () => {
         clearInterval(checkInitialization);
         console.log(`${botName} Phone ${phoneIndex + 1} - READY`);
+
+        // Patch sendSeen to use markSeen instead (fixes markedUnread error in WhatsApp Web)
+        // See: https://github.com/pedroslopez/whatsapp-web.js/issues/5718
+        try {
+          await client.pupPage?.evaluate(`
+            window.WWebJS.sendSeen = async (chatId) => {
+              const chat = await window.WWebJS.getChat(chatId, { getAsModel: false });
+              if (chat) {
+                window.Store.WAWebStreamModel.Stream.markAvailable();
+                await window.Store.SendSeen.markSeen(chat);
+                window.Store.WAWebStreamModel.Stream.markUnavailable();
+                return true;
+              }
+              return false;
+            };
+          `);
+          console.log(`${botName} Phone ${phoneIndex + 1} - sendSeen patch applied`);
+        } catch (patchError) {
+          console.warn(`${botName} Phone ${phoneIndex + 1} - Failed to apply sendSeen patch:`, patchError.message);
+        }
+
         clients[phoneIndex] = {
           ...clients[phoneIndex],
           status: "ready",
