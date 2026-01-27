@@ -9755,9 +9755,13 @@ async function runAssistant(
   phoneIndex = 0
 ) {
   try {
+    // Get current date and time in Malaysia timezone
+    const currentDateTime = getTodayDate();
+    
     const run = await openai.beta.threads.runs.create(threadId, {
       assistant_id: assistantID,
       tools: tools,
+      additional_instructions: `IMPORTANT: Today's date and time is ${currentDateTime}. Always use this as the current date for any date-related queries or operations.`,
     });
 
     console.log(`Created run: ${run.id}`);
