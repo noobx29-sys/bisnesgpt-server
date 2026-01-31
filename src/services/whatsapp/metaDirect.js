@@ -7,7 +7,7 @@ const axios = require('axios');
 const crypto = require('crypto');
 const { pool } = require('../../config/database');
 const broadcast = require('../../utils/broadcast');
-const { handleNewMessagesTemplateWweb } = require('../../../bots/handleMessagesFiraz');
+const { handleNewMessagesTemplateWweb } = require('../../../bots/handleMessagesTemplateWweb');
 
 const GRAPH_API_VERSION = 'v24.0';
 const GRAPH_API_BASE = `https://graph.facebook.com/${GRAPH_API_VERSION}`;
@@ -174,30 +174,79 @@ class MetaDirect {
         body: msg.type === 'text' ? msg.text?.body : '',
         type: msg.type,
         timestamp: parseInt(msg.timestamp),
-        hasMedia: ['image', 'video', 'audio', 'document'].includes(msg.type),
+        hasMedia: ['image', 'video', 'audio', 'document', 'sticker'].includes(msg.type),
         _data: msg,
+        downloadMedia: async () => {
+          // Download media from Meta API if message has media
+          if (!wwebjsCompatibleMsg.hasMedia) return null;
+          
+          try {
+            const mediaId = msg[msg.type]?.id;
+            if (!mediaId) return null;
+
+            // Get media URL from Meta
+            const configData = await this.getConfig(company_id, phone_index);
+            const accessToken = this.decrypt(configData.meta_access_token_encrypted);
+            
+            const mediaInfo = await axios.get(
+              `${GRAPH_API_BASE}/${mediaId}`,
+              { headers: { Authorization: `Bearer ${accessToken}` } }
+            );
+
+            const mediaUrl = mediaInfo.data.url;
+            const mediaResponse = await axios.get(mediaUrl, {
+              headers: { Authorization: `Bearer ${accessToken}` },
+              responseType: 'arraybuffer',
+            });
+
+            return {
+              data: Buffer.from(mediaResponse.data).toString('base64'),
+              mimetype: mediaResponse.headers['content-type'],
+              filename: msg[msg.type]?.filename || `media_${Date.now()}`,
+            };
+          } catch (error) {
+            console.error('Error downloading media from Meta:', error);
+            return null;
+          }
+        },
       };
 
       // Create mock client for Meta Direct (bot handlers expect wwebjs client)
+      const self = this;
       const mockClient = {
         info: { wid: { _serialized: `${display_phone_number}@c.us` } },
         sendMessage: async (chatId, content, options = {}) => {
-          // Route through Meta Direct sendText
+          // Route through Meta Direct sendText or sendMedia
           if (typeof content === 'string') {
-            return await this.sendText(company_id, phone_index, chatId, content);
+            const result = await self.sendText(company_id, phone_index, chatId, content);
+            return { id: { _serialized: result.id } };
           }
-          // For media, we'd need to handle MessageMedia objects
+          // Handle MessageMedia objects
+          if (content && content.mimetype && content.data) {
+            const mediaType = content.mimetype.startsWith('image/') ? 'image' :
+                            content.mimetype.startsWith('video/') ? 'video' :
+                            content.mimetype.startsWith('audio/') ? 'audio' : 'document';
+            
+            // For now, we'll need to upload media to a URL first
+            // This is a simplified version - you may need to implement media upload
+            console.log('Media sending not fully implemented for Meta Direct yet');
+            return { id: { _serialized: 'media_mock_id' } };
+          }
           return { id: { _serialized: 'mock_id' } };
         },
         getContactById: async (contactId) => ({
           id: { _serialized: contactId },
           number: contactId.replace(/@.+/, ''),
           pushname: contact?.profile?.name || '',
+          getProfilePicUrl: async () => '',
         }),
         getChatById: async (chatId) => ({
           id: { _serialized: chatId },
           name: contact?.profile?.name || chatId.replace(/@.+/, ''),
+          sendStateTyping: async () => {},
+          clearState: async () => {},
         }),
+        pupPage: null, // Some bot functions check for this
       };
 
       // Call bot handler for AI auto-reply
@@ -206,6 +255,7 @@ class MetaDirect {
         await handleNewMessagesTemplateWweb(mockClient, wwebjsCompatibleMsg, botName, phone_index);
       } catch (error) {
         console.error('Error in Meta Direct bot handler:', error);
+        console.error('Error stack:', error.stack);
         // Don't fail the webhook if bot handler fails
       }
     }
