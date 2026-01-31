@@ -3,5 +3,8 @@ credentials-file: C:\Users\FHE_Marketing1\.cloudflared\68e76c9d-f6e7-49fb-9f4a-a
 
 ingress:
   - hostname: bisnesgpt.jutateknologi.com
+    path: ^/api/server-manager
+    service: http://localhost:9000
+  - hostname: bisnesgpt.jutateknologi.com
     service: http://localhost:8443
   - service: http_status:404
