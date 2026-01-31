@@ -420,10 +420,8 @@
 </head>
 <body>
     <script>
-        // Auto-detect and use daemon port 9000 for API calls
-        const API_BASE = window.location.port === '9000' 
-            ? '' // Use relative URLs if already on port 9000
-            : (window.location.protocol + '//' + window.location.hostname + ':9000'); // Point to daemon
+        // Use relative URLs for Nginx reverse proxy
+        const API_BASE = '';
         
         console.log('API Base URL:', API_BASE);
     </script>
