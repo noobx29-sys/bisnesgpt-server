@@ -519,24 +519,26 @@
         }
 
         async function executeAction() {
-            console.log('executeAction called with:', currentAction);
+            // Save action FIRST before any other operations
+            const actionToExecute = currentAction;
+            console.log('executeAction called with:', actionToExecute);
             
-            // Save action before closing dialog
-            const action = currentAction;
-            closeConfirm();
-            
-            if (!action) {
+            if (!actionToExecute) {
                 console.log('No action selected');
+                closeConfirm();
                 return;
             }
 
-            console.log('Proceeding with action:', action);
+            // Close dialog AFTER we've saved the action
+            closeConfirm();
+            
+            console.log('Proceeding with action:', actionToExecute);
             showLoader();
             disableButtons(true);
 
             try {
                 // Handle delete session separately
-                if (action === 'delete-session') {
+                if (actionToExecute === 'delete-session') {
                     const folderName = window.sessionToDelete;
                     console.log('Deleting session folder:', folderName);
                     if (!folderName) {
@@ -573,8 +575,8 @@
                 }
 
                 // Handle other actions
-                console.log('Executing action:', action);
-                const response = await fetch(`/api/server-manager/${action}`, {
+                console.log('Executing action:', actionToExecute);
+                const response = await fetch(`/api/server-manager/${actionToExecute}`, {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json'
