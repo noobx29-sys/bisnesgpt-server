@@ -82,6 +82,7 @@ const feedbackResponsesRouter = require("./routes/feedbackResponse");
 const mtdcSpreadsheet = require("./spreadsheet/mtdcSpreadsheet.js");
 const certificatesRouter = require("./routes/certificates");
 const contactSyncRouter = require("./routes/contactSync");
+const serverManagerRouter = require("./routes/serverManager");
 
 // WhatsApp Embedded Signup & Cloud API routes
 const whatsappApiRoutes = require("./src/routes/whatsapp");
@@ -3051,6 +3052,9 @@ app.use("/api/lead-analytics", leadAnalyticsRouter);
 
 // Contact Sync Routes
 app.use("/api/sync", contactSyncRouter);
+
+// Server Manager Routes
+app.use("/api/server-manager", serverManagerRouter);
 
 // WhatsApp Embedded Signup & Cloud API routes
 app.use("/api/whatsapp", whatsappApiRoutes);
