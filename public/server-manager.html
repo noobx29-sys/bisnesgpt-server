@@ -519,8 +519,12 @@
         }
 
         async function executeAction() {
+            console.log('executeAction called with:', currentAction);
             closeConfirm();
-            if (!currentAction) return;
+            if (!currentAction) {
+                console.log('No action selected');
+                return;
+            }
 
             showLoader();
             disableButtons(true);
@@ -529,8 +533,11 @@
                 // Handle delete session separately
                 if (currentAction === 'delete-session') {
                     const folderName = window.sessionToDelete;
+                    console.log('Deleting session folder:', folderName);
                     if (!folderName) {
                         showStatus('Error: No folder selected', 'error');
+                        hideLoader();
+                        disableButtons(false);
                         return;
                     }
 
@@ -542,7 +549,9 @@
                         body: JSON.stringify({ folderName })
                     });
 
+                    console.log('Delete response status:', response.status);
                     const data = await response.json();
+                    console.log('Delete response data:', data);
                     
                     if (response.ok) {
                         showStatus(data.message + '\n\n' + (data.output || ''), 'success');
@@ -553,10 +562,13 @@
                     }
                     
                     window.sessionToDelete = null;
+                    hideLoader();
+                    disableButtons(false);
                     return;
                 }
 
                 // Handle other actions
+                console.log('Executing action:', currentAction);
                 const response = await fetch(`/api/server-manager/${currentAction}`, {
                     method: 'POST',
                     headers: {
@@ -564,7 +576,9 @@
                     }
                 });
 
+                console.log('Response status:', response.status);
                 const data = await response.json();
+                console.log('Response data:', data);
                 
                 if (response.ok) {
                     showStatus(data.message, 'success');
@@ -578,6 +592,7 @@
                     }
                 }
             } catch (error) {
+                console.error('Error in executeAction:', error);
                 showStatus('Error: Failed to communicate with server\n' + error.message, 'error');
             } finally {
                 hideLoader();
@@ -586,12 +601,15 @@
         }
 
         async function getServerStatus() {
+            console.log('getServerStatus called');
             showLoader();
             disableButtons(true);
 
             try {
                 const response = await fetch('/api/server-manager/status');
+                console.log('Status response:', response.status);
                 const data = await response.json();
+                console.log('Status data:', data);
                 
                 if (response.ok) {
                     let statusText = 'Server Status:\n\n';
@@ -612,6 +630,7 @@
                     showStatus('Error: ' + (data.error || 'Failed to get status'), 'error');
                 }
             } catch (error) {
+                console.error('Error in getServerStatus:', error);
                 showStatus('Error: Failed to communicate with server\n' + error.message, 'error');
             } finally {
                 hideLoader();
@@ -620,12 +639,15 @@
         }
 
         async function getGitStatus() {
+            console.log('getGitStatus called');
             showLoader();
             disableButtons(true);
 
             try {
                 const response = await fetch('/api/server-manager/git-status');
+                console.log('Git status response:', response.status);
                 const data = await response.json();
+                console.log('Git status data:', data);
                 
                 if (response.ok) {
                     let statusText = '🌿 Git Status:\n\n';
@@ -637,6 +659,7 @@
                     showStatus('Error: ' + (data.error || 'Failed to get git status'), 'error');
                 }
             } catch (error) {
+                console.error('Error in getGitStatus:', error);
                 showStatus('Error: Failed to communicate with server\n' + error.message, 'error');
             } finally {
                 hideLoader();
@@ -645,6 +668,7 @@
         }
 
         async function viewLogs() {
+            console.log('viewLogs called');
             showLoader();
             disableButtons(true);
 
@@ -657,7 +681,9 @@
                 }
 
                 const response = await fetch(`/api/server-manager/logs?lines=${lines}`);
+                console.log('Logs response:', response.status);
                 const data = await response.json();
+                console.log('Logs data length:', data.logs?.length || 0);
                 
                 if (response.ok) {
                     showStatus('📝 Recent Logs:\n\n' + data.logs, 'info');
@@ -665,6 +691,7 @@
                     showStatus('Error: ' + (data.error || 'Failed to get logs'), 'error');
                 }
             } catch (error) {
+                console.error('Error in viewLogs:', error);
                 showStatus('Error: Failed to communicate with server\n' + error.message, 'error');
             } finally {
                 hideLoader();
@@ -673,12 +700,15 @@
         }
 
         async function getSystemInfo() {
+            console.log('getSystemInfo called');
             showLoader();
             disableButtons(true);
 
             try {
                 const response = await fetch('/api/server-manager/system-info');
+                console.log('System info response:', response.status);
                 const data = await response.json();
+                console.log('System info data:', data);
                 
                 if (response.ok) {
                     let infoText = '💻 System Information:\n\n';
@@ -690,6 +720,7 @@
                     showStatus('Error: ' + (data.error || 'Failed to get system info'), 'error');
                 }
             } catch (error) {
+                console.error('Error in getSystemInfo:', error);
                 showStatus('Error: Failed to communicate with server\n' + error.message, 'error');
             } finally {
                 hideLoader();
@@ -698,12 +729,15 @@
         }
 
         async function viewSessionFolders() {
+            console.log('viewSessionFolders called');
             showLoader();
             disableButtons(true);
 
             try {
                 const response = await fetch('/api/server-manager/wwebjs-folders');
+                console.log('Session folders response:', response.status);
                 const data = await response.json();
+                console.log('Session folders data:', data);
                 
                 if (response.ok) {
                     const sessionBox = document.getElementById('sessionBox');
@@ -739,6 +773,7 @@
                     showStatus('Error: ' + (data.error || 'Failed to get session folders'), 'error');
                 }
             } catch (error) {
+                console.error('Error in viewSessionFolders:', error);
                 showStatus('Error: Failed to communicate with server\n' + error.message, 'error');
             } finally {
                 hideLoader();
