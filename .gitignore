@@ -41,7 +41,8 @@ firebase.json
 config.json
 last_processed_row.json
 config.js
-public/
+# public/ - commented out to allow server-manager.html
+public/media/
 
 # Ignore all session-related directories and their contents
 .sessions/
