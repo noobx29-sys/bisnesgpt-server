@@ -419,6 +419,15 @@
     </style>
 </head>
 <body>
+    <script>
+        // Auto-detect and use daemon port 9000 for API calls
+        const API_BASE = window.location.port === '9000' 
+            ? '' // Use relative URLs if already on port 9000
+            : (window.location.protocol + '//' + window.location.hostname + ':9000'); // Point to daemon
+        
+        console.log('API Base URL:', API_BASE);
+    </script>
+
     <div class="container">
         <h1>🚀 Server Manager</h1>
         <p class="subtitle">Control your server operations</p>
@@ -539,7 +548,7 @@
             try {
                 // Handle delete session separately
                 if (actionToExecute === 'delete-session') {
-                    const folderName = window.sessionToDelete;
+                    const folderName = window.ses`${API_BASE}/api/server-manager/delete-wwebjs-folder`
                     console.log('Deleting session folder:', folderName);
                     if (!folderName) {
                         showStatus('Error: No folder selected', 'error');
@@ -576,7 +585,7 @@
 
                 // Handle other actions
                 console.log('Executing action:', actionToExecute);
-                const response = await fetch(`/api/server-manager/${actionToExecute}`, {
+                const response = await fetch(`${API_BASE}/api/server-manager/${actionToExecute}`, {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json'
@@ -613,7 +622,7 @@
             disableButtons(true);
 
             try {
-                const response = await fetch('/api/server-manager/status');
+                const response = await fetch(`${API_BASE}/api/server-manager/status`);
                 console.log('Status response:', response.status);
                 const data = await response.json();
                 console.log('Status data:', data);
@@ -651,7 +660,7 @@
             disableButtons(true);
 
             try {
-                const response = await fetch('/api/server-manager/git-status');
+                const response = await fetch(`${API_BASE}/api/server-manager/git-status`);
                 console.log('Git status response:', response.status);
                 const data = await response.json();
                 console.log('Git status data:', data);
@@ -687,7 +696,7 @@
                     return;
                 }
 
-                const response = await fetch(`/api/server-manager/logs?lines=${lines}`);
+                const response = await fetch(`${API_BASE}/api/server-manager/logs?lines=${lines}`);
                 console.log('Logs response:', response.status);
                 const data = await response.json();
                 console.log('Logs data length:', data.logs?.length || 0);
@@ -712,7 +721,7 @@
             disableButtons(true);
 
             try {
-                const response = await fetch('/api/server-manager/system-info');
+                const response = await fetch(`${API_BASE}/api/server-manager/system-info`);
                 console.log('System info response:', response.status);
                 const data = await response.json();
                 console.log('System info data:', data);
@@ -741,7 +750,7 @@
             disableButtons(true);
 
             try {
-                const response = await fetch('/api/server-manager/wwebjs-folders');
+                const response = await fetch(`${API_BASE}/api/server-manager/wwebjs-folders`);
                 console.log('Session folders response:', response.status);
                 const data = await response.json();
                 console.log('Session folders data:', data);
