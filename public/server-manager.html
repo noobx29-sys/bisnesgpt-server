@@ -520,18 +520,23 @@
 
         async function executeAction() {
             console.log('executeAction called with:', currentAction);
+            
+            // Save action before closing dialog
+            const action = currentAction;
             closeConfirm();
-            if (!currentAction) {
+            
+            if (!action) {
                 console.log('No action selected');
                 return;
             }
 
+            console.log('Proceeding with action:', action);
             showLoader();
             disableButtons(true);
 
             try {
                 // Handle delete session separately
-                if (currentAction === 'delete-session') {
+                if (action === 'delete-session') {
                     const folderName = window.sessionToDelete;
                     console.log('Deleting session folder:', folderName);
                     if (!folderName) {
@@ -568,8 +573,8 @@
                 }
 
                 // Handle other actions
-                console.log('Executing action:', currentAction);
-                const response = await fetch(`/api/server-manager/${currentAction}`, {
+                console.log('Executing action:', action);
+                const response = await fetch(`/api/server-manager/${action}`, {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json'
