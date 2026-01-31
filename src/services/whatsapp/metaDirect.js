@@ -9,7 +9,7 @@ const { pool } = require('../../config/database');
 const broadcast = require('../../utils/broadcast');
 const { handleNewMessagesTemplateWweb } = require('../../../bots/handleMessagesFiraz');
 
-const GRAPH_API_VERSION = 'v18.0';
+const GRAPH_API_VERSION = 'v24.0';
 const GRAPH_API_BASE = `https://graph.facebook.com/${GRAPH_API_VERSION}`;
 
 class MetaDirect {

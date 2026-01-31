@@ -83,6 +83,10 @@ const mtdcSpreadsheet = require("./spreadsheet/mtdcSpreadsheet.js");
 const certificatesRouter = require("./routes/certificates");
 const contactSyncRouter = require("./routes/contactSync");
 
+// WhatsApp Embedded Signup & Cloud API routes
+const whatsappApiRoutes = require("./src/routes/whatsapp");
+const metaWebhookRoutes = require("./src/routes/webhooks/meta");
+
 // Initialize logger
 const logger = new ServerLogger();
 const logManager = new LogManager();
@@ -3047,6 +3051,11 @@ app.use("/api/lead-analytics", leadAnalyticsRouter);
 
 // Contact Sync Routes
 app.use("/api/sync", contactSyncRouter);
+
+// WhatsApp Embedded Signup & Cloud API routes
+app.use("/api/whatsapp", whatsappApiRoutes);
+app.use("/webhook", metaWebhookRoutes);
+
 // Read specific log file
 app.get("/api/logs/read/:filename", async (req, res) => {
   try {
