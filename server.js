@@ -10223,6 +10223,7 @@ async function syncContacts(client, companyId, phoneIndex = 0) {
                     caption: mediaTypeData.caption || "",
                     thumbnail: mediaTypeData.thumbnail || null,
                     mediaKey: mediaTypeData.media_key || null,
+                    expired: mediaTypeData.expired || false, // Track if media is expired
                     ...(msg.type === "image" && {
                       width: mediaTypeData.width,
                       height: mediaTypeData.height,
@@ -10588,6 +10589,7 @@ async function syncSingleContact(
                   caption: mediaTypeData.caption || "",
                   thumbnail: mediaTypeData.thumbnail || null,
                   mediaKey: mediaTypeData.media_key || null,
+                  expired: mediaTypeData.expired || false, // Track if media is expired
                   ...(msg.type === "image" && {
                     width: mediaTypeData.width,
                     height: mediaTypeData.height,
@@ -18170,6 +18172,7 @@ async function addMessageToPostgres(
           caption: mediaTypeData.caption || "",
           thumbnail: mediaTypeData.thumbnail || null,
           mediaKey: mediaTypeData.media_key || null,
+          expired: mediaTypeData.expired || false, // Track if media is expired
           ...(msg.type === "image" && {
             width: mediaTypeData.width,
             height: mediaTypeData.height,
@@ -18449,12 +18452,43 @@ async function processMessageMedia(msg) {
   }
 
   try {
-    const media = await msg.downloadMedia();
+    // Try to download media with retry logic
+    let media = null;
+    let retryCount = 0;
+    const maxRetries = 2;
+    
+    while (!media && retryCount < maxRetries) {
+      try {
+        media = await msg.downloadMedia();
+        if (!media) {
+          retryCount++;
+          if (retryCount < maxRetries) {
+            console.log(`Retry ${retryCount}/${maxRetries} downloading media for message: ${msg.id._serialized}`);
+            await new Promise(resolve => setTimeout(resolve, 1000)); // Wait 1 second before retry
+          }
+        }
+      } catch (downloadError) {
+        retryCount++;
+        console.log(`Download attempt ${retryCount} failed for message ${msg.id._serialized}:`, downloadError.message);
+        if (retryCount < maxRetries) {
+          await new Promise(resolve => setTimeout(resolve, 1000));
+        }
+      }
+    }
+    
     if (!media) {
       console.log(
-        `Failed to download media for message: ${msg.id._serialized}`
+        `⚠️ Failed to download media for message: ${msg.id._serialized} (type: ${msg.type}) - Media may be expired`
       );
-      return null;
+      // Return placeholder data so we at least know there was media
+      return {
+        mimetype: msg._data?.mimetype || (msg.type === 'image' ? 'image/jpeg' : 'application/octet-stream'),
+        data: null,
+        link: null,
+        filename: msg._data?.filename || '',
+        caption: msg._data?.caption || '',
+        expired: true, // Mark as expired so frontend knows
+      };
     }
 
     const fileSizeBytes = Math.floor((media.data.length * 3) / 4);
