@@ -8066,13 +8066,21 @@ app.post("/api/schedule-message/:companyId", async (req, res) => {
     let activeHoursStart = null;
     let activeHoursEnd = null;
 
-    if (scheduledMessage.activeHours) {
+    console.log("Active hours from request:", scheduledMessage.activeHours);
+
+    // Only validate if activeHours is explicitly provided and not null/undefined
+    if (scheduledMessage.activeHours && 
+        scheduledMessage.activeHours.start && 
+        scheduledMessage.activeHours.end) {
       const start = scheduledMessage.activeHours.start;
       const end = scheduledMessage.activeHours.end;
+
+      console.log("Validating active hours:", { start, end });
 
       // Validate active hours
       const validation = validateActiveHours(start, end);
       if (!validation.valid) {
+        console.error("Active hours validation failed:", validation.error);
         return res.status(400).json({
           success: false,
           error: validation.error
