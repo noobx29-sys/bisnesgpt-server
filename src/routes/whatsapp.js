@@ -381,4 +381,154 @@ router.post('/embedded-signup/complete-with-ids', async (req, res) => {
   }
 });
 
+/**
+ * POST /api/whatsapp/coexistence/sync-contacts
+ * Initiate contacts synchronization for WhatsApp Business App onboarding (coexistence)
+ * Must be called within 24 hours of onboarding
+ */
+router.post('/coexistence/sync-contacts', async (req, res) => {
+  try {
+    const { companyId, phoneIndex } = req.body;
+
+    if (!companyId || phoneIndex === undefined) {
+      return res.status(400).json({ success: false, error: 'Missing companyId or phoneIndex' });
+    }
+
+    // Get config
+    const configResult = await pool.query(
+      'SELECT meta_phone_number_id, meta_access_token_encrypted FROM phone_configs WHERE company_id = $1 AND phone_index = $2',
+      [companyId, phoneIndex]
+    );
+
+    if (!configResult.rows[0]) {
+      return res.status(404).json({ success: false, error: 'Phone config not found' });
+    }
+
+    const { meta_phone_number_id, meta_access_token_encrypted } = configResult.rows[0];
+    const accessToken = metaDirect.decrypt(meta_access_token_encrypted);
+
+    // Initiate contacts sync
+    const response = await axios.post(
+      `${GRAPH_API_BASE}/${meta_phone_number_id}/smb_app_data`,
+      {
+        messaging_product: 'whatsapp',
+        sync_type: 'smb_app_state_sync',
+      },
+      { headers: { Authorization: `Bearer ${accessToken}` } }
+    );
+
+    res.json({
+      success: true,
+      requestId: response.data.request_id,
+      message: 'Contacts sync initiated. Webhooks will deliver the contact data.',
+    });
+
+  } catch (error) {
+    console.error('Contacts sync error:', error.response?.data || error.message);
+    res.status(500).json({
+      success: false,
+      error: error.response?.data?.error?.message || error.message,
+    });
+  }
+});
+
+/**
+ * POST /api/whatsapp/coexistence/sync-history
+ * Initiate message history synchronization for WhatsApp Business App onboarding (coexistence)
+ * Must be called within 24 hours of onboarding
+ */
+router.post('/coexistence/sync-history', async (req, res) => {
+  try {
+    const { companyId, phoneIndex } = req.body;
+
+    if (!companyId || phoneIndex === undefined) {
+      return res.status(400).json({ success: false, error: 'Missing companyId or phoneIndex' });
+    }
+
+    // Get config
+    const configResult = await pool.query(
+      'SELECT meta_phone_number_id, meta_access_token_encrypted FROM phone_configs WHERE company_id = $1 AND phone_index = $2',
+      [companyId, phoneIndex]
+    );
+
+    if (!configResult.rows[0]) {
+      return res.status(404).json({ success: false, error: 'Phone config not found' });
+    }
+
+    const { meta_phone_number_id, meta_access_token_encrypted } = configResult.rows[0];
+    const accessToken = metaDirect.decrypt(meta_access_token_encrypted);
+
+    // Initiate history sync
+    const response = await axios.post(
+      `${GRAPH_API_BASE}/${meta_phone_number_id}/smb_app_data`,
+      {
+        messaging_product: 'whatsapp',
+        sync_type: 'history',
+      },
+      { headers: { Authorization: `Bearer ${accessToken}` } }
+    );
+
+    res.json({
+      success: true,
+      requestId: response.data.request_id,
+      message: 'History sync initiated. Webhooks will deliver the message history.',
+    });
+
+  } catch (error) {
+    console.error('History sync error:', error.response?.data || error.message);
+    res.status(500).json({
+      success: false,
+      error: error.response?.data?.error?.message || error.message,
+    });
+  }
+});
+
+/**
+ * GET /api/whatsapp/coexistence/status/:companyId/:phoneIndex
+ * Check if phone number is in coexistence mode (using both WA Business App and Cloud API)
+ */
+router.get('/coexistence/status/:companyId/:phoneIndex', async (req, res) => {
+  try {
+    const { companyId, phoneIndex } = req.params;
+
+    // Get config
+    const configResult = await pool.query(
+      'SELECT meta_phone_number_id, meta_access_token_encrypted FROM phone_configs WHERE company_id = $1 AND phone_index = $2',
+      [companyId, parseInt(phoneIndex)]
+    );
+
+    if (!configResult.rows[0]) {
+      return res.status(404).json({ success: false, error: 'Phone config not found' });
+    }
+
+    const { meta_phone_number_id, meta_access_token_encrypted } = configResult.rows[0];
+    const accessToken = metaDirect.decrypt(meta_access_token_encrypted);
+
+    // Check coexistence status
+    const response = await axios.get(
+      `${GRAPH_API_BASE}/${meta_phone_number_id}`,
+      {
+        headers: { Authorization: `Bearer ${accessToken}` },
+        params: { fields: 'is_on_biz_app,platform_type,display_phone_number,verified_name' },
+      }
+    );
+
+    res.json({
+      success: true,
+      isCoexistence: response.data.is_on_biz_app === true && response.data.platform_type === 'CLOUD_API',
+      isOnBizApp: response.data.is_on_biz_app,
+      platformType: response.data.platform_type,
+      displayPhoneNumber: response.data.display_phone_number,
+      verifiedName: response.data.verified_name,
+    });
+
+  } catch (error) {
+    console.error('Coexistence status error:', error.response?.data || error.message);
+    res.status(500).json({
+      success: false,
+      error: error.response?.data?.error?.message || error.message,
+    });
+  }
+});
+
 module.exports = router;

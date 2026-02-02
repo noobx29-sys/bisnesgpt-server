@@ -102,11 +102,29 @@ class MetaDirect {
     if (body.entry) {
       for (const entry of body.entry) {
         for (const change of entry.changes || []) {
-          if (change.value?.messages) {
-            await this.handleMessages(change.value);
+          const field = change.field;
+          const value = change.value;
+
+          // Standard messages webhook
+          if (field === 'messages' || value?.messages) {
+            await this.handleMessages(value);
           }
-          if (change.value?.statuses) {
-            await this.handleStatuses(change.value);
+          if (value?.statuses) {
+            await this.handleStatuses(value);
+          }
+
+          // Coexistence webhooks (WhatsApp Business App onboarding)
+          if (field === 'history') {
+            await this.handleHistory(value);
+          }
+          if (field === 'smb_app_state_sync') {
+            await this.handleSmbAppStateSync(value);
+          }
+          if (field === 'smb_message_echoes') {
+            await this.handleSmbMessageEchoes(value);
+          }
+          if (field === 'account_update') {
+            await this.handleAccountUpdate(value);
           }
         }
       }
@@ -121,6 +139,197 @@ class MetaDirect {
     // Status updates
     if (body.statuses) {
       await this.handleStatuses(body);
+    }
+  }
+
+  /**
+   * Handle history webhook (coexistence - message history sync)
+   * @param {object} value - Webhook value
+   */
+  async handleHistory(value) {
+    const { metadata, history } = value;
+    const phoneNumberId = metadata?.phone_number_id;
+
+    console.log('Received history webhook for phone:', phoneNumberId);
+
+    // Find config by phone number ID
+    const config = await pool.query(
+      'SELECT company_id, phone_index FROM phone_configs WHERE meta_phone_number_id = $1',
+      [phoneNumberId]
+    );
+
+    if (!config.rows[0]) {
+      console.log('No config found for history webhook, phone_number_id:', phoneNumberId);
+      return;
+    }
+
+    const { company_id, phone_index } = config.rows[0];
+
+    for (const historyItem of history || []) {
+      // Check for errors (e.g., business declined history sharing)
+      if (historyItem.errors) {
+        console.log('History sync error:', historyItem.errors);
+        broadcast.newMessage(company_id, {
+          type: 'system',
+          content: `History sync: ${historyItem.errors[0]?.message || 'Error occurred'}`,
+        });
+        continue;
+      }
+
+      const { metadata: historyMeta, threads } = historyItem;
+      console.log(`History sync phase ${historyMeta?.phase}, chunk ${historyMeta?.chunk_order}, progress ${historyMeta?.progress}%`);
+
+      // Process each thread (conversation)
+      for (const thread of threads || []) {
+        const contactId = thread.id; // WhatsApp user phone number
+
+        for (const msg of thread.messages || []) {
+          // Skip media placeholders for now (separate webhook will have media details)
+          if (msg.type === 'media_placeholder') continue;
+
+          const messageData = {
+            externalId: msg.id,
+            provider: 'meta_direct_history',
+            chatId: `${contactId}@c.us`,
+            from: msg.from,
+            to: msg.to,
+            fromMe: msg.from !== contactId,
+            timestamp: parseInt(msg.timestamp),
+            type: msg.type,
+            content: this.extractContent(msg),
+            historyStatus: msg.history_context?.status,
+          };
+
+          // Broadcast to frontend for display
+          broadcast.newMessage(company_id, messageData);
+        }
+      }
+
+      // Notify progress
+      if (historyMeta?.progress) {
+        broadcast.newMessage(company_id, {
+          type: 'system',
+          content: `History sync: ${historyMeta.progress}% complete`,
+        });
+      }
+    }
+  }
+
+  /**
+   * Handle smb_app_state_sync webhook (coexistence - contacts sync)
+   * @param {object} value - Webhook value
+   */
+  async handleSmbAppStateSync(value) {
+    const { metadata, state_sync } = value;
+    const phoneNumberId = metadata?.phone_number_id;
+
+    console.log('Received smb_app_state_sync webhook for phone:', phoneNumberId);
+
+    // Find config by phone number ID
+    const config = await pool.query(
+      'SELECT company_id, phone_index FROM phone_configs WHERE meta_phone_number_id = $1',
+      [phoneNumberId]
+    );
+
+    if (!config.rows[0]) {
+      console.log('No config found for state_sync webhook, phone_number_id:', phoneNumberId);
+      return;
+    }
+
+    const { company_id } = config.rows[0];
+
+    for (const syncItem of state_sync || []) {
+      if (syncItem.type === 'contact') {
+        const contact = syncItem.contact;
+        const action = syncItem.action; // 'add' or 'remove'
+
+        console.log(`Contact ${action}: ${contact?.full_name} (${contact?.phone_number})`);
+
+        // Broadcast contact update to frontend
+        broadcast.newMessage(company_id, {
+          type: 'contact_sync',
+          action,
+          contact: {
+            phoneNumber: contact?.phone_number,
+            fullName: contact?.full_name,
+            firstName: contact?.first_name,
+          },
+        });
+      }
+    }
+  }
+
+  /**
+   * Handle smb_message_echoes webhook (messages sent via WhatsApp Business App)
+   * @param {object} value - Webhook value
+   */
+  async handleSmbMessageEchoes(value) {
+    const { metadata, message_echoes } = value;
+    const phoneNumberId = metadata?.phone_number_id;
+
+    console.log('Received smb_message_echoes webhook for phone:', phoneNumberId);
+
+    // Find config by phone number ID
+    const config = await pool.query(
+      'SELECT company_id, phone_index, display_phone_number FROM phone_configs WHERE meta_phone_number_id = $1',
+      [phoneNumberId]
+    );
+
+    if (!config.rows[0]) {
+      console.log('No config found for message_echoes webhook, phone_number_id:', phoneNumberId);
+      return;
+    }
+
+    const { company_id, display_phone_number } = config.rows[0];
+
+    for (const msg of message_echoes || []) {
+      const messageData = {
+        externalId: msg.id,
+        provider: 'meta_direct_echo',
+        chatId: `${msg.to}@c.us`,
+        from: msg.from,
+        to: msg.to,
+        fromMe: true, // Messages echoed from WA Business App are always from the business
+        timestamp: parseInt(msg.timestamp),
+        type: msg.type,
+        content: this.extractContent(msg),
+      };
+
+      // Broadcast to frontend so the message shows in the conversation
+      broadcast.newMessage(company_id, messageData);
+    }
+  }
+
+  /**
+   * Handle account_update webhook (e.g., partner removed)
+   * @param {object} value - Webhook value
+   */
+  async handleAccountUpdate(value) {
+    const { phone_number, event } = value;
+
+    console.log('Received account_update webhook:', event, 'for phone:', phone_number);
+
+    if (event === 'PARTNER_REMOVED') {
+      // Business disconnected from Cloud API via WhatsApp Business App
+      const config = await pool.query(
+        'SELECT company_id, phone_index FROM phone_configs WHERE display_phone_number LIKE $1',
+        [`%${phone_number}%`]
+      );
+
+      if (config.rows[0]) {
+        const { company_id, phone_index } = config.rows[0];
+
+        // Update status
+        await pool.query(
+          'UPDATE phone_configs SET status = $1 WHERE company_id = $2 AND phone_index = $3',
+          ['disconnected', company_id, phone_index]
+        );
+
+        // Broadcast disconnection
+        broadcast.authStatus(company_id, 'disconnected', null, phone_index, {
+          reason: 'Business disconnected via WhatsApp Business App',
+        });
+      }
     }
   }
 
