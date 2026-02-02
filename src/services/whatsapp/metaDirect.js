@@ -478,6 +478,8 @@ class MetaDirect {
           isGroup: false,
           sendStateTyping: async () => {},
           clearState: async () => {},
+          markUnread: async () => {},
+          sendSeen: async () => {},
         }),
         // Mock getContact method
         getContact: async () => ({

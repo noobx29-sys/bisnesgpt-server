@@ -130,6 +130,111 @@ router.get('/config/:companyId', async (req, res) => {
 });
 
 /**
+ * GET /api/whatsapp/meta-accounts
+ * Get all Meta Direct/Embedded Signup accounts with their statuses
+ */
+router.get('/meta-accounts', async (req, res) => {
+  try {
+    // Get all phone configs with meta connection types
+    const result = await pool.query(`
+      SELECT
+        pc.company_id,
+        pc.phone_index,
+        pc.connection_type,
+        pc.status,
+        pc.display_phone_number,
+        pc.meta_phone_number_id,
+        pc.meta_waba_id,
+        pc.created_at,
+        pc.updated_at,
+        c.name as company_name
+      FROM phone_configs pc
+      LEFT JOIN company c ON pc.company_id = c.id
+      WHERE pc.connection_type IN ('meta_direct', 'meta_embedded', '360dialog')
+      ORDER BY pc.updated_at DESC, pc.company_id, pc.phone_index
+    `);
+
+    // Also get verification status from Meta API for each account (optional, can be slow)
+    const accounts = result.rows.map(row => ({
+      companyId: row.company_id,
+      companyName: row.company_name || row.company_id,
+      phoneIndex: row.phone_index,
+      connectionType: row.connection_type,
+      status: row.status,
+      displayPhoneNumber: row.display_phone_number,
+      phoneNumberId: row.meta_phone_number_id,
+      wabaId: row.meta_waba_id,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    }));
+
+    res.json({
+      success: true,
+      total: accounts.length,
+      accounts,
+    });
+  } catch (e) {
+    console.error('Error fetching meta accounts:', e);
+    res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+/**
+ * GET /api/whatsapp/meta-accounts/:companyId/:phoneIndex/verify
+ * Verify a specific Meta account by checking with Meta API
+ */
+router.get('/meta-accounts/:companyId/:phoneIndex/verify', async (req, res) => {
+  try {
+    const { companyId, phoneIndex } = req.params;
+
+    // Get config with encrypted token
+    const configResult = await pool.query(
+      'SELECT meta_phone_number_id, meta_access_token_encrypted, display_phone_number FROM phone_configs WHERE company_id = $1 AND phone_index = $2',
+      [companyId, parseInt(phoneIndex)]
+    );
+
+    if (!configResult.rows[0] || !configResult.rows[0].meta_phone_number_id) {
+      return res.json({ success: false, error: 'Meta configuration not found' });
+    }
+
+    const { meta_phone_number_id, meta_access_token_encrypted, display_phone_number } = configResult.rows[0];
+    const accessToken = metaDirect.decrypt(meta_access_token_encrypted);
+
+    // Verify with Meta API
+    const metaResponse = await axios.get(
+      `${GRAPH_API_BASE}/${meta_phone_number_id}`,
+      {
+        headers: { Authorization: `Bearer ${accessToken}` },
+        params: { fields: 'display_phone_number,verified_name,quality_rating,status,code_verification_status' },
+      }
+    );
+
+    const metaData = metaResponse.data;
+
+    // Update status in database if different
+    const newStatus = metaData.status === 'CONNECTED' ? 'ready' : metaData.status?.toLowerCase() || 'unknown';
+    await pool.query(
+      'UPDATE phone_configs SET status = $1, updated_at = NOW() WHERE company_id = $2 AND phone_index = $3',
+      [newStatus, companyId, parseInt(phoneIndex)]
+    );
+
+    res.json({
+      success: true,
+      companyId,
+      phoneIndex,
+      displayPhoneNumber: metaData.display_phone_number || display_phone_number,
+      verifiedName: metaData.verified_name,
+      qualityRating: metaData.quality_rating,
+      status: metaData.status,
+      codeVerificationStatus: metaData.code_verification_status,
+    });
+  } catch (e) {
+    console.error('Error verifying meta account:', e);
+    res.status(500).json({ success: false, error: e.response?.data?.error?.message || e.message });
+  }
+});
+
+/**
  * DELETE /api/whatsapp/config/:companyId/:phoneIndex
  * Remove a phone configuration
  */
