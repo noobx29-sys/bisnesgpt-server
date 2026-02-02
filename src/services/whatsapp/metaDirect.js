@@ -543,6 +543,43 @@ class MetaDirect {
           // Route through Meta Direct sendText or sendMedia
           if (typeof content === 'string') {
             const result = await self.sendText(company_id, phone_index, chatId, content);
+            
+            // Save the outgoing message to database and broadcast to frontend
+            const recipientPhone = chatId.replace(/@.+/, '');
+            const outgoingMessageData = {
+              // Core identifiers
+              messageId: result.id,
+              externalId: result.id,
+              chat_id: chatId,
+              chatId: chatId,
+
+              // Message content
+              message: content,
+              messageContent: content,
+              content: content,
+              messageType: 'text',
+              type: 'text',
+
+              // Sender info (fromMe = true for bot replies)
+              from: display_phone_number,
+              to: recipientPhone,
+              phone: recipientPhone,
+              extractedNumber: recipientPhone,
+              fromMe: true,
+              contactName: recipientPhone,
+              from_name: display_phone_number,
+
+              // Timestamps
+              timestamp: Date.now(),
+
+              // Provider info
+              provider: 'meta_direct',
+              phoneIndex: phone_index,
+            };
+
+            // Broadcast to frontend
+            broadcast.newMessage(company_id, outgoingMessageData);
+
             return { id: { _serialized: result.id } };
           }
           // Handle MessageMedia objects
