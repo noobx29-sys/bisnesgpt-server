@@ -187,16 +187,39 @@ class MetaDirect {
           // Skip media placeholders for now (separate webhook will have media details)
           if (msg.type === 'media_placeholder') continue;
 
+          const extractedContent = this.extractContent(msg);
+          const textBody = msg.type === 'text' ? msg.text?.body : (typeof extractedContent === 'string' ? extractedContent : '');
+          const isFromMe = msg.from !== contactId;
+
           const messageData = {
+            // Core identifiers
+            messageId: msg.id,
             externalId: msg.id,
-            provider: 'meta_direct_history',
+            chat_id: `${contactId}@c.us`,
             chatId: `${contactId}@c.us`,
+
+            // Message content
+            message: textBody,
+            messageContent: textBody,
+            content: extractedContent,
+            messageType: msg.type,
+            type: msg.type,
+
+            // Sender info
             from: msg.from,
             to: msg.to,
-            fromMe: msg.from !== contactId,
-            timestamp: parseInt(msg.timestamp),
-            type: msg.type,
-            content: this.extractContent(msg),
+            phone: contactId,
+            extractedNumber: contactId,
+            fromMe: isFromMe,
+            contactName: contactId,
+            from_name: contactId,
+
+            // Timestamps
+            timestamp: parseInt(msg.timestamp) * 1000,
+
+            // Provider info
+            provider: 'meta_direct_history',
+            phoneIndex: phone_index,
             historyStatus: msg.history_context?.status,
           };
 
@@ -280,19 +303,41 @@ class MetaDirect {
       return;
     }
 
-    const { company_id, display_phone_number } = config.rows[0];
+    const { company_id, phone_index = 0, display_phone_number } = config.rows[0];
 
     for (const msg of message_echoes || []) {
+      const extractedContent = this.extractContent(msg);
+      const textBody = msg.type === 'text' ? msg.text?.body : (typeof extractedContent === 'string' ? extractedContent : '');
+
       const messageData = {
+        // Core identifiers
+        messageId: msg.id,
         externalId: msg.id,
-        provider: 'meta_direct_echo',
+        chat_id: `${msg.to}@c.us`,
         chatId: `${msg.to}@c.us`,
+
+        // Message content
+        message: textBody,
+        messageContent: textBody,
+        content: extractedContent,
+        messageType: msg.type,
+        type: msg.type,
+
+        // Sender info
         from: msg.from,
         to: msg.to,
+        phone: msg.to,
+        extractedNumber: msg.to,
         fromMe: true, // Messages echoed from WA Business App are always from the business
-        timestamp: parseInt(msg.timestamp),
-        type: msg.type,
-        content: this.extractContent(msg),
+        contactName: msg.to,
+        from_name: display_phone_number,
+
+        // Timestamps
+        timestamp: parseInt(msg.timestamp) * 1000,
+
+        // Provider info
+        provider: 'meta_direct_echo',
+        phoneIndex: phone_index,
       };
 
       // Broadcast to frontend so the message shows in the conversation
@@ -356,17 +401,37 @@ class MetaDirect {
 
     for (const msg of messages) {
       const contact = contacts?.find(c => c.wa_id === msg.from);
+      const extractedContent = this.extractContent(msg);
+      const textBody = msg.type === 'text' ? msg.text?.body : (typeof extractedContent === 'string' ? extractedContent : '');
 
       const messageData = {
+        // Core identifiers
+        messageId: msg.id,
         externalId: msg.id,
-        provider: 'meta_direct',
+        chat_id: `${msg.from}@c.us`,
         chatId: `${msg.from}@c.us`,
-        from: msg.from,
-        fromMe: false,
-        timestamp: parseInt(msg.timestamp),
+
+        // Message content (dc-crm expects these field names)
+        message: textBody,
+        messageContent: textBody,
+        content: extractedContent,
+        messageType: msg.type,
         type: msg.type,
-        content: this.extractContent(msg),
-        contactName: contact?.profile?.name,
+
+        // Sender info
+        from: msg.from,
+        phone: msg.from,
+        extractedNumber: msg.from,
+        fromMe: false,
+        contactName: contact?.profile?.name || msg.from,
+        from_name: contact?.profile?.name || msg.from,
+
+        // Timestamps
+        timestamp: parseInt(msg.timestamp) * 1000, // Convert to milliseconds for JS
+
+        // Provider info
+        provider: 'meta_direct',
+        phoneIndex: phone_index,
       };
 
       // Save message to database (import from your existing message handler)
@@ -422,8 +487,14 @@ class MetaDirect {
 
       // Create mock client for Meta Direct (bot handlers expect wwebjs client)
       const self = this;
+      const phoneNumberClean = display_phone_number.replace(/\D/g, ''); // Remove non-digits
       const mockClient = {
-        info: { wid: { _serialized: `${display_phone_number}@c.us` } },
+        info: {
+          wid: {
+            _serialized: `${phoneNumberClean}@c.us`,
+            user: phoneNumberClean,
+          }
+        },
         sendMessage: async (chatId, content, options = {}) => {
           // Route through Meta Direct sendText or sendMedia
           if (typeof content === 'string') {

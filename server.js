@@ -20000,22 +20000,15 @@ async function main(reinitialize = false) {
           error.message
         );
 
-        // Check if phone got stuck and attempt cleanup
+        // Check if phone got stuck - don't cleanup, just log it
         const botData = botMap.get(botName);
         if (botData && botData[phoneIndex]?.status === "initializing") {
           console.log(
-            `🧹 Attempting cleanup for stuck phone ${botName}-P${
+            `⚠️ Phone ${botName}-P${
               phoneIndex + 1
-            }`
+            } is stuck in initializing state - skipping cleanup, please restart server manually`
           );
-          try {
-            await safeCleanup(botName, phoneIndex);
-          } catch (cleanupError) {
-            console.error(
-              `Error during cleanup for ${botName}-P${phoneIndex + 1}:`,
-              cleanupError
-            );
-          }
+          // Don't cleanup - user will restart server manually
         }
 
         return {
@@ -20198,18 +20191,11 @@ async function main(reinitialize = false) {
           error.message
         );
 
-        // Check if bot got stuck and attempt cleanup
+        // Check if bot got stuck - don't cleanup, just log it
         const currentStatus = await getBotStatus(config.botName);
         if (currentStatus === "initializing") {
-          console.log(`🧹 Attempting cleanup for stuck bot ${config.botName}`);
-          try {
-            await safeCleanup(config.botName, 0); // Cleanup first phone
-          } catch (cleanupError) {
-            console.error(
-              `Error during cleanup for ${config.botName}:`,
-              cleanupError
-            );
-          }
+          console.log(`⚠️ Bot ${config.botName} is stuck in initializing state - skipping cleanup, please restart server manually`);
+          // Don't cleanup - user will restart server manually
         }
 
         return {
@@ -20465,45 +20451,9 @@ function startBotMonitoringSystem() {
                   phoneIndex + 1
                 } stuck in initializing for ${(stuckDuration / 1000).toFixed(
                   1
-                )}s - attempting recovery`
+                )}s - please restart server manually if needed`
               );
-
-              try {
-                // Update status to indicate recovery attempt
-                botData[phoneIndex].status = "recovering";
-                botMap.set(botName, botData);
-                await updatePhoneStatus(botName, phoneIndex, "recovering");
-
-                // Attempt cleanup and reinitialization
-                await safeCleanup(botName, phoneIndex);
-
-                // Small delay before reinitializing
-                await new Promise((resolve) => setTimeout(resolve, 5000));
-
-                // Reinitialize this specific phone
-                console.log(
-                  `🔄 Attempting to reinitialize stuck bot ${botName} Phone ${
-                    phoneIndex + 1
-                  }`
-                );
-                await initializeBot(botName, 1, phoneIndex);
-              } catch (recoveryError) {
-                console.error(
-                  `❌ Failed to recover stuck bot ${botName} Phone ${
-                    phoneIndex + 1
-                  }:`,
-                  recoveryError
-                );
-                botData[phoneIndex].status = "error";
-                botData[
-                  phoneIndex
-                ].error = `Recovery failed: ${recoveryError.message}`;
-                botMap.set(botName, botData);
-                await updatePhoneStatus(botName, phoneIndex, "error", {
-                  error: recoveryError.message,
-                  recoveryAttempted: true,
-                });
-              }
+              // Don't cleanup or attempt recovery - user will restart server manually
             }
           }
         }
