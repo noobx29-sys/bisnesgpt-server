@@ -588,7 +588,7 @@ class MetaDirect {
                   content, message_type, from_me, 
                   timestamp, phone_index
                 ) VALUES ($1, $2, $3, $4, $5, $6, to_timestamp($7/1000.0), $8)
-                ON CONFLICT (message_id) DO NOTHING
+                ON CONFLICT (message_id, company_id) DO NOTHING
               `, [
                 company_id,
                 contactID,
