@@ -11707,6 +11707,25 @@ async function sendScheduledMessage(message) {
       message.phone_index = 0;
     }
 
+    // Check for Meta Direct connection first
+    const metaConfigResult = await client.query(
+      'SELECT * FROM phone_configs WHERE company_id = $1 AND phone_index = $2 AND connection_type = $3',
+      [companyId, message.phone_index, 'meta_direct']
+    );
+
+    const hasMetaDirect = metaConfigResult.rows.length > 0;
+    
+    if (hasMetaDirect) {
+      const error = new Error(
+        `Blasting not yet supported for Meta Direct connections. Please use wwebjs (QR code) connection for scheduled messages. Meta Direct support coming soon!`
+      );
+      console.error(`[Company ${companyId}] Meta Direct blasting not supported:`, {
+        phoneIndex: message.phone_index,
+        connectionType: 'meta_direct',
+      });
+      throw error;
+    }
+
     const botData = botMap.get(companyId);
     console.log(
       `[Company ${companyId}] Available phone indices:`,
