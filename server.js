@@ -10223,7 +10223,6 @@ async function syncContacts(client, companyId, phoneIndex = 0) {
                     caption: mediaTypeData.caption || "",
                     thumbnail: mediaTypeData.thumbnail || null,
                     mediaKey: mediaTypeData.media_key || null,
-                    expired: mediaTypeData.expired || false, // Track if media is expired
                     ...(msg.type === "image" && {
                       width: mediaTypeData.width,
                       height: mediaTypeData.height,
@@ -10490,29 +10489,13 @@ async function syncSingleContact(
       : `${phoneWithoutPlus}@c.us`;
 
     try {
-      // Check if client is ready
-      const clientState = await client.getState();
-      console.log(`Client state for phone ${phoneIndex}: ${clientState}`);
-      
-      if (clientState !== 'CONNECTED') {
-        console.error(`WhatsApp client for phone ${phoneIndex} is not connected. State: ${clientState}`);
-        throw new Error(`WhatsApp client not connected. Current state: ${clientState}`);
-      }
-
       const sync = await client.syncHistory(chatId);
       if (sync) {
         console.log("Synced Chat ID history");
       } else {
-        console.log("Sync Failed - this may happen if chat doesn't exist or already synced");
+        console.log("Sync Failed");
       }
-      
       const chat = await client.getChatById(chatId);
-      if (!chat) {
-        console.error(`Chat not found for ${chatId} on phone ${phoneIndex}`);
-        throw new Error(`Chat not found for ${chatId}`);
-      }
-      console.log(`Found chat: ${chat.name || chatId}, isGroup: ${chat.isGroup}`);
-      
       const contact = await chat.getContact();
       const contactID = `${companyId}-${phoneWithoutPlus}`;
 
@@ -10605,7 +10588,6 @@ async function syncSingleContact(
                   caption: mediaTypeData.caption || "",
                   thumbnail: mediaTypeData.thumbnail || null,
                   mediaKey: mediaTypeData.media_key || null,
-                  expired: mediaTypeData.expired || false, // Track if media is expired
                   ...(msg.type === "image" && {
                     width: mediaTypeData.width,
                     height: mediaTypeData.height,
@@ -12961,7 +12943,7 @@ async function scheduleAllMessages(specificCompanyId = null) {
 const { broadcastNewMessageToCompany } = require("./utils/broadcast");
 const {
   handleNewMessagesTemplateWweb,
-} = require("./bots/handleMessagesFiraz.js");
+} = require("./bots/handleMessagesTemplateWweb.js");
 
 function setupMessageHandler(client, botName, phoneIndex) {
   client.on("message", async (msg) => {
@@ -18188,7 +18170,6 @@ async function addMessageToPostgres(
           caption: mediaTypeData.caption || "",
           thumbnail: mediaTypeData.thumbnail || null,
           mediaKey: mediaTypeData.media_key || null,
-          expired: mediaTypeData.expired || false, // Track if media is expired
           ...(msg.type === "image" && {
             width: mediaTypeData.width,
             height: mediaTypeData.height,
@@ -18468,43 +18449,12 @@ async function processMessageMedia(msg) {
   }
 
   try {
-    // Try to download media with retry logic
-    let media = null;
-    let retryCount = 0;
-    const maxRetries = 2;
-    
-    while (!media && retryCount < maxRetries) {
-      try {
-        media = await msg.downloadMedia();
-        if (!media) {
-          retryCount++;
-          if (retryCount < maxRetries) {
-            console.log(`Retry ${retryCount}/${maxRetries} downloading media for message: ${msg.id._serialized}`);
-            await new Promise(resolve => setTimeout(resolve, 1000)); // Wait 1 second before retry
-          }
-        }
-      } catch (downloadError) {
-        retryCount++;
-        console.log(`Download attempt ${retryCount} failed for message ${msg.id._serialized}:`, downloadError.message);
-        if (retryCount < maxRetries) {
-          await new Promise(resolve => setTimeout(resolve, 1000));
-        }
-      }
-    }
-    
+    const media = await msg.downloadMedia();
     if (!media) {
       console.log(
-        `⚠️ Failed to download media for message: ${msg.id._serialized} (type: ${msg.type}) - Media may be expired`
+        `Failed to download media for message: ${msg.id._serialized}`
       );
-      // Return placeholder data so we at least know there was media
-      return {
-        mimetype: msg._data?.mimetype || (msg.type === 'image' ? 'image/jpeg' : 'application/octet-stream'),
-        data: null,
-        link: null,
-        filename: msg._data?.filename || '',
-        caption: msg._data?.caption || '',
-        expired: true, // Mark as expired so frontend knows
-      };
+      return null;
     }
 
     const fileSizeBytes = Math.floor((media.data.length * 3) / 4);
@@ -26635,9 +26585,24 @@ app.post("/api/v2/messages/text/:companyId/:chatId", async (req, res) => {
         .send("No active WhatsApp client found for this company");
     }
 
-    // 2. Send the message
+    // 2. Ensure the chat exists and send the message
     console.log("\n=== Sending Message ===");
     let sentMessage;
+
+    // Try to retrieve the chat first to surface clear errors when chat data is missing
+    try {
+      console.log("Checking chat exists for:", chatId);
+      await client.getChatById(chatId);
+    } catch (chatErr) {
+      console.error("Failed to get chat before sending message:", chatErr?.message);
+      // Return a 404-like response so caller knows the chat is not available
+      return res.status(404).json({
+        success: false,
+        error: "Chat not found or not available in WhatsApp client",
+        details: chatErr?.message,
+      });
+    }
+
     try {
       if (quotedMessageId) {
         console.log("Sending with quoted message:", quotedMessageId);
@@ -26656,10 +26621,25 @@ app.post("/api/v2/messages/text/:companyId/:chatId", async (req, res) => {
       });
     } catch (sendError) {
       console.error("\n=== Message Send Error ===");
-      console.error("Error Type:", sendError.name);
-      console.error("Error Message:", sendError.message);
-      console.error("Stack:", sendError.stack);
-      throw sendError;
+      console.error("Error Type:", sendError?.name);
+      console.error("Error Message:", sendError?.message);
+      console.error("Stack:", sendError?.stack);
+
+      // Known whatsapp-web error: "Lid is missing in chat table" - surface a helpful message
+      if (sendError?.message && sendError.message.includes("Lid is missing")) {
+        return res.status(500).json({
+          success: false,
+          error: "WhatsApp internal error: Lid is missing in chat table",
+          details: sendError.message,
+        });
+      }
+
+      // Generic send failure
+      return res.status(500).json({
+        success: false,
+        error: "Failed to send message",
+        details: sendError?.message,
+      });
     }
 
     // 3. Process response and save to SQL

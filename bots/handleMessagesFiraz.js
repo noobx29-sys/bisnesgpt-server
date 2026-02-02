@@ -11394,7 +11394,7 @@ async function runAssistant(
     const run = await openai.beta.threads.runs.create(threadId, {
       assistant_id: assistantID,
       tools: tools,
-      xadditional_instructions: `IMPORTANT: Today's date and time is ${currentDateTime}. Always use this as the current date for any date-related queries or operations.`,
+      additional_instructions: `IMPORTANT: Today's date and time is ${currentDateTime}. Always use this as the current date for any date-related queries or operations.`,
     });
 
     console.log(`Created run: ${run.id}`);
