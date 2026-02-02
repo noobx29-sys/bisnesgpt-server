@@ -24707,86 +24707,78 @@ app.get("/api/bot-status/:companyId", async (req, res) => {
       return res.status(404).json({ error: "Company not found" });
     }
 
-    // Then get the bot status
+    // Check for Meta Direct connections first
+    const metaConfigsResult = await sqlDb.query(
+      'SELECT phone_index, connection_type, status, display_phone_number FROM phone_configs WHERE company_id = $1 ORDER BY phone_index',
+      [companyId]
+    );
+
+    // Then get the bot status from botMap (wwebjs clients)
     const botData = botMap.get(companyId);
 
-    if (botData && Array.isArray(botData)) {
-      if (botData.length === 1) {
-        const { status, qrCode } = botData[0];
+    // Merge Meta Direct statuses with wwebjs statuses
+    const phoneCount = companyData.phone_count || 1;
+    let statusArray = [];
 
+    for (let i = 0; i < phoneCount; i++) {
+      // Check if this phone has a Meta Direct connection
+      const metaConfig = metaConfigsResult.rows.find(row => row.phone_index === i);
+      
+      if (metaConfig) {
+        // Use Meta Direct status
+        statusArray.push({
+          phoneIndex: i,
+          status: metaConfig.status || 'unknown',
+          qrCode: null,
+          phoneInfo: metaConfig.display_phone_number,
+          connectionType: metaConfig.connection_type,
+        });
+      } else if (botData && botData[i]) {
+        // Use wwebjs status
         let phoneInfo = null;
-
-        if (botData[0]?.client) {
+        if (botData[i]?.client) {
           try {
-            const info = await botData[0].client.info;
+            const info = await botData[i].client.info;
             phoneInfo = info?.wid?.user || null;
           } catch (err) {
-            console.error(
-              `Error getting client info for company ${companyId}:`,
-              err
-            );
-            console.error("Error stack:", err.stack);
+            console.error(`Error getting client info for company ${companyId} phone ${i}:`, err);
           }
-        } else {
-          console.log("No client object found in bot data");
         }
-
-        const response = {
-          status,
-          qrCode,
+        
+        statusArray.push({
+          phoneIndex: i,
+          status: botData[i].status,
+          qrCode: botData[i].qrCode,
           phoneInfo,
-          companyId,
-          v2: companyData.v2,
-          trialEndDate: companyData.trial_end_date,
-          apiUrl: companyData.api_url,
-          phoneCount: companyData.phone_count,
-        };
-        res.json(response);
+          connectionType: 'wwebjs',
+        });
       } else {
-        const statusArray = await Promise.all(
-          botData.map(async (phone, index) => {
-            let phoneInfo = null;
-
-            if (phone?.client) {
-              try {
-                const info = await phone.client.info;
-                phoneInfo = info?.wid?.user || null;
-              } catch (err) {
-                console.error(
-                  `Error getting client info for company ${companyId} phone ${index}:`,
-                  err
-                );
-                console.error(`Phone ${index} error stack:`, err.stack);
-              }
-            } else {
-              console.log(`Phone ${index} has no client object`);
-            }
-
-            const phoneResult = {
-              phoneIndex: index,
-              status: phone.status,
-              qrCode: phone.qrCode,
-              phoneInfo,
-            };
-            return phoneResult;
-          })
-        );
-
-        const response = {
-          phones: statusArray,
-          companyId,
-          v2: companyData.v2,
-          trialEndDate: companyData.trial_end_date,
-          apiUrl: companyData.api_url,
-          phoneCount: companyData.phone_count,
-        };
-        res.json(response);
+        // No connection found
+        statusArray.push({
+          phoneIndex: i,
+          status: 'initializing',
+          qrCode: null,
+          phoneInfo: null,
+          connectionType: null,
+        });
       }
-    } else {
+    }
+
+    if (statusArray.length === 1) {
+      // Single phone response
       const response = {
-        status: "initializing",
-        qrCode: null,
-        phoneInfo: null,
+        ...statusArray[0],
+        companyId,
+        v2: companyData.v2,
+        trialEndDate: companyData.trial_end_date,
+        apiUrl: companyData.api_url,
+        phoneCount: companyData.phone_count,
+      };
+      res.json(response);
+    } else {
+      // Multiple phones response
+      const response = {
+        phones: statusArray,
         companyId,
         v2: companyData.v2,
         trialEndDate: companyData.trial_end_date,
