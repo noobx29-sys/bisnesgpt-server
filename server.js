@@ -26606,6 +26606,7 @@ app.post("/api/v2/messages/text/:companyId/:chatId", async (req, res) => {
       // Use Meta Direct API to send message
       console.log("📱 [META DIRECT] Sending message via Meta API");
       const metaDirect = require('./src/services/whatsapp/metaDirect');
+      const { broadcastNewMessageToCompany } = require("./utils/broadcast");
       
       try {
         const result = await metaDirect.sendText(companyId, phoneIndex, chatId, message);
@@ -26619,8 +26620,8 @@ app.post("/api/v2/messages/text/:companyId/:chatId", async (req, res) => {
           ON CONFLICT (message_id, company_id) DO NOTHING
         `, [companyId, contactID, messageId, message, 'text', true, phoneIndex]);
 
-        // Broadcast to frontend
-        broadcast.newMessage(companyId, {
+        // Broadcast to frontend using the correct function
+        broadcastNewMessageToCompany(companyId, {
           chatId,
           message,
           messageContent: message,
