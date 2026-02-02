@@ -10490,13 +10490,29 @@ async function syncSingleContact(
       : `${phoneWithoutPlus}@c.us`;
 
     try {
+      // Check if client is ready
+      const clientState = await client.getState();
+      console.log(`Client state for phone ${phoneIndex}: ${clientState}`);
+      
+      if (clientState !== 'CONNECTED') {
+        console.error(`WhatsApp client for phone ${phoneIndex} is not connected. State: ${clientState}`);
+        throw new Error(`WhatsApp client not connected. Current state: ${clientState}`);
+      }
+
       const sync = await client.syncHistory(chatId);
       if (sync) {
         console.log("Synced Chat ID history");
       } else {
-        console.log("Sync Failed");
+        console.log("Sync Failed - this may happen if chat doesn't exist or already synced");
       }
+      
       const chat = await client.getChatById(chatId);
+      if (!chat) {
+        console.error(`Chat not found for ${chatId} on phone ${phoneIndex}`);
+        throw new Error(`Chat not found for ${chatId}`);
+      }
+      console.log(`Found chat: ${chat.name || chatId}, isGroup: ${chat.isGroup}`);
+      
       const contact = await chat.getContact();
       const contactID = `${companyId}-${phoneWithoutPlus}`;
 
