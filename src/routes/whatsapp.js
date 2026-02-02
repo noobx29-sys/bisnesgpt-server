@@ -147,7 +147,7 @@ router.delete('/config/:companyId/:phoneIndex', async (req, res) => {
     res.status(500).json({ error: e.message });
   }
 });
-
+//
 /**
  * GET /api/whatsapp/embedded-signup/config
  * Get Meta App configuration for embedded signup
