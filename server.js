@@ -8027,6 +8027,11 @@ app.post("/api/contacts/:contactId/mark-read", async (req, res) => {
 
 // POST endpoint to schedule a message
 app.post("/api/schedule-message/:companyId", async (req, res) => {
+  console.log("\n=== 📨 BLAST MESSAGE REQUEST RECEIVED ===");
+  console.log("Timestamp:", new Date().toISOString());
+  console.log("Company ID:", req.params.companyId);
+  console.log("Request body keys:", Object.keys(req.body));
+  
   const { companyId } = req.params;
   const scheduledMessage = req.body;
   const phoneIndex = scheduledMessage.phoneIndex || 0;
@@ -8044,6 +8049,16 @@ app.post("/api/schedule-message/:companyId", async (req, res) => {
     contactCount: Array.isArray(scheduledMessage.contactId)
       ? scheduledMessage.contactId.length
       : 1,
+    phoneIndex: phoneIndex,
+    chatIds: scheduledMessage.chatIds?.length || 0,
+    contact_id: scheduledMessage.contact_id?.length || 0,
+  });
+  
+  console.log("Request body sample:", {
+    message: scheduledMessage.message?.substring(0, 50),
+    chatIds: scheduledMessage.chatIds?.slice(0, 3),
+    contact_id: scheduledMessage.contact_id?.slice(0, 3),
+    scheduledTime: scheduledMessage.scheduledTime,
   });
 
   try {
@@ -8138,8 +8153,9 @@ app.post("/api/schedule-message/:companyId", async (req, res) => {
         chatIds = [];
       }
 
-      // Basic validation: accept only typical WA chatId formats like '60123456789@c.us' or '12345@g.us'
-      const validChatIdRegex = /^\+?\d+@(?:c\.us|g\.us)$/i;
+      // Basic validation: accept typical WA chatId formats
+      // Allow formats like: 60123456789@c.us, +60123456789@c.us, 12345@g.us
+      const validChatIdRegex = /^[\+\d]+@(?:c\.us|g\.us)$/i;
       const invalidSamples = chatIds.filter(
         (id) => !validChatIdRegex.test(String(id))
       );
@@ -8151,6 +8167,11 @@ app.post("/api/schedule-message/:companyId", async (req, res) => {
         // Remove invalid entries
         chatIds = chatIds.filter((id) => validChatIdRegex.test(String(id)));
       }
+      
+      console.log("Chat IDs after validation:", {
+        totalChatIds: chatIds.length,
+        sampleChatIds: chatIds.slice(0, 5),
+      });
 
       // Calculate batching based on CONTACTS (not messages)
       const totalContacts = contactIds.length;
