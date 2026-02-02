@@ -546,6 +546,9 @@ class MetaDirect {
             
             // Save the outgoing message to database and broadcast to frontend
             const recipientPhone = chatId.replace(/@.+/, '');
+            const recipientPhoneWithPlus = recipientPhone.startsWith('+') ? recipientPhone : '+' + recipientPhone;
+            const contactID = `${company_id}-${recipientPhone}`;
+            
             const outgoingMessageData = {
               // Core identifiers
               messageId: result.id,
@@ -563,10 +566,10 @@ class MetaDirect {
               // Sender info (fromMe = true for bot replies)
               from: display_phone_number,
               to: recipientPhone,
-              phone: recipientPhone,
-              extractedNumber: recipientPhone,
+              phone: recipientPhoneWithPlus,
+              extractedNumber: recipientPhoneWithPlus,
               fromMe: true,
-              contactName: recipientPhone,
+              contactName: contact?.profile?.name || recipientPhone,
               from_name: display_phone_number,
 
               // Timestamps
@@ -576,6 +579,30 @@ class MetaDirect {
               provider: 'meta_direct',
               phoneIndex: phone_index,
             };
+
+            // Save to database
+            try {
+              await pool.query(`
+                INSERT INTO messages (
+                  company_id, contact_id, message_id, 
+                  content, message_type, from_me, 
+                  timestamp, phone_index
+                ) VALUES ($1, $2, $3, $4, $5, $6, to_timestamp($7/1000.0), $8)
+                ON CONFLICT (message_id) DO NOTHING
+              `, [
+                company_id,
+                contactID,
+                result.id,
+                content,
+                'text',
+                true,
+                Date.now(),
+                phone_index
+              ]);
+              console.log('✅ [META DIRECT] Outgoing message saved to database');
+            } catch (dbError) {
+              console.error('❌ [META DIRECT] Error saving outgoing message to database:', dbError);
+            }
 
             // Broadcast to frontend
             broadcast.newMessage(company_id, outgoingMessageData);
