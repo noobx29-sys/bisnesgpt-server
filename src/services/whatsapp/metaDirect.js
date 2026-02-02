@@ -738,9 +738,10 @@ class MetaDirect {
    * @param {string} type - Media type (image, video, audio, document)
    * @param {string} url - Media URL
    * @param {string} caption - Optional caption
+   * @param {string} filename - Optional filename (for documents)
    * @returns {Promise<{id: string, provider: string}>}
    */
-  async sendMedia(companyId, phoneIndex, to, type, url, caption) {
+  async sendMedia(companyId, phoneIndex, to, type, url, caption, filename) {
     const config = await this.getConfig(companyId, phoneIndex);
     const accessToken = this.decrypt(config.meta_access_token_encrypted);
     const phone = to.replace(/@.+/, '');
@@ -752,6 +753,7 @@ class MetaDirect {
       [type]: { link: url },
     };
     if (caption) body[type].caption = caption;
+    if (filename && type === 'document') body[type].filename = filename;
 
     const res = await axios.post(
       `${GRAPH_API_BASE}/${config.meta_phone_number_id}/messages`,

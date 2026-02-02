@@ -11758,58 +11758,62 @@ async function sendScheduledMessage(message) {
     );
 
     const hasMetaDirect = metaConfigResult.rows.length > 0;
+    let metaDirectService = null;
     
     if (hasMetaDirect) {
-      const error = new Error(
-        `Blasting not yet supported for Meta Direct connections. Please use wwebjs (QR code) connection for scheduled messages. Meta Direct support coming soon!`
-      );
-      console.error(`[Company ${companyId}] Meta Direct blasting not supported:`, {
-        phoneIndex: message.phone_index,
-        connectionType: 'meta_direct',
-      });
-      throw error;
+      console.log(`[Company ${companyId}] 📱 Using Meta Direct API for blasting`);
+      metaDirectService = require('./src/services/whatsapp/metaDirect');
     }
 
-    const botData = botMap.get(companyId);
-    console.log(
-      `[Company ${companyId}] Available phone indices:`,
-      botData ? botData.map((_, i) => i) : []
-    );
-    console.log(`[Company ${companyId}] Client status:`, {
-      phoneIndex: message.phone_index,
-      hasClient: Boolean(botData?.[message.phone_index]?.client),
-      clientInfo: botData?.[message.phone_index]?.client
-        ? "Client exists"
-        : null,
-      totalBots: botData ? botData.length : 0,
-    });
-
-    if (!botData?.[message.phone_index]?.client) {
-      const error = new Error(
-        `No active WhatsApp client found for phone index: ${message.phone_index}`
+    // Get wwebjs client if not using Meta Direct
+    let whatsappClient = null;
+    if (!hasMetaDirect) {
+      const botData = botMap.get(companyId);
+      console.log(
+        `[Company ${companyId}] Available phone indices:`,
+        botData ? botData.map((_, i) => i) : []
       );
-      console.error(`[Company ${companyId}] Client not found:`, {
+      console.log(`[Company ${companyId}] Client status:`, {
         phoneIndex: message.phone_index,
-        availableIndices: botData ? botData.map((_, i) => i) : [],
-        botDataExists: Boolean(botData),
-        botDataLength: botData ? botData.length : 0,
+        hasClient: Boolean(botData?.[message.phone_index]?.client),
+        clientInfo: botData?.[message.phone_index]?.client
+          ? "Client exists"
+          : null,
+        totalBots: botData ? botData.length : 0,
       });
-      throw error;
+
+      if (!botData?.[message.phone_index]?.client) {
+        const error = new Error(
+          `No active WhatsApp client found for phone index: ${message.phone_index}`
+        );
+        console.error(`[Company ${companyId}] Client not found:`, {
+          phoneIndex: message.phone_index,
+          availableIndices: botData ? botData.map((_, i) => i) : [],
+          botDataExists: Boolean(botData),
+          botDataLength: botData ? botData.length : 0,
+        });
+        throw error;
+      }
+      
+      whatsappClient = botData[message.phone_index].client;
     }
 
     // Log client info
-    const whatsappClient = botData[message.phone_index].client;
-    console.log(`[Company ${companyId}] WhatsApp client info:`, {
-      hasInfo: Boolean(whatsappClient.info),
-      info: whatsappClient.info
-        ? {
-            wid: whatsappClient.info.wid?._serialized,
-            platform: whatsappClient.info.platform,
-            pushname: whatsappClient.info.pushname,
-          }
-        : null,
-      isReady: Boolean(whatsappClient.info),
-    });
+    if (whatsappClient) {
+      console.log(`[Company ${companyId}] WhatsApp client info:`, {
+        hasInfo: Boolean(whatsappClient.info),
+        info: whatsappClient.info
+          ? {
+              wid: whatsappClient.info.wid?._serialized,
+              platform: whatsappClient.info.platform,
+              pushname: whatsappClient.info.pushname,
+            }
+          : null,
+        isReady: Boolean(whatsappClient.info),
+      });
+    } else if (hasMetaDirect) {
+      console.log(`[Company ${companyId}] 📱 Using Meta Direct API for scheduled messages`);
+    }
 
     if (message) {
       console.log(`\n=== [Company ${companyId}] Processing V2 Message ===`);
@@ -12457,35 +12461,82 @@ async function sendScheduledMessage(message) {
               messageItem.documentUrl || message.document_url || "";
             const fileName = messageItem.fileName || message.file_name || "";
 
-            // Use direct WhatsApp client instead of HTTP API
-            const whatsappClient = botData[message.phone_index].client;
-
-            if (!whatsappClient || !whatsappClient.info) {
-              throw new Error("WhatsApp client not ready");
-            }
-
             let messageResult;
 
-            if (mediaUrl) {
-              // Send image message using MessageMedia for whatsapp-web.js
-              const media = await MessageMedia.fromUrl(mediaUrl);
-              messageResult = await whatsappClient.sendMessage(chatId, media, {
-                caption: processedMessageText || "",
+            // Use Meta Direct API if available, otherwise use wwebjs client
+            if (hasMetaDirect && metaDirectService) {
+              console.log(`[Company ${companyId}] 📱 Sending via Meta Direct API`);
+
+              if (mediaUrl) {
+                // Send image message via Meta Direct
+                messageResult = await metaDirectService.sendMedia(
+                  companyId,
+                  message.phone_index,
+                  chatId,
+                  'image',
+                  mediaUrl,
+                  processedMessageText || ""
+                );
+              } else if (documentUrl) {
+                // Send document message via Meta Direct
+                messageResult = await metaDirectService.sendMedia(
+                  companyId,
+                  message.phone_index,
+                  chatId,
+                  'document',
+                  documentUrl,
+                  processedMessageText || "",
+                  fileName
+                );
+              } else {
+                // Send text message via Meta Direct
+                messageResult = await metaDirectService.sendText(
+                  companyId,
+                  message.phone_index,
+                  chatId,
+                  processedMessageText || message.message_content || ""
+                );
+              }
+
+              console.log(`[Company ${companyId}] Meta Direct message sent:`, {
+                messageId: messageResult?.messageId || "unknown",
+                chatId: chatId,
+                type: mediaUrl ? "image" : documentUrl ? "document" : "text",
               });
-            } else if (documentUrl) {
-              // Send document message using MessageMedia for whatsapp-web.js
-              const media = await MessageMedia.fromUrl(documentUrl, {
-                filename: fileName || "document",
-              });
-              messageResult = await whatsappClient.sendMessage(chatId, media, {
-                caption: processedMessageText || "",
-              });
+
             } else {
-              // Send text message
-              messageResult = await whatsappClient.sendMessage(
-                chatId,
-                processedMessageText || message.message_content || ""
-              );
+              // Use wwebjs client
+              if (!whatsappClient || !whatsappClient.info) {
+                throw new Error("WhatsApp client not ready");
+              }
+
+              if (mediaUrl) {
+                // Send image message using MessageMedia for whatsapp-web.js
+                const media = await MessageMedia.fromUrl(mediaUrl);
+                messageResult = await whatsappClient.sendMessage(chatId, media, {
+                  caption: processedMessageText || "",
+                });
+              } else if (documentUrl) {
+                // Send document message using MessageMedia for whatsapp-web.js
+                const media = await MessageMedia.fromUrl(documentUrl, {
+                  filename: fileName || "document",
+                });
+                messageResult = await whatsappClient.sendMessage(chatId, media, {
+                  caption: processedMessageText || "",
+                });
+              } else {
+                // Send text message
+                messageResult = await whatsappClient.sendMessage(
+                  chatId,
+                  processedMessageText || message.message_content || ""
+                );
+              }
+
+              console.log(`[Company ${companyId}] WhatsApp message sent:`, {
+                messageId: messageResult?.id?._serialized || "unknown",
+                chatId: chatId,
+                type: mediaUrl ? "image" : documentUrl ? "document" : "text",
+              });
             }
 
             if (!messageResult) {
@@ -12493,12 +12544,6 @@ async function sendScheduledMessage(message) {
                 "Failed to send WhatsApp message - no result returned"
               );
             }
-
-            console.log(`[Company ${companyId}] WhatsApp message sent:`, {
-              messageId: messageResult?.id?._serialized || "unknown",
-              chatId: chatId,
-              type: mediaUrl ? "image" : documentUrl ? "document" : "text",
-            });
 
             await client.query(
               `INSERT INTO sent_messages (
@@ -26548,8 +26593,64 @@ app.post("/api/v2/messages/text/:companyId/:chatId", async (req, res) => {
   const phoneNumber = "+" + chatId.split("@")[0];
 
   try {
-    // 1. Get the client for this company from botMap
-    console.log("\n=== Client Validation ===");
+    // Check if this company uses Meta Direct
+    const metaConfigResult = await sqlDb.query(
+      'SELECT * FROM phone_configs WHERE company_id = $1 AND phone_index = $2 AND connection_type = $3',
+      [companyId, phoneIndex, 'meta_direct']
+    );
+
+    const hasMetaDirect = metaConfigResult.rows?.length > 0;
+    console.log("Connection type check:", { hasMetaDirect, companyId, phoneIndex });
+
+    if (hasMetaDirect) {
+      // Use Meta Direct API to send message
+      console.log("📱 [META DIRECT] Sending message via Meta API");
+      const metaDirect = require('./src/services/whatsapp/metaDirect');
+      
+      try {
+        const result = await metaDirect.sendText(companyId, phoneIndex, chatId, message);
+        console.log("📱 [META DIRECT] Message sent successfully:", result);
+
+        // Save to database
+        const messageId = result.id;
+        await sqlDb.query(`
+          INSERT INTO messages (company_id, contact_id, message_id, content, message_type, from_me, timestamp, phone_index)
+          VALUES ($1, $2, $3, $4, $5, $6, NOW(), $7)
+          ON CONFLICT (message_id, company_id) DO NOTHING
+        `, [companyId, contactID, messageId, message, 'text', true, phoneIndex]);
+
+        // Broadcast to frontend
+        broadcast.newMessage(companyId, {
+          chatId,
+          message,
+          messageContent: message,
+          fromMe: true,
+          timestamp: Date.now(),
+          messageType: 'text',
+          extractedNumber: phoneNumber,
+          phone: phoneNumber,
+          contactId: contactID,
+          messageId: messageId,
+          provider: 'meta_direct',
+        });
+
+        return res.status(200).json({
+          success: true,
+          messageId,
+          provider: 'meta_direct',
+        });
+      } catch (metaError) {
+        console.error("📱 [META DIRECT] Error sending message:", metaError.response?.data || metaError.message);
+        return res.status(500).json({
+          success: false,
+          error: "Failed to send message via Meta API",
+          details: metaError.response?.data?.error?.message || metaError.message,
+        });
+      }
+    }
+
+    // Fallback to wwebjs client
+    console.log("\n=== Client Validation (wwebjs) ===");
     const botData = botMap.get(companyId);
     console.log("Bot data found:", Boolean(botData));
     console.log(
