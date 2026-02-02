@@ -147,9 +147,9 @@ router.get('/meta-accounts', async (req, res) => {
         pc.meta_waba_id,
         pc.created_at,
         pc.updated_at,
-        c.name as company_name
+        cc.name as company_name
       FROM phone_configs pc
-      LEFT JOIN company c ON pc.company_id = c.id
+      LEFT JOIN company_configs cc ON pc.company_id = cc.company_id
       WHERE pc.connection_type IN ('meta_direct', 'meta_embedded', '360dialog')
       ORDER BY pc.updated_at DESC, pc.company_id, pc.phone_index
     `);
