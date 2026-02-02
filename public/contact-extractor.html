@@ -1,0 +1,1697 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WhatsApp Contact Extractor</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        :root {
+            --bg-primary: #0a0a0b;
+            --bg-secondary: #111113;
+            --bg-tertiary: #18181b;
+            --bg-hover: #1f1f23;
+            --border-color: #27272a;
+            --border-light: #3f3f46;
+            --text-primary: #fafafa;
+            --text-secondary: #a1a1aa;
+            --text-muted: #71717a;
+            --accent: #22c55e;
+            --accent-hover: #16a34a;
+            --accent-glow: rgba(34, 197, 94, 0.15);
+            --danger: #ef4444;
+            --danger-hover: #dc2626;
+            --warning: #f59e0b;
+            --info: #3b82f6;
+        }
+
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: var(--bg-primary);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+            color: var(--text-primary);
+        }
+
+        .container {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 16px;
+            padding: 32px;
+            max-width: 560px;
+            width: 100%;
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+        }
+
+        .logo {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 12px;
+            margin-bottom: 8px;
+        }
+
+        .logo-icon {
+            width: 40px;
+            height: 40px;
+            background: linear-gradient(135deg, var(--accent) 0%, #15803d 100%);
+            border-radius: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .logo-icon svg {
+            width: 24px;
+            height: 24px;
+            fill: white;
+        }
+
+        h1 {
+            color: var(--text-primary);
+            font-size: 22px;
+            font-weight: 600;
+            letter-spacing: -0.5px;
+        }
+
+        .subtitle {
+            color: var(--text-muted);
+            text-align: center;
+            margin-bottom: 32px;
+            font-size: 14px;
+        }
+
+        .step {
+            display: none;
+            animation: fadeIn 0.3s ease;
+        }
+
+        .step.active {
+            display: block;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .qr-container {
+            text-align: center;
+            padding: 24px;
+        }
+
+        .qr-wrapper {
+            display: inline-block;
+            padding: 16px;
+            background: white;
+            border-radius: 16px;
+            box-shadow: 0 0 40px var(--accent-glow);
+        }
+
+        .qr-container img {
+            max-width: 240px;
+            display: block;
+        }
+
+        .qr-placeholder {
+            width: 240px;
+            height: 240px;
+            margin: 0 auto;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            background: var(--bg-tertiary);
+            border-radius: 16px;
+            border: 2px dashed var(--border-color);
+            color: var(--text-muted);
+            gap: 12px;
+        }
+
+        .status-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 16px;
+            border-radius: 100px;
+            font-size: 13px;
+            font-weight: 500;
+            margin: 20px 0;
+        }
+
+        .status-badge.waiting {
+            background: rgba(245, 158, 11, 0.1);
+            color: var(--warning);
+            border: 1px solid rgba(245, 158, 11, 0.2);
+        }
+
+        .status-badge.connected {
+            background: rgba(34, 197, 94, 0.1);
+            color: var(--accent);
+            border: 1px solid rgba(34, 197, 94, 0.2);
+        }
+
+        .status-badge.extracting {
+            background: rgba(59, 130, 246, 0.1);
+            color: var(--info);
+            border: 1px solid rgba(59, 130, 246, 0.2);
+        }
+
+        .status-badge.error {
+            background: rgba(239, 68, 68, 0.1);
+            color: var(--danger);
+            border: 1px solid rgba(239, 68, 68, 0.2);
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: currentColor;
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            padding: 12px 24px;
+            border: none;
+            border-radius: 10px;
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            font-family: inherit;
+        }
+
+        .btn-primary {
+            background: var(--accent);
+            color: #000;
+        }
+
+        .btn-primary:hover {
+            background: var(--accent-hover);
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(34, 197, 94, 0.3);
+        }
+
+        .btn-secondary {
+            background: var(--bg-tertiary);
+            color: var(--text-secondary);
+            border: 1px solid var(--border-color);
+        }
+
+        .btn-secondary:hover {
+            background: var(--bg-hover);
+            border-color: var(--border-light);
+            color: var(--text-primary);
+        }
+
+        .btn-danger {
+            background: rgba(239, 68, 68, 0.1);
+            color: var(--danger);
+            border: 1px solid rgba(239, 68, 68, 0.2);
+        }
+
+        .btn-danger:hover {
+            background: var(--danger);
+            color: white;
+            border-color: var(--danger);
+        }
+
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .btn-group {
+            display: flex;
+            justify-content: center;
+            gap: 12px;
+            margin-top: 24px;
+            flex-wrap: wrap;
+        }
+
+        .spinner {
+            width: 18px;
+            height: 18px;
+            border: 2px solid transparent;
+            border-top-color: currentColor;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .contact-stats {
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border-color);
+            border-radius: 16px;
+            padding: 32px;
+            margin: 24px 0;
+            text-align: center;
+        }
+
+        .contact-stats h2 {
+            font-size: 56px;
+            font-weight: 700;
+            background: linear-gradient(135deg, var(--accent) 0%, #4ade80 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            line-height: 1;
+            margin-bottom: 8px;
+        }
+
+        .contact-stats p {
+            color: var(--text-muted);
+            font-size: 14px;
+        }
+
+        .contact-table-wrapper {
+            max-height: 320px;
+            overflow-y: auto;
+            margin: 20px 0;
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            background: var(--bg-tertiary);
+        }
+
+        .contact-table-wrapper::-webkit-scrollbar {
+            width: 6px;
+        }
+
+        .contact-table-wrapper::-webkit-scrollbar-track {
+            background: var(--bg-tertiary);
+        }
+
+        .contact-table-wrapper::-webkit-scrollbar-thumb {
+            background: var(--border-light);
+            border-radius: 3px;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 13px;
+        }
+
+        th, td {
+            padding: 12px 16px;
+            text-align: left;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        th {
+            background: var(--bg-secondary);
+            font-weight: 500;
+            color: var(--text-secondary);
+            position: sticky;
+            top: 0;
+            text-transform: uppercase;
+            font-size: 11px;
+            letter-spacing: 0.5px;
+        }
+
+        td {
+            color: var(--text-primary);
+        }
+
+        tr:last-child td {
+            border-bottom: none;
+        }
+
+        tr:hover td {
+            background: var(--bg-hover);
+        }
+
+        .type-badge {
+            display: inline-block;
+            padding: 4px 8px;
+            border-radius: 6px;
+            font-size: 11px;
+            font-weight: 500;
+        }
+
+        .type-badge.business {
+            background: rgba(59, 130, 246, 0.1);
+            color: var(--info);
+        }
+
+        .type-badge.personal {
+            background: rgba(113, 113, 122, 0.1);
+            color: var(--text-muted);
+        }
+
+        .source-badge {
+            display: inline-block;
+            padding: 4px 8px;
+            border-radius: 6px;
+            font-size: 11px;
+            font-weight: 500;
+        }
+
+        .source-badge.contact {
+            background: rgba(34, 197, 94, 0.1);
+            color: var(--accent);
+        }
+
+        .source-badge.chat {
+            background: rgba(245, 158, 11, 0.1);
+            color: var(--warning);
+        }
+
+        .source-badge.group {
+            background: rgba(139, 92, 246, 0.1);
+            color: #a78bfa;
+        }
+
+        .search-box {
+            width: 100%;
+            padding: 12px 16px;
+            padding-left: 44px;
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border-color);
+            border-radius: 10px;
+            font-size: 14px;
+            color: var(--text-primary);
+            transition: all 0.2s ease;
+            font-family: inherit;
+        }
+
+        .search-box::placeholder {
+            color: var(--text-muted);
+        }
+
+        .search-box:focus {
+            outline: none;
+            border-color: var(--accent);
+            box-shadow: 0 0 0 3px var(--accent-glow);
+        }
+
+        .search-wrapper {
+            position: relative;
+            margin-bottom: 16px;
+        }
+
+        .search-icon {
+            position: absolute;
+            left: 16px;
+            top: 50%;
+            transform: translateY(-50%);
+            color: var(--text-muted);
+        }
+
+        .instructions {
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 20px;
+            margin: 24px 0;
+        }
+
+        .instructions h3 {
+            color: var(--text-primary);
+            margin-bottom: 16px;
+            font-size: 14px;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .instructions ol {
+            color: var(--text-secondary);
+            font-size: 13px;
+            padding-left: 20px;
+            line-height: 1.8;
+        }
+
+        .instructions li {
+            padding-left: 8px;
+        }
+
+        .text-center {
+            text-align: center;
+        }
+
+        .success-icon {
+            width: 64px;
+            height: 64px;
+            background: rgba(34, 197, 94, 0.1);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin: 0 auto 16px;
+        }
+
+        .success-icon svg {
+            width: 32px;
+            height: 32px;
+            color: var(--accent);
+        }
+
+        .loading-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(10, 10, 11, 0.95);
+            backdrop-filter: blur(8px);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+        }
+
+        .loading-overlay.hidden {
+            display: none;
+        }
+
+        .loading-content {
+            text-align: center;
+            animation: fadeIn 0.5s ease;
+        }
+
+        /* Animated contact cards flying effect */
+        .extraction-animation {
+            position: relative;
+            width: 200px;
+            height: 200px;
+            margin-bottom: 24px;
+        }
+
+        .phone-icon {
+            position: absolute;
+            left: 50%;
+            top: 50%;
+            transform: translate(-50%, -50%);
+            width: 80px;
+            height: 80px;
+            background: linear-gradient(135deg, var(--accent) 0%, #15803d 100%);
+            border-radius: 20px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 0 60px rgba(34, 197, 94, 0.4);
+            animation: phonePulse 2s ease-in-out infinite;
+            z-index: 10;
+        }
+
+        .phone-icon svg {
+            width: 40px;
+            height: 40px;
+            fill: white;
+        }
+
+        @keyframes phonePulse {
+            0%, 100% { transform: translate(-50%, -50%) scale(1); box-shadow: 0 0 60px rgba(34, 197, 94, 0.4); }
+            50% { transform: translate(-50%, -50%) scale(1.05); box-shadow: 0 0 80px rgba(34, 197, 94, 0.6); }
+        }
+
+        /* Flying contact cards */
+        .flying-card {
+            position: absolute;
+            width: 50px;
+            height: 35px;
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border-light);
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            opacity: 0;
+        }
+
+        .flying-card svg {
+            width: 20px;
+            height: 20px;
+            color: var(--text-muted);
+        }
+
+        .flying-card:nth-child(1) { animation: flyCard1 2s ease-in-out infinite; }
+        .flying-card:nth-child(2) { animation: flyCard2 2s ease-in-out infinite 0.3s; }
+        .flying-card:nth-child(3) { animation: flyCard3 2s ease-in-out infinite 0.6s; }
+        .flying-card:nth-child(4) { animation: flyCard4 2s ease-in-out infinite 0.9s; }
+        .flying-card:nth-child(5) { animation: flyCard5 2s ease-in-out infinite 1.2s; }
+
+        @keyframes flyCard1 {
+            0% { opacity: 0; transform: translate(0, -80px) scale(0.5) rotate(-15deg); }
+            20% { opacity: 1; }
+            80% { opacity: 1; }
+            100% { opacity: 0; transform: translate(0, 0) scale(1) rotate(0deg); }
+        }
+
+        @keyframes flyCard2 {
+            0% { opacity: 0; transform: translate(70px, -50px) scale(0.5) rotate(20deg); }
+            20% { opacity: 1; }
+            80% { opacity: 1; }
+            100% { opacity: 0; transform: translate(0, 0) scale(1) rotate(0deg); }
+        }
+
+        @keyframes flyCard3 {
+            0% { opacity: 0; transform: translate(-70px, -50px) scale(0.5) rotate(-20deg); }
+            20% { opacity: 1; }
+            80% { opacity: 1; }
+            100% { opacity: 0; transform: translate(0, 0) scale(1) rotate(0deg); }
+        }
+
+        @keyframes flyCard4 {
+            0% { opacity: 0; transform: translate(60px, 60px) scale(0.5) rotate(15deg); }
+            20% { opacity: 1; }
+            80% { opacity: 1; }
+            100% { opacity: 0; transform: translate(0, 0) scale(1) rotate(0deg); }
+        }
+
+        @keyframes flyCard5 {
+            0% { opacity: 0; transform: translate(-60px, 60px) scale(0.5) rotate(-15deg); }
+            20% { opacity: 1; }
+            80% { opacity: 1; }
+            100% { opacity: 0; transform: translate(0, 0) scale(1) rotate(0deg); }
+        }
+
+        /* Orbiting dots */
+        .orbit-container {
+            position: absolute;
+            width: 160px;
+            height: 160px;
+            left: 50%;
+            top: 50%;
+            transform: translate(-50%, -50%);
+            animation: orbitRotate 8s linear infinite;
+        }
+
+        @keyframes orbitRotate {
+            from { transform: translate(-50%, -50%) rotate(0deg); }
+            to { transform: translate(-50%, -50%) rotate(360deg); }
+        }
+
+        .orbit-dot {
+            position: absolute;
+            width: 10px;
+            height: 10px;
+            background: var(--accent);
+            border-radius: 50%;
+            box-shadow: 0 0 10px var(--accent);
+        }
+
+        .orbit-dot:nth-child(1) { top: 0; left: 50%; transform: translateX(-50%); }
+        .orbit-dot:nth-child(2) { top: 50%; right: 0; transform: translateY(-50%); }
+        .orbit-dot:nth-child(3) { bottom: 0; left: 50%; transform: translateX(-50%); }
+        .orbit-dot:nth-child(4) { top: 50%; left: 0; transform: translateY(-50%); }
+
+        /* Progress ring */
+        .progress-ring {
+            position: absolute;
+            left: 50%;
+            top: 50%;
+            transform: translate(-50%, -50%);
+            width: 140px;
+            height: 140px;
+        }
+
+        .progress-ring-circle {
+            fill: none;
+            stroke: var(--border-color);
+            stroke-width: 3;
+        }
+
+        .progress-ring-progress {
+            fill: none;
+            stroke: var(--accent);
+            stroke-width: 3;
+            stroke-linecap: round;
+            stroke-dasharray: 408;
+            stroke-dashoffset: 408;
+            transform: rotate(-90deg);
+            transform-origin: center;
+            transition: stroke-dashoffset 0.3s ease;
+        }
+
+        /* Counter animation */
+        .contact-counter {
+            font-size: 48px;
+            font-weight: 700;
+            background: linear-gradient(135deg, var(--accent) 0%, #4ade80 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            margin-bottom: 8px;
+            animation: counterPop 0.3s ease;
+        }
+
+        @keyframes counterPop {
+            0% { transform: scale(1); }
+            50% { transform: scale(1.1); }
+            100% { transform: scale(1); }
+        }
+
+        .loading-text {
+            margin-top: 16px;
+            color: var(--text-secondary);
+            font-size: 14px;
+            max-width: 280px;
+        }
+
+        .loading-subtitle {
+            color: var(--text-muted);
+            font-size: 12px;
+            margin-top: 8px;
+        }
+
+        /* Particles background */
+        .particles {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            pointer-events: none;
+        }
+
+        .particle {
+            position: absolute;
+            width: 4px;
+            height: 4px;
+            background: var(--accent);
+            border-radius: 50%;
+            opacity: 0.3;
+            animation: particleFloat 4s ease-in-out infinite;
+        }
+
+        @keyframes particleFloat {
+            0%, 100% { transform: translateY(0) scale(1); opacity: 0.3; }
+            50% { transform: translateY(-20px) scale(1.5); opacity: 0.6; }
+        }
+
+        /* Stage indicators */
+        .stage-indicators {
+            display: flex;
+            gap: 8px;
+            margin-top: 24px;
+            justify-content: center;
+        }
+
+        .stage-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--border-color);
+            transition: all 0.3s ease;
+        }
+
+        .stage-dot.active {
+            background: var(--accent);
+            box-shadow: 0 0 10px var(--accent);
+        }
+
+        .stage-dot.completed {
+            background: var(--accent);
+        }
+
+        .divider {
+            height: 1px;
+            background: var(--border-color);
+            margin: 24px 0;
+        }
+    </style>
+</head>
+<body>
+    <div class="loading-overlay hidden" id="loadingOverlay">
+        <!-- Particles background -->
+        <div class="particles" id="particles"></div>
+
+        <div class="loading-content">
+            <!-- Extraction Animation -->
+            <div class="extraction-animation" id="extractionAnimation">
+                <!-- Progress ring -->
+                <svg class="progress-ring" viewBox="0 0 140 140">
+                    <circle class="progress-ring-circle" cx="70" cy="70" r="65"></circle>
+                    <circle class="progress-ring-progress" id="progressRing" cx="70" cy="70" r="65"></circle>
+                </svg>
+
+                <!-- Orbiting dots -->
+                <div class="orbit-container">
+                    <div class="orbit-dot"></div>
+                    <div class="orbit-dot"></div>
+                    <div class="orbit-dot"></div>
+                    <div class="orbit-dot"></div>
+                </div>
+
+                <!-- Center phone icon -->
+                <div class="phone-icon">
+                    <svg viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/>
+                    </svg>
+                </div>
+
+                <!-- Flying contact cards -->
+                <div class="flying-card" style="left: 50%; top: 50%; transform: translate(-50%, -50%);">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
+                        <circle cx="12" cy="7" r="4"></circle>
+                    </svg>
+                </div>
+                <div class="flying-card" style="left: 50%; top: 50%; transform: translate(-50%, -50%);">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
+                        <circle cx="12" cy="7" r="4"></circle>
+                    </svg>
+                </div>
+                <div class="flying-card" style="left: 50%; top: 50%; transform: translate(-50%, -50%);">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
+                        <circle cx="12" cy="7" r="4"></circle>
+                    </svg>
+                </div>
+                <div class="flying-card" style="left: 50%; top: 50%; transform: translate(-50%, -50%);">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
+                        <circle cx="12" cy="7" r="4"></circle>
+                    </svg>
+                </div>
+                <div class="flying-card" style="left: 50%; top: 50%; transform: translate(-50%, -50%);">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
+                        <circle cx="12" cy="7" r="4"></circle>
+                    </svg>
+                </div>
+            </div>
+
+            <!-- Contact counter (shown during extraction) -->
+            <div class="contact-counter" id="contactCounter" style="display: none;">0</div>
+
+            <p class="loading-text" id="loadingText">Initializing...</p>
+            <p class="loading-subtitle" id="loadingSubtitle"></p>
+
+            <!-- Stage indicators -->
+            <div class="stage-indicators" id="stageIndicators" style="display: none;">
+                <div class="stage-dot" id="stage1"></div>
+                <div class="stage-dot" id="stage2"></div>
+                <div class="stage-dot" id="stage3"></div>
+            </div>
+        </div>
+    </div>
+
+    <div class="container">
+        <div class="logo">
+            <div class="logo-icon">
+                <svg viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/>
+                </svg>
+            </div>
+            <h1>Contact Extractor</h1>
+        </div>
+        <p class="subtitle">Extract and export your WhatsApp contacts to CSV</p>
+
+        <!-- Step 1: Start -->
+        <div class="step active" id="step1">
+            <div class="instructions">
+                <h3>
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="12" cy="12" r="10"></circle>
+                        <line x1="12" y1="16" x2="12" y2="12"></line>
+                        <line x1="12" y1="8" x2="12.01" y2="8"></line>
+                    </svg>
+                    How it works
+                </h3>
+                <ol>
+                    <li>Click "Start Session" to generate a QR code</li>
+                    <li>Open WhatsApp on your phone</li>
+                    <li>Go to Settings > Linked Devices > Link a Device</li>
+                    <li>Scan the QR code displayed here</li>
+                    <li>Extract and export your contacts</li>
+                </ol>
+            </div>
+            <p id="sessionStatus" class="status-badge connected" style="display: none; margin-bottom: 16px;">
+                <span class="status-dot"></span>
+                <span>Saved session found</span>
+            </p>
+            <div class="btn-group">
+                <button class="btn btn-primary" id="startBtn" onclick="startSession()">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polygon points="5 3 19 12 5 21 5 3"></polygon>
+                    </svg>
+                    Start Session
+                </button>
+                <button class="btn btn-primary" id="resumeBtn" onclick="resumeSession()" style="display: none;">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polyline points="23 4 23 10 17 10"></polyline>
+                        <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
+                    </svg>
+                    Resume Session
+                </button>
+                <button class="btn btn-secondary" id="newSessionBtn" onclick="startNewSession()" style="display: none;">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="12" y1="5" x2="12" y2="19"></line>
+                        <line x1="5" y1="12" x2="19" y2="12"></line>
+                    </svg>
+                    New Session
+                </button>
+            </div>
+        </div>
+
+        <!-- Step 2: QR Code -->
+        <div class="step" id="step2">
+            <div class="qr-container">
+                <div class="qr-placeholder" id="qrPlaceholder">
+                    <div class="spinner"></div>
+                    <span>Generating QR Code...</span>
+                </div>
+                <div class="qr-wrapper" id="qrWrapper" style="display: none;">
+                    <img id="qrImage" src="" alt="QR Code">
+                </div>
+            </div>
+            <div class="text-center">
+                <span class="status-badge waiting" id="statusBadge">
+                    <span class="status-dot"></span>
+                    Waiting for scan...
+                </span>
+            </div>
+            <div class="instructions">
+                <h3>
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+                        <rect x="7" y="7" width="3" height="3"></rect>
+                        <rect x="14" y="7" width="3" height="3"></rect>
+                        <rect x="7" y="14" width="3" height="3"></rect>
+                    </svg>
+                    Scan with WhatsApp
+                </h3>
+                <ol>
+                    <li>Open WhatsApp on your phone</li>
+                    <li>Tap Menu or Settings</li>
+                    <li>Select "Linked Devices"</li>
+                    <li>Tap "Link a Device"</li>
+                    <li>Point your phone at this QR code</li>
+                </ol>
+            </div>
+            <div class="btn-group">
+                <button class="btn btn-secondary" onclick="cancelSession()">Cancel</button>
+            </div>
+        </div>
+
+        <!-- Step 3: Connected - Extract -->
+        <div class="step" id="step3">
+            <div class="text-center">
+                <div class="success-icon">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polyline points="20 6 9 17 4 12"></polyline>
+                    </svg>
+                </div>
+                <span class="status-badge connected">
+                    <span class="status-dot"></span>
+                    Connected
+                </span>
+            </div>
+            <div class="contact-stats">
+                <p>Ready to extract contacts from your WhatsApp account</p>
+            </div>
+            <div class="btn-group">
+                <button class="btn btn-primary" onclick="extractContacts()">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                        <polyline points="7 10 12 15 17 10"></polyline>
+                        <line x1="12" y1="15" x2="12" y2="3"></line>
+                    </svg>
+                    Extract Contacts
+                </button>
+                <button class="btn btn-danger" onclick="disconnectSession()">Disconnect</button>
+            </div>
+        </div>
+
+        <!-- Step 4: Contacts Extracted -->
+        <div class="step" id="step4">
+            <div class="contact-stats">
+                <h2 id="contactCount">0</h2>
+                <p>Contacts Extracted</p>
+            </div>
+
+            <div class="search-wrapper">
+                <svg class="search-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="11" cy="11" r="8"></circle>
+                    <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+                </svg>
+                <input type="text" class="search-box" id="searchBox" placeholder="Search contacts..." oninput="filterContacts()">
+            </div>
+
+            <div class="contact-table-wrapper">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Name</th>
+                            <th>Phone Number</th>
+                            <th>Source</th>
+                            <th>Group(s)</th>
+                            <th>Type</th>
+                        </tr>
+                    </thead>
+                    <tbody id="contactTableBody">
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="btn-group">
+                <button class="btn btn-primary" onclick="exportToCSV()">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                        <polyline points="7 10 12 15 17 10"></polyline>
+                        <line x1="12" y1="15" x2="12" y2="3"></line>
+                    </svg>
+                    Export All
+                </button>
+                <button class="btn btn-primary" onclick="exportByGroups()" style="background: var(--info);">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
+                    </svg>
+                    Export by Groups (ZIP)
+                </button>
+                <button class="btn btn-secondary" onclick="extractContacts()">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polyline points="23 4 23 10 17 10"></polyline>
+                        <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
+                    </svg>
+                    Refresh
+                </button>
+                <button class="btn btn-secondary" onclick="disconnectSession()">Disconnect</button>
+                <button class="btn btn-danger" onclick="logoutSession()">Logout</button>
+            </div>
+        </div>
+
+        <!-- Step 5: Disconnected -->
+        <div class="step" id="step5">
+            <div class="text-center">
+                <div class="success-icon">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polyline points="20 6 9 17 4 12"></polyline>
+                    </svg>
+                </div>
+                <h3 style="margin-bottom: 8px; font-size: 18px;">Session Ended</h3>
+                <p style="color: var(--text-muted); font-size: 14px;">Your session has been disconnected and cleaned up.</p>
+            </div>
+            <div class="btn-group">
+                <button class="btn btn-primary" onclick="resetApp()">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polyline points="23 4 23 10 17 10"></polyline>
+                        <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
+                    </svg>
+                    Start New Session
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let sessionId = null;
+        let contacts = [];
+        let pollInterval = null;
+
+        function showStep(stepNumber) {
+            document.querySelectorAll('.step').forEach(step => step.classList.remove('active'));
+            document.getElementById(`step${stepNumber}`).classList.add('active');
+        }
+
+        let currentExtractionStage = 0;
+        let lastContactCount = 0;
+
+        function showLoading(text = 'Loading...', isExtraction = false) {
+            document.getElementById('loadingText').textContent = text;
+            document.getElementById('loadingSubtitle').textContent = '';
+            document.getElementById('loadingOverlay').classList.remove('hidden');
+
+            // Create particles on first show
+            createParticles();
+
+            // Show/hide extraction-specific elements
+            const counter = document.getElementById('contactCounter');
+            const stages = document.getElementById('stageIndicators');
+
+            if (isExtraction) {
+                counter.style.display = 'block';
+                counter.textContent = '0';
+                stages.style.display = 'flex';
+                resetStages();
+                lastContactCount = 0;
+            } else {
+                counter.style.display = 'none';
+                stages.style.display = 'none';
+            }
+        }
+
+        function hideLoading() {
+            document.getElementById('loadingOverlay').classList.add('hidden');
+            // Clear particles
+            document.getElementById('particles').innerHTML = '';
+        }
+
+        function updateLoadingText(text) {
+            document.getElementById('loadingText').textContent = text;
+
+            // Extract contact count from "(X contacts)" pattern - works for all stages
+            const contactMatch = text.match(/\((\d+)\s*contacts?\)/i);
+            if (contactMatch) {
+                const count = parseInt(contactMatch[1]);
+                if (count > 0) updateContactCounter(count);
+            }
+
+            // Also check for "Found X" pattern
+            const foundMatch = text.match(/Found\s+(\d+)/i);
+            if (foundMatch) {
+                const count = parseInt(foundMatch[1]);
+                if (count > 0) updateContactCounter(count);
+            }
+
+            // Determine which stage we're in
+            if (text.includes('saved contacts') || text.includes('Getting saved')) {
+                setStage(1);
+            } else if (text.includes('chats') || text.includes('Getting chats')) {
+                setStage(2);
+            } else if (text.includes('group') || text.includes('Group')) {
+                setStage(3);
+            } else if (text.includes('Finalizing') || text.includes('Done')) {
+                setStage(3);
+            }
+
+            // Update subtitle based on stage
+            updateLoadingSubtitle(text);
+        }
+
+        function updateLoadingSubtitle(text) {
+            const subtitle = document.getElementById('loadingSubtitle');
+            if (text.includes('Step 1') || text.includes('saved contacts')) {
+                subtitle.textContent = 'Stage 1/3: Scanning saved contacts';
+            } else if (text.includes('Step 2') || text.includes('chats')) {
+                subtitle.textContent = 'Stage 2/3: Scanning chat history';
+            } else if (text.includes('Step 3') || text.includes('group')) {
+                subtitle.textContent = 'Stage 3/3: Scanning group members';
+            } else if (text.includes('Finalizing')) {
+                subtitle.textContent = 'Almost done...';
+            }
+        }
+
+        function updateContactCounter(count) {
+            const counter = document.getElementById('contactCounter');
+            if (count > lastContactCount) {
+                // Animate the counter
+                animateCounter(lastContactCount, count);
+                lastContactCount = count;
+
+                // Update progress ring
+                updateProgressRing(count);
+            }
+        }
+
+        function animateCounter(from, to) {
+            const counter = document.getElementById('contactCounter');
+            const duration = 500;
+            const start = performance.now();
+
+            function update(currentTime) {
+                const elapsed = currentTime - start;
+                const progress = Math.min(elapsed / duration, 1);
+
+                // Ease out cubic
+                const eased = 1 - Math.pow(1 - progress, 3);
+                const current = Math.floor(from + (to - from) * eased);
+
+                counter.textContent = current.toLocaleString();
+
+                if (progress < 1) {
+                    requestAnimationFrame(update);
+                } else {
+                    counter.textContent = to.toLocaleString();
+                    // Add pop animation
+                    counter.style.animation = 'none';
+                    counter.offsetHeight; // Trigger reflow
+                    counter.style.animation = 'counterPop 0.3s ease';
+                }
+            }
+
+            requestAnimationFrame(update);
+        }
+
+        function updateProgressRing(count) {
+            const ring = document.getElementById('progressRing');
+            const circumference = 408; // 2 * PI * 65
+            // Assume max 1000 contacts for full circle
+            const progress = Math.min(count / 1000, 1);
+            const offset = circumference - (progress * circumference);
+            ring.style.strokeDashoffset = offset;
+        }
+
+        function setStage(stage) {
+            currentExtractionStage = stage;
+            for (let i = 1; i <= 3; i++) {
+                const dot = document.getElementById(`stage${i}`);
+                dot.classList.remove('active', 'completed');
+                if (i < stage) {
+                    dot.classList.add('completed');
+                } else if (i === stage) {
+                    dot.classList.add('active');
+                }
+            }
+        }
+
+        function resetStages() {
+            currentExtractionStage = 0;
+            for (let i = 1; i <= 3; i++) {
+                const dot = document.getElementById(`stage${i}`);
+                dot.classList.remove('active', 'completed');
+            }
+        }
+
+        function createParticles() {
+            const container = document.getElementById('particles');
+            container.innerHTML = '';
+
+            for (let i = 0; i < 20; i++) {
+                const particle = document.createElement('div');
+                particle.className = 'particle';
+                particle.style.left = Math.random() * 100 + '%';
+                particle.style.top = Math.random() * 100 + '%';
+                particle.style.animationDelay = Math.random() * 4 + 's';
+                particle.style.animationDuration = (3 + Math.random() * 2) + 's';
+                container.appendChild(particle);
+            }
+        }
+
+        // Check for existing session on page load
+        async function checkExistingSession() {
+            try {
+                const response = await fetch('/api/contact-extractor/session/check');
+                const data = await response.json();
+
+                if (data.success && data.sessionExists) {
+                    // Session files exist on disk - show resume option
+                    document.getElementById('startBtn').style.display = 'none';
+                    document.getElementById('resumeBtn').style.display = 'inline-flex';
+                    document.getElementById('newSessionBtn').style.display = 'inline-flex';
+
+                    // Update instructions
+                    document.getElementById('sessionStatus').textContent =
+                        data.isActive ? 'Session is active' : 'Saved session found';
+                    document.getElementById('sessionStatus').style.display = 'block';
+                }
+            } catch (error) {
+                console.log('No existing session found');
+            }
+        }
+
+        // Resume existing session
+        async function resumeSession() {
+            showLoading('Resuming session...');
+            try {
+                const response = await fetch('/api/contact-extractor/session/create', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' }
+                });
+                const data = await response.json();
+
+                if (data.success) {
+                    sessionId = data.sessionId;
+                    if (data.reused) {
+                        // Already connected
+                        hideLoading();
+                        showStep(3);
+                    } else {
+                        // Need to wait for auto-auth from saved session
+                        hideLoading();
+                        showStep(2);
+                        // Hide QR placeholder, show connecting message
+                        document.getElementById('qrPlaceholder').innerHTML =
+                            '<div class="spinner"></div><span>Reconnecting from saved session...</span>';
+                        startPolling();
+                    }
+                } else {
+                    throw new Error(data.error || 'Failed to resume session');
+                }
+            } catch (error) {
+                hideLoading();
+                alert('Error: ' + error.message);
+            }
+        }
+
+        async function startSession() {
+            showLoading('Creating session...');
+            try {
+                const response = await fetch('/api/contact-extractor/session/create', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' }
+                });
+                const data = await response.json();
+
+                if (data.success) {
+                    sessionId = data.sessionId;
+                    if (data.reused) {
+                        // Session already connected, go straight to extract
+                        hideLoading();
+                        showStep(3);
+                    } else {
+                        hideLoading();
+                        showStep(2);
+                        // Reset QR placeholder
+                        document.getElementById('qrPlaceholder').innerHTML =
+                            '<div class="spinner"></div><span>Generating QR Code...</span>';
+                        startPolling();
+                    }
+                } else {
+                    throw new Error(data.error || 'Failed to create session');
+                }
+            } catch (error) {
+                hideLoading();
+                alert('Error: ' + error.message);
+            }
+        }
+
+        // Start fresh session (clear existing)
+        async function startNewSession() {
+            if (!confirm('This will clear your saved session. You will need to scan QR again. Continue?')) {
+                return;
+            }
+
+            showLoading('Clearing old session...');
+            try {
+                // Logout to clear saved session
+                await fetch('/api/contact-extractor/session/contact_extractor_main/logout', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' }
+                });
+            } catch (e) {
+                // Ignore errors
+            }
+            hideLoading();
+
+            // Reset UI and start fresh
+            document.getElementById('startBtn').style.display = 'inline-flex';
+            document.getElementById('resumeBtn').style.display = 'none';
+            document.getElementById('newSessionBtn').style.display = 'none';
+            document.getElementById('sessionStatus').style.display = 'none';
+
+            startSession();
+        }
+
+        function startPolling() {
+            pollInterval = setInterval(async () => {
+                try {
+                    const response = await fetch(`/api/contact-extractor/session/${sessionId}/status`);
+                    const data = await response.json();
+
+                    if (data.success) {
+                        updateStatus(data);
+                    }
+                } catch (error) {
+                    console.error('Polling error:', error);
+                }
+            }, 1500);
+        }
+
+        function stopPolling() {
+            if (pollInterval) {
+                clearInterval(pollInterval);
+                pollInterval = null;
+            }
+        }
+
+        function updateStatus(data) {
+            const qrImage = document.getElementById('qrImage');
+            const qrPlaceholder = document.getElementById('qrPlaceholder');
+            const qrWrapper = document.getElementById('qrWrapper');
+            const statusBadge = document.getElementById('statusBadge');
+
+            if (data.qrCode) {
+                qrImage.src = data.qrCode;
+                qrWrapper.style.display = 'inline-block';
+                qrPlaceholder.style.display = 'none';
+            }
+
+            switch (data.status) {
+                case 'waiting_for_scan':
+                    statusBadge.innerHTML = '<span class="status-dot"></span>Waiting for scan...';
+                    statusBadge.className = 'status-badge waiting';
+                    break;
+                case 'authenticated':
+                    statusBadge.innerHTML = '<span class="status-dot"></span>Authenticated! Connecting...';
+                    statusBadge.className = 'status-badge connected';
+                    break;
+                case 'connected':
+                    stopPolling();
+                    showStep(3);
+                    break;
+                case 'auth_failed':
+                    stopPolling();
+                    statusBadge.innerHTML = '<span class="status-dot"></span>Authentication failed';
+                    statusBadge.className = 'status-badge error';
+                    break;
+                case 'disconnected':
+                    stopPolling();
+                    showStep(5);
+                    break;
+            }
+        }
+
+        async function extractContacts() {
+            // Show loading with extraction mode (shows counter and stages)
+            showLoading('Starting extraction...', true);
+            setStage(1);
+
+            // Poll for progress while extracting
+            const progressInterval = setInterval(async () => {
+                try {
+                    const statusRes = await fetch(`/api/contact-extractor/session/${sessionId}/status`);
+                    const statusData = await statusRes.json();
+                    if (statusData.progress) {
+                        updateLoadingText(statusData.progress);
+                    }
+                } catch (e) {}
+            }, 800);
+
+            try {
+                const response = await fetch(`/api/contact-extractor/session/${sessionId}/extract`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' }
+                });
+                clearInterval(progressInterval);
+                const data = await response.json();
+
+                if (data.success) {
+                    contacts = data.contacts;
+
+                    // Final animation before showing results
+                    updateLoadingText(`Extracted ${data.count} contacts!`);
+                    document.getElementById('loadingSubtitle').textContent = 'Preparing your data...';
+                    updateContactCounter(data.count);
+
+                    // Mark all stages complete
+                    for (let i = 1; i <= 3; i++) {
+                        document.getElementById(`stage${i}`).classList.add('completed');
+                        document.getElementById(`stage${i}`).classList.remove('active');
+                    }
+
+                    // Wait a moment for the final animation
+                    await new Promise(resolve => setTimeout(resolve, 1000));
+
+                    document.getElementById('contactCount').textContent = data.count;
+                    renderContacts(contacts);
+                    hideLoading();
+                    showStep(4);
+                } else {
+                    throw new Error(data.error || 'Failed to extract contacts');
+                }
+            } catch (error) {
+                clearInterval(progressInterval);
+                hideLoading();
+                alert('Error: ' + error.message);
+            }
+        }
+
+        function renderContacts(contactsToRender) {
+            const tbody = document.getElementById('contactTableBody');
+            tbody.innerHTML = '';
+
+            contactsToRender.forEach(contact => {
+                const row = document.createElement('tr');
+                const typeClass = contact.isBusiness ? 'business' : 'personal';
+                const typeName = contact.isBusiness ? 'Business' : 'Personal';
+                const sourceClass = contact.source || 'contact';
+                const sourceLabels = { contact: 'Saved', chat: 'Chat', group: 'Group' };
+                const sourceName = sourceLabels[sourceClass] || 'Saved';
+
+                // Handle groups display
+                let groupsDisplay = '-';
+                if (contact.groups && contact.groups.length > 0) {
+                    groupsDisplay = contact.groups.slice(0, 2).map(g => escapeHtml(g)).join(', ');
+                    if (contact.groups.length > 2) {
+                        groupsDisplay += ` +${contact.groups.length - 2} more`;
+                    }
+                } else if (contact.groupName) {
+                    groupsDisplay = escapeHtml(contact.groupName);
+                }
+
+                row.innerHTML = `
+                    <td>${escapeHtml(contact.name || contact.pushname || 'Unknown')}</td>
+                    <td>${escapeHtml(contact.number)}</td>
+                    <td><span class="source-badge ${sourceClass}">${sourceName}</span></td>
+                    <td style="font-size: 12px; color: var(--text-muted); max-width: 150px; overflow: hidden; text-overflow: ellipsis;" title="${contact.groups ? contact.groups.join(', ') : ''}">${groupsDisplay}</td>
+                    <td><span class="type-badge ${typeClass}">${typeName}</span></td>
+                `;
+                tbody.appendChild(row);
+            });
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        function filterContacts() {
+            const searchTerm = document.getElementById('searchBox').value.toLowerCase();
+            const filtered = contacts.filter(contact =>
+                (contact.name || '').toLowerCase().includes(searchTerm) ||
+                (contact.pushname || '').toLowerCase().includes(searchTerm) ||
+                (contact.number || '').includes(searchTerm)
+            );
+            renderContacts(filtered);
+        }
+
+        function exportToCSV() {
+            if (contacts.length === 0) {
+                alert('No contacts to export');
+                return;
+            }
+
+            // Export all contacts to a single CSV
+            downloadAllContactsCSV();
+        }
+
+        function downloadAllContactsCSV() {
+            const sourceLabels = { contact: 'Saved', chat: 'Chat', group: 'Group' };
+            const headers = ['Name', 'Push Name', 'Phone Number', 'Source', 'Groups', 'Type', 'Is My Contact'];
+            const csvContent = [
+                headers.join(','),
+                ...contacts.map(contact => [
+                    `"${(contact.name || '').replace(/"/g, '""')}"`,
+                    `"${(contact.pushname || '').replace(/"/g, '""')}"`,
+                    `"${contact.number}"`,
+                    sourceLabels[contact.source] || 'Saved',
+                    `"${(contact.groups ? contact.groups.join('; ') : '').replace(/"/g, '""')}"`,
+                    contact.isBusiness ? 'Business' : 'Personal',
+                    contact.isMyContact ? 'Yes' : 'No'
+                ].join(','))
+            ].join('\n');
+
+            const blob = new Blob(['\ufeff' + csvContent], { type: 'text/csv;charset=utf-8;' });
+            const link = document.createElement('a');
+            const url = URL.createObjectURL(blob);
+            link.setAttribute('href', url);
+            link.setAttribute('download', `whatsapp_contacts_${new Date().toISOString().split('T')[0]}.csv`);
+            link.style.visibility = 'hidden';
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        }
+
+        async function exportByGroups() {
+            if (contacts.length === 0) {
+                alert('No contacts to export');
+                return;
+            }
+
+            // Collect all unique groups
+            const groupsMap = new Map();
+            const noGroupContacts = [];
+
+            contacts.forEach(contact => {
+                if (contact.groups && contact.groups.length > 0) {
+                    contact.groups.forEach(groupName => {
+                        if (!groupsMap.has(groupName)) {
+                            groupsMap.set(groupName, []);
+                        }
+                        groupsMap.get(groupName).push(contact);
+                    });
+                } else {
+                    noGroupContacts.push(contact);
+                }
+            });
+
+            // Load JSZip library dynamically
+            if (typeof JSZip === 'undefined') {
+                const script = document.createElement('script');
+                script.src = 'https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js';
+                document.head.appendChild(script);
+                await new Promise(resolve => script.onload = resolve);
+            }
+
+            const zip = new JSZip();
+            const sourceLabels = { contact: 'Saved', chat: 'Chat', group: 'Group' };
+            const headers = ['Name', 'Push Name', 'Phone Number', 'Source', 'Type', 'Is My Contact'];
+
+            // Helper to create CSV content
+            const createCSV = (contactList) => {
+                return [
+                    headers.join(','),
+                    ...contactList.map(contact => [
+                        `"${(contact.name || '').replace(/"/g, '""')}"`,
+                        `"${(contact.pushname || '').replace(/"/g, '""')}"`,
+                        `"${contact.number}"`,
+                        sourceLabels[contact.source] || 'Saved',
+                        contact.isBusiness ? 'Business' : 'Personal',
+                        contact.isMyContact ? 'Yes' : 'No'
+                    ].join(','))
+                ].join('\n');
+            };
+
+            // Sanitize filename
+            const sanitizeFilename = (name) => {
+                return name.replace(/[<>:"/\\|?*]/g, '_').replace(/\s+/g, '_').substring(0, 50);
+            };
+
+            // Add CSV for each group
+            groupsMap.forEach((groupContacts, groupName) => {
+                const csvContent = '\ufeff' + createCSV(groupContacts);
+                const filename = `${sanitizeFilename(groupName)}_${groupContacts.length}_contacts.csv`;
+                zip.file(filename, csvContent);
+            });
+
+            // Add CSV for contacts with no groups
+            if (noGroupContacts.length > 0) {
+                const csvContent = '\ufeff' + createCSV(noGroupContacts);
+                zip.file(`_No_Group_${noGroupContacts.length}_contacts.csv`, csvContent);
+            }
+
+            // Add a summary CSV with all contacts
+            const allHeaders = ['Name', 'Push Name', 'Phone Number', 'Source', 'Groups', 'Type', 'Is My Contact'];
+            const allCSV = [
+                allHeaders.join(','),
+                ...contacts.map(contact => [
+                    `"${(contact.name || '').replace(/"/g, '""')}"`,
+                    `"${(contact.pushname || '').replace(/"/g, '""')}"`,
+                    `"${contact.number}"`,
+                    sourceLabels[contact.source] || 'Saved',
+                    `"${(contact.groups ? contact.groups.join('; ') : '').replace(/"/g, '""')}"`,
+                    contact.isBusiness ? 'Business' : 'Personal',
+                    contact.isMyContact ? 'Yes' : 'No'
+                ].join(','))
+            ].join('\n');
+            zip.file(`_All_Contacts_${contacts.length}_total.csv`, '\ufeff' + allCSV);
+
+            // Generate and download ZIP
+            const zipBlob = await zip.generateAsync({ type: 'blob' });
+            const link = document.createElement('a');
+            const url = URL.createObjectURL(zipBlob);
+            link.setAttribute('href', url);
+            link.setAttribute('download', `whatsapp_contacts_by_group_${new Date().toISOString().split('T')[0]}.zip`);
+            link.style.visibility = 'hidden';
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+
+            alert(`Exported ${groupsMap.size} group files + ${noGroupContacts.length > 0 ? '1 no-group file + ' : ''}1 summary file`);
+        }
+
+        async function disconnectSession() {
+            if (!sessionId) return;
+
+            showLoading('Disconnecting (session saved)...');
+            try {
+                const response = await fetch(`/api/contact-extractor/session/${sessionId}/disconnect`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' }
+                });
+                const data = await response.json();
+
+                hideLoading();
+                stopPolling();
+                showStep(5);
+            } catch (error) {
+                hideLoading();
+                alert('Error disconnecting: ' + error.message);
+            }
+        }
+
+        async function logoutSession() {
+            if (!sessionId) return;
+
+            if (!confirm('This will log out completely and you will need to scan QR again next time. Continue?')) {
+                return;
+            }
+
+            showLoading('Logging out...');
+            try {
+                const response = await fetch(`/api/contact-extractor/session/${sessionId}/logout`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' }
+                });
+                const data = await response.json();
+
+                hideLoading();
+                stopPolling();
+                showStep(5);
+            } catch (error) {
+                hideLoading();
+                alert('Error logging out: ' + error.message);
+            }
+        }
+
+        function cancelSession() {
+            stopPolling();
+            if (sessionId) {
+                disconnectSession();
+            } else {
+                showStep(1);
+            }
+        }
+
+        function resetApp() {
+            sessionId = null;
+            contacts = [];
+            document.getElementById('qrWrapper').style.display = 'none';
+            document.getElementById('qrPlaceholder').style.display = 'flex';
+            document.getElementById('qrPlaceholder').innerHTML =
+                '<div class="spinner"></div><span>Generating QR Code...</span>';
+            document.getElementById('searchBox').value = '';
+
+            // Reset buttons to initial state
+            document.getElementById('startBtn').style.display = 'inline-flex';
+            document.getElementById('resumeBtn').style.display = 'none';
+            document.getElementById('newSessionBtn').style.display = 'none';
+            document.getElementById('sessionStatus').style.display = 'none';
+
+            showStep(1);
+            // Check if there's still a saved session
+            checkExistingSession();
+        }
+
+        // Check for existing session on page load
+        window.addEventListener('DOMContentLoaded', () => {
+            checkExistingSession();
+        });
+
+        // NOTE: We intentionally do NOT disconnect on page unload
+        // This allows the session to persist for next time
+    </script>
+</body>
+</html>
