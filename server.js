@@ -19588,8 +19588,35 @@ async function main(reinitialize = false) {
   // );
   //const companyIds = ['0145'];
   const companyIds = [
-    "0103",
-
+    "0101",
+    "0107",
+    '128137',
+    "0149",
+    "0156",
+    "0160",
+    "0161",
+    "0210",
+    "621275",
+    "0245",
+    "0342",
+    "0377",
+    "049815",
+    "058666",
+    "063",
+    "079",
+    "088",
+    "092",
+    "296245",
+    "325117",
+    "399849",
+    '920072',
+    "458752",
+    "728219",
+    "765943",
+    "621275",
+    "946386",
+    "wellness_unlimited",
+    'premium_pure',
   ];
   const placeholders = companyIds.map((_, i) => `$${i + 1}`).join(", ");
   const query = `SELECT * FROM companies WHERE company_id IN (${placeholders})`;
@@ -29032,6 +29059,10 @@ async function initializeWithTimeout(
         authTimeoutMs: 20000,
         takeoverOnConflict: true,
         restartOnAuthFail: true,
+        webVersionCache: {
+          type: "remote",
+          remotePath: "https://raw.githubusercontent.com/wppconnect-team/wa-version/main/html/2.3000.1032360465-alpha.html",
+        },
         puppeteer: {
           headless: true,
           executablePath: process.env.CHROME_PATH || "/usr/bin/google-chrome",
@@ -29111,27 +29142,42 @@ async function initializeWithTimeout(
       botMap.set(botName, clients);
       await updatePhoneStatus(botName, phoneIndex, "initializing");
 
-      // Start checking for stuck initialization (increased timeout to 2 minutes)
+      // Start checking for stuck initialization or authenticated state (timeout 2 minutes)
+      let checkCount = 0;
       const checkInitialization = setInterval(async () => {
         try {
+          checkCount++;
           const result = await sqlDb.query(
             `SELECT status FROM phone_status
              WHERE company_id = $1 AND phone_number = $2`,
             [botName, phoneIndex]
           );
 
-          if (
-            result.rows.length > 0 &&
-            result.rows[0].status === "initializing"
-          ) {
-            console.log(
-              `${botName} Phone ${
-                phoneIndex + 1
-              } - Still initializing after 2 minutes, running cleanup...`
-            );
+          if (result.rows.length > 0) {
+            const status = result.rows[0].status;
 
-            clearInterval(checkInitialization);
-            await safeCleanup(botName, phoneIndex);
+            // Check for stuck in initializing state
+            if (status === "initializing") {
+              console.log(
+                `${botName} Phone ${
+                  phoneIndex + 1
+                } - Still initializing after 2 minutes, running cleanup...`
+              );
+              clearInterval(checkInitialization);
+              await safeCleanup(botName, phoneIndex);
+            }
+
+            // Check for stuck in authenticated state (should transition to ready within 60s)
+            // Only trigger after second check (4 minutes total, 2 minutes in authenticated)
+            if (status === "authenticated" && checkCount >= 2) {
+              console.log(
+                `${botName} Phone ${
+                  phoneIndex + 1
+                } - Stuck in authenticated state, running cleanup...`
+              );
+              clearInterval(checkInitialization);
+              await safeCleanup(botName, phoneIndex);
+            }
           }
         } catch (error) {
           console.error(`Error checking initialization status: ${error}`);
@@ -29209,31 +29255,11 @@ async function initializeWithTimeout(
         botMap.set(botName, clients);
         await updatePhoneStatus(botName, phoneIndex, "authenticated");
       });
-
       client.on("ready", async () => {
         clearInterval(checkInitialization);
         console.log(`${botName} Phone ${phoneIndex + 1} - READY`);
 
-        // Patch sendSeen to use markSeen instead (fixes markedUnread error in WhatsApp Web)
-        // See: https://github.com/pedroslopez/whatsapp-web.js/issues/5718
-        try {
-          await client.pupPage?.evaluate(`
-            window.WWebJS.sendSeen = async (chatId) => {
-              const chat = await window.WWebJS.getChat(chatId, { getAsModel: false });
-              if (chat) {
-                window.Store.WAWebStreamModel.Stream.markAvailable();
-                await window.Store.SendSeen.markSeen(chat);
-                window.Store.WAWebStreamModel.Stream.markUnavailable();
-                return true;
-              }
-              return false;
-            };
-          `);
-          console.log(`${botName} Phone ${phoneIndex + 1} - sendSeen patch applied`);
-        } catch (patchError) {
-          console.warn(`${botName} Phone ${phoneIndex + 1} - Failed to apply sendSeen patch:`, patchError.message);
-        }
-
+  
         clients[phoneIndex] = {
           ...clients[phoneIndex],
           status: "ready",
@@ -29248,7 +29274,6 @@ async function initializeWithTimeout(
           resolve();
         }
       });
-
       client.on("error", async (error) => {
         clearInterval(checkInitialization);
         console.error(
