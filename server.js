@@ -8445,7 +8445,22 @@ app.post("/api/schedule-message/:companyId", async (req, res) => {
     }
   } catch (error) {
     console.error("Error scheduling message:", error);
-    res.status(500).json({ error: "Failed to schedule message" });
+    console.error("Error details:", {
+      message: error.message,
+      stack: error.stack,
+      companyId: req.params.companyId,
+      requestBody: req.body,
+    });
+    
+    // Send appropriate status code based on error type
+    const statusCode = error.message?.includes("No valid") || 
+                       error.message?.includes("No message content") ? 400 : 500;
+    
+    res.status(statusCode).json({ 
+      success: false,
+      error: error.message || "Failed to schedule message",
+      details: statusCode === 400 ? error.message : undefined
+    });
   }
 });
 
