@@ -24769,7 +24769,7 @@ app.get("/api/bot-status/:companyId", async (req, res) => {
       const response = {
         ...statusArray[0],
         companyId,
-        v2: companyData.v2,
+        v2: companyData.v2 === true, // Ensure boolean
         trialEndDate: companyData.trial_end_date,
         apiUrl: companyData.api_url,
         phoneCount: companyData.phone_count,
@@ -24780,7 +24780,7 @@ app.get("/api/bot-status/:companyId", async (req, res) => {
       const response = {
         phones: statusArray,
         companyId,
-        v2: companyData.v2,
+        v2: companyData.v2 === true, // Ensure boolean
         trialEndDate: companyData.trial_end_date,
         apiUrl: companyData.api_url,
         phoneCount: companyData.phone_count,

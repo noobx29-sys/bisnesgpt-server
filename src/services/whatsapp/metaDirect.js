@@ -56,6 +56,12 @@ class MetaDirect {
           status = 'ready', connection_type = 'meta_direct', updated_at = NOW()
       `, [companyId, phoneIndex]);
 
+      // Update companies table to set v2 = true (Meta Cloud API)
+      await pool.query(`
+        UPDATE companies SET v2 = true, updated_at = NOW()
+        WHERE company_id = $1
+      `, [companyId]);
+
       // Broadcast via WebSocket
       broadcast.authStatus(companyId, 'ready', null, phoneIndex, {
         connectionType: 'meta_direct',
