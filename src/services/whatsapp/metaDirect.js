@@ -98,15 +98,20 @@ class MetaDirect {
    * @param {object} body - Webhook body (WhatsApp Cloud API format)
    */
   async handleWebhook(body) {
+    console.log('🔔 [META DIRECT] Webhook received');
+
     // WhatsApp Cloud API format messages
     if (body.entry) {
       for (const entry of body.entry) {
+        console.log('🔔 [META DIRECT] Processing entry:', entry.id);
         for (const change of entry.changes || []) {
           const field = change.field;
           const value = change.value;
+          console.log('🔔 [META DIRECT] Change field:', field, 'has messages:', !!value?.messages, 'has statuses:', !!value?.statuses);
 
           // Standard messages webhook
           if (field === 'messages' || value?.messages) {
+            console.log('🔔 [META DIRECT] Routing to handleMessages');
             await this.handleMessages(value);
           }
           if (value?.statuses) {
@@ -383,21 +388,34 @@ class MetaDirect {
    * @param {object} body - Message payload
    */
   async handleMessages(body) {
+    console.log('📩 [META DIRECT] handleMessages called with body:', JSON.stringify(body, null, 2).slice(0, 500));
+
     const { messages, contacts, metadata } = body;
+
+    if (!messages || messages.length === 0) {
+      console.log('📩 [META DIRECT] No messages in body');
+      return;
+    }
 
     // Find config by phone number ID
     const phoneNumberId = metadata?.phone_number_id;
+    console.log('📩 [META DIRECT] Looking for config with phone_number_id:', phoneNumberId);
+
     const config = await pool.query(
       'SELECT company_id, phone_index, display_phone_number FROM phone_configs WHERE meta_phone_number_id = $1',
       [phoneNumberId]
     );
 
     if (!config.rows[0]) {
-      console.log('No config found for meta phone_number_id:', phoneNumberId);
+      console.log('❌ [META DIRECT] No config found for meta phone_number_id:', phoneNumberId);
+      // Log all configs for debugging
+      const allConfigs = await pool.query('SELECT company_id, meta_phone_number_id, display_phone_number FROM phone_configs');
+      console.log('📋 [META DIRECT] All configs:', allConfigs.rows);
       return;
     }
 
     const { company_id, phone_index, display_phone_number } = config.rows[0];
+    console.log('✅ [META DIRECT] Found config - company:', company_id, 'phone_index:', phone_index);
 
     for (const msg of messages) {
       const contact = contacts?.find(c => c.wa_id === msg.from);
@@ -441,15 +459,39 @@ class MetaDirect {
       broadcast.newMessage(company_id, messageData);
 
       // Create a wwebjs-compatible message object for bot handler
+      const chatId = `${msg.from}@c.us`;
+      const contactName = contact?.profile?.name || msg.from;
+
       const wwebjsCompatibleMsg = {
         id: { _serialized: msg.id, id: msg.id },
-        from: `${msg.from}@c.us`,
+        from: chatId,
         to: `${display_phone_number}@c.us`,
         body: msg.type === 'text' ? msg.text?.body : '',
         type: msg.type,
         timestamp: parseInt(msg.timestamp),
         hasMedia: ['image', 'video', 'audio', 'document', 'sticker'].includes(msg.type),
         _data: msg,
+        // Mock getChat method (required by bot handler)
+        getChat: async () => ({
+          id: { _serialized: chatId },
+          name: contactName,
+          isGroup: false,
+          sendStateTyping: async () => {},
+          clearState: async () => {},
+        }),
+        // Mock getContact method
+        getContact: async () => ({
+          id: { _serialized: chatId },
+          number: msg.from,
+          pushname: contactName,
+          name: contactName,
+          getProfilePicUrl: async () => '',
+        }),
+        // Mock reply method
+        reply: async (content) => {
+          // This will be handled by sendMessage in the client
+          return { id: { _serialized: 'reply_' + Date.now() } };
+        },
         downloadMedia: async () => {
           // Download media from Meta API if message has media
           if (!wwebjsCompatibleMsg.hasMedia) return null;
@@ -532,10 +574,13 @@ class MetaDirect {
       // Call bot handler for AI auto-reply
       try {
         const botName = company_id; // Using company_id as bot identifier
+        console.log('🤖 [META DIRECT] Calling bot handler with botName:', botName, 'phoneIndex:', phone_index);
+        console.log('🤖 [META DIRECT] Message body:', wwebjsCompatibleMsg.body);
         await handleNewMessagesTemplateWweb(mockClient, wwebjsCompatibleMsg, botName, phone_index);
+        console.log('🤖 [META DIRECT] Bot handler completed');
       } catch (error) {
-        console.error('Error in Meta Direct bot handler:', error);
-        console.error('Error stack:', error.stack);
+        console.error('❌ [META DIRECT] Error in bot handler:', error.message);
+        console.error('❌ [META DIRECT] Error stack:', error.stack);
         // Don't fail the webhook if bot handler fails
       }
     }
