@@ -297,4 +297,88 @@ router.post('/embedded-signup/session-info', async (req, res) => {
   }
 });
 
+/**
+ * POST /api/whatsapp/embedded-signup/complete-with-ids
+ * Complete signup using WABA ID and Phone Number ID from Meta-hosted Embedded Signup
+ * This uses the System User token to access the shared WABA
+ */
+router.post('/embedded-signup/complete-with-ids', async (req, res) => {
+  try {
+    const { companyId, phoneIndex, wabaId, phoneNumberId } = req.body;
+
+    if (!companyId || phoneIndex === undefined || !wabaId || !phoneNumberId) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'Missing required fields: companyId, phoneIndex, wabaId, phoneNumberId' 
+      });
+    }
+
+    // Use System User token to access the shared WABA
+    const systemUserToken = process.env.META_SYSTEM_USER_TOKEN;
+    
+    if (!systemUserToken) {
+      return res.status(500).json({
+        success: false,
+        error: 'System User Token not configured. Please add META_SYSTEM_USER_TOKEN to environment.'
+      });
+    }
+
+    // Step 1: Get phone number details using System User token
+    const phoneResponse = await axios.get(`${GRAPH_API_BASE}/${phoneNumberId}`, {
+      headers: { Authorization: `Bearer ${systemUserToken}` },
+      params: { fields: 'display_phone_number,verified_name,quality_rating,code_verification_status' }
+    });
+
+    const displayPhoneNumber = phoneResponse.data.display_phone_number;
+    const verifiedName = phoneResponse.data.verified_name;
+
+    // Step 2: Subscribe the app to the WABA webhooks
+    try {
+      await axios.post(
+        `${GRAPH_API_BASE}/${wabaId}/subscribed_apps`,
+        {},
+        { headers: { Authorization: `Bearer ${systemUserToken}` } }
+      );
+      console.log('Successfully subscribed app to WABA webhooks');
+    } catch (subError) {
+      console.warn('Warning: Could not subscribe to WABA webhooks:', subError.response?.data || subError.message);
+    }
+
+    // Step 3: Register phone number for Cloud API (if not already registered)
+    try {
+      await axios.post(
+        `${GRAPH_API_BASE}/${phoneNumberId}/register`,
+        {
+          messaging_product: 'whatsapp',
+          pin: '123456' // 6-digit PIN for two-step verification
+        },
+        { headers: { Authorization: `Bearer ${systemUserToken}` } }
+      );
+      console.log('Successfully registered phone number for Cloud API');
+    } catch (regError) {
+      // Phone might already be registered, which is fine
+      console.warn('Phone registration note:', regError.response?.data?.error?.message || regError.message);
+    }
+
+    // Step 4: Save credentials using the existing metaDirect.connect method
+    const result = await metaDirect.connect(companyId, phoneIndex, phoneNumberId, wabaId, systemUserToken);
+
+    res.json({
+      success: true,
+      displayPhoneNumber,
+      verifiedName,
+      wabaId,
+      phoneNumberId,
+      ...result,
+    });
+
+  } catch (error) {
+    console.error('Embedded signup with IDs error:', error.response?.data || error.message);
+    res.status(500).json({
+      success: false,
+      error: error.response?.data?.error?.message || error.message || 'Failed to complete embedded signup'
+    });
+  }
+});
+
 module.exports = router;
