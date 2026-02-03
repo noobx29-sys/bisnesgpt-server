@@ -183,8 +183,10 @@ class TemplatesService {
   async checkSessionWindow(companyId, phoneIndex, contactPhone) {
     // Clean phone number (remove @c.us, etc.)
     const cleanPhone = contactPhone.replace(/@.+/, '').replace(/\D/g, '');
+    console.log(`🔍 [SESSION CHECK] Checking session for company: ${companyId}, phone: ${cleanPhone}`);
 
-    const result = await pool.query(`
+    // First try to get from conversation_sessions table
+    const sessionResult = await pool.query(`
       SELECT last_customer_message_at,
              (NOW() - last_customer_message_at) < INTERVAL '24 hours' as is_open,
              EXTRACT(EPOCH FROM (INTERVAL '24 hours' - (NOW() - last_customer_message_at))) / 3600 as hours_remaining
@@ -192,22 +194,64 @@ class TemplatesService {
       WHERE company_id = $1 AND phone_index = $2 AND contact_phone = $3
     `, [companyId, phoneIndex, cleanPhone]);
 
-    if (!result.rows[0] || !result.rows[0].last_customer_message_at) {
+    console.log(`🔍 [SESSION CHECK] Session table result:`, sessionResult.rows[0] || 'no session found');
+
+    if (sessionResult.rows[0] && sessionResult.rows[0].last_customer_message_at) {
+      const { last_customer_message_at, is_open, hours_remaining } = sessionResult.rows[0];
+      console.log(`✅ [SESSION CHECK] Found session - isOpen: ${is_open}, hoursRemaining: ${hours_remaining}`);
       return {
-        isOpen: false,
-        lastCustomerMessage: null,
-        hoursRemaining: 0,
-        requiresTemplate: true
+        isOpen: is_open,
+        lastCustomerMessage: last_customer_message_at,
+        hoursRemaining: Math.max(0, Math.round(hours_remaining * 10) / 10),
+        requiresTemplate: !is_open
       };
     }
 
-    const { last_customer_message_at, is_open, hours_remaining } = result.rows[0];
-    
+    // Fallback: Check messages table for recent incoming messages from this contact
+    // This handles cases where conversation_sessions wasn't populated yet
+    // Try multiple contact_id formats since they vary across the codebase
+    console.log(`🔍 [SESSION CHECK] Checking messages table as fallback...`);
+    const messagesResult = await pool.query(`
+      SELECT timestamp,
+             (NOW() - timestamp) < INTERVAL '24 hours' as is_open,
+             EXTRACT(EPOCH FROM (INTERVAL '24 hours' - (NOW() - timestamp))) / 3600 as hours_remaining
+      FROM messages
+      WHERE company_id = $1 
+        AND (contact_id = $2 OR contact_id = $3 OR contact_id LIKE $4)
+        AND from_me = false
+      ORDER BY timestamp DESC
+      LIMIT 1
+    `, [companyId, `${companyId}-${cleanPhone}`, `${companyId}-+${cleanPhone}`, `%-${cleanPhone}`]);
+
+    console.log(`🔍 [SESSION CHECK] Messages table result:`, messagesResult.rows[0] || 'no messages found');
+
+    if (messagesResult.rows[0] && messagesResult.rows[0].timestamp) {
+      const { timestamp, is_open, hours_remaining } = messagesResult.rows[0];
+      
+      // Also update conversation_sessions for future checks
+      if (is_open) {
+        try {
+          await this.updateCustomerSession(companyId, phoneIndex, cleanPhone);
+        } catch (e) {
+          console.warn('Could not update session from message fallback:', e.message);
+        }
+      }
+      
+      return {
+        isOpen: is_open,
+        lastCustomerMessage: timestamp,
+        hoursRemaining: Math.max(0, Math.round(hours_remaining * 10) / 10),
+        requiresTemplate: !is_open
+      };
+    }
+
+    // No incoming messages found at all - this contact never messaged us
+    // In this case, template IS required for first outreach
     return {
-      isOpen: is_open,
-      lastCustomerMessage: last_customer_message_at,
-      hoursRemaining: Math.max(0, Math.round(hours_remaining * 10) / 10),
-      requiresTemplate: !is_open
+      isOpen: false,
+      lastCustomerMessage: null,
+      hoursRemaining: 0,
+      requiresTemplate: true
     };
   }
 
