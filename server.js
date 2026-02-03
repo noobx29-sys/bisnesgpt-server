@@ -87,6 +87,7 @@ const serverManagerRouter = require("./routes/serverManager");
 // WhatsApp Embedded Signup & Cloud API routes
 const whatsappApiRoutes = require("./src/routes/whatsapp");
 const metaWebhookRoutes = require("./src/routes/webhooks/meta");
+const templatesRouter = require("./src/routes/templates");
 
 // Initialize logger
 const logger = new ServerLogger();
@@ -3058,6 +3059,7 @@ app.use("/api/server-manager", serverManagerRouter);
 
 // WhatsApp Embedded Signup & Cloud API routes
 app.use("/api/whatsapp", whatsappApiRoutes);
+app.use("/api/templates", templatesRouter);
 app.use("/webhook", metaWebhookRoutes);
 
 // Read specific log file

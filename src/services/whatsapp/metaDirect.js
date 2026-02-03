@@ -8,6 +8,7 @@ const crypto = require('crypto');
 const { pool } = require('../../config/database');
 const broadcast = require('../../utils/broadcast');
 const { handleNewMessagesTemplateWweb } = require('../../../bots/handleMessagesTemplateWweb');
+const templatesService = require('./templatesService');
 
 const GRAPH_API_VERSION = 'v24.0';
 const GRAPH_API_BASE = `https://graph.facebook.com/${GRAPH_API_VERSION}`;
@@ -425,6 +426,15 @@ class MetaDirect {
 
     for (const msg of messages) {
       const contact = contacts?.find(c => c.wa_id === msg.from);
+      
+      // Update session window - customer has messaged, 24h window is now open
+      try {
+        await templatesService.updateCustomerSession(company_id, phone_index, msg.from);
+        console.log('✅ [META DIRECT] Updated 24h session for:', msg.from);
+      } catch (sessionError) {
+        console.error('❌ [META DIRECT] Error updating session:', sessionError.message);
+      }
+      
       const extractedContent = this.extractContent(msg);
       const textBody = msg.type === 'text' ? msg.text?.body : (typeof extractedContent === 'string' ? extractedContent : '');
 
@@ -704,12 +714,28 @@ class MetaDirect {
    * @param {number} phoneIndex - Phone index
    * @param {string} to - Recipient (WhatsApp ID or phone number)
    * @param {string} text - Message text
+   * @param {boolean} skipSessionCheck - Skip 24h window check (for bot auto-replies within session)
    * @returns {Promise<{id: string, provider: string}>}
    */
-  async sendText(companyId, phoneIndex, to, text) {
+  async sendText(companyId, phoneIndex, to, text, skipSessionCheck = false) {
     const config = await this.getConfig(companyId, phoneIndex);
     const accessToken = this.decrypt(config.meta_access_token_encrypted);
     const phone = to.replace(/@.+/, '');
+
+    // Check 24-hour session window (can be skipped for bot auto-replies)
+    if (!skipSessionCheck) {
+      const sessionWindow = await templatesService.checkSessionWindow(companyId, phoneIndex, phone);
+      if (sessionWindow.requiresTemplate) {
+        const error = new Error('TEMPLATE_REQUIRED');
+        error.code = 'TEMPLATE_REQUIRED';
+        error.details = {
+          message: '24-hour messaging window has expired. You must use a message template to re-engage this contact.',
+          lastCustomerMessage: sessionWindow.lastCustomerMessage,
+          hoursExpired: sessionWindow.hoursRemaining < 0 ? Math.abs(sessionWindow.hoursRemaining) : 0
+        };
+        throw error;
+      }
+    }
 
     const res = await axios.post(
       `${GRAPH_API_BASE}/${config.meta_phone_number_id}/messages`,
@@ -726,6 +752,13 @@ class MetaDirect {
         },
       }
     );
+
+    // Update business session timestamp
+    try {
+      await templatesService.updateBusinessSession(companyId, phoneIndex, phone);
+    } catch (e) {
+      console.warn('Warning: Could not update business session:', e.message);
+    }
 
     return { id: res.data.messages[0].id, provider: 'meta_direct' };
   }
