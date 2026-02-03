@@ -13,6 +13,19 @@ const templatesService = require('./templatesService');
 const GRAPH_API_VERSION = 'v24.0';
 const GRAPH_API_BASE = `https://graph.facebook.com/${GRAPH_API_VERSION}`;
 
+/**
+ * Standalone decrypt function to avoid circular dependency issues
+ * @param {string} data - Encrypted string (iv:tag:ciphertext)
+ * @returns {string} - Decrypted text
+ */
+function decrypt(data) {
+  const [iv, tag, enc] = data.split(':');
+  const key = Buffer.from(process.env.ENCRYPTION_KEY, 'hex');
+  const decipher = crypto.createDecipheriv('aes-256-gcm', key, Buffer.from(iv, 'hex'));
+  decipher.setAuthTag(Buffer.from(tag, 'hex'));
+  return decipher.update(enc, 'hex', 'utf8') + decipher.final('utf8');
+}
+
 class MetaDirect {
   /**
    * Connect and verify Meta credentials
@@ -663,6 +676,7 @@ class MetaDirect {
                   timestamp: Date.now(),
                   provider: 'meta_direct',
                   phoneIndex: phone_index,
+                  mediaUrl: content.url,
                 };
                 
                 try {
@@ -670,20 +684,27 @@ class MetaDirect {
                     INSERT INTO messages (
                       company_id, contact_id, message_id, 
                       content, message_type, from_me, 
-                      timestamp, phone_index
-                    ) VALUES ($1, $2, $3, $4, $5, $6, to_timestamp($7/1000.0), $8)
+                      timestamp, phone_index, media_url,
+                      direction, status, chat_id, author, customer_phone
+                    ) VALUES ($1, $2, $3, $4, $5, $6, to_timestamp($7/1000.0), $8, $9, $10, $11, $12, $13, $14)
                     ON CONFLICT (message_id, company_id) DO NOTHING
                   `, [
                     company_id,
                     contactID,
                     result.id,
-                    caption || `[${mediaType}]`,
+                    caption || '',
                     mediaType,
                     true,
                     Date.now(),
-                    phone_index
+                    phone_index,
+                    content.url,
+                    'outbound',
+                    'delivered',
+                    chatId,
+                    contactID,
+                    recipientPhoneWithPlus
                   ]);
-                  console.log('✅ [META DIRECT] Outgoing media message saved to database');
+                  console.log('✅ [META DIRECT] Outgoing media message saved to database:', result.id);
                 } catch (dbError) {
                   console.error('❌ [META DIRECT] Error saving outgoing media message to database:', dbError);
                 }
@@ -1001,12 +1022,11 @@ class MetaDirect {
    * @returns {string} - Decrypted text
    */
   decrypt(data) {
-    const [iv, tag, enc] = data.split(':');
-    const key = Buffer.from(process.env.ENCRYPTION_KEY, 'hex');
-    const decipher = crypto.createDecipheriv('aes-256-gcm', key, Buffer.from(iv, 'hex'));
-    decipher.setAuthTag(Buffer.from(tag, 'hex'));
-    return decipher.update(enc, 'hex', 'utf8') + decipher.final('utf8');
+    return decrypt(data); // Use standalone function
   }
 }
 
-module.exports = new MetaDirect();
+// Export instance with standalone decrypt attached for circular dependency resolution
+const metaDirectInstance = new MetaDirect();
+metaDirectInstance.decrypt = decrypt; // Ensure decrypt is always available
+module.exports = metaDirectInstance;
