@@ -10179,41 +10179,110 @@ async function syncContacts(client, companyId, phoneIndex = 0) {
       `Found ${chats.length} chats for company ${companyId}, phone ${phoneIndex}. Processing all chats.`
     );
 
+    let processedCount = 0;
+    let skippedCount = 0;
+    let errorCount = 0;
+
     for (const chat of chats) {
       try {
-        const contact = await chat.getContact();
+        // Skip chats with @lid identifiers (WhatsApp Linked Identity - cannot be synced)
+        if (chat.id._serialized && chat.id._serialized.includes("@lid")) {
+          skippedCount++;
+          continue;
+        }
+
+        let contact;
+        try {
+          contact = await chat.getContact();
+        } catch (contactError) {
+          // Handle Protocol errors when getting contact
+          if (contactError.message && (contactError.message.includes("Protocol error") || contactError.message.includes("Promise was collected"))) {
+            console.log(`⚠️ [SYNC] Protocol error getting contact for chat ${chat.id._serialized}, skipping`);
+          } else {
+            console.log(`⚠️ [SYNC] Error getting contact for chat ${chat.id._serialized}: ${contactError.message}`);
+          }
+          skippedCount++;
+          continue;
+        }
+        
+        // Check if contact uses @lid identifier
+        if (contact.id._serialized && contact.id._serialized.includes("@lid")) {
+          skippedCount++;
+          continue;
+        }
+        
         const contactPhone = contact.id.user;
+        
+        // Skip if contactPhone is not a valid phone number (contains @lid or other invalid formats)
+        if (!contactPhone || contactPhone.includes("@") || contactPhone.length < 5) {
+          skippedCount++;
+          continue;
+        }
+        
         const contactID = `${companyId}-${contactPhone}`;
 
-        const profilePicUrl = await getProfilePicUrl(contact);
+        let profilePicUrl = null;
+        try {
+          profilePicUrl = await getProfilePicUrl(contact);
+        } catch (picError) {
+          // Ignore profile pic errors silently
+        }
+
+        // Log progress every 50 chats
+        const totalChats = chats.length;
+        const currentIndex = processedCount + skippedCount + errorCount;
+        if (currentIndex % 50 === 0 || currentIndex === totalChats - 1) {
+          console.log(`📊 [SYNC] Progress: ${currentIndex + 1}/${totalChats} chats for company ${companyId}`);
+        }
 
         // Upsert contact
-        const contactQuery = `
-          INSERT INTO public.contacts (
-            contact_id, company_id, name, phone, tags, unread_count, created_at, last_updated, 
-            chat_data, company, chat_id, last_message, profile_pic_url
-          ) VALUES ($1, $2, $3, $4, '[]'::jsonb, $5, NOW(), NOW(), $6, $7, $8, '{}'::jsonb, $9)
-          ON CONFLICT (contact_id, company_id) DO UPDATE SET
-            last_updated = NOW(),
-            profile_pic_url = EXCLUDED.profile_pic_url,
-            unread_count = EXCLUDED.unread_count,
-            last_message = EXCLUDED.last_message,
-            chat_data = EXCLUDED.chat_data;
-        `;
-        await sqlDb.query(contactQuery, [
-          contactID,
-          companyId,
-          contact.name || contact.pushname || contact.shortName || contactPhone,
-          contactPhone,
-          chat.unreadCount,
-          JSON.stringify(chat),
-          contact.name,
-          chat.id._serialized,
-          profilePicUrl,
-        ]);
+        let contactUpserted = false;
+        try {
+          const contactQuery = `
+            INSERT INTO public.contacts (
+              contact_id, company_id, name, phone, tags, unread_count, created_at, last_updated, 
+              chat_data, company, chat_id, last_message, profile_pic_url
+            ) VALUES ($1, $2, $3, $4, '[]'::jsonb, $5, NOW(), NOW(), $6, $7, $8, '{}'::jsonb, $9)
+            ON CONFLICT (contact_id, company_id) DO UPDATE SET
+              last_updated = NOW(),
+              profile_pic_url = EXCLUDED.profile_pic_url,
+              unread_count = EXCLUDED.unread_count,
+              last_message = EXCLUDED.last_message,
+              chat_data = EXCLUDED.chat_data;
+          `;
+          await sqlDb.query(contactQuery, [
+            contactID,
+            companyId,
+            contact.name || contact.pushname || contact.shortName || contactPhone,
+            contactPhone,
+            chat.unreadCount,
+            JSON.stringify(chat),
+            contact.name,
+            chat.id._serialized,
+            profilePicUrl,
+          ]);
+          contactUpserted = true;
+        } catch (dbError) {
+          console.log(`⚠️ [SYNC] Database error upserting contact ${contactID}: ${dbError.message}`);
+          errorCount++;
+          continue;
+        }
 
         // Fetch and insert messages using the same method as addMessageToPostgres
-        const messages = await chat.fetchMessages({ limit: 200 });
+        let messages = [];
+        try {
+          messages = await chat.fetchMessages({ limit: 200 });
+        } catch (fetchError) {
+          // Handle Protocol errors and Promise collection errors
+          if (fetchError.message && (fetchError.message.includes("Protocol error") || fetchError.message.includes("Promise was collected"))) {
+            console.log(`⚠️ [SYNC] Protocol error fetching messages for ${chat.id._serialized}, skipping messages for this chat`);
+          } else {
+            console.log(`⚠️ [SYNC] Error fetching messages for ${chat.id._serialized}: ${fetchError.message}`);
+          }
+          processedCount++;
+          continue; // Skip to next chat but count as processed
+        }
+        
         let lastMessage = null;
 
         for (const msg of messages) {
@@ -10344,39 +10413,56 @@ async function syncContacts(client, companyId, phoneIndex = 0) {
               };
             }
           } catch (error) {
-            console.error(
-              `Error processing message ${msg.id._serialized} during sync:`,
-              error
-            );
+            // Handle Protocol errors gracefully
+            if (error.message && (error.message.includes("Protocol error") || error.message.includes("Promise was collected"))) {
+              console.log(`⚠️ [SYNC] Protocol error processing message ${msg.id._serialized}, skipping`);
+            } else {
+              console.log(
+                `⚠️ [SYNC] Error processing message during sync: ${error.message || error}`
+              );
+            }
           }
         }
 
         // Update contact with the actual last message
         if (lastMessage) {
-          const updateContactQuery = `
-            UPDATE public.contacts SET
-              last_message = $1,
-              last_updated = NOW()
-            WHERE contact_id = $2 AND company_id = $3;
-          `;
-          await sqlDb.query(updateContactQuery, [
-            JSON.stringify(lastMessage),
-            contactID,
-            companyId,
-          ]);
+          try {
+            const updateContactQuery = `
+              UPDATE public.contacts SET
+                last_message = $1,
+                last_updated = NOW()
+              WHERE contact_id = $2 AND company_id = $3;
+            `;
+            await sqlDb.query(updateContactQuery, [
+              JSON.stringify(lastMessage),
+              contactID,
+              companyId,
+            ]);
+          } catch (updateError) {
+            console.log(`⚠️ [SYNC] Error updating last message for ${contactID}: ${updateError.message}`);
+          }
         }
+        
+        processedCount++;
       } catch (error) {
-        console.error(`Error processing chat ${chat.id._serialized}:`, error);
+        errorCount++;
+        // Handle Protocol errors gracefully - don't stop the whole sync
+        if (error.message && (error.message.includes("Protocol error") || error.message.includes("Promise was collected"))) {
+          console.log(`⚠️ [SYNC] Protocol error processing chat ${chat.id?._serialized || 'unknown'}, continuing to next chat`);
+        } else {
+          console.log(`⚠️ [SYNC] Error processing chat ${chat.id?._serialized || 'unknown'}: ${error.message || error}`);
+        }
+        // Continue to next chat instead of stopping
       }
     }
 
     console.log(
-      `Finished syncing contacts for company ${companyId}, phone ${phoneIndex}`
+      `✅ [SYNC] Finished syncing contacts for company ${companyId}, phone ${phoneIndex}. Processed: ${processedCount}, Skipped: ${skippedCount}, Errors: ${errorCount}`
     );
   } catch (error) {
     console.error(
-      `Error syncing contacts for company ${companyId}, phone ${phoneIndex}:`,
-      error
+      `❌ [SYNC] Fatal error syncing contacts for company ${companyId}, phone ${phoneIndex}:`,
+      error.message || error
     );
   }
 }
@@ -10388,13 +10474,58 @@ async function syncContactNames(client, companyId, phoneIndex = 0) {
       `Found ${chats.length} chats for company ${companyId}, phone ${phoneIndex}. Syncing contact names only.`
     );
 
+    let processedCount = 0;
+    let skippedCount = 0;
+    let errorCount = 0;
+
     for (const chat of chats) {
       try {
-        const contact = await chat.getContact();
+        // Skip chats with @lid identifiers (WhatsApp Linked Identity - cannot be synced)
+        if (chat.id._serialized && chat.id._serialized.includes("@lid")) {
+          skippedCount++;
+          continue;
+        }
+        
+        let contact;
+        try {
+          contact = await chat.getContact();
+        } catch (contactError) {
+          if (contactError.message && (contactError.message.includes("Protocol error") || contactError.message.includes("Promise was collected"))) {
+            // Skip silently for Protocol errors
+          }
+          skippedCount++;
+          continue;
+        }
+        
+        // Check if contact uses @lid identifier
+        if (contact.id._serialized && contact.id._serialized.includes("@lid")) {
+          skippedCount++;
+          continue;
+        }
+        
         const contactPhone = contact.id.user;
+        
+        // Skip if contactPhone is not a valid phone number
+        if (!contactPhone || contactPhone.includes("@") || contactPhone.length < 5) {
+          skippedCount++;
+          continue;
+        }
+        
         const contactID = `${companyId}-${contactPhone}`;
 
-        const profilePicUrl = await getProfilePicUrl(contact);
+        // Log progress every 50 chats
+        const totalChats = chats.length;
+        const currentIndex = processedCount + skippedCount + errorCount;
+        if (currentIndex % 50 === 0 || currentIndex === totalChats - 1) {
+          console.log(`📊 [SYNC_NAMES] Progress: ${currentIndex + 1}/${totalChats} chats for company ${companyId}`);
+        }
+
+        let profilePicUrl = null;
+        try {
+          profilePicUrl = await getProfilePicUrl(contact);
+        } catch (picError) {
+          // Ignore profile pic errors
+        }
 
         const potentialName =
           contact.name || contact.pushname || contact.shortName || contactPhone;
@@ -10418,9 +10549,6 @@ async function syncContactNames(client, companyId, phoneIndex = 0) {
         let nameToSave = potentialName;
 
         if (isJustPhoneNumber(potentialName)) {
-          console.log(
-            `Skipping name sync for ${contactID} - name is just a phone number: ${potentialName}`
-          );
           shouldSaveName = false;
         } else if (hasMixedContent(potentialName)) {
           shouldSaveName = true;
@@ -10465,16 +10593,23 @@ async function syncContactNames(client, companyId, phoneIndex = 0) {
             companyId,
           ]);
         }
+        processedCount++;
       } catch (error) {
-        console.error(
-          `Error processing contact name for chat ${chat.id._serialized}:`,
-          error
-        );
+        errorCount++;
+        // Handle Protocol errors gracefully
+        if (error.message && (error.message.includes("Protocol error") || error.message.includes("Promise was collected"))) {
+          console.log(`⚠️ [SYNC_NAMES] Protocol error for chat ${chat.id._serialized}, skipping`);
+        } else {
+          console.error(
+            `Error processing contact name for chat ${chat.id._serialized}:`,
+            error.message || error
+          );
+        }
       }
     }
 
     console.log(
-      `Finished syncing contact names for company ${companyId}, phone ${phoneIndex}`
+      `✅ [SYNC_NAMES] Finished syncing contact names for company ${companyId}, phone ${phoneIndex}. Processed: ${processedCount}, Skipped: ${skippedCount}, Errors: ${errorCount}`
     );
   } catch (error) {
     console.error(
