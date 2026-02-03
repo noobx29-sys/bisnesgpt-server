@@ -27666,25 +27666,70 @@ app.post("/api/v2/messages/image/:companyId/:chatId", async (req, res) => {
   const userName = requestedUserName !== undefined ? requestedUserName : "";
 
   try {
+    // Check if this is a Meta Direct company first
+    const phoneConfig = await sqlDb.query(
+      'SELECT connection_type FROM phone_configs WHERE company_id = $1 AND phone_index = $2',
+      [companyId, phoneIndex]
+    );
+    
+    const isMetaDirect = phoneConfig.rows[0]?.connection_type === 'meta_direct';
+    
+    if (isMetaDirect) {
+      // Use Meta Direct API to send image
+      const metaDirect = require('./src/services/whatsapp/metaDirect');
+      const result = await metaDirect.sendMedia(companyId, phoneIndex, chatId, 'image', imageUrl, caption);
+      
+      let phoneNumber = "+" + chatId.split("@")[0];
+      const contactData = await getContactDataFromDatabaseByPhone(phoneNumber, companyId);
+      
+      // Save message to database
+      const contactID = companyId + "-" + chatId.split("@")[0];
+      try {
+        await sqlDb.query(`
+          INSERT INTO messages (
+            company_id, contact_id, message_id, 
+            content, message_type, from_me, 
+            timestamp, phone_index
+          ) VALUES ($1, $2, $3, $4, $5, $6, NOW(), $7)
+          ON CONFLICT (message_id, company_id) DO NOTHING
+        `, [
+          companyId,
+          contactID,
+          result.id,
+          caption || '[image]',
+          'image',
+          true,
+          phoneIndex
+        ]);
+      } catch (dbError) {
+        console.error('Error saving image message to database:', dbError);
+      }
+      
+      if (caption) {
+        await findAndUpdateMessageAuthor(caption, contactID, companyId, userName);
+      }
+      
+      return res.json({ success: true, messageId: result.id });
+    }
+    
+    // Fallback to wwebjs for non-Meta Direct companies
     let client;
-    // 1. Get the client for this company from botMap
     const botData = botMap.get(companyId);
     if (!botData) {
       return res.status(404).send("WhatsApp client not found for this company");
     }
-    client = botData[phoneIndex].client;
+    client = botData[phoneIndex]?.client;
 
     if (!client) {
       return res
         .status(404)
         .send("No active WhatsApp client found for this company");
     }
-    // 2. Use wwebjs to send the image message
+    
     const media = await MessageMedia.fromUrl(imageUrl);
     const sentMessage = await client.sendMessage(chatId, media, { caption });
     let phoneNumber = "+" + chatId.split("@")[0];
 
-    // 3. Save the message to Firebase
     const contactData = await getContactDataFromDatabaseByPhone(
       phoneNumber,
       companyId
@@ -27707,7 +27752,7 @@ app.post("/api/v2/messages/image/:companyId/:chatId", async (req, res) => {
     res.json({ success: true, messageId: sentMessage.id._serialized });
   } catch (error) {
     console.error("Error sending image message:", error);
-    res.status(500).send("Internal Server Error");
+    res.status(500).send("Internal Server Error: " + error.message);
   }
 });
 
@@ -27726,7 +27771,56 @@ app.post("/api/v2/messages/audio/:companyId/:chatId", async (req, res) => {
   const userName = requestedUserName !== undefined ? requestedUserName : "";
 
   try {
-    // 1. Get the client for this company from botMap
+    if (!audioUrl) {
+      return res.status(400).send("No audio URL provided");
+    }
+
+    // Check if this is a Meta Direct company first
+    const phoneConfig = await sqlDb.query(
+      'SELECT connection_type FROM phone_configs WHERE company_id = $1 AND phone_index = $2',
+      [companyId, phoneIndex]
+    );
+    
+    const isMetaDirect = phoneConfig.rows[0]?.connection_type === 'meta_direct';
+    
+    if (isMetaDirect) {
+      // Use Meta Direct API to send audio
+      const metaDirect = require('./src/services/whatsapp/metaDirect');
+      const result = await metaDirect.sendMedia(companyId, phoneIndex, chatId, 'audio', audioUrl, caption);
+      
+      let phoneNumber = "+" + chatId.split("@")[0];
+      const contactID = companyId + "-" + chatId.split("@")[0];
+      
+      // Save message to database
+      try {
+        await sqlDb.query(`
+          INSERT INTO messages (
+            company_id, contact_id, message_id, 
+            content, message_type, from_me, 
+            timestamp, phone_index
+          ) VALUES ($1, $2, $3, $4, $5, $6, NOW(), $7)
+          ON CONFLICT (message_id, company_id) DO NOTHING
+        `, [
+          companyId,
+          contactID,
+          result.id,
+          caption || '[audio]',
+          'audio',
+          true,
+          phoneIndex
+        ]);
+      } catch (dbError) {
+        console.error('Error saving audio message to database:', dbError);
+      }
+      
+      if (caption) {
+        await findAndUpdateMessageAuthor(caption, contactID, companyId, userName);
+      }
+      
+      return res.json({ success: true, messageId: result.id });
+    }
+
+    // Fallback to wwebjs for non-Meta Direct companies
     const botData = botMap.get(companyId);
     if (!botData) {
       return res.status(404).send("WhatsApp client not found for this company");
@@ -27737,15 +27831,12 @@ app.post("/api/v2/messages/audio/:companyId/:chatId", async (req, res) => {
         .status(404)
         .send("No active WhatsApp client found for this company");
     }
-    if (!audioUrl) {
-      return res.status(400).send("No audio URL provided");
-    }
 
-    // 2. Download the audio file (assume it's already in a WhatsApp-compatible format, e.g. mp3, ogg, m4a)
+    // Download the audio file (assume it's already in a WhatsApp-compatible format, e.g. mp3, ogg, m4a)
     const response = await axios.get(audioUrl, { responseType: "arraybuffer" });
     const buffer = Buffer.from(response.data);
 
-    // 3. Create MessageMedia object (try to detect mimetype from url or fallback to audio/mpeg)
+    // Create MessageMedia object (try to detect mimetype from url or fallback to audio/mpeg)
     let mimetype = "audio/mpeg";
     if (audioUrl.endsWith(".ogg")) mimetype = "audio/ogg";
     else if (audioUrl.endsWith(".mp3")) mimetype = "audio/mpeg";
@@ -27760,7 +27851,7 @@ app.post("/api/v2/messages/audio/:companyId/:chatId", async (req, res) => {
       filename
     );
 
-    // 4. Send the audio as a voice message, with caption if provided
+    // Send the audio as a voice message, with caption if provided
     const options = { sendAudioAsVoice: true };
     if (caption) options.caption = caption;
 
@@ -27768,7 +27859,7 @@ app.post("/api/v2/messages/audio/:companyId/:chatId", async (req, res) => {
 
     let phoneNumber = "+" + chatId.split("@")[0];
 
-    // 5. Save the message to database
+    // Save the message to database
     const contactData = await getContactDataFromDatabaseByPhone(
       phoneNumber,
       companyId
@@ -28739,13 +28830,58 @@ app.post("/api/v2/messages/video/:companyId/:chatId", async (req, res) => {
   const userName = requestedUserName !== undefined ? requestedUserName : "";
 
   try {
+    // Check if this is a Meta Direct company first
+    const phoneConfig = await sqlDb.query(
+      'SELECT connection_type FROM phone_configs WHERE company_id = $1 AND phone_index = $2',
+      [companyId, phoneIndex]
+    );
+    
+    const isMetaDirect = phoneConfig.rows[0]?.connection_type === 'meta_direct';
+    
+    if (isMetaDirect) {
+      // Use Meta Direct API to send video
+      const metaDirect = require('./src/services/whatsapp/metaDirect');
+      const result = await metaDirect.sendMedia(companyId, phoneIndex, chatId, 'video', videoUrl, caption);
+      
+      let phoneNumber = "+" + chatId.split("@")[0];
+      const contactID = companyId + "-" + chatId.split("@")[0];
+      
+      // Save message to database
+      try {
+        await sqlDb.query(`
+          INSERT INTO messages (
+            company_id, contact_id, message_id, 
+            content, message_type, from_me, 
+            timestamp, phone_index
+          ) VALUES ($1, $2, $3, $4, $5, $6, NOW(), $7)
+          ON CONFLICT (message_id, company_id) DO NOTHING
+        `, [
+          companyId,
+          contactID,
+          result.id,
+          caption || '[video]',
+          'video',
+          true,
+          phoneIndex
+        ]);
+      } catch (dbError) {
+        console.error('Error saving video message to database:', dbError);
+      }
+      
+      if (caption) {
+        await findAndUpdateMessageAuthor(caption, contactID, companyId, userName);
+      }
+      
+      return res.json({ success: true, messageId: result.id });
+    }
+
+    // Fallback to wwebjs for non-Meta Direct companies
     let client;
-    // 1. Get the client forl this company from botMap
     const botData = botMap.get(companyId);
     if (!botData) {
       return res.status(404).send("WhatsApp client not found for this company");
     }
-    client = botData[phoneIndex].client;
+    client = botData[phoneIndex]?.client;
 
     if (!client) {
       return res
@@ -28753,12 +28889,10 @@ app.post("/api/v2/messages/video/:companyId/:chatId", async (req, res) => {
         .send("No active WhatsApp client found for this company");
     }
 
-    // 2. Use wwebjs to send the video message
     const media = await MessageMedia.fromUrl(videoUrl);
     const sentMessage = await client.sendMessage(chatId, media, { caption });
     let phoneNumber = "+" + chatId.split("@")[0];
 
-    // 3. Save the message to Database
     const contactData = await getContactDataFromDatabaseByPhone(
       phoneNumber,
       companyId
@@ -28781,7 +28915,7 @@ app.post("/api/v2/messages/video/:companyId/:chatId", async (req, res) => {
     res.json({ success: true, messageId: sentMessage.id._serialized });
   } catch (error) {
     console.error("Error sending video message:", error);
-    res.status(500).send("Internal Server Error");
+    res.status(500).send("Internal Server Error: " + error.message);
   }
 });
 
@@ -28813,14 +28947,59 @@ app.post("/api/v2/messages/document/:companyId/:chatId", async (req, res) => {
   });
 
   try {
+    // Check if this is a Meta Direct company first
+    const phoneConfig = await sqlDb.query(
+      'SELECT connection_type FROM phone_configs WHERE company_id = $1 AND phone_index = $2',
+      [companyId, phoneIndex]
+    );
+    
+    const isMetaDirect = phoneConfig.rows[0]?.connection_type === 'meta_direct';
+    
+    if (isMetaDirect) {
+      // Use Meta Direct API to send document
+      const metaDirect = require('./src/services/whatsapp/metaDirect');
+      const result = await metaDirect.sendMedia(companyId, phoneIndex, chatId, 'document', documentUrl, caption, filename);
+      
+      let phoneNumber = "+" + chatId.split("@")[0];
+      const contactID = companyId + "-" + chatId.split("@")[0];
+      
+      // Save message to database
+      try {
+        await sqlDb.query(`
+          INSERT INTO messages (
+            company_id, contact_id, message_id, 
+            content, message_type, from_me, 
+            timestamp, phone_index
+          ) VALUES ($1, $2, $3, $4, $5, $6, NOW(), $7)
+          ON CONFLICT (message_id, company_id) DO NOTHING
+        `, [
+          companyId,
+          contactID,
+          result.id,
+          caption || `[document: ${filename || 'file'}]`,
+          'document',
+          true,
+          phoneIndex
+        ]);
+      } catch (dbError) {
+        console.error('Error saving document message to database:', dbError);
+      }
+      
+      if (caption) {
+        await findAndUpdateMessageAuthor(caption, contactID, companyId, userName);
+      }
+      
+      return res.json({ success: true, messageId: result.id });
+    }
+
+    // Fallback to wwebjs for non-Meta Direct companies
     let client;
-    // 1. Get the client for this company from botMap
     const botData = botMap.get(companyId);
     if (!botData) {
       console.error("WhatsApp client not found for this company");
       return res.status(404).send("WhatsApp client not found for this company");
     }
-    client = botData[phoneIndex].client;
+    client = botData[phoneIndex]?.client;
 
     if (!client) {
       console.error("No active WhatsApp client found for this company");
@@ -28829,7 +29008,6 @@ app.post("/api/v2/messages/document/:companyId/:chatId", async (req, res) => {
         .send("No active WhatsApp client found for this company");
     }
 
-    // 2. Use wwebjs to send the document message
     const media = await MessageMedia.fromUrl(documentUrl, {
       unsafeMime: true,
       filename: filename,
@@ -28842,7 +29020,6 @@ app.post("/api/v2/messages/document/:companyId/:chatId", async (req, res) => {
     });
     let phoneNumber = "+" + chatId.split("@")[0];
 
-    // 3. Save the message to Database
     const contactData = await getContactDataFromDatabaseByPhone(
       phoneNumber,
       companyId
@@ -28865,7 +29042,7 @@ app.post("/api/v2/messages/document/:companyId/:chatId", async (req, res) => {
     res.json({ success: true, messageId: sentMessage.id._serialized });
   } catch (error) {
     console.error("Error sending document message:", error);
-    res.status(500).send("Internal Server Error");
+    res.status(500).send("Internal Server Error: " + error.message);
   }
 });
 
