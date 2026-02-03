@@ -29,6 +29,60 @@ router.post('/sync', async (req, res) => {
 });
 
 /**
+ * POST /api/templates/create
+ * Create a new message template in Meta
+ */
+router.post('/create', async (req, res) => {
+  try {
+    const { companyId, phoneIndex = 0, name, category, language, header, body, footer, buttons } = req.body;
+
+    if (!companyId) {
+      return res.status(400).json({ success: false, error: 'Missing companyId' });
+    }
+
+    if (!name) {
+      return res.status(400).json({ success: false, error: 'Missing template name' });
+    }
+
+    if (!body || !body.text) {
+      return res.status(400).json({ success: false, error: 'Missing body text' });
+    }
+
+    const result = await templatesService.createTemplate(companyId, phoneIndex, {
+      name,
+      category,
+      language,
+      header,
+      body,
+      footer,
+      buttons
+    });
+
+    res.json(result);
+  } catch (error) {
+    console.error('Template create error:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+/**
+ * DELETE /api/templates/:companyId/:templateName
+ * Delete a message template from Meta
+ */
+router.delete('/:companyId/:templateName', async (req, res) => {
+  try {
+    const { companyId, templateName } = req.params;
+    const { phoneIndex = 0 } = req.query;
+
+    const result = await templatesService.deleteTemplate(companyId, parseInt(phoneIndex), templateName);
+    res.json(result);
+  } catch (error) {
+    console.error('Template delete error:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+/**
  * GET /api/templates/:companyId
  * Get all templates for a company
  */

@@ -105,6 +105,212 @@ class TemplatesService {
   }
 
   /**
+   * Create a new message template in Meta
+   * @param {string} companyId - Company ID
+   * @param {number} phoneIndex - Phone index
+   * @param {object} templateData - Template data
+   * @param {string} templateData.name - Template name (lowercase, underscores only)
+   * @param {string} templateData.category - MARKETING, UTILITY, or AUTHENTICATION
+   * @param {string} templateData.language - Language code (e.g., 'en', 'en_US')
+   * @param {array} templateData.components - Template components
+   * @returns {Promise<{success: boolean, template: object}>}
+   */
+  async createTemplate(companyId, phoneIndex = 0, templateData) {
+    try {
+      // Get phone config
+      const config = await pool.query(
+        'SELECT meta_waba_id, meta_access_token_encrypted FROM phone_configs WHERE company_id = $1 AND phone_index = $2 AND connection_type IN ($3, $4)',
+        [companyId, phoneIndex, 'meta_direct', 'meta_embedded']
+      );
+
+      if (!config.rows[0]) {
+        throw new Error('No Meta connection found for this company. Please connect via Official API first.');
+      }
+
+      const { meta_waba_id, meta_access_token_encrypted } = config.rows[0];
+      const accessToken = metaDirect.decrypt(meta_access_token_encrypted);
+
+      // Validate template name (must be lowercase, only underscores allowed for spaces)
+      const name = templateData.name.toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '');
+      
+      if (name.length < 1 || name.length > 512) {
+        throw new Error('Template name must be between 1 and 512 characters');
+      }
+
+      // Build components array
+      const components = [];
+
+      // Add HEADER component if provided
+      if (templateData.header) {
+        const headerComp = { type: 'HEADER' };
+        if (templateData.header.format === 'TEXT') {
+          headerComp.format = 'TEXT';
+          headerComp.text = templateData.header.text;
+        } else if (['IMAGE', 'VIDEO', 'DOCUMENT'].includes(templateData.header.format)) {
+          headerComp.format = templateData.header.format;
+          if (templateData.header.example) {
+            headerComp.example = { header_handle: [templateData.header.example] };
+          }
+        }
+        components.push(headerComp);
+      }
+
+      // Add BODY component (required)
+      if (!templateData.body || !templateData.body.text) {
+        throw new Error('Body text is required');
+      }
+      
+      const bodyComp = {
+        type: 'BODY',
+        text: templateData.body.text
+      };
+
+      // Check for variables in body text and add examples
+      const variableMatches = templateData.body.text.match(/\{\{(\d+)\}\}/g);
+      if (variableMatches && templateData.body.examples) {
+        bodyComp.example = {
+          body_text: [templateData.body.examples]
+        };
+      }
+      
+      components.push(bodyComp);
+
+      // Add FOOTER component if provided
+      if (templateData.footer && templateData.footer.text) {
+        components.push({
+          type: 'FOOTER',
+          text: templateData.footer.text
+        });
+      }
+
+      // Add BUTTONS component if provided
+      if (templateData.buttons && templateData.buttons.length > 0) {
+        const buttonsList = templateData.buttons.map(btn => {
+          const button = { type: btn.type, text: btn.text };
+          if (btn.type === 'URL') {
+            button.url = btn.url;
+          } else if (btn.type === 'PHONE_NUMBER') {
+            button.phone_number = btn.phone_number;
+          }
+          return button;
+        });
+        
+        components.push({
+          type: 'BUTTONS',
+          buttons: buttonsList
+        });
+      }
+
+      // Create template in Meta
+      const response = await axios.post(
+        `${GRAPH_API_BASE}/${meta_waba_id}/message_templates`,
+        {
+          name: name,
+          language: templateData.language || 'en',
+          category: templateData.category || 'UTILITY',
+          components: components
+        },
+        {
+          headers: { 
+            Authorization: `Bearer ${accessToken}`,
+            'Content-Type': 'application/json'
+          }
+        }
+      );
+
+      console.log('Template created in Meta:', response.data);
+
+      // Store in local database (with PENDING status since it needs approval)
+      await pool.query(`
+        INSERT INTO message_templates (
+          company_id, phone_index, template_id, template_name,
+          template_language, category, status, components, synced_at
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
+        ON CONFLICT (company_id, phone_index, template_id) DO UPDATE SET
+          template_name = $4,
+          template_language = $5,
+          category = $6,
+          status = $7,
+          components = $8,
+          synced_at = NOW(),
+          updated_at = NOW()
+      `, [
+        companyId,
+        phoneIndex,
+        response.data.id,
+        name,
+        templateData.language || 'en',
+        templateData.category || 'UTILITY',
+        response.data.status || 'PENDING',
+        JSON.stringify(components)
+      ]);
+
+      return {
+        success: true,
+        template: {
+          id: response.data.id,
+          name: name,
+          language: templateData.language || 'en',
+          category: templateData.category || 'UTILITY',
+          status: response.data.status || 'PENDING',
+          components: components
+        }
+      };
+    } catch (error) {
+      console.error('Error creating template:', error.response?.data || error.message);
+      const errorMessage = error.response?.data?.error?.message || 
+                          error.response?.data?.error?.error_user_msg ||
+                          error.message;
+      throw new Error(errorMessage);
+    }
+  }
+
+  /**
+   * Delete a message template from Meta
+   * @param {string} companyId - Company ID
+   * @param {number} phoneIndex - Phone index
+   * @param {string} templateName - Template name to delete
+   * @returns {Promise<{success: boolean}>}
+   */
+  async deleteTemplate(companyId, phoneIndex = 0, templateName) {
+    try {
+      // Get phone config
+      const config = await pool.query(
+        'SELECT meta_waba_id, meta_access_token_encrypted FROM phone_configs WHERE company_id = $1 AND phone_index = $2 AND connection_type IN ($3, $4)',
+        [companyId, phoneIndex, 'meta_direct', 'meta_embedded']
+      );
+
+      if (!config.rows[0]) {
+        throw new Error('No Meta connection found for this company.');
+      }
+
+      const { meta_waba_id, meta_access_token_encrypted } = config.rows[0];
+      const accessToken = metaDirect.decrypt(meta_access_token_encrypted);
+
+      // Delete from Meta
+      await axios.delete(
+        `${GRAPH_API_BASE}/${meta_waba_id}/message_templates`,
+        {
+          headers: { Authorization: `Bearer ${accessToken}` },
+          params: { name: templateName }
+        }
+      );
+
+      // Delete from local database
+      await pool.query(`
+        DELETE FROM message_templates 
+        WHERE company_id = $1 AND phone_index = $2 AND template_name = $3
+      `, [companyId, phoneIndex, templateName]);
+
+      return { success: true };
+    } catch (error) {
+      console.error('Error deleting template:', error.response?.data || error.message);
+      throw new Error(error.response?.data?.error?.message || error.message);
+    }
+  }
+
+  /**
    * Get all templates for a company
    * @param {string} companyId - Company ID
    * @param {number} phoneIndex - Phone index

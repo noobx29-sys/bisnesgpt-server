@@ -16946,6 +16946,8 @@ async function handleAIImageResponses({
           console.log("Sending image:", imageUrl);
           console.log("Chat ID:", chatId);
           const media = await MessageMedia.fromUrl(imageUrl);
+          // Attach original URL for Meta Direct API (which requires a URL, not base64)
+          media.url = imageUrl;
           const imageMessage = await client.sendMessage(chatId, media);
           await addMessageToPostgres(
             imageMessage,
@@ -16955,7 +16957,7 @@ async function handleAIImageResponses({
             phoneIndex
           );
         } catch (error) {
-          console.error(`Error sending image:`, error);
+          console.error(`Error sending image message:`, error);
         }
       }
     }
@@ -16995,9 +16997,12 @@ async function handleAIDocumentResponses({
           media.mimetype =
             media.mimetype ||
             getMimeTypeFromExtension(path.extname(documentName));
+          // Attach original URL for Meta Direct API (which requires a URL, not base64)
+          media.url = documentUrl;
 
           const documentMessage = await client.sendMessage(chatId, media, {
             sendMediaAsDocument: true,
+            filename: documentName,
           });
 
           await addMessageToPostgres(
@@ -17009,7 +17014,7 @@ async function handleAIDocumentResponses({
           );
           await new Promise((resolve) => setTimeout(resolve, 1000));
         } catch (error) {
-          console.error(`Error sending document:`, error);
+          console.error(`Error sending document message:`, error);
         }
       }
     }
@@ -19724,56 +19729,103 @@ async function obiliterateAllJobs() {
 async function main(reinitialize = false) {
   console.log("Initialization starting...");
 
-  // 1. Fetch companies in parallel with other initialization tasks
-  // const companiesPromise = sqlDb.query(
-  //   "SELECT * FROM companies WHERE company_id = $1",
-  //   ["0145"]
-  // );
-  // const companiesPromise = sqlDb.query(
-  //   "SELECT * FROM companies WHERE company_id = $1",
-  //   ["0150"]
-  // );
-
-  // WHEN WANT TO INITIALIZE ALL BOTS
-  // const companiesPromise = sqlDb.query(
-  //   "SELECT * FROM companies WHERE api_url = $1",
-  //   ["https://bisnesgpt.jutateknologi.com"]
-  // );
-  //const companyIds = ['0145'];
-  const companyIds = [
-    "0101",
-    "0107",
-    '128137',
-    "0149",
-    "0156",
-    "0160",
-    "0161",
-    "0210",
-    "621275",
-    "0245",
-    "0342",
-    "0377",
-    "049815",
-    "058666",
-    "063",
-    "079",
-    "088",
-    "092",
-    "296245",
-    "325117",
-    "399849",
-    '920072',
-    "458752",
-    "728219",
-    "765943",
-    "621275",
-    "946386",
-    "wellness_unlimited",
-    'premium_pure',
+  // ============================================
+  // LOAD MONITORED COMPANIES FROM DATABASE
+  // Company IDs are now managed via /api/monitored-companies endpoint
+  // and can be edited from the status.html page
+  // ============================================
+  let WWEBJS_COMPANY_IDS = [];
+  
+  // Default fallback list if database read fails
+  const DEFAULT_COMPANY_IDS = [
+    "0101", "0107", "128137", "0149", "0156", "0160", "0161", "0210",
+    "621275", "0245", "0342", "0377", "049815", "058666", "063", "079",
+    "088", "092", "296245", "325117", "399849", "920072", "458752",
+    "728219", "765943", "946386", "wellness_unlimited", "premium_pure"
   ];
+
+  try {
+    // Ensure the monitored_companies table exists
+    await sqlDb.query(`
+      CREATE TABLE IF NOT EXISTS monitored_companies (
+        id SERIAL PRIMARY KEY,
+        company_id VARCHAR(255) NOT NULL UNIQUE,
+        is_active BOOLEAN DEFAULT true,
+        notes TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
+    // Fetch active monitored companies from database
+    const monitoredResult = await sqlDb.query(`
+      SELECT company_id FROM monitored_companies WHERE is_active = true ORDER BY company_id
+    `);
+
+    if (monitoredResult.rows.length > 0) {
+      WWEBJS_COMPANY_IDS = monitoredResult.rows.map(row => row.company_id);
+      console.log(`📋 Loaded ${WWEBJS_COMPANY_IDS.length} monitored companies from database`);
+    } else {
+      // Insert default companies if table is empty
+      console.log("📋 No monitored companies found in database, inserting defaults...");
+      for (const companyId of DEFAULT_COMPANY_IDS) {
+        await sqlDb.query(`
+          INSERT INTO monitored_companies (company_id, notes, is_active)
+          VALUES ($1, 'Default company', true)
+          ON CONFLICT (company_id) DO NOTHING
+        `, [companyId]);
+      }
+      WWEBJS_COMPANY_IDS = DEFAULT_COMPANY_IDS;
+      console.log(`📋 Inserted ${DEFAULT_COMPANY_IDS.length} default companies`);
+    }
+  } catch (error) {
+    console.error("Error loading monitored companies from database:", error.message);
+    console.log("📋 Using fallback default company list");
+    WWEBJS_COMPANY_IDS = DEFAULT_COMPANY_IDS;
+  }
+
+  console.log(`📋 Companies to monitor: ${WWEBJS_COMPANY_IDS.join(', ')}`);
+  // ============================================
+  // END DATABASE LOAD SECTION
+  // ============================================
+
+  // Check which companies have Meta API configured (meta_direct, meta_embedded, 360dialog)
+  console.log("Checking for Meta verified companies...");
+  let metaVerifiedCompanies = [];
+  try {
+    const metaConfigResult = await sqlDb.query(`
+      SELECT DISTINCT company_id, connection_type, status 
+      FROM phone_configs 
+      WHERE connection_type IN ('meta_direct', 'meta_embedded', '360dialog')
+      AND company_id = ANY($1::text[])
+    `, [WWEBJS_COMPANY_IDS]);
+    
+    metaVerifiedCompanies = metaConfigResult.rows.map(row => row.company_id);
+    
+    if (metaVerifiedCompanies.length > 0) {
+      console.log(`📱 Found ${metaVerifiedCompanies.length} Meta verified companies: ${metaVerifiedCompanies.join(', ')}`);
+      console.log("   These companies will NOT start WWebJS - they use Meta Cloud API instead.");
+    }
+  } catch (error) {
+    console.log("Could not check Meta verified companies:", error.message);
+    metaVerifiedCompanies = [];
+  }
+
+  // Filter out Meta verified companies from WWebJS initialization
+  const companyIds = WWEBJS_COMPANY_IDS.filter(id => !metaVerifiedCompanies.includes(id));
+  
+  console.log(`🤖 Will initialize WWebJS for ${companyIds.length} companies: ${companyIds.join(', ')}`);
+  if (metaVerifiedCompanies.length > 0) {
+    console.log(`📱 Skipping WWebJS for ${metaVerifiedCompanies.length} Meta verified companies: ${metaVerifiedCompanies.join(', ')}`);
+  }
+
   const placeholders = companyIds.map((_, i) => `$${i + 1}`).join(", ");
-  const query = `SELECT * FROM companies WHERE company_id IN (${placeholders})`;
-  const companiesPromise = sqlDb.query(query, companyIds);
+  const query = companyIds.length > 0 
+    ? `SELECT * FROM companies WHERE company_id IN (${placeholders})`
+    : `SELECT * FROM companies WHERE 1=0`; // Empty result if no companies need WWebJS
+  const companiesPromise = companyIds.length > 0 
+    ? sqlDb.query(query, companyIds)
+    : Promise.resolve({ rows: [] });
 
   // 2. If reinitializing, start cleanup early
   const cleanupPromise = reinitialize
@@ -24731,6 +24783,172 @@ app.get("/api/bots", async (req, res) => {
     }
   }
 });
+
+// ============================================
+// MONITORED COMPANIES API ENDPOINTS
+// Manage the list of company IDs that are monitored on status page
+// and initialized on server start
+// ============================================
+
+/**
+ * GET /api/monitored-companies
+ * Get all monitored company IDs
+ */
+app.get("/api/monitored-companies", async (req, res) => {
+  try {
+    // First, ensure the table exists
+    await sqlDb.query(`
+      CREATE TABLE IF NOT EXISTS monitored_companies (
+        id SERIAL PRIMARY KEY,
+        company_id VARCHAR(255) NOT NULL UNIQUE,
+        is_active BOOLEAN DEFAULT true,
+        notes TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
+    const result = await sqlDb.query(`
+      SELECT company_id, is_active, notes, created_at, updated_at 
+      FROM monitored_companies 
+      WHERE is_active = true 
+      ORDER BY company_id
+    `);
+
+    res.json({
+      success: true,
+      total: result.rows.length,
+      companies: result.rows.map(row => ({
+        companyId: row.company_id,
+        isActive: row.is_active,
+        notes: row.notes,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at
+      }))
+    });
+  } catch (error) {
+    console.error("Error fetching monitored companies:", error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+/**
+ * POST /api/monitored-companies
+ * Add a new company to the monitored list
+ */
+app.post("/api/monitored-companies", async (req, res) => {
+  try {
+    const { companyId, notes } = req.body;
+
+    if (!companyId) {
+      return res.status(400).json({ success: false, error: "companyId is required" });
+    }
+
+    // Check if company exists in companies table
+    const companyExists = await sqlDb.query(
+      "SELECT company_id, name FROM companies WHERE company_id = $1",
+      [companyId]
+    );
+
+    if (companyExists.rows.length === 0) {
+      return res.status(404).json({ 
+        success: false, 
+        error: `Company ${companyId} not found in companies table` 
+      });
+    }
+
+    // Insert or update the monitored company
+    const result = await sqlDb.query(`
+      INSERT INTO monitored_companies (company_id, notes, is_active)
+      VALUES ($1, $2, true)
+      ON CONFLICT (company_id) 
+      DO UPDATE SET is_active = true, notes = COALESCE($2, monitored_companies.notes), updated_at = CURRENT_TIMESTAMP
+      RETURNING *
+    `, [companyId, notes || null]);
+
+    res.json({
+      success: true,
+      message: `Company ${companyId} added to monitored list`,
+      company: {
+        companyId: result.rows[0].company_id,
+        companyName: companyExists.rows[0].name,
+        notes: result.rows[0].notes,
+        createdAt: result.rows[0].created_at
+      }
+    });
+  } catch (error) {
+    console.error("Error adding monitored company:", error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+/**
+ * DELETE /api/monitored-companies/:companyId
+ * Remove a company from the monitored list
+ */
+app.delete("/api/monitored-companies/:companyId", async (req, res) => {
+  try {
+    const { companyId } = req.params;
+
+    // Soft delete - set is_active to false
+    const result = await sqlDb.query(`
+      UPDATE monitored_companies 
+      SET is_active = false, updated_at = CURRENT_TIMESTAMP 
+      WHERE company_id = $1
+      RETURNING *
+    `, [companyId]);
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ 
+        success: false, 
+        error: `Company ${companyId} not found in monitored list` 
+      });
+    }
+
+    res.json({
+      success: true,
+      message: `Company ${companyId} removed from monitored list`
+    });
+  } catch (error) {
+    console.error("Error removing monitored company:", error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+/**
+ * GET /api/monitored-companies/available
+ * Get all companies that can be added to monitoring (not already monitored)
+ */
+app.get("/api/monitored-companies/available", async (req, res) => {
+  try {
+    const result = await sqlDb.query(`
+      SELECT c.company_id, c.name 
+      FROM companies c
+      WHERE c.v2 = true
+      AND NOT EXISTS (
+        SELECT 1 FROM monitored_companies mc 
+        WHERE mc.company_id = c.company_id AND mc.is_active = true
+      )
+      ORDER BY c.company_id
+    `);
+
+    res.json({
+      success: true,
+      total: result.rows.length,
+      companies: result.rows.map(row => ({
+        companyId: row.company_id,
+        name: row.name
+      }))
+    });
+  } catch (error) {
+    console.error("Error fetching available companies:", error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// ============================================
+// END MONITORED COMPANIES API ENDPOINTS
+// ============================================
 
 app.put("/api/bots/:botId/category", async (req, res) => {
   const { botId } = req.params;

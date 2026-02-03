@@ -1372,6 +1372,163 @@
         cursor: not-allowed;
         transform: none;
       }
+
+      /* Monitored Companies Management Styles */
+      .company-management-section {
+        background: linear-gradient(
+          135deg,
+          rgba(30, 41, 59, 0.9) 0%,
+          rgba(51, 65, 85, 0.9) 100%
+        );
+        backdrop-filter: blur(20px);
+        border: 1px solid rgba(51, 65, 85, 0.3);
+        border-radius: 16px;
+        padding: 20px;
+        margin-bottom: 30px;
+        position: relative;
+        overflow: hidden;
+      }
+
+      .company-management-section::before {
+        content: "";
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        height: 2px;
+        background: linear-gradient(
+          90deg,
+          rgba(139, 92, 246, 0.5),
+          rgba(59, 130, 246, 0.5),
+          rgba(139, 92, 246, 0.5)
+        );
+      }
+
+      .company-management-section h3 {
+        color: #a78bfa;
+        font-size: 16px;
+        font-weight: 600;
+        margin-bottom: 16px;
+        text-shadow: 0 0 20px rgba(167, 139, 250, 0.3);
+      }
+
+      .monitored-companies-list {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-bottom: 16px;
+        min-height: 40px;
+        padding: 12px;
+        background: rgba(15, 23, 42, 0.5);
+        border-radius: 8px;
+        border: 1px solid rgba(51, 65, 85, 0.3);
+      }
+
+      .monitored-company-tag {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 6px 10px;
+        background: linear-gradient(135deg, rgba(59, 130, 246, 0.2), rgba(99, 102, 241, 0.2));
+        border: 1px solid rgba(59, 130, 246, 0.3);
+        border-radius: 6px;
+        font-size: 13px;
+        color: #e2e8f0;
+        font-family: monospace;
+      }
+
+      .remove-company-btn {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 18px;
+        height: 18px;
+        padding: 0;
+        background: rgba(239, 68, 68, 0.2);
+        border: 1px solid rgba(239, 68, 68, 0.3);
+        border-radius: 4px;
+        color: #f87171;
+        font-size: 14px;
+        font-weight: bold;
+        cursor: pointer;
+        transition: all 0.2s ease;
+        line-height: 1;
+      }
+
+      .remove-company-btn:hover {
+        background: rgba(239, 68, 68, 0.4);
+        transform: scale(1.1);
+      }
+
+      .add-company-controls {
+        display: flex;
+        gap: 12px;
+        align-items: center;
+        flex-wrap: wrap;
+      }
+
+      .add-company-select {
+        padding: 10px 14px;
+        background: rgba(51, 65, 85, 0.8);
+        backdrop-filter: blur(10px);
+        border: 1px solid rgba(75, 85, 99, 0.3);
+        border-radius: 8px;
+        color: #f8fafc;
+        font-size: 14px;
+        min-width: 250px;
+        cursor: pointer;
+        transition: all 0.2s ease;
+      }
+
+      .add-company-select:focus {
+        outline: none;
+        border-color: rgba(139, 92, 246, 0.5);
+        box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.1);
+      }
+
+      .add-company-btn {
+        padding: 10px 16px;
+        background: linear-gradient(135deg, rgba(139, 92, 246, 0.8), rgba(99, 102, 241, 0.8));
+        color: white;
+        border: 1px solid rgba(139, 92, 246, 0.3);
+        border-radius: 8px;
+        font-size: 14px;
+        font-weight: 500;
+        cursor: pointer;
+        transition: all 0.2s ease;
+      }
+
+      .add-company-btn:hover {
+        transform: translateY(-1px);
+        box-shadow: 0 4px 12px rgba(139, 92, 246, 0.3);
+      }
+
+      .refresh-companies-btn {
+        padding: 10px 16px;
+        background: linear-gradient(135deg, rgba(75, 85, 99, 0.8), rgba(107, 114, 128, 0.8));
+        color: white;
+        border: 1px solid rgba(75, 85, 99, 0.3);
+        border-radius: 8px;
+        font-size: 14px;
+        font-weight: 500;
+        cursor: pointer;
+        transition: all 0.2s ease;
+      }
+
+      .refresh-companies-btn:hover {
+        transform: translateY(-1px);
+        box-shadow: 0 4px 12px rgba(75, 85, 99, 0.3);
+      }
+
+      .company-count-badge {
+        padding: 4px 10px;
+        background: rgba(16, 185, 129, 0.2);
+        border: 1px solid rgba(16, 185, 129, 0.3);
+        border-radius: 12px;
+        font-size: 12px;
+        color: #34d399;
+        font-weight: 600;
+      }
     </style>
   </head>
   <body>
@@ -1693,7 +1850,15 @@
           </div>
           <div class="stat-card">
             <div class="stat-value" id="activeBots">0</div>
-            <div class="stat-label">Connected Bots</div>
+            <div class="stat-label">Connected (Total)</div>
+          </div>
+          <div class="stat-card" style="border-left: 3px solid #3b82f6;">
+            <div class="stat-value" id="metaConnected">0</div>
+            <div class="stat-label">Meta API Connected</div>
+          </div>
+          <div class="stat-card" style="border-left: 3px solid #10b981;">
+            <div class="stat-value" id="wwebjsConnected">0</div>
+            <div class="stat-label">WWebJS Connected</div>
           </div>
           <div class="stat-card">
             <div class="stat-value" id="disconnectedBots">0</div>
@@ -1704,6 +1869,29 @@
             <div class="stat-label">Currently Active</div>
           </div>
         </div>
+
+        <!-- Company Management Section -->
+        <div class="company-management-section">
+          <h3>📋 Monitored Companies <span id="companyCountBadge" class="company-count-badge">0</span></h3>
+          <div id="monitoredCompaniesList" class="monitored-companies-list">
+            <span style="color: #94a3b8; font-style: italic;">Loading...</span>
+          </div>
+          <div class="add-company-controls">
+            <select id="addCompanySelect" class="add-company-select">
+              <option value="">Select a company to add...</option>
+            </select>
+            <button onclick="handleAddCompany()" class="add-company-btn">
+              + Add Company
+            </button>
+            <button onclick="refreshMonitoredCompanies()" class="refresh-companies-btn">
+              🔄 Refresh List
+            </button>
+          </div>
+          <p style="color: #64748b; font-size: 12px; margin-top: 12px;">
+            ℹ️ Changes here will affect which companies are monitored on this page and initialized when the server restarts.
+          </p>
+        </div>
+
         <div id="categoryGroups"></div>
       </div>
       <div id="connectionStatus" class="connection-status">
@@ -1712,6 +1900,157 @@
     </div>
 
     <script>
+      // ============================================
+      // MONITORED COMPANY IDS - LOADED FROM DATABASE
+      // Managed via the UI below or /api/monitored-companies endpoint
+      // ============================================
+      let MONITORED_COMPANY_IDS = []; // Will be loaded from database
+
+      // Load monitored companies from database
+      async function loadMonitoredCompanies() {
+        try {
+          const response = await fetch('/api/monitored-companies');
+          const data = await response.json();
+          
+          if (data.success && data.companies) {
+            MONITORED_COMPANY_IDS = data.companies.map(c => c.companyId);
+            console.log(`Loaded ${MONITORED_COMPANY_IDS.length} monitored companies from database`);
+            return MONITORED_COMPANY_IDS;
+          }
+        } catch (error) {
+          console.error('Error loading monitored companies:', error);
+        }
+        
+        // Fallback to empty list if API fails
+        return [];
+      }
+
+      // Add a company to monitoring
+      async function addMonitoredCompany(companyId, notes = '') {
+        try {
+          const response = await fetch('/api/monitored-companies', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ companyId, notes })
+          });
+          
+          const data = await response.json();
+          
+          if (data.success) {
+            showNotification(`✅ Added ${companyId} to monitoring`);
+            await refreshMonitoredCompanies();
+            return true;
+          } else {
+            showNotification(`❌ Failed to add: ${data.error}`, true);
+            return false;
+          }
+        } catch (error) {
+          console.error('Error adding company:', error);
+          showNotification(`❌ Error: ${error.message}`, true);
+          return false;
+        }
+      }
+
+      // Remove a company from monitoring
+      async function removeMonitoredCompany(companyId) {
+        if (!confirm(`Are you sure you want to remove ${companyId} from monitoring?`)) {
+          return false;
+        }
+        
+        try {
+          const response = await fetch(`/api/monitored-companies/${companyId}`, {
+            method: 'DELETE'
+          });
+          
+          const data = await response.json();
+          
+          if (data.success) {
+            showNotification(`✅ Removed ${companyId} from monitoring`);
+            await refreshMonitoredCompanies();
+            return true;
+          } else {
+            showNotification(`❌ Failed to remove: ${data.error}`, true);
+            return false;
+          }
+        } catch (error) {
+          console.error('Error removing company:', error);
+          showNotification(`❌ Error: ${error.message}`, true);
+          return false;
+        }
+      }
+
+      // Refresh monitored companies list and UI
+      async function refreshMonitoredCompanies() {
+        await loadMonitoredCompanies();
+        updateMonitoredCompaniesUI();
+        document.getElementById('companyCountBadge').textContent = MONITORED_COMPANY_IDS.length;
+        await loadAvailableCompanies();
+        await initializeBots();
+      }
+
+      // Update the UI showing current monitored companies
+      function updateMonitoredCompaniesUI() {
+        const container = document.getElementById('monitoredCompaniesList');
+        if (!container) return;
+        
+        if (MONITORED_COMPANY_IDS.length === 0) {
+          container.innerHTML = '<span style="color: #94a3b8; font-style: italic;">No companies being monitored. Add some below.</span>';
+          return;
+        }
+        
+        container.innerHTML = MONITORED_COMPANY_IDS.map(id => `
+          <span class="monitored-company-tag">
+            ${id}
+            <button onclick="removeMonitoredCompany('${id}')" class="remove-company-btn" title="Remove from monitoring">×</button>
+          </span>
+        `).join('');
+      }
+
+      // Load available companies for the dropdown
+      async function loadAvailableCompanies() {
+        try {
+          const response = await fetch('/api/monitored-companies/available');
+          const data = await response.json();
+          
+          const select = document.getElementById('addCompanySelect');
+          if (!select) return;
+          
+          // Clear existing options except the first one
+          while (select.children.length > 1) {
+            select.removeChild(select.lastChild);
+          }
+          
+          if (data.success && data.companies) {
+            data.companies.forEach(company => {
+              const option = document.createElement('option');
+              option.value = company.companyId;
+              option.textContent = `${company.companyId} - ${company.name || 'No name'}`;
+              select.appendChild(option);
+            });
+          }
+        } catch (error) {
+          console.error('Error loading available companies:', error);
+        }
+      }
+
+      // Handle add company form
+      async function handleAddCompany() {
+        const select = document.getElementById('addCompanySelect');
+        const companyId = select.value;
+        
+        if (!companyId) {
+          showNotification('Please select a company to add', true);
+          return;
+        }
+        
+        await addMonitoredCompany(companyId);
+        select.value = '';
+        await loadAvailableCompanies();
+      }
+      // ============================================
+      // END MONITORED COMPANIES MANAGEMENT
+      // ============================================
+
       function checkPassword() {
         const password = document.getElementById("passwordInput").value;
         if (password === "P@ssw0rd") {
@@ -2064,14 +2403,44 @@
         );
         const totalBots = uniqueBots.size;
 
-        // Count active bots (ready or authenticated status)
+        // Count active bots (ready or authenticated status) - total from all sources
         const activeBots = new Set(
           Array.from(botStatuses.entries())
             .filter(([, bot]) =>
-              ["ready", "authenticated"].includes(bot.status.toLowerCase())
+              ["ready", "authenticated", "connected"].includes(bot.status.toLowerCase())
             )
             .map(([key]) => key.split("_")[0])
         ).size;
+
+        // Count Meta API connected bots
+        let metaConnected = 0;
+        let wwebjsConnected = 0;
+        
+        // Get unique bot names with their connection types
+        const processedBots = new Set();
+        Array.from(botStatuses.entries()).forEach(([key, bot]) => {
+          const botName = key.split("_")[0];
+          const phoneIndex = parseInt(key.split("_")[1]) || 0;
+          
+          if (processedBots.has(`${botName}_${phoneIndex}`)) return;
+          processedBots.add(`${botName}_${phoneIndex}`);
+          
+          const metaKey = `${botName}_${phoneIndex}`;
+          const metaData = window.metaAccountsData?.get(metaKey);
+          
+          const isReady = ["ready", "authenticated", "connected"].includes(bot.status.toLowerCase());
+          
+          if (metaData && (metaData.connectionType === 'meta_direct' || metaData.connectionType === 'meta_embedded' || metaData.connectionType === '360dialog')) {
+            // Check if meta account is connected
+            const metaStatus = metaData.metaStatus || metaData.status || '';
+            if (isReady || metaStatus.toLowerCase() === 'connected' || metaStatus.toLowerCase() === 'ready' || metaData.verifiedName) {
+              metaConnected++;
+            }
+          } else if (isReady) {
+            // WWebJS connected
+            wwebjsConnected++;
+          }
+        });
 
         // Count disconnected bots
         const disconnectedBots = new Set(
@@ -2091,6 +2460,8 @@
 
         document.getElementById("totalBots").textContent = totalBots;
         document.getElementById("activeBots").textContent = activeBots;
+        document.getElementById("metaConnected").textContent = metaConnected;
+        document.getElementById("wwebjsConnected").textContent = wwebjsConnected;
         document.getElementById("disconnectedBots").textContent =
           disconnectedBots;
         document.getElementById("currentlyActiveBots").textContent =
@@ -2143,7 +2514,7 @@
         );
         const totalVisible = visibleItems.length;
         const activeVisible = Array.from(visibleItems).filter((item) =>
-          ["ready", "authenticated"].includes(
+          ["ready", "authenticated", "connected"].includes(
             item.querySelector(".bot-status").textContent.toLowerCase()
           )
         ).length;
@@ -2160,8 +2531,26 @@
             )
         ).size;
 
+        // Count Meta vs WWebJS connections for visible items
+        let metaVisible = 0;
+        let wwebjsVisible = 0;
+        Array.from(visibleItems).forEach((item) => {
+          const botId = item.querySelector(".bot-id").textContent.split(":")[1]?.trim() || "";
+          const metaInfo = item.querySelector(".meta-verification-info");
+          const status = item.querySelector(".bot-status").textContent.toLowerCase();
+          const isReady = ["ready", "authenticated", "connected"].includes(status);
+          
+          if (metaInfo && isReady) {
+            metaVisible++;
+          } else if (isReady) {
+            wwebjsVisible++;
+          }
+        });
+
         document.getElementById("totalBots").textContent = totalVisible;
         document.getElementById("activeBots").textContent = activeVisible;
+        document.getElementById("metaConnected").textContent = metaVisible;
+        document.getElementById("wwebjsConnected").textContent = wwebjsVisible;
         document.getElementById("disconnectedBots").textContent =
           disconnectedVisible;
         document.getElementById("currentlyActiveBots").textContent =
@@ -2174,46 +2563,10 @@
           const bots = await response.json();
           console.log("Fetched bot data:", bots);
 
-          // // Filter bots to only include those with juta.ngrok.app apiUrl
-          // const jutaBots = bots.filter(
-          //   (bot) => bot.apiUrl === "https://juta-dev.ngrok.dev"
-          // );
-
-          // Define the allowed company IDs
-          const companyIds = [
-            "0101",
-            "0107",
-            "0149",
-            "0156",
-            "0160",
-            "0161",
-            "0210",
-            "621275",
-            "022027",
-            "920072",
-            'premium_pure',
-            "wellness_unlimted",
-            "0245",
-            "0342",
-            "0377",
-            "049815",
-            "058666",
-            "063",
-            "079",
-            "088",
-            "092",
-            "296245",
-            "325117",
-            "399849",
-            "458752",
-            "728219",
-            "765943",
-            "946386",
-          ];
-
+          // Use the configurable MONITORED_COMPANY_IDS list from the top of the script
           // Filter bots to only include those with the specified companyIds
           const jutaBots = bots.filter((bot) =>
-            companyIds.includes(bot.botName)
+            MONITORED_COMPANY_IDS.includes(bot.botName)
           );
 
           jutaBots.forEach((bot) => {
@@ -2459,6 +2812,15 @@
       }
 
       async function initialize() {
+        // First, load monitored companies from database
+        await loadMonitoredCompanies();
+        updateMonitoredCompaniesUI();
+        document.getElementById('companyCountBadge').textContent = MONITORED_COMPANY_IDS.length;
+        
+        // Load available companies for the dropdown
+        await loadAvailableCompanies();
+        
+        // Then initialize bots
         await initializeBots();
         connectWebSocket();
         // Update auto-reply status after main initialization

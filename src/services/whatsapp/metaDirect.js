@@ -625,16 +625,87 @@ class MetaDirect {
 
             return { id: { _serialized: result.id } };
           }
-          // Handle MessageMedia objects
+          // Handle MessageMedia objects (from MessageMedia.fromUrl)
           if (content && content.mimetype && content.data) {
             const mediaType = content.mimetype.startsWith('image/') ? 'image' :
                             content.mimetype.startsWith('video/') ? 'video' :
                             content.mimetype.startsWith('audio/') ? 'audio' : 'document';
             
-            // For now, we'll need to upload media to a URL first
-            // This is a simplified version - you may need to implement media upload
-            console.log('Media sending not fully implemented for Meta Direct yet');
-            return { id: { _serialized: 'media_mock_id' } };
+            // If the MessageMedia has a URL property (set by bot handlers), use it directly
+            if (content.url) {
+              try {
+                const caption = options.caption || '';
+                const filename = content.filename || options.filename;
+                const result = await self.sendMedia(company_id, phone_index, chatId, mediaType, content.url, caption, filename);
+                
+                // Save to database and broadcast
+                const recipientPhone = chatId.replace(/@.+/, '');
+                const recipientPhoneWithPlus = recipientPhone.startsWith('+') ? recipientPhone : '+' + recipientPhone;
+                const contactID = `${company_id}-${recipientPhone}`;
+                
+                const outgoingMessageData = {
+                  messageId: result.id,
+                  externalId: result.id,
+                  chat_id: chatId,
+                  chatId: chatId,
+                  message: caption || `[${mediaType}]`,
+                  messageContent: caption || `[${mediaType}]`,
+                  content: caption || `[${mediaType}]`,
+                  messageType: mediaType,
+                  type: mediaType,
+                  from: display_phone_number,
+                  to: recipientPhone,
+                  phone: recipientPhoneWithPlus,
+                  extractedNumber: recipientPhoneWithPlus,
+                  fromMe: true,
+                  contactName: contact?.profile?.name || recipientPhone,
+                  from_name: display_phone_number,
+                  timestamp: Date.now(),
+                  provider: 'meta_direct',
+                  phoneIndex: phone_index,
+                };
+                
+                try {
+                  await pool.query(`
+                    INSERT INTO messages (
+                      company_id, contact_id, message_id, 
+                      content, message_type, from_me, 
+                      timestamp, phone_index
+                    ) VALUES ($1, $2, $3, $4, $5, $6, to_timestamp($7/1000.0), $8)
+                    ON CONFLICT (message_id, company_id) DO NOTHING
+                  `, [
+                    company_id,
+                    contactID,
+                    result.id,
+                    caption || `[${mediaType}]`,
+                    mediaType,
+                    true,
+                    Date.now(),
+                    phone_index
+                  ]);
+                  console.log('✅ [META DIRECT] Outgoing media message saved to database');
+                } catch (dbError) {
+                  console.error('❌ [META DIRECT] Error saving outgoing media message to database:', dbError);
+                }
+                
+                broadcast.newMessage(company_id, outgoingMessageData);
+                return { id: { _serialized: result.id } };
+              } catch (mediaError) {
+                console.error('❌ [META DIRECT] Error sending media via URL:', mediaError);
+                throw mediaError;
+              }
+            }
+            
+            // Fallback: if only base64 data (no URL), we need to upload first
+            // Meta API doesn't support base64 directly, so we need a URL
+            console.error('❌ [META DIRECT] Media has no URL property. Meta API requires a publicly accessible URL.');
+            console.error('❌ [META DIRECT] MessageMedia object received:', { 
+              hasData: !!content.data, 
+              mimetype: content.mimetype, 
+              hasUrl: !!content.url,
+              filename: content.filename 
+            });
+            throw new Error('Meta API requires a publicly accessible URL for media. Base64 upload not supported.');
           }
           return { id: { _serialized: 'mock_id' } };
         },

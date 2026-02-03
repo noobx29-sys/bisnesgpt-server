@@ -3077,6 +3077,8 @@ async function handleAIVideoResponses({
 
           const media = await MessageMedia.fromUrl(videoUrl);
           if (!media) throw new Error("Failed to load video from URL");
+          // Attach original URL for Meta Direct API (which requires a URL, not base64)
+          media.url = videoUrl;
 
           const videoMessage = await client.sendMessage(chatId, media, {
             caption,
@@ -3092,7 +3094,7 @@ async function handleAIVideoResponses({
           );
           await new Promise((resolve) => setTimeout(resolve, 1000));
         } catch (error) {
-          console.error(`Error sending video ${i}:`, error);
+          console.error(`Error sending video message ${i}:`, error);
         }
       }
     }
@@ -3172,6 +3174,8 @@ async function handleAIImageResponses({
       for (const imageUrl of response.imageUrls) {
         try {
           const media = await MessageMedia.fromUrl(imageUrl);
+          // Attach original URL for Meta Direct API (which requires a URL, not base64)
+          media.url = imageUrl;
           const imageMessage = await client.sendMessage(chatId, media);
           await addMessageToPostgres(
             imageMessage,
@@ -3181,7 +3185,7 @@ async function handleAIImageResponses({
             phoneIndex
           );
         } catch (error) {
-          console.error(`Error sending image:`, error);
+          console.error(`Error sending image message:`, error);
         }
       }
     }
@@ -3221,9 +3225,12 @@ async function handleAIDocumentResponses({
           media.mimetype =
             media.mimetype ||
             getMimeTypeFromExtension(path.extname(documentName));
+          // Attach original URL for Meta Direct API (which requires a URL, not base64)
+          media.url = documentUrl;
 
           const documentMessage = await client.sendMessage(chatId, media, {
             sendMediaAsDocument: true,
+            filename: documentName,
           });
 
           await addMessageToPostgres(
@@ -3235,7 +3242,7 @@ async function handleAIDocumentResponses({
           );
           await new Promise((resolve) => setTimeout(resolve, 1000));
         } catch (error) {
-          console.error(`Error sending document:`, error);
+          console.error(`Error sending document message:`, error);
         }
       }
     }
@@ -7205,6 +7212,8 @@ async function sendVoiceMessage(client, chatId, voiceUrl, caption = "") {
       audioBuffer.toString("base64"),
       `voice_${Date.now()}.mp3` // Generate unique filename
     );
+    // Attach original URL for Meta Direct API (which requires a URL, not base64)
+    media.url = voiceUrl;
 
     // Send the voice message with options
     const messageOptions = {
