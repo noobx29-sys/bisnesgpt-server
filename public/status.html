@@ -2401,53 +2401,82 @@
         const uniqueBots = new Set(
           Array.from(botStatuses.keys()).map((key) => key.split("_")[0])
         );
+        
+        // Also add Meta accounts that might not be in botStatuses
+        if (window.metaAccountsData) {
+          window.metaAccountsData.forEach((account, key) => {
+            const botName = key.split("_")[0];
+            uniqueBots.add(botName);
+          });
+        }
+        
         const totalBots = uniqueBots.size;
 
-        // Count active bots (ready or authenticated status) - total from all sources
-        const activeBots = new Set(
-          Array.from(botStatuses.entries())
-            .filter(([, bot]) =>
-              ["ready", "authenticated", "connected"].includes(bot.status.toLowerCase())
-            )
-            .map(([key]) => key.split("_")[0])
-        ).size;
-
-        // Count Meta API connected bots
+        // Count Meta API connected bots and WWebJS connected bots
         let metaConnected = 0;
         let wwebjsConnected = 0;
-        
-        // Get unique bot names with their connection types
         const processedBots = new Set();
+        
+        // First, count Meta accounts that are connected (from metaAccountsData)
+        if (window.metaAccountsData) {
+          window.metaAccountsData.forEach((metaData, metaKey) => {
+            if (processedBots.has(metaKey)) return;
+            
+            const isMetaConnection = metaData.connectionType === 'meta_direct' || 
+                                     metaData.connectionType === 'meta_embedded' || 
+                                     metaData.connectionType === '360dialog';
+            
+            if (isMetaConnection) {
+              // Meta account is connected if it has a verified name or connected status
+              const metaStatus = (metaData.metaStatus || metaData.status || '').toLowerCase();
+              if (metaData.verifiedName || metaStatus === 'connected' || metaStatus === 'ready') {
+                metaConnected++;
+                processedBots.add(metaKey);
+              }
+            }
+          });
+        }
+        
+        // Then count WWebJS connected bots (those in botStatuses that aren't Meta)
         Array.from(botStatuses.entries()).forEach(([key, bot]) => {
-          const botName = key.split("_")[0];
-          const phoneIndex = parseInt(key.split("_")[1]) || 0;
-          
-          if (processedBots.has(`${botName}_${phoneIndex}`)) return;
-          processedBots.add(`${botName}_${phoneIndex}`);
-          
-          const metaKey = `${botName}_${phoneIndex}`;
-          const metaData = window.metaAccountsData?.get(metaKey);
+          if (processedBots.has(key)) return;
           
           const isReady = ["ready", "authenticated", "connected"].includes(bot.status.toLowerCase());
+          const metaData = window.metaAccountsData?.get(key);
           
-          if (metaData && (metaData.connectionType === 'meta_direct' || metaData.connectionType === 'meta_embedded' || metaData.connectionType === '360dialog')) {
-            // Check if meta account is connected
-            const metaStatus = metaData.metaStatus || metaData.status || '';
-            if (isReady || metaStatus.toLowerCase() === 'connected' || metaStatus.toLowerCase() === 'ready' || metaData.verifiedName) {
-              metaConnected++;
-            }
-          } else if (isReady) {
-            // WWebJS connected
+          // If this is a Meta connection, skip (already counted above)
+          if (metaData && (metaData.connectionType === 'meta_direct' || 
+                          metaData.connectionType === 'meta_embedded' || 
+                          metaData.connectionType === '360dialog')) {
+            return;
+          }
+          
+          // This is a WWebJS connection
+          if (isReady) {
             wwebjsConnected++;
+            processedBots.add(key);
           }
         });
+
+        // Count active bots (total connected from both sources)
+        const activeBots = metaConnected + wwebjsConnected;
 
         // Count disconnected bots
         const disconnectedBots = new Set(
           Array.from(botStatuses.entries())
-            .filter(([, bot]) =>
-              ["disconnected", "error"].includes(bot.status.toLowerCase())
-            )
+            .filter(([key, bot]) => {
+              const metaData = window.metaAccountsData?.get(key);
+              const isMetaConnection = metaData && (metaData.connectionType === 'meta_direct' || 
+                                                    metaData.connectionType === 'meta_embedded' || 
+                                                    metaData.connectionType === '360dialog');
+              // Don't count as disconnected if it's a Meta connection that's actually connected
+              if (isMetaConnection && (metaData.verifiedName || 
+                  (metaData.metaStatus || '').toLowerCase() === 'connected' ||
+                  (metaData.metaStatus || '').toLowerCase() === 'ready')) {
+                return false;
+              }
+              return ["disconnected", "error"].includes(bot.status.toLowerCase());
+            })
             .map(([key]) => key.split("_")[0])
         ).size;
 
