@@ -1219,6 +1219,128 @@
         color: #10b981;
         font-weight: 500;
       }
+
+      /* Meta Verification Status Styles */
+      .meta-verification-info {
+        margin-top: 8px;
+        padding: 8px 12px;
+        background: rgba(59, 130, 246, 0.1);
+        border: 1px solid rgba(59, 130, 246, 0.2);
+        border-radius: 8px;
+        font-size: 12px;
+      }
+
+      .meta-verification-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 4px;
+      }
+
+      .meta-verification-row:last-child {
+        margin-bottom: 0;
+      }
+
+      .meta-label {
+        color: #94a3b8;
+      }
+
+      .meta-value {
+        color: #e2e8f0;
+        font-weight: 500;
+      }
+
+      .meta-verified-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        padding: 2px 8px;
+        border-radius: 6px;
+        font-size: 11px;
+        font-weight: 600;
+        background: linear-gradient(135deg, rgba(16, 185, 129, 0.2), rgba(5, 150, 105, 0.2));
+        color: #34d399;
+        border: 1px solid rgba(16, 185, 129, 0.3);
+      }
+
+      .meta-verified-badge svg {
+        width: 12px;
+        height: 12px;
+      }
+
+      .meta-quality-badge {
+        padding: 2px 8px;
+        border-radius: 6px;
+        font-size: 11px;
+        font-weight: 600;
+      }
+
+      .meta-quality-GREEN {
+        background: rgba(16, 185, 129, 0.2);
+        color: #34d399;
+      }
+
+      .meta-quality-YELLOW {
+        background: rgba(245, 158, 11, 0.2);
+        color: #fbbf24;
+      }
+
+      .meta-quality-RED {
+        background: rgba(239, 68, 68, 0.2);
+        color: #f87171;
+      }
+
+      .meta-connection-badge {
+        display: inline-block;
+        padding: 2px 8px;
+        border-radius: 6px;
+        font-size: 10px;
+        font-weight: 600;
+        text-transform: uppercase;
+        margin-left: 8px;
+      }
+
+      .meta-type-meta_direct {
+        background: rgba(59, 130, 246, 0.2);
+        color: #60a5fa;
+      }
+
+      .meta-type-meta_embedded {
+        background: rgba(139, 92, 246, 0.2);
+        color: #a78bfa;
+      }
+
+      .meta-type-360dialog {
+        background: rgba(245, 158, 11, 0.2);
+        color: #fbbf24;
+      }
+
+      .meta-loading {
+        color: #94a3b8;
+        font-style: italic;
+      }
+
+      .verify-meta-btn {
+        padding: 4px 8px;
+        font-size: 10px;
+        background: linear-gradient(135deg, rgba(59, 130, 246, 0.8), rgba(99, 102, 241, 0.8));
+        color: white;
+        border: none;
+        border-radius: 4px;
+        cursor: pointer;
+        transition: all 0.2s ease;
+      }
+
+      .verify-meta-btn:hover {
+        transform: translateY(-1px);
+        box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);
+      }
+
+      .verify-meta-btn:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+        transform: none;
+      }
     </style>
   </head>
   <body>
@@ -1788,6 +1910,7 @@
                                           : ""
                                       }: Not Set</div>`
                                 }
+                                ${renderMetaInfo(botData?.companyId || botName, phoneIndex)}
                             </div>
                             <span class="bot-status status-${status.toLowerCase()}">${status}</span>
                             <div class="bot-actions">
@@ -2074,9 +2197,130 @@
 
           // Populate the test company select with dynamic companies
           populateTestCompanySelect();
+
+          // Fetch meta accounts data
+          await fetchMetaAccounts();
         } catch (error) {
           console.error("Error fetching bots:", error);
         }
+      }
+
+      // Store meta accounts data
+      window.metaAccountsData = new Map();
+
+      async function fetchMetaAccounts() {
+        try {
+          const response = await fetch('/api/whatsapp/meta-accounts');
+          const data = await response.json();
+
+          if (data.success && data.accounts) {
+            // Store meta accounts indexed by companyId_phoneIndex
+            data.accounts.forEach(account => {
+              const key = `${account.companyId}_${account.phoneIndex}`;
+              window.metaAccountsData.set(key, account);
+            });
+            console.log('Meta accounts loaded:', window.metaAccountsData.size);
+            // Re-render to show meta info
+            renderStatuses();
+          }
+        } catch (error) {
+          console.error('Error fetching meta accounts:', error);
+        }
+      }
+
+      async function verifyMetaAccount(companyId, phoneIndex) {
+        const verifyBtn = event.target;
+        const originalText = verifyBtn.textContent;
+        verifyBtn.disabled = true;
+        verifyBtn.textContent = 'Verifying...';
+
+        try {
+          const response = await fetch(`/api/whatsapp/meta-accounts/${companyId}/${phoneIndex}/verify`);
+          const data = await response.json();
+
+          if (data.success) {
+            // Update stored meta data
+            const key = `${companyId}_${phoneIndex}`;
+            const existing = window.metaAccountsData.get(key) || {};
+            window.metaAccountsData.set(key, {
+              ...existing,
+              ...data,
+              verifiedName: data.verifiedName,
+              qualityRating: data.qualityRating,
+              metaStatus: data.status,
+            });
+            showNotification(`Verified: ${data.verifiedName || 'Success'}`);
+            renderStatuses();
+          } else {
+            showNotification(data.error || 'Verification failed', true);
+          }
+        } catch (error) {
+          console.error('Error verifying meta account:', error);
+          showNotification('Error verifying account', true);
+        } finally {
+          verifyBtn.disabled = false;
+          verifyBtn.textContent = originalText;
+        }
+      }
+
+      function renderMetaInfo(companyId, phoneIndex) {
+        const key = `${companyId}_${phoneIndex}`;
+        const metaData = window.metaAccountsData.get(key);
+
+        if (!metaData) {
+          return '';
+        }
+
+        const connectionTypeBadge = metaData.connectionType ? 
+          `<span class="meta-connection-badge meta-type-${metaData.connectionType}">${formatMetaConnectionType(metaData.connectionType)}</span>` : '';
+
+        const verifiedBadge = metaData.verifiedName ? 
+          `<span class="meta-verified-badge">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
+            </svg>
+            ${metaData.verifiedName}
+          </span>` : '';
+
+        const qualityBadge = metaData.qualityRating ? 
+          `<span class="meta-quality-badge meta-quality-${metaData.qualityRating}">${metaData.qualityRating}</span>` : '';
+
+        return `
+          <div class="meta-verification-info">
+            <div class="meta-verification-row">
+              <span class="meta-label">Meta API</span>
+              ${connectionTypeBadge}
+            </div>
+            ${metaData.verifiedName ? `
+            <div class="meta-verification-row">
+              <span class="meta-label">Verified</span>
+              ${verifiedBadge}
+            </div>
+            ` : ''}
+            ${metaData.qualityRating ? `
+            <div class="meta-verification-row">
+              <span class="meta-label">Quality</span>
+              ${qualityBadge}
+            </div>
+            ` : ''}
+            <div class="meta-verification-row">
+              <span class="meta-label">Status</span>
+              <span class="meta-value">${metaData.metaStatus || metaData.status || '-'}</span>
+            </div>
+            <div class="meta-verification-row" style="margin-top: 6px;">
+              <button class="verify-meta-btn" onclick="verifyMetaAccount('${companyId}', ${phoneIndex})">
+                Refresh Meta Status
+              </button>
+            </div>
+          </div>
+        `;
+      }
+
+      function formatMetaConnectionType(type) {
+        if (type === 'meta_direct') return 'Meta Direct';
+        if (type === 'meta_embedded') return 'Embedded';
+        if (type === '360dialog') return '360dialog';
+        return type;
       }
 
       function connectWebSocket() {
