@@ -455,6 +455,37 @@
         box-shadow: 0 0 20px rgba(75, 85, 99, 0.3);
       }
 
+      /* Meta status classes - mapped to match existing styles */
+      .status-connected {
+        background: linear-gradient(
+          135deg,
+          rgba(5, 150, 105, 0.9),
+          rgba(16, 185, 129, 0.9)
+        );
+        color: #ecfdf5;
+        box-shadow: 0 0 20px rgba(5, 150, 105, 0.3);
+      }
+
+      .status-pending {
+        background: linear-gradient(
+          135deg,
+          rgba(234, 179, 8, 0.9),
+          rgba(245, 158, 11, 0.9)
+        );
+        color: #1a1a1a;
+        box-shadow: 0 0 20px rgba(234, 179, 8, 0.3);
+      }
+
+      .status-pending_review {
+        background: linear-gradient(
+          135deg,
+          rgba(234, 179, 8, 0.9),
+          rgba(245, 158, 11, 0.9)
+        );
+        color: #1a1a1a;
+        box-shadow: 0 0 20px rgba(234, 179, 8, 0.3);
+      }
+
       .bot-actions {
         display: flex;
         gap: 8px;
@@ -1882,6 +1913,13 @@
                             </select>
                         `;
 
+              // Check if this bot has meta verification - use meta status if available
+              const companyId = botData?.companyId || botName;
+              const metaKey = `${companyId}_${phoneIndex}`;
+              const metaData = window.metaAccountsData?.get(metaKey);
+              const displayStatus = getDisplayStatus(status, metaData);
+              const statusClass = displayStatus.toLowerCase().replace(/\s+/g, '-');
+
               botItem.innerHTML = `
                             <div class="bot-info">
                                 <div class="bot-display-name">
@@ -1910,9 +1948,9 @@
                                           : ""
                                       }: Not Set</div>`
                                 }
-                                ${renderMetaInfo(botData?.companyId || botName, phoneIndex)}
+                                ${renderMetaInfo(companyId, phoneIndex)}
                             </div>
-                            <span class="bot-status status-${status.toLowerCase()}">${status}</span>
+                            <span class="bot-status status-${statusClass}">${displayStatus}</span>
                             <div class="bot-actions">
                                 ${
                                   botData?.trialEndDate
@@ -2207,6 +2245,40 @@
 
       // Store meta accounts data
       window.metaAccountsData = new Map();
+
+      // Determine which status to display - prioritize meta status if verified
+      function getDisplayStatus(wwebjsStatus, metaData) {
+        // If no meta data, use wwebjs status
+        if (!metaData) {
+          return wwebjsStatus;
+        }
+
+        // If meta account exists and has a status
+        const metaStatus = metaData.metaStatus || metaData.status;
+        if (metaStatus) {
+          // Map meta statuses to display-friendly names
+          const statusLower = metaStatus.toLowerCase();
+          if (statusLower === 'connected' || statusLower === 'ready') {
+            return 'Ready';
+          } else if (statusLower === 'disconnected') {
+            return 'Disconnected';
+          } else if (statusLower === 'pending' || statusLower === 'pending_review') {
+            return 'Pending';
+          } else if (metaData.verifiedName) {
+            // If verified, show as ready
+            return 'Ready';
+          }
+          return metaStatus;
+        }
+
+        // If meta account exists but no specific status, check for connection type
+        if (metaData.connectionType && (metaData.connectionType === 'meta_direct' || metaData.connectionType === 'meta_embedded' || metaData.connectionType === '360dialog')) {
+          // Has meta connection, use meta status or default to wwebjs
+          return metaData.verifiedName ? 'Ready' : wwebjsStatus;
+        }
+
+        return wwebjsStatus;
+      }
 
       async function fetchMetaAccounts() {
         try {
