@@ -10175,45 +10175,51 @@ async function getProfilePicUrl(contact) {
 async function syncContacts(client, companyId, phoneIndex = 0) {
   try {
     const chats = await client.getChats();
+    const totalChats = chats.length;
     console.log(
-      `Found ${chats.length} chats for company ${companyId}, phone ${phoneIndex}. Processing all chats.`
+      `Found ${totalChats} chats for company ${companyId}, phone ${phoneIndex}. Processing all chats.`
     );
 
     let processedCount = 0;
     let skippedCount = 0;
     let errorCount = 0;
 
-    for (const chat of chats) {
+    for (let i = 0; i < chats.length; i++) {
+      const chat = chats[i];
+      
+      // Log progress at the start of each chat processing
+      if (i % 25 === 0 || i === totalChats - 1) {
+        console.log(`📊 [SYNC] Progress: ${i + 1}/${totalChats} chats for company ${companyId} (Processed: ${processedCount}, Skipped: ${skippedCount}, Errors: ${errorCount})`);
+      }
+      
       try {
         // Skip chats with @lid identifiers (WhatsApp Linked Identity - cannot be synced)
-        if (chat.id._serialized && chat.id._serialized.includes("@lid")) {
+        if (chat.id?._serialized && chat.id._serialized.includes("@lid")) {
           skippedCount++;
           continue;
         }
 
         let contact;
         try {
-          contact = await chat.getContact();
+          // Add timeout to getContact
+          contact = await Promise.race([
+            chat.getContact(),
+            new Promise((_, reject) => setTimeout(() => reject(new Error('getContact timeout')), 10000))
+          ]);
         } catch (contactError) {
-          // Handle Protocol errors when getting contact
-          if (contactError.message && (contactError.message.includes("Protocol error") || contactError.message.includes("Promise was collected"))) {
-            console.log(`⚠️ [SYNC] Protocol error getting contact for chat ${chat.id._serialized}, skipping`);
-          } else {
-            console.log(`⚠️ [SYNC] Error getting contact for chat ${chat.id._serialized}: ${contactError.message}`);
-          }
           skippedCount++;
           continue;
         }
         
         // Check if contact uses @lid identifier
-        if (contact.id._serialized && contact.id._serialized.includes("@lid")) {
+        if (!contact || !contact.id || (contact.id._serialized && contact.id._serialized.includes("@lid"))) {
           skippedCount++;
           continue;
         }
         
         const contactPhone = contact.id.user;
         
-        // Skip if contactPhone is not a valid phone number (contains @lid or other invalid formats)
+        // Skip if contactPhone is not a valid phone number
         if (!contactPhone || contactPhone.includes("@") || contactPhone.length < 5) {
           skippedCount++;
           continue;
@@ -10223,20 +10229,15 @@ async function syncContacts(client, companyId, phoneIndex = 0) {
 
         let profilePicUrl = null;
         try {
-          profilePicUrl = await getProfilePicUrl(contact);
+          profilePicUrl = await Promise.race([
+            getProfilePicUrl(contact),
+            new Promise((resolve) => setTimeout(() => resolve(null), 5000))
+          ]);
         } catch (picError) {
-          // Ignore profile pic errors silently
-        }
-
-        // Log progress every 50 chats
-        const totalChats = chats.length;
-        const currentIndex = processedCount + skippedCount + errorCount;
-        if (currentIndex % 50 === 0 || currentIndex === totalChats - 1) {
-          console.log(`📊 [SYNC] Progress: ${currentIndex + 1}/${totalChats} chats for company ${companyId}`);
+          // Ignore
         }
 
         // Upsert contact
-        let contactUpserted = false;
         try {
           const contactQuery = `
             INSERT INTO public.contacts (
@@ -10255,204 +10256,112 @@ async function syncContacts(client, companyId, phoneIndex = 0) {
             companyId,
             contact.name || contact.pushname || contact.shortName || contactPhone,
             contactPhone,
-            chat.unreadCount,
-            JSON.stringify(chat),
-            contact.name,
+            chat.unreadCount || 0,
+            JSON.stringify({}), // Don't store full chat data to avoid large payloads
+            contact.name || null,
             chat.id._serialized,
             profilePicUrl,
           ]);
-          contactUpserted = true;
         } catch (dbError) {
-          console.log(`⚠️ [SYNC] Database error upserting contact ${contactID}: ${dbError.message}`);
+          console.log(`⚠️ [SYNC] DB error for ${contactID}: ${dbError.message}`);
           errorCount++;
           continue;
         }
 
-        // Fetch and insert messages using the same method as addMessageToPostgres
+        // Fetch messages with timeout
         let messages = [];
         try {
-          messages = await chat.fetchMessages({ limit: 200 });
+          messages = await Promise.race([
+            chat.fetchMessages({ limit: 100 }), // Reduced limit for faster sync
+            new Promise((_, reject) => setTimeout(() => reject(new Error('fetchMessages timeout')), 30000))
+          ]);
         } catch (fetchError) {
-          // Handle Protocol errors and Promise collection errors
-          if (fetchError.message && (fetchError.message.includes("Protocol error") || fetchError.message.includes("Promise was collected"))) {
-            console.log(`⚠️ [SYNC] Protocol error fetching messages for ${chat.id._serialized}, skipping messages for this chat`);
-          } else {
-            console.log(`⚠️ [SYNC] Error fetching messages for ${chat.id._serialized}: ${fetchError.message}`);
-          }
           processedCount++;
-          continue; // Skip to next chat but count as processed
+          continue;
         }
         
         let lastMessage = null;
 
         for (const msg of messages) {
           try {
-            // Use the same comprehensive message saving as addMessageToPostgres
-            const basicInfo = await extractBasicMessageInfo(msg);
-            const messageData = await prepareMessageData(
-              msg,
-              companyId,
-              phoneIndex
-            );
-
-            // Get message body (with audio transcription if applicable)
-            let messageBody = messageData.text?.body || "";
-            if (msg.hasMedia && (msg.type === "audio" || msg.type === "ptt")) {
-              console.log("Voice message detected during sync");
-              try {
-                const media = await msg.downloadMedia();
-                const transcription = await transcribeAudio(media.data);
-                if (
-                  transcription &&
-                  transcription !==
-                    "Audio transcription failed. Please try again."
-                ) {
-                  messageBody += transcription;
-                } else {
-                  messageBody += "Audio message";
-                }
-              } catch (error) {
-                console.error("Error transcribing audio during sync:", error);
-                messageBody += "Audio message";
-              }
-            }
-
-            // Prepare media data
-            let mediaUrl = null;
-            let mediaData = null;
-            let mediaMetadata = {};
-
-            if (msg.hasMedia) {
-              if (msg.type === "video") {
-                mediaUrl = messageData.video?.link || null;
-              } else if (msg.type !== "audio" && msg.type !== "ptt") {
-                const mediaTypeData = messageData[msg.type];
-                if (mediaTypeData) {
-                  mediaData = mediaTypeData.data || null;
-                  mediaUrl = mediaTypeData.link || null;
-                  mediaMetadata = {
-                    mimetype: mediaTypeData.mimetype,
-                    filename: mediaTypeData.filename || "",
-                    caption: mediaTypeData.caption || "",
-                    thumbnail: mediaTypeData.thumbnail || null,
-                    mediaKey: mediaTypeData.media_key || null,
-                    ...(msg.type === "image" && {
-                      width: mediaTypeData.width,
-                      height: mediaTypeData.height,
-                    }),
-                    ...(msg.type === "document" && {
-                      pageCount: mediaTypeData.page_count,
-                      fileSize: mediaTypeData.file_size,
-                    }),
-                  };
-                }
-              } else if (msg.type === "audio" || msg.type === "ptt") {
-                mediaData = messageData.audio?.data || null;
-              }
-            }
-
-            // Prepare quoted message
-            const quotedMessage = messageData.text?.context || null;
-
-            // Determine author
+            // Simple message extraction without media processing
+            const messageBody = msg.body || "";
+            const messageType = msg.type === "chat" ? "text" : msg.type;
+            const timestamp = msg.timestamp || Math.floor(Date.now() / 1000);
+            
+            // Determine author for group messages
             let author = null;
-            if (msg.from.includes("@g.us") && basicInfo.author) {
-              const authorData = await getContactDataFromDatabaseByPhone(
-                basicInfo.author,
-                companyId
-              );
-              author = authorData ? authorData.contactName : basicInfo.author;
+            if (msg.from && msg.from.includes("@g.us") && msg.author) {
+              author = "+" + msg.author.split("@")[0];
             }
 
             const messageQuery = `
               INSERT INTO public.messages (
                 message_id, company_id, contact_id, content, message_type,
-                media_url, media_data, media_metadata, timestamp, direction,
-                status, from_me, chat_id, author, phone_index, quoted_message,
-                thread_id, customer_phone
-              ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+                timestamp, direction, status, from_me, chat_id, author, 
+                phone_index, customer_phone
+              ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
               ON CONFLICT (message_id, company_id) DO NOTHING;
             `;
 
             await sqlDb.query(messageQuery, [
-              basicInfo.idSerialized,
+              msg.id?._serialized || `${Date.now()}-${Math.random()}`,
               companyId,
               contactID,
               messageBody,
-              basicInfo.type,
-              mediaUrl,
-              mediaData,
-              Object.keys(mediaMetadata).length > 0
-                ? JSON.stringify(mediaMetadata)
-                : null,
-              new Date(basicInfo.timestamp * 1000),
+              messageType,
+              new Date(timestamp * 1000),
               msg.fromMe ? "outbound" : "inbound",
               "delivered",
               msg.fromMe || false,
-              msg.from,
+              msg.from || chat.id._serialized,
               author || contactID,
               phoneIndex,
-              quotedMessage ? JSON.stringify(quotedMessage) : null,
-              msg.to,
               contactPhone,
             ]);
 
-            // Keep track of the most recent message for last_message
-            if (!lastMessage || basicInfo.timestamp > lastMessage.timestamp) {
+            // Track most recent message
+            if (!lastMessage || timestamp > lastMessage.timestamp) {
               lastMessage = {
-                chat_id: basicInfo.chatId,
-                from: basicInfo.from,
-                from_me: basicInfo.fromMe,
-                id: basicInfo.idSerialized,
+                chat_id: msg.from || chat.id._serialized,
+                from: msg.from || chat.id._serialized,
+                from_me: msg.fromMe || false,
+                id: msg.id?._serialized,
                 phoneIndex: phoneIndex,
-                source: basicInfo.deviceType,
+                source: msg.deviceType || "unknown",
                 status: "delivered",
                 text: { body: messageBody },
-                timestamp: basicInfo.timestamp,
-                type: basicInfo.type,
+                timestamp: timestamp,
+                type: messageType,
               };
             }
-          } catch (error) {
-            // Handle Protocol errors gracefully
-            if (error.message && (error.message.includes("Protocol error") || error.message.includes("Promise was collected"))) {
-              console.log(`⚠️ [SYNC] Protocol error processing message ${msg.id._serialized}, skipping`);
-            } else {
-              console.log(
-                `⚠️ [SYNC] Error processing message during sync: ${error.message || error}`
-              );
-            }
+          } catch (msgError) {
+            // Skip individual message errors silently
           }
         }
 
-        // Update contact with the actual last message
+        // Update last message
         if (lastMessage) {
           try {
-            const updateContactQuery = `
+            const updateQuery = `
               UPDATE public.contacts SET
                 last_message = $1,
                 last_updated = NOW()
               WHERE contact_id = $2 AND company_id = $3;
             `;
-            await sqlDb.query(updateContactQuery, [
+            await sqlDb.query(updateQuery, [
               JSON.stringify(lastMessage),
               contactID,
               companyId,
             ]);
           } catch (updateError) {
-            console.log(`⚠️ [SYNC] Error updating last message for ${contactID}: ${updateError.message}`);
+            // Ignore update errors
           }
         }
         
         processedCount++;
       } catch (error) {
         errorCount++;
-        // Handle Protocol errors gracefully - don't stop the whole sync
-        if (error.message && (error.message.includes("Protocol error") || error.message.includes("Promise was collected"))) {
-          console.log(`⚠️ [SYNC] Protocol error processing chat ${chat.id?._serialized || 'unknown'}, continuing to next chat`);
-        } else {
-          console.log(`⚠️ [SYNC] Error processing chat ${chat.id?._serialized || 'unknown'}: ${error.message || error}`);
-        }
-        // Continue to next chat instead of stopping
       }
     }
 
@@ -10466,7 +10375,6 @@ async function syncContacts(client, companyId, phoneIndex = 0) {
     );
   }
 }
-
 async function syncContactNames(client, companyId, phoneIndex = 0) {
   try {
     const chats = await client.getChats();
