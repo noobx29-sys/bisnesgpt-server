@@ -27682,28 +27682,53 @@ app.post("/api/v2/messages/image/:companyId/:chatId", async (req, res) => {
       let phoneNumber = "+" + chatId.split("@")[0];
       const contactData = await getContactDataFromDatabaseByPhone(phoneNumber, companyId);
       
-      // Save message to database
+      // Save message to database with all required fields
       const contactID = companyId + "-" + chatId.split("@")[0];
       try {
         await sqlDb.query(`
           INSERT INTO messages (
             company_id, contact_id, message_id, 
             content, message_type, from_me, 
-            timestamp, phone_index
-          ) VALUES ($1, $2, $3, $4, $5, $6, NOW(), $7)
+            timestamp, phone_index, media_url,
+            direction, status, chat_id, author, customer_phone
+          ) VALUES ($1, $2, $3, $4, $5, $6, NOW(), $7, $8, $9, $10, $11, $12, $13)
           ON CONFLICT (message_id, company_id) DO NOTHING
         `, [
           companyId,
           contactID,
           result.id,
-          caption || '[image]',
+          caption || '',
           'image',
           true,
-          phoneIndex
+          phoneIndex,
+          imageUrl,
+          'outbound',
+          'delivered',
+          chatId,
+          userName || contactID,
+          phoneNumber
         ]);
+        console.log('✅ Image message saved to database:', result.id);
       } catch (dbError) {
         console.error('Error saving image message to database:', dbError);
       }
+      
+      // Broadcast to frontend
+      const { broadcastNewMessageToCompany } = require("./utils/broadcast");
+      broadcastNewMessageToCompany(companyId, {
+        chatId,
+        message: caption || '[image]',
+        messageContent: caption || '[image]',
+        fromMe: true,
+        timestamp: Date.now(),
+        messageType: 'image',
+        extractedNumber: phoneNumber,
+        phone: phoneNumber,
+        contactId: contactID,
+        messageId: result.id,
+        provider: 'meta_direct',
+        mediaUrl: imageUrl,
+      });
       
       if (caption) {
         await findAndUpdateMessageAuthor(caption, contactID, companyId, userName);
@@ -27791,27 +27816,52 @@ app.post("/api/v2/messages/audio/:companyId/:chatId", async (req, res) => {
       let phoneNumber = "+" + chatId.split("@")[0];
       const contactID = companyId + "-" + chatId.split("@")[0];
       
-      // Save message to database
+      // Save message to database with all required fields
       try {
         await sqlDb.query(`
           INSERT INTO messages (
             company_id, contact_id, message_id, 
             content, message_type, from_me, 
-            timestamp, phone_index
-          ) VALUES ($1, $2, $3, $4, $5, $6, NOW(), $7)
+            timestamp, phone_index, media_url,
+            direction, status, chat_id, author, customer_phone
+          ) VALUES ($1, $2, $3, $4, $5, $6, NOW(), $7, $8, $9, $10, $11, $12, $13)
           ON CONFLICT (message_id, company_id) DO NOTHING
         `, [
           companyId,
           contactID,
           result.id,
-          caption || '[audio]',
+          caption || '',
           'audio',
           true,
-          phoneIndex
+          phoneIndex,
+          audioUrl,
+          'outbound',
+          'delivered',
+          chatId,
+          userName || contactID,
+          phoneNumber
         ]);
+        console.log('✅ Audio message saved to database:', result.id);
       } catch (dbError) {
         console.error('Error saving audio message to database:', dbError);
       }
+      
+      // Broadcast to frontend
+      const { broadcastNewMessageToCompany } = require("./utils/broadcast");
+      broadcastNewMessageToCompany(companyId, {
+        chatId,
+        message: caption || '[audio]',
+        messageContent: caption || '[audio]',
+        fromMe: true,
+        timestamp: Date.now(),
+        messageType: 'audio',
+        extractedNumber: phoneNumber,
+        phone: phoneNumber,
+        contactId: contactID,
+        messageId: result.id,
+        provider: 'meta_direct',
+        mediaUrl: audioUrl,
+      });
       
       if (caption) {
         await findAndUpdateMessageAuthor(caption, contactID, companyId, userName);
@@ -28846,27 +28896,52 @@ app.post("/api/v2/messages/video/:companyId/:chatId", async (req, res) => {
       let phoneNumber = "+" + chatId.split("@")[0];
       const contactID = companyId + "-" + chatId.split("@")[0];
       
-      // Save message to database
+      // Save message to database with all required fields
       try {
         await sqlDb.query(`
           INSERT INTO messages (
             company_id, contact_id, message_id, 
             content, message_type, from_me, 
-            timestamp, phone_index
-          ) VALUES ($1, $2, $3, $4, $5, $6, NOW(), $7)
+            timestamp, phone_index, media_url,
+            direction, status, chat_id, author, customer_phone
+          ) VALUES ($1, $2, $3, $4, $5, $6, NOW(), $7, $8, $9, $10, $11, $12, $13)
           ON CONFLICT (message_id, company_id) DO NOTHING
         `, [
           companyId,
           contactID,
           result.id,
-          caption || '[video]',
+          caption || '',
           'video',
           true,
-          phoneIndex
+          phoneIndex,
+          videoUrl,
+          'outbound',
+          'delivered',
+          chatId,
+          userName || contactID,
+          phoneNumber
         ]);
+        console.log('✅ Video message saved to database:', result.id);
       } catch (dbError) {
         console.error('Error saving video message to database:', dbError);
       }
+      
+      // Broadcast to frontend
+      const { broadcastNewMessageToCompany } = require("./utils/broadcast");
+      broadcastNewMessageToCompany(companyId, {
+        chatId,
+        message: caption || '[video]',
+        messageContent: caption || '[video]',
+        fromMe: true,
+        timestamp: Date.now(),
+        messageType: 'video',
+        extractedNumber: phoneNumber,
+        phone: phoneNumber,
+        contactId: contactID,
+        messageId: result.id,
+        provider: 'meta_direct',
+        mediaUrl: videoUrl,
+      });
       
       if (caption) {
         await findAndUpdateMessageAuthor(caption, contactID, companyId, userName);
@@ -28963,27 +29038,55 @@ app.post("/api/v2/messages/document/:companyId/:chatId", async (req, res) => {
       let phoneNumber = "+" + chatId.split("@")[0];
       const contactID = companyId + "-" + chatId.split("@")[0];
       
-      // Save message to database
+      // Save message to database with all required fields
       try {
         await sqlDb.query(`
           INSERT INTO messages (
             company_id, contact_id, message_id, 
             content, message_type, from_me, 
-            timestamp, phone_index
-          ) VALUES ($1, $2, $3, $4, $5, $6, NOW(), $7)
+            timestamp, phone_index, media_url,
+            direction, status, chat_id, author, customer_phone,
+            media_metadata
+          ) VALUES ($1, $2, $3, $4, $5, $6, NOW(), $7, $8, $9, $10, $11, $12, $13, $14)
           ON CONFLICT (message_id, company_id) DO NOTHING
         `, [
           companyId,
           contactID,
           result.id,
-          caption || `[document: ${filename || 'file'}]`,
+          caption || '',
           'document',
           true,
-          phoneIndex
+          phoneIndex,
+          documentUrl,
+          'outbound',
+          'delivered',
+          chatId,
+          userName || contactID,
+          phoneNumber,
+          JSON.stringify({ filename: filename || 'document' })
         ]);
+        console.log('✅ Document message saved to database:', result.id);
       } catch (dbError) {
         console.error('Error saving document message to database:', dbError);
       }
+      
+      // Broadcast to frontend
+      const { broadcastNewMessageToCompany } = require("./utils/broadcast");
+      broadcastNewMessageToCompany(companyId, {
+        chatId,
+        message: caption || `[document: ${filename || 'file'}]`,
+        messageContent: caption || `[document: ${filename || 'file'}]`,
+        fromMe: true,
+        timestamp: Date.now(),
+        messageType: 'document',
+        extractedNumber: phoneNumber,
+        phone: phoneNumber,
+        contactId: contactID,
+        messageId: result.id,
+        provider: 'meta_direct',
+        mediaUrl: documentUrl,
+        filename: filename,
+      });
       
       if (caption) {
         await findAndUpdateMessageAuthor(caption, contactID, companyId, userName);
