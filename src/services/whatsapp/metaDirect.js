@@ -8,7 +8,7 @@ const crypto = require('crypto');
 const { pool } = require('../../config/database');
 const broadcast = require('../../utils/broadcast');
 const { handleNewMessagesTemplateWweb } = require('../../../bots/handleMessagesTemplateWweb');
-const templatesService = require('./templatesService');
+// Note: templatesService is loaded lazily to avoid circular dependency
 
 const GRAPH_API_VERSION = 'v24.0';
 const GRAPH_API_BASE = `https://graph.facebook.com/${GRAPH_API_VERSION}`;
@@ -442,6 +442,7 @@ class MetaDirect {
       
       // Update session window - customer has messaged, 24h window is now open
       try {
+        const templatesService = require('./templatesService');
         await templatesService.updateCustomerSession(company_id, phone_index, msg.from);
         console.log('✅ [META DIRECT] Updated 24h session for:', msg.from);
       } catch (sessionError) {
@@ -816,6 +817,7 @@ class MetaDirect {
 
     // Check 24-hour session window (can be skipped for bot auto-replies)
     if (!skipSessionCheck) {
+      const templatesService = require('./templatesService');
       const sessionWindow = await templatesService.checkSessionWindow(companyId, phoneIndex, phone);
       if (sessionWindow.requiresTemplate) {
         const error = new Error('TEMPLATE_REQUIRED');
@@ -847,6 +849,7 @@ class MetaDirect {
 
     // Update business session timestamp
     try {
+      const templatesService = require('./templatesService');
       await templatesService.updateBusinessSession(companyId, phoneIndex, phone);
     } catch (e) {
       console.warn('Warning: Could not update business session:', e.message);
