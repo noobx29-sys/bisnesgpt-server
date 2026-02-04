@@ -8135,25 +8135,25 @@ Also describe what type of document this appears to be (form, invoice, letter, r
         }
         
         const aiResponse = await openai.chat.completions.create({
-          model: "gpt-4o-mini",
+          model: "gpt-4o",  // Use gpt-4o for better vision capabilities
           messages: [
             {
               role: "user",
               content: [
-                {
-                  type: "text",
-                  text: extractionPrompt,
-                },
                 {
                   type: "image_url",
                   image_url: {
                     url: `data:image/png;base64,${base64Image}`,
                   },
                 },
+                {
+                  type: "text",
+                  text: extractionPrompt,
+                },
               ],
             },
           ],
-          max_tokens: 1000,
+          max_tokens: 2000,
         });
 
         const pageAnalysis = aiResponse.choices[0].message.content;
