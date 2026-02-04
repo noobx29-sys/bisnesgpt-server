@@ -1174,6 +1174,138 @@ function getQuotaKey(plan) {
 // END MESSAGE QUOTA SYSTEM
 // ========================================
 
+// ========================================
+// UNIFIED SEND MESSAGE (Meta Direct + WWebJS)
+// ========================================
+/**
+ * Unified send text message function that works with both Meta Direct and WWebJS
+ * @param {object} client - WWebJS client (null for Meta Direct)
+ * @param {string} to - Recipient phone number or chatId
+ * @param {string} message - Message text
+ * @param {string} idSubstring - Company ID
+ * @param {number} phoneIndex - Phone index
+ * @returns {Promise<object>} - Sent message result
+ */
+async function sendUnifiedMessage(client, to, message, idSubstring, phoneIndex = 0) {
+  try {
+    // Check if this company uses Meta Direct
+    const phoneConfig = await pool.query(
+      `SELECT connection_type FROM phone_configs WHERE company_id = $1 AND phone_index = $2`,
+      [idSubstring, phoneIndex]
+    );
+    
+    const isMetaDirect = ['meta_direct', 'meta_embedded', '360dialog'].includes(
+      phoneConfig.rows[0]?.connection_type
+    );
+    
+    // Normalize phone number
+    const phone = to.replace(/@c\.us|@s\.whatsapp\.net|@g\.us/g, '').replace(/\D/g, '');
+    const chatId = phone.includes('@') ? to : `${phone}@c.us`;
+    
+    if (isMetaDirect) {
+      // Use Meta Direct API - path from bots/ to src/services/whatsapp/
+      const metaDirectModule = require('../src/services/whatsapp/metaDirect');
+      console.log(`📤 [UNIFIED SEND] Using Meta Direct for ${idSubstring} to ${phone}`);
+      
+      const result = await metaDirectModule.sendText(idSubstring, phoneIndex, phone, message, true); // skipSessionCheck for bot messages
+      
+      return {
+        id: { _serialized: result.id },
+        from: chatId,
+        to: chatId,
+        body: message,
+        type: 'chat',
+        timestamp: Math.floor(Date.now() / 1000),
+        fromMe: true,
+        provider: 'meta_direct'
+      };
+    } else {
+      // Use WWebJS client
+      console.log(`📤 [UNIFIED SEND] Using WWebJS for ${idSubstring} to ${chatId}`);
+      
+      if (!client || typeof client.sendMessage !== 'function') {
+        console.error('❌ [UNIFIED SEND] WWebJS client not available');
+        throw new Error('WWebJS client not available');
+      }
+      
+      const sent = await client.sendMessage(chatId, message);
+      return sent;
+    }
+  } catch (error) {
+    console.error(`❌ [UNIFIED SEND] Error sending message:`, error.message);
+    throw error;
+  }
+}
+
+/**
+ * Unified send message to group (supports both Meta Direct and WWebJS)
+ * Note: Meta Direct doesn't support groups directly, so we'll just send to the group chat ID
+ */
+async function sendUnifiedGroupMessage(client, groupId, message, idSubstring, phoneIndex = 0) {
+  try {
+    // Check if this company uses Meta Direct
+    const phoneConfig = await pool.query(
+      `SELECT connection_type FROM phone_configs WHERE company_id = $1 AND phone_index = $2`,
+      [idSubstring, phoneIndex]
+    );
+    
+    const isMetaDirect = ['meta_direct', 'meta_embedded', '360dialog'].includes(
+      phoneConfig.rows[0]?.connection_type
+    );
+    
+    if (isMetaDirect) {
+      // Meta doesn't support groups in the same way - log and skip
+      console.log(`⚠️ [UNIFIED SEND] Meta Direct does not support group messages. GroupId: ${groupId}`);
+      // We could potentially send to individual members, but for now just log
+      return {
+        id: { _serialized: 'meta_group_unsupported_' + Date.now() },
+        body: message,
+        type: 'chat',
+        timestamp: Math.floor(Date.now() / 1000),
+        fromMe: true,
+        provider: 'meta_direct',
+        note: 'Group messages not supported on Meta Direct'
+      };
+    } else {
+      // Use WWebJS client
+      console.log(`📤 [UNIFIED SEND] Sending to group ${groupId} via WWebJS`);
+      
+      if (!client || typeof client.sendMessage !== 'function') {
+        console.error('❌ [UNIFIED SEND] WWebJS client not available');
+        throw new Error('WWebJS client not available');
+      }
+      
+      const sent = await client.sendMessage(groupId, message);
+      return sent;
+    }
+  } catch (error) {
+    console.error(`❌ [UNIFIED SEND] Error sending group message:`, error.message);
+    throw error;
+  }
+}
+
+/**
+ * Check if company uses Meta Direct API
+ */
+async function isMetaDirectCompany(idSubstring, phoneIndex = 0) {
+  try {
+    const phoneConfig = await pool.query(
+      `SELECT connection_type FROM phone_configs WHERE company_id = $1 AND phone_index = $2`,
+      [idSubstring, phoneIndex]
+    );
+    
+    return ['meta_direct', 'meta_embedded', '360dialog'].includes(
+      phoneConfig.rows[0]?.connection_type
+    );
+  } catch (error) {
+    console.error('Error checking Meta Direct status:', error);
+    return false;
+  }
+}
+// ========================================
+// END UNIFIED SEND MESSAGE
+// ========================================
+
 async function generateSpecialReportMTDC(
   threadID,
   assistantId,
@@ -6203,9 +6335,13 @@ async function handleSpecialCases({
       console.log("=== [Special Cases] JobBuilder Hiring Company Report ===");
       console.log(reportMessage);
       
-      const sentMessage = await client.sendMessage(
-        "60167557780@c.us",
-        reportMessage
+      // Use unified send for Meta Direct compatibility
+      const sentMessage = await sendUnifiedMessage(
+        client,
+        "60167557780",
+        reportMessage,
+        idSubstring,
+        phoneIndex
       );
       await addMessageToPostgres(
         sentMessage,
@@ -6226,9 +6362,13 @@ async function handleSpecialCases({
       console.log("=== [Special Cases] JobBuilder Job Seeker Report ===");
       console.log(reportMessage);
       
-      const sentMessage = await client.sendMessage(
+      // For groups, use unified group send (note: Meta Direct doesn't support groups)
+      const sentMessage = await sendUnifiedGroupMessage(
+        client,
         "120363028469517905@g.us",
-        reportMessage
+        reportMessage,
+        idSubstring,
+        phoneIndex
       );
       await addMessageToPostgres(
         sentMessage,
@@ -6253,9 +6393,13 @@ async function handleSpecialCases({
       console.log("=== [Special Cases] JobBuilder Team Notification Report ===");
       console.log(reportMessage);
       
-      const sentMessage = await client.sendMessage(
-        "60167557780@c.us",
-        reportMessage
+      // Use unified send for Meta Direct compatibility
+      const sentMessage = await sendUnifiedMessage(
+        client,
+        "60167557780",
+        reportMessage,
+        idSubstring,
+        phoneIndex
       );
       await addMessageToPostgres(
         sentMessage,
@@ -7383,16 +7527,22 @@ async function handleAIAsssignResponses058666({
       console.error("[058666] Error creating assignment:", err);
     }
 
-    // Send the generated report to employee via WhatsApp (instead of generic assignment message)
+    // Send the generated report to employee via WhatsApp (Meta Direct or WWebJS)
     const employeePhone = employee.phone_number || employee.phone || "";
     if (employeePhone) {
-      const employeeId = employeePhone.replace(/\D/g, "") + "@c.us";
       try {
-        const sent = await client.sendMessage(employeeId, reportMessage);
+        // Use unified send function for Meta Direct compatibility
+        const sent = await sendUnifiedMessage(
+          client,
+          employeePhone,
+          reportMessage,
+          idSubstring,
+          phoneIndex
+        );
         console.log(`Sent AI-generated report to employee ${employee.name} (${employeePhone})`);
         // Log message to Postgres for record
         try {
-          await addMessageToPostgres(sent, idSubstring, employeePhone);
+          await addMessageToPostgres(sent, idSubstring, "+" + employeePhone.replace(/\D/g, ''));
         } catch (err) {
           console.error("Failed to log sent report to Postgres:", err);
         }
