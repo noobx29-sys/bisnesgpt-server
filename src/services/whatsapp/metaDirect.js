@@ -751,8 +751,14 @@ class MetaDirect {
                 broadcast.newMessage(company_id, outgoingMessageData);
                 return { id: { _serialized: result.id } };
               } catch (mediaError) {
-                console.error('❌ [META DIRECT] Error sending media via URL:', mediaError);
-                throw mediaError;
+                console.error('❌ [META DIRECT] Error sending media via URL:', mediaError.message);
+                if (mediaError.response) {
+                  console.error('❌ [META DIRECT] API Response:', JSON.stringify(mediaError.response.data));
+                }
+                // Create a proper error object with message
+                const err = new Error(mediaError.message || 'Failed to send media');
+                err.response = mediaError.response;
+                throw err;
               }
             }
             
@@ -912,6 +918,8 @@ class MetaDirect {
     const accessToken = this.decrypt(config.meta_access_token_encrypted);
     const phone = to.replace(/@.+/, '');
 
+    console.log(`📤 [META DIRECT] Sending ${type} to ${phone}, URL: ${url}`);
+
     const body = {
       messaging_product: 'whatsapp',
       to: phone,
@@ -921,18 +929,28 @@ class MetaDirect {
     if (caption) body[type].caption = caption;
     if (filename && type === 'document') body[type].filename = filename;
 
-    const res = await axios.post(
-      `${GRAPH_API_BASE}/${config.meta_phone_number_id}/messages`,
-      body,
-      {
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-          'Content-Type': 'application/json',
-        },
-      }
-    );
+    try {
+      const res = await axios.post(
+        `${GRAPH_API_BASE}/${config.meta_phone_number_id}/messages`,
+        body,
+        {
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            'Content-Type': 'application/json',
+          },
+        }
+      );
 
-    return { id: res.data.messages[0].id, provider: 'meta_direct' };
+      console.log(`✅ [META DIRECT] ${type} sent successfully, message ID:`, res.data.messages[0].id);
+      return { id: res.data.messages[0].id, provider: 'meta_direct' };
+    } catch (error) {
+      console.error(`❌ [META DIRECT] Error sending ${type}:`, error.message);
+      if (error.response) {
+        console.error(`❌ [META DIRECT] API Error Status:`, error.response.status);
+        console.error(`❌ [META DIRECT] API Error Data:`, JSON.stringify(error.response.data));
+      }
+      throw error;
+    }
   }
 
   /**
