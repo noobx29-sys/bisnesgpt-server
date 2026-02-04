@@ -1013,8 +1013,8 @@ class MetaDirect {
    * @param {string} url - Media URL
    * @param {string} caption - Optional caption
    * @param {string} filename - Optional filename (for documents)
-   * @param {string} base64Data - Optional base64 data (for fallback upload)
-   * @param {string} mimeType - Optional MIME type (for fallback upload)
+   * @param {string} base64Data - Optional base64 data (preferred method - upload first)
+   * @param {string} mimeType - Optional MIME type (for upload)
    * @returns {Promise<{id: string, provider: string}>}
    */
   async sendMedia(companyId, phoneIndex, to, type, url, caption, filename, base64Data, mimeType) {
@@ -1022,8 +1022,23 @@ class MetaDirect {
     const accessToken = this.decrypt(config.meta_access_token_encrypted);
     const phone = to.replace(/@.+/, '');
 
-    console.log(`📤 [META DIRECT] Sending ${type} to ${phone}, URL: ${url}`);
+    console.log(`📤 [META DIRECT] Sending ${type} to ${phone}, URL: ${url}, hasBase64: ${!!base64Data}`);
 
+    // PREFERRED METHOD: If we have base64 data, always upload first then send via media ID
+    // This is more reliable than URLs which Meta often fails to fetch
+    if (base64Data && mimeType) {
+      console.log(`📤 [META DIRECT] Using upload method (more reliable than URL)...`);
+      try {
+        const mediaId = await this.uploadMedia(companyId, phoneIndex, base64Data, mimeType, filename || 'media');
+        return await this.sendMediaById(companyId, phoneIndex, to, type, mediaId, caption, filename);
+      } catch (uploadError) {
+        console.error(`❌ [META DIRECT] Upload method failed:`, uploadError.message);
+        // Fall through to try URL method as backup
+        console.log(`⚠️ [META DIRECT] Falling back to URL method...`);
+      }
+    }
+
+    // FALLBACK: Try URL method (less reliable - Meta may fail to fetch)
     const body = {
       messaging_product: 'whatsapp',
       to: phone,
@@ -1045,63 +1060,37 @@ class MetaDirect {
         }
       );
 
-      console.log(`✅ [META DIRECT] ${type} sent successfully, message ID:`, res.data.messages[0].id);
+      console.log(`✅ [META DIRECT] ${type} sent via URL, message ID:`, res.data.messages[0].id);
+      console.log(`⚠️ [META DIRECT] Note: URL method may fail if Meta cannot fetch the URL`);
       return { id: res.data.messages[0].id, provider: 'meta_direct' };
     } catch (error) {
       console.error(`❌ [META DIRECT] Error sending ${type} via URL:`, error.message);
       if (error.response) {
         console.error(`❌ [META DIRECT] API Error Status:`, error.response.status);
         console.error(`❌ [META DIRECT] API Error Data:`, JSON.stringify(error.response.data));
-        
-        // Check if error is media upload related (131053, 131052, etc.)
-        // Error can be in different locations depending on Meta API version
-        const errorData = error.response.data;
-        const errorCode = errorData?.error?.code || 
-                          errorData?.errors?.[0]?.code || 
-                          errorData?.code;
-        
-        console.log(`⚠️ [META DIRECT] Detected error code: ${errorCode}`);
-        
-        // Media-related error codes
-        const isMediaError = [131053, 131052, 131045, 131009].includes(errorCode);
-        
-        if (isMediaError && base64Data && mimeType) {
-          console.log(`⚠️ [META DIRECT] URL fetch failed (code ${errorCode}), falling back to upload method with provided base64...`);
-          try {
-            // Upload media first, then send using media ID
-            const mediaId = await this.uploadMedia(companyId, phoneIndex, base64Data, mimeType, filename || 'media');
-            return await this.sendMediaById(companyId, phoneIndex, to, type, mediaId, caption, filename);
-          } catch (uploadError) {
-            console.error(`❌ [META DIRECT] Fallback upload also failed:`, uploadError.message);
-            throw uploadError;
-          }
-        }
-        
-        // If no base64 data provided, try to download the URL ourselves and upload
-        if (isMediaError) {
-          console.log(`⚠️ [META DIRECT] Attempting to download media from URL and re-upload...`);
-          try {
-            const mediaResponse = await axios.get(url, { 
-              responseType: 'arraybuffer',
-              timeout: 30000,
-              headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-              }
-            });
-            const downloadedMimeType = mediaResponse.headers['content-type'] || this.getMimeTypeFromUrl(url, type);
-            const mediaBuffer = Buffer.from(mediaResponse.data);
-            
-            console.log(`✅ [META DIRECT] Downloaded media from URL, size: ${mediaBuffer.length} bytes, type: ${downloadedMimeType}`);
-            
-            const mediaId = await this.uploadMedia(companyId, phoneIndex, mediaBuffer, downloadedMimeType, filename || this.getFilenameFromUrl(url));
-            return await this.sendMediaById(companyId, phoneIndex, to, type, mediaId, caption, filename);
-          } catch (downloadError) {
-            console.error(`❌ [META DIRECT] Failed to download and re-upload media:`, downloadError.message);
-            throw error; // Throw original error
-          }
-        }
       }
-      throw error;
+      
+      // Last resort: try to download URL and upload
+      console.log(`⚠️ [META DIRECT] Attempting to download media from URL and re-upload...`);
+      try {
+        const mediaResponse = await axios.get(url, { 
+          responseType: 'arraybuffer',
+          timeout: 30000,
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+          }
+        });
+        const downloadedMimeType = mediaResponse.headers['content-type'] || this.getMimeTypeFromUrl(url, type);
+        const mediaBuffer = Buffer.from(mediaResponse.data);
+        
+        console.log(`✅ [META DIRECT] Downloaded media from URL, size: ${mediaBuffer.length} bytes, type: ${downloadedMimeType}`);
+        
+        const mediaId = await this.uploadMedia(companyId, phoneIndex, mediaBuffer, downloadedMimeType, filename || this.getFilenameFromUrl(url));
+        return await this.sendMediaById(companyId, phoneIndex, to, type, mediaId, caption, filename);
+      } catch (downloadError) {
+        console.error(`❌ [META DIRECT] Failed to download and re-upload media:`, downloadError.message);
+        throw error; // Throw original error
+      }
     }
   }
 
