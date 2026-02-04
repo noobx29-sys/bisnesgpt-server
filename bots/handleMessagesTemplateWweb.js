@@ -5662,19 +5662,26 @@ async function addMessageToPostgres(
 
   let messageBody = messageData.text?.body || "";
 
+  // Only process media for WWebJS messages that have hasMedia property
   if (msg.hasMedia && (msg.type === "audio" || msg.type === "ptt")) {
     console.log("Voice message detected during saving to NeonDB");
-    const media = await msg.downloadMedia();
-    const transcription = await transcribeAudio(media.data);
+    try {
+      const media = await msg.downloadMedia();
+      if (media && media.data) {
+        const transcription = await transcribeAudio(media.data);
 
-    if (
-      transcription &&
-      transcription !== "Audio transcription failed. Please try again."
-    ) {
-      messageBody += transcription;
-    } else {
-      messageBody +=
-        "I couldn't transcribe the audio. Could you please type your message instead?";
+        if (
+          transcription &&
+          transcription !== "Audio transcription failed. Please try again."
+        ) {
+          messageBody += transcription;
+        } else {
+          messageBody +=
+            "I couldn't transcribe the audio. Could you please type your message instead?";
+        }
+      }
+    } catch (mediaError) {
+      console.error("Error processing voice media:", mediaError.message);
     }
   }
 
@@ -5682,7 +5689,8 @@ async function addMessageToPostgres(
   let mediaData = null;
   let mediaMetadata = {};
 
-  if (msg.hasMedia) {
+  // Only process media if msg has the hasMedia property (WWebJS messages)
+  if (msg.hasMedia && msg.type) {
     if (msg.type === "video") {
       mediaUrl = messageData.video?.link || null;
     } else if (msg.type !== "audio" && msg.type !== "ptt") {
@@ -5709,7 +5717,8 @@ async function addMessageToPostgres(
   const quotedMessage = messageData.text?.context || null;
 
   let author = null;
-  if (msg.from.includes("@g.us") && basicInfo.author) {
+  // Check if msg.from exists and is a group chat
+  if (msg.from && msg.from.includes("@g.us") && basicInfo.author) {
     const authorData = await getContactDataFromDatabaseByPhone(
       basicInfo.author,
       idSubstring
