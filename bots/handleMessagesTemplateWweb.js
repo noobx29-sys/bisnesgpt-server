@@ -23,8 +23,7 @@ const pdf = require("pdf-parse");
 const { fromPath } = require("pdf2pic");
 const SKCSpreadsheet = require("../spreadsheet/SKCSpreadsheet");
 const CarCareSpreadsheet = require("../blast/bookingCarCareGroup");
-const ConvertAPI = require("convertapi");
-const convertapi = new ConvertAPI("q6yVdAo4GolFlTyMLcM8pyqtuAbRN60y");
+const { Poppler } = require("node-poppler");
 const { neon, neonConfig } = require("@neondatabase/serverless");
 const { Pool } = require("pg");
 const mime = require("mime-types");
@@ -131,6 +130,132 @@ pool.on("connect", (client) => {
     }
   });
 });
+
+// Utility function to safely extract phone number with @lid failsafe
+async function safeExtractPhoneNumber(msg, client = null) {
+  try {
+    let phoneNumber;
+
+    // Check if it's a @lid case
+    if (msg.from && msg.from.includes("@lid")) {
+      console.log(
+        "🔧 [safeExtractPhoneNumber] @lid detected, using chat/contact method"
+      );
+
+      if (!client) {
+        console.error(
+          "❌ [safeExtractPhoneNumber] Client required for @lid extraction but not provided"
+        );
+        return null;
+      }
+
+      try {
+        const chat = await msg.getChat();
+        const contact = await chat.getContact();
+
+        if (contact && contact.id && contact.id._serialized) {
+          // Extract phone number from contact.id._serialized
+          phoneNumber = contact.id._serialized.split("@")[0];
+          console.log(
+            "✅ [safeExtractPhoneNumber] Extracted from contact:",
+            phoneNumber
+          );
+        } else {
+          console.error(
+            "❌ [safeExtractPhoneNumber] Could not get contact info from chat"
+          );
+          return null;
+        }
+      } catch (error) {
+        console.error(
+          "❌ [safeExtractPhoneNumber] Error getting chat/contact for @lid:",
+          error
+        );
+        return null;
+      }
+    } else {
+      // Standard extraction method
+      phoneNumber = msg.from.split("@")[0];
+      console.log(
+        "✅ [safeExtractPhoneNumber] Standard extraction:",
+        phoneNumber
+      );
+    }
+
+    // Add + prefix if not present
+    if (phoneNumber && !phoneNumber.startsWith("+")) {
+      phoneNumber = "+" + phoneNumber;
+    }
+
+    return phoneNumber;
+  } catch (error) {
+    console.error("❌ [safeExtractPhoneNumber] Unexpected error:", error);
+    return null;
+  }
+}
+
+// Utility function to safely extract "to" phone number with @lid failsafe
+async function safeExtractToPhoneNumber(msg, client = null) {
+  try {
+    let phoneNumber;
+
+    // Check if it's a @lid case
+    if (msg.to && msg.to.includes("@lid")) {
+      console.log(
+        '🔧 [safeExtractToPhoneNumber] @lid detected in "to", using chat/contact method'
+      );
+
+      if (!client) {
+        console.error(
+          "❌ [safeExtractToPhoneNumber] Client required for @lid extraction but not provided"
+        );
+        return null;
+      }
+
+      try {
+        const chat = await msg.getChat();
+        const contact = await chat.getContact();
+
+        if (contact && contact.id && contact.id._serialized) {
+          // Extract phone number from contact.id._serialized
+          phoneNumber = contact.id._serialized.split("@")[0];
+          console.log(
+            "✅ [safeExtractToPhoneNumber] Extracted from contact:",
+            phoneNumber
+          );
+        } else {
+          console.error(
+            "❌ [safeExtractToPhoneNumber] Could not get contact info from chat"
+          );
+          return null;
+        }
+      } catch (error) {
+        console.error(
+          "❌ [safeExtractToPhoneNumber] Error getting chat/contact for @lid:",
+          error
+        );
+        return null;
+      }
+    } else {
+      // Standard extraction method
+      phoneNumber = msg.to.split("@")[0];
+      console.log(
+        "✅ [safeExtractToPhoneNumber] Standard extraction:",
+        phoneNumber
+      );
+    }
+
+    // Add + prefix if not present
+    if (phoneNumber && !phoneNumber.startsWith("+")) {
+      phoneNumber = "+" + phoneNumber;
+    }
+
+    return phoneNumber;
+  } catch (error) {
+    console.error("❌ [safeExtractToPhoneNumber] Unexpected error:", error);
+    return null;
+  }
+}
 
 let companyConfig = {};
 const MEDIA_DIR = path.join(__dirname, "public", "media");
@@ -567,14 +692,37 @@ async function customWait(milliseconds) {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
-async function addNotificationToUser(companyId, message, contactName) {
-  console.log("Adding notification and sending FCM");
+// OneSignal Configuration
+const ONESIGNAL_CONFIG = {
+  appId: process.env.ONESIGNAL_APP_ID || "8df2a641-209a-4a29-bca9-4bc57fe78a31",
+  apiKey: process.env.ONESIGNAL_API_KEY,
+  apiUrl: "https://api.onesignal.com/api/v1/notifications",
+};
+
+async function addNotificationToUser(
+  companyId,
+  message,
+  contactName,
+  contactId = null,
+  chatId = null,
+  phoneNumber = null,
+  profilePicUrl = null
+) {
+  console.log("Adding notification and sending OneSignal");
+  console.log("📱 addNotificationToUser parameters:");
+  console.log("   companyId:", companyId);
+  console.log("   message:", message);
+  console.log("   contactName:", contactName);
+  console.log("   contactId:", contactId);
+  console.log("   chatId:", chatId);
+  console.log("   phoneNumber:", phoneNumber);
+  console.log("   profilePicUrl:", profilePicUrl);
   try {
     const client = await pool.connect();
 
     try {
       const usersQuery = await client.query(
-        "SELECT user_id FROM public.users WHERE company_id = $1",
+        "SELECT user_id, email FROM public.users WHERE company_id = $1",
         [companyId]
       );
 
@@ -598,6 +746,127 @@ async function addNotificationToUser(companyId, message, contactName) {
       let notificationText = cleanMessage.text?.body || "New message received";
       if (cleanMessage.hasMedia) {
         notificationText = `Media: ${cleanMessage.type || "attachment"}`;
+      }
+
+      // Send OneSignal notification to all users in the company
+      try {
+        // Determine notification type based on context
+        let notificationType = "company_announcement";
+        let additionalData = {
+          company_id: companyId,
+        };
+
+        if (contactName && contactId && chatId) {
+          // This is an actual message from a contact
+          notificationType = "message";
+          additionalData = {
+            ...additionalData,
+            message_type: cleanMessage.type || "message",
+            has_media: cleanMessage.hasMedia || false,
+            contact_name: contactName,
+            contact_id: contactId,
+            chat_id: chatId,
+            phone: phoneNumber,
+            profile_pic_url: profilePicUrl,
+            type: notificationType,
+          };
+        } else {
+          // This is a company announcement
+          additionalData = {
+            ...additionalData,
+            type: notificationType,
+          };
+        }
+
+        console.log("📤 Sending to OneSignal with data:");
+        console.log(
+          "   additionalData:",
+          JSON.stringify(additionalData, null, 2)
+        );
+
+        // Create the main notification payload for OneSignal
+        const notificationPayload = {
+          // Core notification data
+          ...additionalData,
+
+          // Profile picture fields - these go directly to OneSignal
+          large_icon: isValidProfilePicUrl(profilePicUrl)
+            ? getOptimizedNotificationIcon(profilePicUrl)
+            : null,
+          big_picture: isValidProfilePicUrl(profilePicUrl)
+            ? getOptimizedNotificationIcon(profilePicUrl)
+            : null,
+          small_icon: "ic_launcher",
+
+          // Android-specific enhancements
+          android_accent_color: "FF2196F3",
+          android_led_color: "FF2196F3",
+
+          // iOS-specific profile picture support
+          ios_attachments: isValidProfilePicUrl(profilePicUrl)
+            ? { id1: getOptimizedNotificationIcon(profilePicUrl) }
+            : null,
+
+          // Additional profile picture fields for better compatibility
+          chrome_web_image: isValidProfilePicUrl(profilePicUrl)
+            ? getOptimizedNotificationIcon(profilePicUrl)
+            : null,
+        };
+
+        console.log("📸 Notification payload with profile picture:");
+        console.log("   Profile Pic URL:", profilePicUrl);
+        console.log("   Is Valid URL:", isValidProfilePicUrl(profilePicUrl));
+        console.log("   Large Icon:", notificationPayload.large_icon);
+        console.log("   Big Picture:", notificationPayload.big_picture);
+
+        try {
+          // Try to send with profile picture first
+          await sendOneSignalNotification(
+            companyId,
+            contactName || "Company Announcement",
+            notificationText,
+            notificationPayload
+          );
+          console.log(
+            `✅ OneSignal notification sent to company: ${companyId} with type: ${notificationType}`
+          );
+        } catch (onesignalError) {
+          console.error(
+            "❌ Failed to send OneSignal notification with profile picture:",
+            onesignalError.message
+          );
+
+          // Fallback: Try without profile picture
+          try {
+            console.log("🔄 Retrying without profile picture...");
+            const fallbackPayload = {
+              ...additionalData,
+              small_icon: "ic_launcher",
+              android_accent_color: "FF2196F3",
+              android_led_color: "FF2196F3",
+            };
+
+            await sendOneSignalNotification(
+              companyId,
+              contactName || "Company Announcement",
+              notificationText,
+              fallbackPayload
+            );
+            console.log(
+              `✅ OneSignal notification sent successfully without profile picture`
+            );
+          } catch (fallbackError) {
+            console.error(
+              "❌ Failed to send OneSignal notification even without profile picture:",
+              fallbackError.message
+            );
+          }
+
+          // Continue with database operations even if OneSignal fails
+        }
+      } catch (error) {
+        console.error("Error in notification sending:", error);
+        // Continue with database operations even if OneSignal fails
       }
 
       const promises = usersQuery.rows.map(async (user) => {
@@ -628,7 +897,145 @@ async function addNotificationToUser(companyId, message, contactName) {
       await safeRelease(client);
     }
   } catch (error) {
-    console.error("Error adding notification or sending FCM: ", error);
+    console.error("Error adding notification or sending OneSignal: ", error);
+  }
+}
+
+function getOptimizedNotificationIcon(profilePicUrl) {
+  // Check if profile picture URL is valid and accessible
+  if (
+    profilePicUrl &&
+    profilePicUrl.startsWith("http") &&
+    profilePicUrl.includes("whatsapp.net")
+  ) {
+    // WhatsApp profile pictures are usually reliable, use them
+    console.log("📸 Using WhatsApp profile picture URL");
+
+    // Ensure URL is properly encoded for OneSignal
+    try {
+      const encodedUrl = encodeURI(profilePicUrl);
+      console.log("📸 Encoded profile picture URL:", encodedUrl);
+      return encodedUrl;
+    } catch (error) {
+      console.log("📸 Error encoding profile picture URL:", error.message);
+      return profilePicUrl; // Return original if encoding fails
+    }
+  } else if (profilePicUrl && profilePicUrl.startsWith("http")) {
+    // Other HTTP URLs - use them but log for monitoring
+    console.log("📸 Using external profile picture URL:", profilePicUrl);
+    return profilePicUrl;
+  } else {
+    // Fallback to app icon
+    console.log("📸 No valid profile picture, using app icon");
+    return null; // Let OneSignal use default
+  }
+}
+
+// Helper function to validate and optimize profile picture URLs for notifications
+function isValidProfilePicUrl(url) {
+  if (!url || typeof url !== "string") return false;
+
+  try {
+    const urlObj = new URL(url);
+    return (
+      urlObj.protocol === "https:" &&
+      urlObj.hostname.includes("whatsapp.net") &&
+      urlObj.pathname.includes(".jpg")
+    );
+  } catch (error) {
+    console.log("📸 Invalid profile picture URL format:", url);
+    return false;
+  }
+}
+
+// OneSignal notification helper functions
+async function sendOneSignalNotification(companyId, title, message, data = {}) {
+  try {
+    console.log("📤 OneSignal request details:");
+    console.log("   URL:", ONESIGNAL_CONFIG.apiUrl);
+    console.log("   App ID:", ONESIGNAL_CONFIG.appId);
+    console.log("   Company ID:", companyId);
+    console.log("   Title:", title);
+    console.log("   Message:", message);
+    console.log("   Data:", JSON.stringify(data, null, 2));
+
+    const requestBody = {
+      app_id: ONESIGNAL_CONFIG.appId,
+      target_channel: "push",
+      name: "Company Notification",
+      headings: { en: title },
+      contents: { en: message },
+      include_external_user_ids: [companyId], // Target all users in the company
+
+      // Profile picture support for rich notifications (OneSignal best practices)
+      large_icon: data.large_icon || null, // Profile picture (right side) - OneSignal auto-scales
+      big_picture: data.big_picture || null, // Full-size profile picture when expanded
+      small_icon: data.small_icon || "ic_launcher", // App icon (left side, status bar)
+
+      // Android-specific enhancements
+      android_accent_color: data.android_accent_color || "FF2196F3",
+      android_led_color: data.android_led_color || "FF2196F3",
+
+      // iOS-specific profile picture support
+      ios_attachments: data.ios_attachments || null,
+
+      // Additional profile picture fields for better compatibility
+      chrome_web_image: data.chrome_web_image || null,
+
+      data: {
+        type: "company_message",
+        company_id: companyId,
+        // Only include non-profile-picture data to avoid conflicts
+        message_type: data.message_type,
+        has_media: data.has_media,
+        contact_name: data.contact_name,
+        contact_id: data.contact_id,
+        chat_id: data.chat_id,
+        phone: data.phone,
+        profile_pic_url: data.profile_pic_url,
+        type: data.type,
+      },
+    };
+
+    console.log(
+      "📤 OneSignal request body:",
+      JSON.stringify(requestBody, null, 2)
+    );
+
+    const response = await axios({
+      method: "POST",
+      url: ONESIGNAL_CONFIG.apiUrl,
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Basic ${ONESIGNAL_CONFIG.apiKey}`,
+      },
+      data: requestBody,
+    });
+
+    console.log("📤 OneSignal response status:", response.status);
+    console.log("📤 OneSignal response body:", response.data);
+
+    if (response.status >= 200 && response.status < 300) {
+      console.log(
+        `✅ OneSignal notification sent successfully:`,
+        response.data
+      );
+      return response.data;
+    } else {
+      console.error(`❌ OneSignal API error:`, response.data);
+      throw new Error(
+        `OneSignal API error: ${
+          response.data.errors?.join(", ") || "Unknown error"
+        }`
+      );
+    }
+  } catch (error) {
+    console.error("❌ Error sending OneSignal notification:", error);
+    if (error.response) {
+      console.error("❌ OneSignal API response error:", error.response.data);
+      console.error("❌ OneSignal API status:", error.response.status);
+    }
+    throw error;
   }
 }
 
@@ -636,6 +1043,136 @@ const messageQueue = new Map();
 const processingQueue = new Map();
 const MAX_QUEUE_SIZE = 5;
 const RATE_LIMIT_DELAY = 5000;
+
+// ========================================
+// MESSAGE QUOTA SYSTEM
+// ========================================
+async function checkMessageQuotaLimit(companyID) {
+  // Get company plan for quota calculation first
+  const companyResult = await pool.query(
+    `SELECT plan FROM companies WHERE company_id = $1`,
+    [companyID]
+  );
+  const companyPlan = companyResult.rows[0]?.plan || "free";
+  const planBasedQuota = getPlanBasedQuota(companyPlan);
+  const quotaKey = getQuotaKey(companyPlan);
+  const isLifetimePlan = !isMonthlyResetPlan(companyPlan);
+
+  let messageUsage = {};
+  const feature = "aiMessages";
+
+  // Get usage based on plan type
+  let featureResult;
+  if (isLifetimePlan) {
+    // For free plan: get lifetime usage
+    featureResult = await pool.query(
+      `SELECT SUM(usage_count) AS total_usage
+       FROM usage_logs
+       WHERE company_id = $1 AND feature = $2`,
+      [companyID, feature]
+    );
+  } else {
+    // For paid plans: get monthly usage
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = (now.getMonth() + 1).toString().padStart(2, "0");
+    const monthlyKey = `${year}-${month}`;
+
+    featureResult = await pool.query(
+      `SELECT SUM(usage_count) AS total_usage
+       FROM usage_logs
+       WHERE company_id = $1 AND feature = $2
+       AND to_char(date, 'YYYY-MM') = $3`,
+      [companyID, feature, monthlyKey]
+    );
+  }
+
+  messageUsage[feature] = featureResult.rows[0]?.total_usage || 0;
+  console.log(
+    `AI message usage data (${isLifetimePlan ? "lifetime" : "monthly"}):`,
+    messageUsage
+  );
+
+  let usageQuota = {};
+  const settingKey = "quotaAIMessage";
+
+  const quotaResult = await pool.query(
+    `SELECT setting_value FROM settings
+    WHERE company_id = $1 AND setting_type = 'messaging' AND setting_key = $2`,
+    [companyID, settingKey]
+  );
+
+  let quotaObj = {};
+  if (quotaResult.rows.length > 0) {
+    try {
+      quotaObj =
+        typeof quotaResult.rows[0].setting_value === "string"
+          ? JSON.parse(quotaResult.rows[0].setting_value)
+          : quotaResult.rows[0].setting_value || {};
+    } catch {
+      quotaObj = {};
+    }
+  }
+
+  if (!quotaObj[quotaKey]) {
+    quotaObj[quotaKey] = planBasedQuota;
+    if (quotaResult.rows.length > 0) {
+      await pool.query(
+        `UPDATE settings SET setting_value = $1, updated_at = CURRENT_TIMESTAMP
+        WHERE company_id = $2 AND setting_type = 'messaging' AND setting_key = $3`,
+        [JSON.stringify(quotaObj), companyID, settingKey]
+      );
+    } else {
+      await pool.query(
+        `INSERT INTO settings (company_id, setting_type, setting_key, setting_value, created_at, updated_at)
+        VALUES ($1, 'messaging', $2, $3, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+        [companyID, settingKey, JSON.stringify(quotaObj)]
+      );
+    }
+  }
+
+  usageQuota[feature] = quotaObj[quotaKey] || planBasedQuota;
+  console.log("AI usage quota data:", usageQuota);
+
+  // Check if usage exceeds quota
+  const exceeded = messageUsage[feature] >= usageQuota[feature];
+  return exceeded;
+}
+
+// Helper function to get plan-based quota amounts
+function getPlanBasedQuota(plan) {
+  switch (plan?.toLowerCase()) {
+    case "free":
+      return 100;
+    case "premium":
+      return 5000;
+    case "enterprise":
+      return 20000;
+    default:
+      return 100; // Default to free plan quota
+  }
+}
+
+// Helper function to check if plan uses monthly reset
+function isMonthlyResetPlan(plan) {
+  const planLower = plan?.toLowerCase();
+  return planLower === "premium" || planLower === "enterprise";
+}
+
+// Helper function to get quota key (monthly for paid plans, lifetime for free)
+function getQuotaKey(plan) {
+  if (isMonthlyResetPlan(plan)) {
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = (now.getMonth() + 1).toString().padStart(2, "0");
+    return `${year}-${month}`;
+  } else {
+    return "lifetime"; // Free plan uses lifetime quota
+  }
+}
+// ========================================
+// END MESSAGE QUOTA SYSTEM
+// ========================================
 
 async function generateSpecialReportMTDC(
   threadID,
@@ -5603,6 +6140,131 @@ async function handleSpecialCases({
     await addTagToPostgres(extractedNumber, empName, idSubstring);
   }
 
+  // Handle 058666 company (door/window sales)
+  if (idSubstring === "058666") {
+    if (part.toLowerCase().includes("team sale")) {
+      // Stop the bot for this contact and perform AI-driven assignment & reporting
+      await addTagToPostgres(extractedNumber, "stop bot", idSubstring);
+      try {
+        await handleAIAsssignResponses058666({
+          threadID,
+          assistantId: companyConfig.assistantId,
+          contactName,
+          extractedNumber,
+          client,
+          idSubstring,
+          phoneIndex,
+        });
+      } catch (err) {
+        console.error("Error in AI assign handler for 058666:", err);
+      }
+    }
+  }
+
+  // Handle JobBuilder case (765943)
+  if (idSubstring == "765943") {
+    // Helper function to check if message contains hiring company triggers (English, Chinese, Malay)
+    const isHiringCompanyTrigger = (text) => {
+      const lowerText = text.toLowerCase();
+      return (
+        lowerText.includes("24-48 hours") ||
+        lowerText.includes("24-48 jam") || // Malay
+        lowerText.includes("24-48小时") || // Chinese Simplified
+        lowerText.includes("24-48小時") || // Chinese Traditional
+        lowerText.includes("dalam 24-48 jam") || // Malay variation
+        lowerText.includes("二十四至四十八小时") || // Chinese variation
+        lowerText.includes("二十四至四十八小時") // Chinese Traditional variation
+      );
+    };
+
+    // Helper function to check if message contains job seeker triggers (English, Chinese, Malay)
+    const isJobSeekerTrigger = (text) => {
+      const lowerText = text.toLowerCase();
+      return (
+        lowerText.includes("processed accordingly") ||
+        lowerText.includes("diproses dengan sewajarnya") || // Malay
+        lowerText.includes("akan diproses") || // Malay variation
+        lowerText.includes("相应处理") || // Chinese Simplified
+        lowerText.includes("相應處理") || // Chinese Traditional
+        lowerText.includes("按照程序处理") || // Chinese variation
+        lowerText.includes("按照程序處理") // Chinese Traditional variation
+      );
+    };
+
+    // Handle company hiring inquiries
+    if (isHiringCompanyTrigger(part)) {
+      const { reportMessage, contactInfo } = await generateSpecialReportRecruitment(
+        threadID,
+        companyConfig.assistantId,
+        contactName,
+        extractedNumber,
+        "hiring_company"
+      );
+      console.log("=== [Special Cases] JobBuilder Hiring Company Report ===");
+      console.log(reportMessage);
+      
+      const sentMessage = await client.sendMessage(
+        "60167557780@c.us",
+        reportMessage
+      );
+      await addMessageToPostgres(
+        sentMessage,
+        idSubstring,
+        "+60167557780"
+      );
+    }
+
+    // Handle job seeker inquiries
+    if (isJobSeekerTrigger(part)) {
+      const { reportMessage, contactInfo } = await generateSpecialReportRecruitment(
+        threadID,
+        companyConfig.assistantId,
+        contactName,
+        extractedNumber,
+        "job_seeker"
+      );
+      console.log("=== [Special Cases] JobBuilder Job Seeker Report ===");
+      console.log(reportMessage);
+      
+      const sentMessage = await client.sendMessage(
+        "120363028469517905@g.us",
+        reportMessage
+      );
+      await addMessageToPostgres(
+        sentMessage,
+        idSubstring,
+        "+120363028469517905"
+      );
+    }
+
+    // Handle general team notifications (contact updates, important info, referrals, etc.)
+    if (
+      part.toLowerCase().includes("informed the team") ||
+      part.toLowerCase().includes("notified the team") ||
+      part.toLowerCase().includes("i have informed") ||
+      part.toLowerCase().includes("i have notified")
+    ) {
+      const { reportMessage, notificationInfo } = await generateTeamNotificationReport(
+        threadID,
+        companyConfig.assistantId,
+        contactName,
+        extractedNumber
+      );
+      console.log("=== [Special Cases] JobBuilder Team Notification Report ===");
+      console.log(reportMessage);
+      
+      const sentMessage = await client.sendMessage(
+        "60167557780@c.us",
+        reportMessage
+      );
+      await addMessageToPostgres(
+        sentMessage,
+        idSubstring,
+        "+60167557780"
+      );
+    }
+  }
+
   // Handle 0128 bot triggers
   if (idSubstring === "0128") {
     if (
@@ -6523,6 +7185,386 @@ function extractContactInfo2(report) {
   return contactInfo;
 }
 
+// ========================================
+// COMPANY 058666 (DOOR/WINDOW SALES) FUNCTIONS
+// ========================================
+// Generate a concise report for company 058666 with required sales fields
+async function generateSpecialReport058666(
+  threadID,
+  assistantId,
+  contactName,
+  extractedNumber
+) {
+  try {
+    const currentDate = new Date().toISOString().split("T")[0]; // Format: YYYY-MM-DD
+    const reportInstruction = `Sila hasilkan satu laporan dalam format berikut berdasarkan perbualan kita, dalam Bahasa Melayu:
+
+Borang Baru Telah Dihantar
+
+Butiran Prospek:
+Tarikh: ${currentDate}
+Nama: ${contactName}
+Nombor Telefon: ${extractedNumber}
+Lokasi: [Ekstrak dari perbualan]
+Produk Diminati (cth: pintu, tingkap, sebutharga rumah penuh): [Ekstrak dari perbualan]
+Jenis Servis (Supply Only atau Supply and Install, untuk tingkap): [Ekstrak dari perbualan]
+Jenis Pintu atau Tingkap Spesifik (cth: folding, majestic, casement, dll): [Ekstrak dari perbualan]
+Keperluan Saiz Custom (jika ada): [Ekstrak dari perbualan]
+
+Isikan maklumat dalam kurungan dengan butiran yang berkaitan dari perbualan. Jika tiada maklumat, biarkan kosong. Jangan ubah medan Tarikh.`;
+
+    await openai.beta.threads.messages.create(threadID, {
+      role: "user",
+      content: reportInstruction,
+    });
+
+    const assistantResponse = await openai.beta.threads.runs.create(threadID, {
+      assistant_id: assistantId,
+    });
+
+    // Wait for the assistant to complete the task
+    let runStatus;
+    do {
+      await new Promise((resolve) => setTimeout(resolve, 1000)); // Wait for 1 second
+      runStatus = await openai.beta.threads.runs.retrieve(
+        threadID,
+        assistantResponse.id
+      );
+    } while (runStatus.status !== "completed");
+
+    // Retrieve the assistant's response
+    const messages = await openai.beta.threads.messages.list(threadID);
+    const reportMessage = messages.data[0].content[0].text.value;
+
+    return { reportMessage };
+  } catch (error) {
+    console.error("Error generating special report 058666:", error);
+    return "Error generating report";
+  }
+}
+
+// AI assignment and notification for company 058666
+async function handleAIAsssignResponses058666({
+  threadID,
+  assistantId,
+  contactName,
+  extractedNumber,
+  client,
+  idSubstring,
+  phoneIndex = 0,
+}) {
+  // Generate special report
+  const { reportMessage } = await generateSpecialReport058666(
+    threadID,
+    assistantId,
+    contactName,
+    extractedNumber
+  );
+
+  // Choose employee with least assignments this month (fair/round-robin)
+  const sqlClient = await pool.connect();
+  try {
+    const now = new Date();
+    const month = now.toLocaleString("default", { month: "short" });
+    const year = now.getFullYear();
+    const monthKey = `${month}-${year}`; // Format: "Nov-2025"
+
+    // First, get assignment counts from actual assignments table for this month
+    const q = `
+      SELECT e.*, 
+             COALESCE(COUNT(a.assignment_id), 0) AS assignments_count
+      FROM public.employees e
+      LEFT JOIN assignments a
+        ON a.employee_id = e.employee_id 
+        AND a.company_id = e.company_id
+        AND a.month_key = $1
+        AND a.status = 'active'
+      WHERE e.company_id = $2 
+        AND e.active = true 
+        AND e.email != 'admin@juta.com'
+      GROUP BY e.id, e.employee_id, e.company_id, e.name, e.email, e.role, 
+               e.current_index, e.last_updated, e.created_at, e.active, 
+               e.assigned_contacts, e.phone_number, e.phone_access, 
+               e.weightages, e.company, e.image_url, e.notes, 
+               e.quota_leads, e.view_employees, e.invoice_number, e.emp_group
+      ORDER BY assignments_count ASC, e.id ASC
+      LIMIT 1
+    `;
+
+    const res = await sqlClient.query(q, [monthKey, idSubstring]);
+    if (!res.rows || res.rows.length === 0) {
+      console.log("No active employees found for company", idSubstring);
+      return;
+    }
+
+    const employee = res.rows[0];
+    console.log("Selected employee for assignment:", {
+      id: employee.id,
+      employee_id: employee.employee_id,
+      name: employee.name,
+      phone_number: employee.phone_number,
+      assignments_count: employee.assignments_count
+    });
+
+    // Add tags and create assignment records (using employee.employee_id for foreign key)
+    try {
+      // Add employee name tag
+      console.log(`[058666] Adding employee tag: ${employee.name} to contact: ${extractedNumber}`);
+      await addTagToPostgres(extractedNumber, employee.name, idSubstring);
+      console.log(`[058666] Employee tag added successfully`);
+      
+      // Add "stop bot" tag
+      console.log(`[058666] Adding "stop bot" tag to contact: ${extractedNumber}`);
+      await addTagToPostgres(extractedNumber, "stop bot", idSubstring);
+      console.log(`[058666] "stop bot" tag added successfully`);
+      
+      // Get contact from database
+      const contactQuery = `
+        SELECT contact_id FROM contacts 
+        WHERE company_id = $1 AND phone = $2
+      `;
+      const contactResult = await sqlClient.query(contactQuery, [
+        idSubstring,
+        extractedNumber,
+      ]);
+
+      if (contactResult.rows.length > 0) {
+        const contactId = contactResult.rows[0].contact_id;
+        const assignmentId = `${idSubstring}-${contactId}-${employee.employee_id}-${Date.now()}`;
+
+        // Create assignment record (using employee.employee_id to match foreign key constraint)
+        const assignmentInsertQuery = `
+          INSERT INTO assignments (
+            assignment_id, company_id, employee_id, contact_id, 
+            assigned_at, status, month_key, assignment_type, 
+            phone_index, weightage_used, employee_role
+          ) VALUES ($1, $2, $3, $4, CURRENT_TIMESTAMP, 'active', $5, 'auto_bot', $6, 1, $7)
+        `;
+
+        await sqlClient.query(assignmentInsertQuery, [
+          assignmentId,
+          idSubstring,
+          employee.employee_id, // Use employee_id for foreign key
+          contactId,
+          monthKey,
+          phoneIndex,
+          "Sales",
+        ]);
+
+        console.log(`[058666] Assignment record created with employee_id: ${employee.employee_id}`);
+
+        // Update employee's assigned_contacts count
+        const employeeUpdateQuery = `
+          UPDATE employees
+          SET assigned_contacts = COALESCE(assigned_contacts, 0) + 1
+          WHERE company_id = $1 AND id = $2
+        `;
+
+        await sqlClient.query(employeeUpdateQuery, [idSubstring, employee.id]);
+
+        // Update monthly assignments (uses employee.id)
+        const monthlyAssignmentUpsertQuery = `
+          INSERT INTO employee_monthly_assignments (employee_id, company_id, month_key, assignments_count, last_updated)
+          VALUES ($1, $2, $3, 1, CURRENT_TIMESTAMP)
+          ON CONFLICT (employee_id, month_key) DO UPDATE
+          SET assignments_count = employee_monthly_assignments.assignments_count + 1,
+              last_updated = CURRENT_TIMESTAMP
+        `;
+
+        await sqlClient.query(monthlyAssignmentUpsertQuery, [
+          employee.id, // Use id for monthly assignments
+          idSubstring,
+          monthKey,
+        ]);
+
+        console.log(`[058666] Assignment complete for employee: ${employee.name}`);
+      }
+    } catch (err) {
+      console.error("[058666] Error creating assignment:", err);
+    }
+
+    // Send the generated report to employee via WhatsApp (instead of generic assignment message)
+    const employeePhone = employee.phone_number || employee.phone || "";
+    if (employeePhone) {
+      const employeeId = employeePhone.replace(/\D/g, "") + "@c.us";
+      try {
+        const sent = await client.sendMessage(employeeId, reportMessage);
+        console.log(`Sent AI-generated report to employee ${employee.name} (${employeePhone})`);
+        // Log message to Postgres for record
+        try {
+          await addMessageToPostgres(sent, idSubstring, employeePhone);
+        } catch (err) {
+          console.error("Failed to log sent report to Postgres:", err);
+        }
+      } catch (err) {
+        console.error("Failed to send report message to employee:", err);
+      }
+    } else {
+      console.log("Assigned employee has no phone number to receive report", employee);
+    }
+  } catch (error) {
+    console.error("Error in handleAIAsssignResponses058666:", error);
+  } finally {
+    await safeRelease(sqlClient);
+  }
+}
+// ========================================
+// END COMPANY 058666 FUNCTIONS
+// ========================================
+
+// ========================================
+// COMPANY 765943 (JOBBUILDER) FUNCTIONS
+// ========================================
+// Generate recruitment report for Job Builder
+async function generateSpecialReportRecruitment(
+  threadID,
+  assistantId,
+  contactName,
+  extractedNumber,
+  inquiryType = "general"
+) {
+  try {
+    const currentDate = new Date().toISOString().split("T")[0]; // Format: YYYY-MM-DD
+    let reportInstruction;
+
+    if (inquiryType === "hiring_company") {
+      reportInstruction = `Please generate a report for HIRING COMPANY inquiry in the following format based on our conversation:
+
+🏢 NEW HIRING COMPANY INQUIRY
+
+Date: ${currentDate}
+Company Representative: ${contactName}
+Phone: ${extractedNumber}
+Company Name: [Extract from conversation]
+Industry: [Extract from conversation]
+Position(s) to Fill: [Extract from conversation]
+Number of Vacancies: [Extract from conversation]
+Requirements/Qualifications: [Extract from conversation]
+Salary Range: [Extract from conversation]
+Location: [Extract from conversation]
+Additional Notes: [Extract any other relevant information]
+
+Fill in the information in square brackets with the relevant details from our conversation. If any information is not available, write "Not specified".`;
+    } else if (inquiryType === "job_seeker") {
+      reportInstruction = `Please generate a report for JOB SEEKER inquiry in the following format based on our conversation:
+
+👤 NEW JOB SEEKER APPLICATION
+
+Date: ${currentDate}
+Candidate Name: ${contactName}
+Phone: ${extractedNumber}
+Email: [Extract from conversation]
+Current Position: [Extract from conversation]
+Years of Experience: [Extract from conversation]
+Desired Position: [Extract from conversation]
+Skills: [Extract from conversation]
+Expected Salary: [Extract from conversation]
+Preferred Location: [Extract from conversation]
+Availability: [Extract from conversation]
+Additional Notes: [Extract any other relevant information]
+
+Fill in the information in square brackets with the relevant details from our conversation. If any information is not available, write "Not specified".`;
+    } else {
+      reportInstruction = `Please generate a general inquiry report in the following format based on our conversation:
+
+📋 NEW INQUIRY
+
+Date: ${currentDate}
+Name: ${contactName}
+Phone: ${extractedNumber}
+Inquiry Type: [Extract from conversation]
+Details: [Extract from conversation]
+Additional Notes: [Extract any other relevant information]
+
+Fill in the information in square brackets with the relevant details from our conversation. If any information is not available, write "Not specified".`;
+    }
+
+    await openai.beta.threads.messages.create(threadID, {
+      role: "user",
+      content: reportInstruction,
+    });
+
+    const assistantResponse = await openai.beta.threads.runs.create(threadID, {
+      assistant_id: assistantId,
+    });
+
+    // Wait for the assistant to complete the task
+    let runStatus;
+    do {
+      await new Promise((resolve) => setTimeout(resolve, 1000)); // Wait for 1 second
+      runStatus = await openai.beta.threads.runs.retrieve(
+        threadID,
+        assistantResponse.id
+      );
+    } while (runStatus.status !== "completed");
+
+    // Retrieve the assistant's response
+    const messages = await openai.beta.threads.messages.list(threadID);
+    const reportMessage = messages.data[0].content[0].text.value;
+
+    return { reportMessage, contactInfo: {} };
+  } catch (error) {
+    console.error("Error generating recruitment report:", error);
+    return { reportMessage: "Error generating report", contactInfo: {} };
+  }
+}
+
+// Generate team notification report for Job Builder
+async function generateTeamNotificationReport(
+  threadID,
+  assistantId,
+  contactName,
+  extractedNumber
+) {
+  try {
+    const currentDate = new Date().toISOString().split("T")[0];
+    const reportInstruction = `Please generate a team notification report in the following format based on our conversation:
+
+🔔 TEAM NOTIFICATION
+
+Date: ${currentDate}
+Contact Name: ${contactName}
+Phone: ${extractedNumber}
+Notification Type: [What was the team notified about - e.g., contact update, important information, referral, etc.]
+Summary: [Brief summary of the key information]
+Action Required: [Any action needed from the team]
+Priority: [High/Medium/Low based on context]
+
+Fill in the information in square brackets with the relevant details from our conversation. If any information is not available, write "Not specified".`;
+
+    await openai.beta.threads.messages.create(threadID, {
+      role: "user",
+      content: reportInstruction,
+    });
+
+    const assistantResponse = await openai.beta.threads.runs.create(threadID, {
+      assistant_id: assistantId,
+    });
+
+    // Wait for the assistant to complete the task
+    let runStatus;
+    do {
+      await new Promise((resolve) => setTimeout(resolve, 1000)); // Wait for 1 second
+      runStatus = await openai.beta.threads.runs.retrieve(
+        threadID,
+        assistantResponse.id
+      );
+    } while (runStatus.status !== "completed");
+
+    // Retrieve the assistant's response
+    const messages = await openai.beta.threads.messages.list(threadID);
+    const reportMessage = messages.data[0].content[0].text.value;
+
+    return { reportMessage, notificationInfo: {} };
+  } catch (error) {
+    console.error("Error generating team notification report:", error);
+    return { reportMessage: "Error generating notification", notificationInfo: {} };
+  }
+}
+// ========================================
+// END COMPANY 765943 FUNCTIONS
+// ========================================
+
 function extractContactInfoSKC(report) {
   var lines = report.split("\n");
   var contactInfoSKC = {};
@@ -6738,124 +7780,235 @@ async function handlePDFMessage(
   extractedNumber
 ) {
   const tempDir = path.join(os.tmpdir(), `pdf_process_${uuidv4()}`);
-  console.log(`[PDF] Creating temp directory: ${tempDir}`);
-  await fs.promises.mkdir(tempDir, { recursive: true });
-
-  const tempPdfPath = path.join(tempDir, `input.pdf`);
-  console.log(`[PDF] Temp PDF path: ${tempPdfPath}`);
+  let tempPdfPath = null;
+  let outputPrefix = null;
 
   try {
-    console.log("[PDF] Downloading media...");
+    console.log("[PDF] Starting PDF document processing with Poppler...");
     const media = await msg.downloadMedia();
-    console.log("[PDF] Media downloaded.");
 
+    // Convert base64 to buffer
     const buffer = Buffer.from(media.data, "base64");
-    console.log(
-      `[PDF] Converted media to buffer. Buffer length: ${buffer.length}`
-    );
+    console.log("[PDF] Buffer created, length:", buffer.length);
 
+    // Create temp directory if it doesn't exist
+    try {
+      await fs.promises.access(tempDir);
+    } catch {
+      await fs.promises.mkdir(tempDir, { recursive: true });
+    }
+
+    // Save buffer to temporary PDF file
+    tempPdfPath = path.join(tempDir, `temp_pdf_${Date.now()}.pdf`);
     await fs.promises.writeFile(tempPdfPath, buffer);
-    console.log("[PDF] Buffer written to temp PDF file.");
+    console.log("[PDF] Temporary PDF file created:", tempPdfPath);
 
-    // Convert first 3 pages to PNG using ConvertAPI SDK
+    // Use pdf-parse to get number of pages
+    const pdfData = await pdf(buffer);
+    const pageCount = pdfData.numpages;
+    console.log(`[PDF] PDF parsed, total pages: ${pageCount}`);
+
+    // Initialize Poppler
+    const poppler = new Poppler();
+    outputPrefix = path.join(tempDir, `pdf_page_${Date.now()}`);
+
+    // Convert PDF to images using Poppler
+    const options = {
+      firstPageToConvert: 1,
+      lastPageToConvert: Math.min(pageCount, 3),
+      pngFile: true,
+      resolutionXYAxis: 300, // 300 DPI for both X and Y
+      scalePageTo: 2480, // Scale long side to 2480 pixels (A4 width at 300 DPI)
+    };
+
+    console.log("[PDF] Converting PDF to images with Poppler...");
+    await poppler.pdfToCairo(tempPdfPath, outputPrefix, options);
+    console.log("[PDF] PDF converted to images successfully");
+
     let allPagesAnalysis = [];
-    const pagesToProcess = [1, 2, 3];
-    for (let i = 0; i < pagesToProcess.length; i++) {
-      const pageNum = pagesToProcess[i];
-      console.log(`[PDF] Converting page ${pageNum} to PNG with ConvertAPI...`);
+    const pagesToProcess = Math.min(pageCount, 3);
 
+    for (let i = 1; i <= pagesToProcess; i++) {
+      console.log(`[PDF] Processing page ${i} of ${pagesToProcess}...`);
+
+      // Try different naming patterns that poppler might use
+      let imagePath = `${outputPrefix}-${i}.png`;
+
+      // Check if image file exists
       try {
-        const result = await convertapi.convert(
-          "png",
-          {
-            File: tempPdfPath,
-            PageRange: `${pageNum}-${pageNum}`,
-          },
-          "pdf"
+        await fs.promises.access(imagePath);
+      } catch {
+        console.log(
+          `[PDF] Image for page ${i} not found, trying alternative naming...`
         );
+        // Try alternative naming patterns
+        const altPaths = [
+          `${outputPrefix}_${i}.png`,
+          `${outputPrefix}-${String(i).padStart(3, "0")}.png`,
+          `${outputPrefix}${i}.png`,
+        ];
 
-        if (result && result.files && result.files.length > 0) {
-          const imageUrl = result.files[0].url;
-          console.log(`[PDF] Got PNG URL for page ${pageNum}: ${imageUrl}`);
-
-          // Download the image as buffer
-          const imageResp = await axios.get(imageUrl, {
-            responseType: "arraybuffer",
-          });
-          const imageBuffer = Buffer.from(imageResp.data);
-
-          // Check if buffer is a valid PNG
-          if (imageBuffer.slice(0, 8).toString("hex") !== "89504e470d0a1a0a") {
-            console.error(
-              `[PDF] Page ${pageNum} is not a valid PNG. Skipping.`
-            );
-            allPagesAnalysis.push(
-              `Page ${pageNum}: [Error: Could not convert to valid PNG image]`
-            );
-            continue;
-          }
-
-          const base64Image = imageBuffer.toString("base64");
-          console.log(`[PDF] Converted page ${pageNum} image to base64.`);
-
-          // Analyze image using OpenAI
+        let found = false;
+        for (const altPath of altPaths) {
           try {
-            console.log(
-              `[PDF] Sending page ${pageNum} image to OpenAI for analysis...`
-            );
-            const aiResponse = await openai.chat.completions.create({
-              model: "gpt-4o-mini",
-              messages: [
+            await fs.promises.access(altPath);
+            imagePath = altPath;
+            found = true;
+            break;
+          } catch {
+            // Continue trying
+          }
+        }
+
+        if (!found) {
+          console.error(`[PDF] Could not find converted image for page ${i}`);
+          continue; // Skip this page but continue with others
+        }
+      }
+
+      console.log(`[PDF] Page ${i} image found: ${imagePath}`);
+
+      // Read image file and convert to base64
+      const imageBuffer = await fs.promises.readFile(imagePath);
+      const base64Image = imageBuffer.toString("base64");
+      console.log(
+        `[PDF] Page ${i} image converted to base64, length: ${base64Image.length}`
+      );
+
+      // Analyze image using OpenAI Vision
+      try {
+        console.log(`[PDF] Sending page ${i} to OpenAI for analysis...`);
+        
+        // Special prompt for Job Builder (765943) resume extraction
+        let extractionPrompt;
+        if (idSubstring === "765943") {
+          extractionPrompt = `You are analyzing a RESUME/CV document. Extract ALL information with EXTREME ACCURACY, paying special attention to:
+
+**CRITICAL FIELDS (Job Builder Resume):**
+1. **Email Address:** 
+   - Extract the COMPLETE email address with 100% accuracy
+   - Format: username@domain.com
+   - Double-check EVERY CHARACTER (no typos allowed)
+   - Look in header, contact section, or anywhere on the page
+   - Example: john.doe@gmail.com, johndoe123@yahoo.com
+
+2. **Full Name:**
+   - Extract complete first name and last name
+   - Include middle name if present
+
+3. **Phone Number:**
+   - Include country code and full number
+   - Format: +60123456789 or similar
+
+4. **Skills (VERY IMPORTANT):**
+   - List ALL technical skills mentioned (programming languages, frameworks, tools, software)
+   - List ALL soft skills (communication, leadership, teamwork, etc.)
+   - Format as a comma-separated list
+   - Examples: "Full Stack Developer, Web Developer, React Developer, Frontend Developer"
+   - Or: "JavaScript, Python, React, Node.js, HTML, CSS, SQL, Git"
+
+5. **Work Experience/Employment History (VERY IMPORTANT):**
+   - Extract EVERY job position with:
+     * Job Title / Position
+     * Company Name
+     * Duration (start date - end date or "Present")
+     * Key responsibilities and achievements (bullet points)
+   - Format clearly for each position
+   - Example format:
+     Position: Senior Developer
+     Company: ABC Tech Sdn Bhd
+     Duration: Jan 2020 - Present
+     Responsibilities: Led team of 5, developed web applications, etc.
+
+6. **Education:**
+   - Degrees, certifications, schools attended
+   - Graduation years
+
+7. **Summary/Profile:**
+   - Professional summary or career objective if present
+
+**OUTPUT FORMAT:**
+Organize the extracted data with clear section headers:
+
+EMAIL: [exact email address]
+FULL NAME: [complete name]
+PHONE: [full phone number]
+
+SKILLS:
+[List all skills found - technical and soft skills]
+
+WORK EXPERIENCE:
+[Each position with company, title, duration, responsibilities]
+
+EDUCATION:
+[Degrees and schools]
+
+PROFILE/SUMMARY:
+[Career objective or professional summary if present]
+
+Be thorough and accurate. If any field is not found on this page, write "Not found on this page".`;
+        } else {
+          extractionPrompt = `Please extract and analyze ALL text and data from this PDF page with high accuracy. Focus on:
+
+1. **Contact Information:**
+   - Full names (first and last names)
+   - Email addresses (be very careful with accuracy - double check each character)
+   - Phone numbers (including country codes and formatting)
+   - Addresses (complete street addresses, cities, states, postal codes)
+   - Company names and job titles
+
+2. **Form Data:**
+   - Any form fields and their values
+   - Checkboxes, radio buttons, and their selections
+   - Dates (in any format)
+   - ID numbers, reference numbers, or codes
+
+3. **Document Content:**
+   - Headers, titles, and section names
+   - Body text and paragraphs
+   - Tables and their data (preserve structure)
+   - Lists and bullet points
+   - Any signatures or handwritten text
+
+4. **Financial/Numerical Data:**
+   - Amounts, prices, quantities
+   - Account numbers, invoice numbers
+   - Percentages and calculations
+
+Provide the extracted information in a structured format with clear labels. Be especially careful with email addresses - verify each character and ensure proper formatting (name@domain.com). If uncertain about any character in an email, mention the uncertainty.
+
+Also describe what type of document this appears to be (form, invoice, letter, etc.).`;
+        }
+        
+        const aiResponse = await openai.chat.completions.create({
+          model: "gpt-4o-mini",
+          messages: [
+            {
+              role: "user",
+              content: [
                 {
-                  role: "user",
-                  content: [
-                    {
-                      type: "text",
-                      text: "What is the content of this PDF page?",
-                    },
-                    {
-                      type: "image_url",
-                      image_url: {
-                        url: `data:image/png;base64,${base64Image}`,
-                      },
-                    },
-                  ],
+                  type: "text",
+                  text: extractionPrompt,
+                },
+                {
+                  type: "image_url",
+                  image_url: {
+                    url: `data:image/png;base64,${base64Image}`,
+                  },
                 },
               ],
-              max_tokens: 300,
-            });
+            },
+          ],
+          max_tokens: 1000,
+        });
 
-            const pageAnalysis = aiResponse.choices[0].message.content;
-            console.log(`[PDF] Analysis for page ${pageNum}: ${pageAnalysis}`);
-            allPagesAnalysis.push(`Page ${pageNum}: ${pageAnalysis}`);
-          } catch (err) {
-            console.error(
-              `[PDF] OpenAI error for page ${pageNum}: ${err.message}\n${err.stack}`
-            );
-            allPagesAnalysis.push(
-              `Page ${pageNum}: [Error: OpenAI could not process image]`
-            );
-          }
-        } else {
-          console.error(`[PDF] No PNG returned for page ${pageNum}.`);
-          allPagesAnalysis.push(
-            `Page ${pageNum}: [Error: No PNG returned from ConvertAPI]`
-          );
-        }
+        const pageAnalysis = aiResponse.choices[0].message.content;
+        console.log(`[PDF] Analysis for page ${i}: ${pageAnalysis}`);
+        allPagesAnalysis.push(`Page ${i}: ${pageAnalysis}`);
       } catch (err) {
-        // FIX: Avoid circular structure error
-        if (err.response) {
-          console.error(
-            `[PDF] ConvertAPI error for page ${pageNum}: ${err.message} - Response:`,
-            err.response.data
-          );
-        } else {
-          console.error(
-            `[PDF] ConvertAPI error for page ${pageNum}: ${err.message}\n${err.stack}`
-          );
-        }
+        console.error(`[PDF] OpenAI error for page ${i}:`, err.message);
         allPagesAnalysis.push(
-          `Page ${pageNum}: [Error: ConvertAPI failed for this page]`
+          `Page ${i}: [Error: OpenAI could not process image]`
         );
       }
     }
@@ -6868,12 +8021,13 @@ async function handlePDFMessage(
     console.error("[PDF] Error processing PDF:", error);
     return "[Error: Unable to process PDF document]";
   } finally {
+    // Clean up temporary files
     try {
       console.log(`[PDF] Cleaning up temp directory: ${tempDir}`);
       await fs.promises.rm(tempDir, { recursive: true, force: true });
       console.log("[PDF] Temp directory cleaned up.");
-    } catch (error) {
-      console.error("[PDF] Error cleaning up temporary files:", error);
+    } catch (cleanupError) {
+      console.error("[PDF] Error cleaning up temporary files:", cleanupError);
     }
   }
 }
