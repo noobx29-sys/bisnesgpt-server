@@ -14,6 +14,22 @@ const pool = new Pool({
 
 const API_BASE_URL = process.env.URL || `http://localhost:${process.env.PORT}`;
 
+// Helper to check if company is using official WhatsApp API
+async function isOfficialApiConnection(companyId, phoneIndex = 0) {
+  try {
+    const result = await pool.query(
+      `SELECT connection_type FROM phone_configs WHERE company_id = $1 AND phone_index = $2`,
+      [companyId, phoneIndex]
+    );
+    if (result.rows.length === 0) return false;
+    const connectionType = result.rows[0].connection_type;
+    return ['meta_direct', 'meta_embedded', '360dialog'].includes(connectionType);
+  } catch (error) {
+    console.error('Error checking connection type:', error);
+    return false;
+  }
+}
+
 async function handleTagFollowUp(req, res) {
   const idSubstring = req.body.idSubstring;
   const { requestType, phone, first_name, phoneIndex: requestedPhoneIndex, templateId } = req.body;
@@ -284,6 +300,17 @@ async function scheduleMessage(message, scheduledTime, chatId, idSubstring, temp
       }, Math.max(0, scheduledTime.toDate().getTime() - Date.now() - 5000)); // 5 seconds before message
     }
 
+    // Build WhatsApp template info if specified in the message
+    let whatsappTemplate = null;
+    if (message.whatsapp_template_name) {
+      whatsappTemplate = {
+        name: message.whatsapp_template_name,
+        language: message.whatsapp_template_language || 'en',
+        variables: message.whatsapp_template_variables || []
+      };
+      console.log(`📋 Follow-up will use WhatsApp template: ${whatsappTemplate.name}`);
+    }
+
     // Handle different message types
     if (message.image && message.image.url) {
       await scheduleMediaMessage(scheduledTime.toDate(), chatId, idSubstring, templateName, phoneIndex, {
@@ -291,7 +318,7 @@ async function scheduleMessage(message, scheduledTime, chatId, idSubstring, temp
         url: message.image.url,
         caption: messageContent,
         customerName: customerName
-      }, templateId);
+      }, templateId, whatsappTemplate);
     } else if (message.document && message.document.url) {
       await scheduleMediaMessage(scheduledTime.toDate(), chatId, idSubstring, templateName, phoneIndex, {
         type: 'document',
@@ -299,17 +326,17 @@ async function scheduleMessage(message, scheduledTime, chatId, idSubstring, temp
         fileName: message.document.fileName || 'Document',
         caption: messageContent,
         customerName: customerName
-      }, templateId);
+      }, templateId, whatsappTemplate);
     } else if (message.video && message.video.url) {
       await scheduleMediaMessage(scheduledTime.toDate(), chatId, idSubstring, templateName, phoneIndex, {
         type: 'video',
         url: message.video.url,
         caption: messageContent,
         customerName: customerName
-      }, templateId);
+      }, templateId, whatsappTemplate);
     } else {
       // Text message
-      await scheduleTextMessage(messageContent, scheduledTime.toDate(), chatId, idSubstring, templateName, phoneIndex, templateId);
+      await scheduleTextMessage(messageContent, scheduledTime.toDate(), chatId, idSubstring, templateName, phoneIndex, templateId, whatsappTemplate);
     }
 
     console.log(`Scheduled message for ${scheduledTime.format("YYYY-MM-DD HH:mm:ss")}`);
@@ -323,7 +350,7 @@ async function customWait(milliseconds) {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
-async function scheduleMediaMessage(scheduledTime, chatId, idSubstring, templateName, phoneIndex, mediaData, templateId) {
+async function scheduleMediaMessage(scheduledTime, chatId, idSubstring, templateName, phoneIndex, mediaData, templateId, whatsappTemplate = null) {
   let finalCaption = mediaData.caption || "";
   if (mediaData.customerName && !/\d/.test(mediaData.customerName)) {
     finalCaption = finalCaption.replace("{customerName}", mediaData.customerName);
@@ -352,6 +379,14 @@ async function scheduleMediaMessage(scheduledTime, chatId, idSubstring, template
       contact_id: contactID
     };
 
+    // Add WhatsApp template info if provided (for official API)
+    if (whatsappTemplate) {
+      scheduledMessage.whatsapp_template_name = whatsappTemplate.name;
+      scheduledMessage.whatsapp_template_language = whatsappTemplate.language || 'en';
+      scheduledMessage.whatsapp_template_variables = whatsappTemplate.variables || [];
+      console.log("📋 Scheduled media message will use WhatsApp template:", whatsappTemplate.name);
+    }
+
     // Add media-specific fields
     switch (mediaData.type) {
       case 'image':
@@ -375,12 +410,10 @@ async function scheduleMediaMessage(scheduledTime, chatId, idSubstring, template
       },
       body: JSON.stringify(scheduledMessage)
     });
-
     if (!response.ok) {
       const errorText = await response.text();
       throw new Error(`Failed to schedule ${mediaData.type}: ${response.status} ${errorText}`);
     }
-
     const result = await response.json();
     console.log(`${mediaData.type} message scheduled successfully for:`, scheduledTime, 'ID:', result.id);
     return result.id;
@@ -390,7 +423,7 @@ async function scheduleMediaMessage(scheduledTime, chatId, idSubstring, template
   }
 }
 
-async function scheduleTextMessage(message, scheduledTime, chatId, idSubstring, templateName, phoneIndex, templateId) {
+async function scheduleTextMessage(message, scheduledTime, chatId, idSubstring, templateName, phoneIndex, templateId, whatsappTemplate = null) {
   console.log("Scheduling text message for:", scheduledTime);
 
   try {
@@ -413,6 +446,14 @@ async function scheduleTextMessage(message, scheduledTime, chatId, idSubstring, 
       repeatUnit: "days",
       contact_id: contactID
     };
+
+    // Add WhatsApp template info if provided (for official API)
+    if (whatsappTemplate) {
+      scheduledMessage.whatsapp_template_name = whatsappTemplate.name;
+      scheduledMessage.whatsapp_template_language = whatsappTemplate.language || 'en';
+      scheduledMessage.whatsapp_template_variables = whatsappTemplate.variables || [];
+      console.log("📋 Scheduled message will use WhatsApp template:", whatsappTemplate.name);
+    }
 
     const response = await fetch(`${API_BASE_URL}/api/schedule-message/${idSubstring}`, {
       method: 'POST',

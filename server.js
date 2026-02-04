@@ -8218,9 +8218,9 @@ app.post("/api/schedule-message/:companyId", async (req, res) => {
           document_url, file_name, caption, chat_ids, batch_quantity, repeat_interval,
           repeat_unit, message_delays, infinite_loop, min_delay, max_delay, activate_sleep,
           sleep_after_messages, sleep_duration, active_hours, from_me, messages, template_id,
-          active_hours_start, active_hours_end
+          active_hours_start, active_hours_end, whatsapp_template_name, whatsapp_template_language, whatsapp_template_variables
         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, 
-          $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34)
+          $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37)
       `;
       const scheduledTime = toPgTimestamp(scheduledMessage.scheduledTime);
       await client.query(mainMessageQuery, [
@@ -8264,6 +8264,11 @@ app.post("/api/schedule-message/:companyId", async (req, res) => {
         scheduledMessage.template_id || null,
         activeHoursStart,
         activeHoursEnd,
+        scheduledMessage.whatsapp_template_name || null,
+        scheduledMessage.whatsapp_template_language || 'en',
+        scheduledMessage.whatsapp_template_variables 
+          ? JSON.stringify(scheduledMessage.whatsapp_template_variables)
+          : '[]',
       ]);
 
       const queue = getQueueForBot(companyId);
@@ -12506,13 +12511,70 @@ async function sendScheduledMessage(message) {
               messageItem.documentUrl || message.document_url || "";
             const fileName = messageItem.fileName || message.file_name || "";
 
+            // Check for WhatsApp template (for official API outside 24-hour window)
+            const hasWhatsAppTemplate = Boolean(message.whatsapp_template_name);
+            
             let messageResult;
 
             // Use Meta Direct API if available, otherwise use wwebjs client
             if (hasMetaDirect && metaDirectService) {
               console.log(`[Company ${companyId}] 📱 Sending via Meta Direct API`);
 
-              if (mediaUrl) {
+              // Check if we should use WhatsApp template
+              if (hasWhatsAppTemplate) {
+                console.log(`[Company ${companyId}] 📋 Sending WhatsApp template: ${message.whatsapp_template_name}`);
+                
+                // Parse variables if stored as JSON string
+                let templateVariables = message.whatsapp_template_variables || [];
+                if (typeof templateVariables === 'string') {
+                  try {
+                    templateVariables = JSON.parse(templateVariables);
+                  } catch (e) {
+                    console.warn(`[Company ${companyId}] Failed to parse template variables:`, e.message);
+                    templateVariables = [];
+                  }
+                }
+
+                // Process variables with contact data placeholders
+                const processedVariables = templateVariables.map(v => {
+                  let value = String(v);
+                  // Replace placeholders with contact data
+                  value = value.replace(/@\{customerName\}|{customerName}/gi, contactData?.name || '');
+                  value = value.replace(/@\{contactName\}|{contactName}/gi, contactData?.name || '');
+                  value = value.replace(/@\{firstName\}|{firstName}/gi, contactData?.first_name || contactData?.name?.split(' ')[0] || '');
+                  value = value.replace(/@\{phone\}|{phone}/gi, contactData?.phone || phone);
+                  return value;
+                });
+
+                // Build components for template
+                const components = [];
+                if (processedVariables.length > 0) {
+                  components.push({
+                    type: 'body',
+                    parameters: processedVariables.map(v => ({
+                      type: 'text',
+                      text: v
+                    }))
+                  });
+                }
+
+                // Send template using Meta Direct
+                messageResult = await metaDirectService.sendTemplate(
+                  companyId,
+                  message.phone_index,
+                  chatId,
+                  message.whatsapp_template_name,
+                  message.whatsapp_template_language || 'en',
+                  components
+                );
+
+                console.log(`[Company ${companyId}] WhatsApp template sent:`, {
+                  templateName: message.whatsapp_template_name,
+                  language: message.whatsapp_template_language,
+                  variableCount: processedVariables.length,
+                  messageId: messageResult?.messageId || 'unknown',
+                });
+              } else if (mediaUrl) {
                 // Send image message via Meta Direct
                 messageResult = await metaDirectService.sendMedia(
                   companyId,
@@ -13814,6 +13876,10 @@ app.post("/api/followup-templates/:templateId/messages", async (req, res) => {
     scheduledTime = "",
     addTags = [],
     removeTags = [],
+    // WhatsApp template fields for official API
+    whatsapp_template_name = null,
+    whatsapp_template_language = 'en',
+    whatsapp_template_variables = [],
   } = req.body;
 
   // Validation
@@ -13925,8 +13991,11 @@ app.post("/api/followup-templates/:templateId/messages", async (req, res) => {
         use_scheduled_time,
         scheduled_time,
         add_tags,
-        remove_tags
-      ) VALUES ($1, $2::character varying, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+        remove_tags,
+        whatsapp_template_name,
+        whatsapp_template_language,
+        whatsapp_template_variables
+      ) VALUES ($1, $2::character varying, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
       RETURNING *
     `;
 
@@ -13947,6 +14016,9 @@ app.post("/api/followup-templates/:templateId/messages", async (req, res) => {
       scheduledTime || null, // scheduled_time
       Array.isArray(addTags) ? addTags : [], // add_tags
       Array.isArray(removeTags) ? removeTags : [], // remove_tags
+      whatsapp_template_name || null, // whatsapp_template_name
+      whatsapp_template_language || 'en', // whatsapp_template_language
+      Array.isArray(whatsapp_template_variables) ? JSON.stringify(whatsapp_template_variables) : '[]', // whatsapp_template_variables
     ];
 
     console.log("Executing message insert with params:", messageParams);
@@ -13977,6 +14049,9 @@ app.post("/api/followup-templates/:templateId/messages", async (req, res) => {
       scheduledTime: messageResult.rows[0].scheduled_time,
       addTags: messageResult.rows[0].add_tags || [],
       removeTags: messageResult.rows[0].remove_tags || [],
+      whatsappTemplateName: messageResult.rows[0].whatsapp_template_name,
+      whatsappTemplateLanguage: messageResult.rows[0].whatsapp_template_language,
+      whatsappTemplateVariables: messageResult.rows[0].whatsapp_template_variables,
     };
 
     console.log("Returning created message:", createdMessage);
@@ -14042,7 +14117,10 @@ async function getMessagesForTemplate(templateId) {
         use_scheduled_time,
         scheduled_time,
         add_tags,
-        remove_tags
+        remove_tags,
+        whatsapp_template_name,
+        whatsapp_template_language,
+        whatsapp_template_variables
       FROM 
         public.followup_messages
       WHERE 
@@ -14075,6 +14153,9 @@ async function getMessagesForTemplate(templateId) {
         scheduledTime: row.scheduled_time,
         addTags: row.add_tags || [],
         removeTags: row.remove_tags || [],
+        whatsappTemplateName: row.whatsapp_template_name,
+        whatsappTemplateLanguage: row.whatsapp_template_language,
+        whatsappTemplateVariables: row.whatsapp_template_variables,
       };
 
       console.log("Adding message object:", messageObj);
@@ -16807,6 +16888,8 @@ async function handleAIVideoResponses({
 
           const media = await MessageMedia.fromUrl(videoUrl);
           if (!media) throw new Error("Failed to load video from URL");
+          // Attach original URL for Meta Direct API (which requires a URL, not base64)
+          media.url = videoUrl;
 
           const videoMessage = await client.sendMessage(chatId, media, {
             caption,
@@ -16893,6 +16976,8 @@ async function sendVoiceMessage(client, chatId, voiceUrl, caption = "") {
       audioBuffer.toString("base64"),
       `voice_${Date.now()}.mp3` // Generate unique filename
     );
+    // Attach original URL for Meta Direct API (which requires a URL, not base64)
+    media.url = voiceUrl;
 
     // Send the voice message with options
     const messageOptions = {

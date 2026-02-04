@@ -492,15 +492,38 @@ class MetaDirect {
       const chatId = `${msg.from}@c.us`;
       const contactName = contact?.profile?.name || msg.from;
 
+      // Map Meta's audio type to wwebjs 'ptt' (push-to-talk) for voice messages
+      // Meta sends voice messages as type='audio' with audio.voice=true
+      const mappedType = (msg.type === 'audio' && msg.audio?.voice) ? 'ptt' : msg.type;
+
+      // Build wwebjs-compatible _data object from Meta message format
+      const wwebjsData = {
+        ...msg,
+        // Map Meta's mime_type to wwebjs's mimetype
+        mimetype: msg[msg.type]?.mime_type || msg[msg.type]?.mimetype,
+        filename: msg[msg.type]?.filename,
+        caption: msg[msg.type]?.caption || msg.image?.caption || msg.video?.caption || msg.document?.caption || '',
+        // For documents, extract additional metadata
+        ...(msg.type === 'document' && {
+          pageCount: msg.document?.page_count,
+          size: msg.document?.file_size,
+        }),
+        // For images, extract dimensions if available
+        ...(msg.type === 'image' && {
+          width: msg.image?.width,
+          height: msg.image?.height,
+        }),
+      };
+
       const wwebjsCompatibleMsg = {
         id: { _serialized: msg.id, id: msg.id },
         from: chatId,
         to: `${display_phone_number}@c.us`,
         body: msg.type === 'text' ? msg.text?.body : '',
-        type: msg.type,
+        type: mappedType,
         timestamp: parseInt(msg.timestamp),
         hasMedia: ['image', 'video', 'audio', 'document', 'sticker'].includes(msg.type),
-        _data: msg,
+        _data: wwebjsData,
         // Mock getChat method (required by bot handler)
         getChat: async () => ({
           id: { _serialized: chatId },
@@ -529,8 +552,15 @@ class MetaDirect {
           if (!wwebjsCompatibleMsg.hasMedia) return null;
           
           try {
-            const mediaId = msg[msg.type]?.id;
-            if (!mediaId) return null;
+            // For voice messages (ptt), Meta stores media under 'audio', not 'ptt'
+            const mediaType = msg.type; // Use original Meta type, not mapped type
+            const mediaId = msg[mediaType]?.id;
+            if (!mediaId) {
+              console.error('❌ [META DIRECT] No media ID found for type:', mediaType);
+              return null;
+            }
+
+            console.log(`📥 [META DIRECT] Downloading ${mediaType} media, ID: ${mediaId}`);
 
             // Get media URL from Meta
             const configData = await this.getConfig(company_id, phone_index);
@@ -542,18 +572,26 @@ class MetaDirect {
             );
 
             const mediaUrl = mediaInfo.data.url;
+            console.log(`📥 [META DIRECT] Got media URL, downloading...`);
+            
             const mediaResponse = await axios.get(mediaUrl, {
               headers: { Authorization: `Bearer ${accessToken}` },
               responseType: 'arraybuffer',
             });
 
+            console.log(`✅ [META DIRECT] Media downloaded, size: ${mediaResponse.data.length} bytes`);
+
             return {
               data: Buffer.from(mediaResponse.data).toString('base64'),
-              mimetype: mediaResponse.headers['content-type'],
-              filename: msg[msg.type]?.filename || `media_${Date.now()}`,
+              mimetype: mediaResponse.headers['content-type'] || msg[mediaType]?.mime_type,
+              filename: msg[mediaType]?.filename || `media_${Date.now()}`,
             };
           } catch (error) {
-            console.error('Error downloading media from Meta:', error);
+            console.error('❌ [META DIRECT] Error downloading media from Meta:', error.message);
+            if (error.response) {
+              console.error('❌ [META DIRECT] Response status:', error.response.status);
+              console.error('❌ [META DIRECT] Response data:', error.response.data);
+            }
             return null;
           }
         },
