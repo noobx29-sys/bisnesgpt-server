@@ -916,8 +916,32 @@ class MetaDirect {
     const config = await this.getConfig(companyId, phoneIndex);
     const accessToken = this.decrypt(config.meta_access_token_encrypted);
 
-    // Convert base64 to Buffer if needed
-    const buffer = Buffer.isBuffer(mediaData) ? mediaData : Buffer.from(mediaData, 'base64');
+    // Convert to Buffer - handle various input formats
+    let buffer;
+    if (Buffer.isBuffer(mediaData)) {
+      buffer = mediaData;
+    } else if (typeof mediaData === 'string') {
+      // Check if it's a data URL (data:image/png;base64,ABC123...)
+      if (mediaData.startsWith('data:')) {
+        // Extract the base64 part after the comma
+        const base64Part = mediaData.split(',')[1] || mediaData;
+        buffer = Buffer.from(base64Part, 'base64');
+        console.log(`📤 [META DIRECT] Detected data URL format, extracted base64 data`);
+      } else {
+        // Assume it's raw base64
+        buffer = Buffer.from(mediaData, 'base64');
+      }
+    } else {
+      throw new Error(`Invalid mediaData type: ${typeof mediaData}`);
+    }
+
+    // Validate buffer size
+    if (buffer.length < 100) {
+      console.error(`❌ [META DIRECT] Buffer too small (${buffer.length} bytes), media data may be corrupted`);
+      console.error(`❌ [META DIRECT] mediaData type: ${typeof mediaData}, length: ${typeof mediaData === 'string' ? mediaData.length : 'N/A'}`);
+      console.error(`❌ [META DIRECT] mediaData preview: ${typeof mediaData === 'string' ? mediaData.substring(0, 100) : 'Buffer'}`);
+      throw new Error(`Media buffer too small: ${buffer.length} bytes`);
+    }
 
     const FormData = require('form-data');
     const form = new FormData();
