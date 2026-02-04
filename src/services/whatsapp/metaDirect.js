@@ -1054,9 +1054,19 @@ class MetaDirect {
         console.error(`❌ [META DIRECT] API Error Data:`, JSON.stringify(error.response.data));
         
         // Check if error is media upload related (131053, 131052, etc.)
-        const errorCode = error.response.data?.error?.code;
-        if ((errorCode === 131053 || errorCode === 131052) && base64Data && mimeType) {
-          console.log(`⚠️ [META DIRECT] URL fetch failed, falling back to upload method...`);
+        // Error can be in different locations depending on Meta API version
+        const errorData = error.response.data;
+        const errorCode = errorData?.error?.code || 
+                          errorData?.errors?.[0]?.code || 
+                          errorData?.code;
+        
+        console.log(`⚠️ [META DIRECT] Detected error code: ${errorCode}`);
+        
+        // Media-related error codes
+        const isMediaError = [131053, 131052, 131045, 131009].includes(errorCode);
+        
+        if (isMediaError && base64Data && mimeType) {
+          console.log(`⚠️ [META DIRECT] URL fetch failed (code ${errorCode}), falling back to upload method with provided base64...`);
           try {
             // Upload media first, then send using media ID
             const mediaId = await this.uploadMedia(companyId, phoneIndex, base64Data, mimeType, filename || 'media');
@@ -1068,10 +1078,16 @@ class MetaDirect {
         }
         
         // If no base64 data provided, try to download the URL ourselves and upload
-        if (errorCode === 131053 || errorCode === 131052) {
+        if (isMediaError) {
           console.log(`⚠️ [META DIRECT] Attempting to download media from URL and re-upload...`);
           try {
-            const mediaResponse = await axios.get(url, { responseType: 'arraybuffer' });
+            const mediaResponse = await axios.get(url, { 
+              responseType: 'arraybuffer',
+              timeout: 30000,
+              headers: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+              }
+            });
             const downloadedMimeType = mediaResponse.headers['content-type'] || this.getMimeTypeFromUrl(url, type);
             const mediaBuffer = Buffer.from(mediaResponse.data);
             
