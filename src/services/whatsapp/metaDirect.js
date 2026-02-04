@@ -688,7 +688,8 @@ class MetaDirect {
               try {
                 const caption = options.caption || '';
                 const filename = content.filename || options.filename;
-                const result = await self.sendMedia(company_id, phone_index, chatId, mediaType, content.url, caption, filename);
+                // Pass base64 data and mimetype for fallback upload if URL fails
+                const result = await self.sendMedia(company_id, phone_index, chatId, mediaType, content.url, caption, filename, content.data, content.mimetype);
                 
                 // Save to database and broadcast
                 const recipientPhone = chatId.replace(/@.+/, '');
@@ -903,6 +904,107 @@ class MetaDirect {
   }
 
   /**
+   * Upload media to Meta's servers and get a media ID
+   * @param {string} companyId - Company ID
+   * @param {number} phoneIndex - Phone index
+   * @param {Buffer|string} mediaData - Media data (Buffer or base64 string)
+   * @param {string} mimeType - MIME type of the media
+   * @param {string} filename - Optional filename
+   * @returns {Promise<string>} - Media ID
+   */
+  async uploadMedia(companyId, phoneIndex, mediaData, mimeType, filename = 'media') {
+    const config = await this.getConfig(companyId, phoneIndex);
+    const accessToken = this.decrypt(config.meta_access_token_encrypted);
+
+    // Convert base64 to Buffer if needed
+    const buffer = Buffer.isBuffer(mediaData) ? mediaData : Buffer.from(mediaData, 'base64');
+
+    const FormData = require('form-data');
+    const form = new FormData();
+    form.append('messaging_product', 'whatsapp');
+    form.append('file', buffer, {
+      filename: filename,
+      contentType: mimeType,
+    });
+
+    console.log(`📤 [META DIRECT] Uploading media to Meta servers, type: ${mimeType}, size: ${buffer.length} bytes`);
+
+    try {
+      const res = await axios.post(
+        `${GRAPH_API_BASE}/${config.meta_phone_number_id}/media`,
+        form,
+        {
+          headers: {
+            ...form.getHeaders(),
+            Authorization: `Bearer ${accessToken}`,
+          },
+        }
+      );
+
+      console.log(`✅ [META DIRECT] Media uploaded successfully, media ID:`, res.data.id);
+      return res.data.id;
+    } catch (error) {
+      console.error(`❌ [META DIRECT] Error uploading media:`, error.message);
+      if (error.response) {
+        console.error(`❌ [META DIRECT] API Error Status:`, error.response.status);
+        console.error(`❌ [META DIRECT] API Error Data:`, JSON.stringify(error.response.data));
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * Send media message using uploaded media ID
+   * @param {string} companyId - Company ID
+   * @param {number} phoneIndex - Phone index
+   * @param {string} to - Recipient
+   * @param {string} type - Media type (image, video, audio, document)
+   * @param {string} mediaId - Media ID from uploadMedia
+   * @param {string} caption - Optional caption
+   * @param {string} filename - Optional filename (for documents)
+   * @returns {Promise<{id: string, provider: string}>}
+   */
+  async sendMediaById(companyId, phoneIndex, to, type, mediaId, caption, filename) {
+    const config = await this.getConfig(companyId, phoneIndex);
+    const accessToken = this.decrypt(config.meta_access_token_encrypted);
+    const phone = to.replace(/@.+/, '');
+
+    console.log(`📤 [META DIRECT] Sending ${type} by media ID to ${phone}, mediaId: ${mediaId}`);
+
+    const body = {
+      messaging_product: 'whatsapp',
+      to: phone,
+      type,
+      [type]: { id: mediaId },
+    };
+    if (caption) body[type].caption = caption;
+    if (filename && type === 'document') body[type].filename = filename;
+
+    try {
+      const res = await axios.post(
+        `${GRAPH_API_BASE}/${config.meta_phone_number_id}/messages`,
+        body,
+        {
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            'Content-Type': 'application/json',
+          },
+        }
+      );
+
+      console.log(`✅ [META DIRECT] ${type} sent successfully via media ID, message ID:`, res.data.messages[0].id);
+      return { id: res.data.messages[0].id, provider: 'meta_direct' };
+    } catch (error) {
+      console.error(`❌ [META DIRECT] Error sending ${type} by media ID:`, error.message);
+      if (error.response) {
+        console.error(`❌ [META DIRECT] API Error Status:`, error.response.status);
+        console.error(`❌ [META DIRECT] API Error Data:`, JSON.stringify(error.response.data));
+      }
+      throw error;
+    }
+  }
+
+  /**
    * Send media message
    * @param {string} companyId - Company ID
    * @param {number} phoneIndex - Phone index
@@ -911,9 +1013,11 @@ class MetaDirect {
    * @param {string} url - Media URL
    * @param {string} caption - Optional caption
    * @param {string} filename - Optional filename (for documents)
+   * @param {string} base64Data - Optional base64 data (for fallback upload)
+   * @param {string} mimeType - Optional MIME type (for fallback upload)
    * @returns {Promise<{id: string, provider: string}>}
    */
-  async sendMedia(companyId, phoneIndex, to, type, url, caption, filename) {
+  async sendMedia(companyId, phoneIndex, to, type, url, caption, filename, base64Data, mimeType) {
     const config = await this.getConfig(companyId, phoneIndex);
     const accessToken = this.decrypt(config.meta_access_token_encrypted);
     const phone = to.replace(/@.+/, '');
@@ -944,13 +1048,71 @@ class MetaDirect {
       console.log(`✅ [META DIRECT] ${type} sent successfully, message ID:`, res.data.messages[0].id);
       return { id: res.data.messages[0].id, provider: 'meta_direct' };
     } catch (error) {
-      console.error(`❌ [META DIRECT] Error sending ${type}:`, error.message);
+      console.error(`❌ [META DIRECT] Error sending ${type} via URL:`, error.message);
       if (error.response) {
         console.error(`❌ [META DIRECT] API Error Status:`, error.response.status);
         console.error(`❌ [META DIRECT] API Error Data:`, JSON.stringify(error.response.data));
+        
+        // Check if error is media upload related (131053, 131052, etc.)
+        const errorCode = error.response.data?.error?.code;
+        if ((errorCode === 131053 || errorCode === 131052) && base64Data && mimeType) {
+          console.log(`⚠️ [META DIRECT] URL fetch failed, falling back to upload method...`);
+          try {
+            // Upload media first, then send using media ID
+            const mediaId = await this.uploadMedia(companyId, phoneIndex, base64Data, mimeType, filename || 'media');
+            return await this.sendMediaById(companyId, phoneIndex, to, type, mediaId, caption, filename);
+          } catch (uploadError) {
+            console.error(`❌ [META DIRECT] Fallback upload also failed:`, uploadError.message);
+            throw uploadError;
+          }
+        }
+        
+        // If no base64 data provided, try to download the URL ourselves and upload
+        if (errorCode === 131053 || errorCode === 131052) {
+          console.log(`⚠️ [META DIRECT] Attempting to download media from URL and re-upload...`);
+          try {
+            const mediaResponse = await axios.get(url, { responseType: 'arraybuffer' });
+            const downloadedMimeType = mediaResponse.headers['content-type'] || this.getMimeTypeFromUrl(url, type);
+            const mediaBuffer = Buffer.from(mediaResponse.data);
+            
+            console.log(`✅ [META DIRECT] Downloaded media from URL, size: ${mediaBuffer.length} bytes, type: ${downloadedMimeType}`);
+            
+            const mediaId = await this.uploadMedia(companyId, phoneIndex, mediaBuffer, downloadedMimeType, filename || this.getFilenameFromUrl(url));
+            return await this.sendMediaById(companyId, phoneIndex, to, type, mediaId, caption, filename);
+          } catch (downloadError) {
+            console.error(`❌ [META DIRECT] Failed to download and re-upload media:`, downloadError.message);
+            throw error; // Throw original error
+          }
+        }
       }
       throw error;
     }
+  }
+
+  /**
+   * Get MIME type from URL or type
+   */
+  getMimeTypeFromUrl(url, type) {
+    const ext = url.split('.').pop().toLowerCase().split('?')[0];
+    const mimeTypes = {
+      'jpg': 'image/jpeg', 'jpeg': 'image/jpeg', 'png': 'image/png', 'gif': 'image/gif', 'webp': 'image/webp',
+      'mp4': 'video/mp4', 'mov': 'video/quicktime',
+      'mp3': 'audio/mpeg', 'ogg': 'audio/ogg', 'wav': 'audio/wav',
+      'pdf': 'application/pdf', 'doc': 'application/msword', 'docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    };
+    if (mimeTypes[ext]) return mimeTypes[ext];
+    // Fallback based on type
+    const typeDefaults = { image: 'image/jpeg', video: 'video/mp4', audio: 'audio/mpeg', document: 'application/pdf' };
+    return typeDefaults[type] || 'application/octet-stream';
+  }
+
+  /**
+   * Get filename from URL
+   */
+  getFilenameFromUrl(url) {
+    const parts = url.split('/');
+    const filename = parts[parts.length - 1].split('?')[0];
+    return filename || 'media';
   }
 
   /**
