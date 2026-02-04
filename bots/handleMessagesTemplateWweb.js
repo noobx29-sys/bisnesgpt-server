@@ -3854,7 +3854,10 @@ async function handleAIImageResponses({
             phoneIndex
           );
         } catch (error) {
-          console.error(`Error sending image message:`, error);
+          console.error(`Error sending image message:`, error.message || error);
+          if (error.response) {
+            console.error(`Error response data:`, JSON.stringify(error.response.data));
+          }
         }
       }
     }
@@ -6156,13 +6159,13 @@ async function processBotResponse({
     const sentMessage = await client.sendMessage(msg.from, part);
 
     // Save message to PostgreSQL
-    await addMessageToPostgres({
-      msg: sentMessage,
-      idSubstring: idSubstring,
-      extractedNumber: extractedNumber,
-      contactName: contactName,
-      phoneIndex: phoneIndex,
-    });
+    await addMessageToPostgres(
+      sentMessage,
+      idSubstring,
+      extractedNumber,
+      contactName,
+      phoneIndex
+    );
 
     // Handle special cases based on message content
     await handleSpecialCases({
@@ -6235,13 +6238,13 @@ async function handleProductResponse({
             sendMediaAsDocument: true,
           });
 
-          await addMessageToPostgres({
-            msg: documentMessage,
-            idSubstring: idSubstring,
-            extractedNumber: extractedNumber,
-            contactName: contactName,
-            phoneIndex: phoneIndex,
-          });
+          await addMessageToPostgres(
+            documentMessage,
+            idSubstring,
+            extractedNumber,
+            contactName,
+            phoneIndex
+          );
         } catch (error) {
           console.error(`Error sending document for ${rawProductName}:`, error);
         }
