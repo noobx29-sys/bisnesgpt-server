@@ -8032,7 +8032,9 @@ async function handlePDFMessage(
         // Special prompt for Job Builder (765943) resume extraction
         let extractionPrompt;
         if (idSubstring === "765943") {
-          extractionPrompt = `You are analyzing a RESUME/CV document. Extract ALL information with EXTREME ACCURACY, paying special attention to:
+          extractionPrompt = `IMPORTANT: You are looking at a PNG IMAGE of a resume/CV document. This is NOT a PDF file - it's an image that you CAN see and read. Please analyze what you SEE in this image.
+
+You are analyzing a RESUME/CV document. Extract ALL information with EXTREME ACCURACY, paying special attention to:
 
 **CRITICAL FIELDS (Job Builder Resume):**
 1. **Email Address:** 
@@ -8098,7 +8100,9 @@ PROFILE/SUMMARY:
 
 Be thorough and accurate. If any field is not found on this page, write "Not found on this page".`;
         } else {
-          extractionPrompt = `Please extract and analyze ALL text and data from this PDF page with high accuracy. Focus on:
+          extractionPrompt = `You are looking at an IMAGE of a document page. This is NOT a PDF file - it's a PNG image that I'm showing you directly. Please analyze what you SEE in this image and extract ALL visible text and data with high accuracy.
+
+Focus on extracting:
 
 1. **Contact Information:**
    - Full names (first and last names)
@@ -8125,9 +8129,9 @@ Be thorough and accurate. If any field is not found on this page, write "Not fou
    - Account numbers, invoice numbers
    - Percentages and calculations
 
-Provide the extracted information in a structured format with clear labels. Be especially careful with email addresses - verify each character and ensure proper formatting (name@domain.com). If uncertain about any character in an email, mention the uncertainty.
+IMPORTANT: You ARE able to see and read this image. Please describe everything you can see and extract all text visible in the image. Provide the extracted information in a structured format with clear labels.
 
-Also describe what type of document this appears to be (form, invoice, letter, etc.).`;
+Also describe what type of document this appears to be (form, invoice, letter, resume, etc.).`;
         }
         
         const aiResponse = await openai.chat.completions.create({
@@ -9363,8 +9367,9 @@ async function processOrderMessage(msg) {
 
 async function prepareMessageData(msg, idSubstring, phoneIndex) {
   const basicInfo = await extractBasicMessageInfo(msg);
-  const contact = await msg.getContact();
-  const chat = await msg.getChat();
+  
+  // Note: msg.getContact() and msg.getChat() are WWebJS-specific methods
+  // For Meta Direct messages, these don't exist - skipping as they're not used anyway
 
   const messageData = {
     chat_id: basicInfo.chatId,
