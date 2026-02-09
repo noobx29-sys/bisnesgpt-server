@@ -10184,11 +10184,10 @@ async function syncContacts(client, companyId, phoneIndex = 0) {
     const chats = await client.getChats();
     const totalChats = chats.length;
     console.log(
-      `Found ${totalChats} chats for company ${companyId}, phone ${phoneIndex}. Processing all chats.`
+      `Found ${totalChats} chats for company ${companyId}, phone ${phoneIndex}. Processing ALL chats (no skipping).`
     );
 
     let processedCount = 0;
-    let skippedCount = 0;
     let errorCount = 0;
 
     for (let i = 0; i < chats.length; i++) {
@@ -10196,50 +10195,55 @@ async function syncContacts(client, companyId, phoneIndex = 0) {
       
       // Log progress at the start of each chat processing
       if (i % 25 === 0 || i === totalChats - 1) {
-        console.log(`📊 [SYNC] Progress: ${i + 1}/${totalChats} chats for company ${companyId} (Processed: ${processedCount}, Skipped: ${skippedCount}, Errors: ${errorCount})`);
+        console.log(`📊 [SYNC] Progress: ${i + 1}/${totalChats} chats for company ${companyId} (Processed: ${processedCount}, Errors: ${errorCount})`);
       }
       
       try {
-        // Skip chats with @lid identifiers (WhatsApp Linked Identity - cannot be synced)
-        if (chat.id?._serialized && chat.id._serialized.includes("@lid")) {
-          skippedCount++;
-          continue;
-        }
-
-        let contact;
-        try {
-          // Add timeout to getContact
-          contact = await Promise.race([
-            chat.getContact(),
-            new Promise((_, reject) => setTimeout(() => reject(new Error('getContact timeout')), 10000))
-          ]);
-        } catch (contactError) {
-          skippedCount++;
-          continue;
+        // Extract phone/identifier from chat ID
+        let chatIdRaw = chat.id?._serialized || chat.id?.user || '';
+        let contactPhone = chatIdRaw.split('@')[0]; // Extract number before @
+        
+        // For group chats, use the group ID as identifier
+        const isGroup = chat.isGroup || chatIdRaw.includes('@g.us');
+        if (isGroup) {
+          contactPhone = chatIdRaw.replace('@g.us', '').replace('@c.us', '');
         }
         
-        // Check if contact uses @lid identifier
-        if (!contact || !contact.id || (contact.id._serialized && contact.id._serialized.includes("@lid"))) {
-          skippedCount++;
-          continue;
+        // Handle @lid chats - extract what we can
+        if (chatIdRaw.includes('@lid')) {
+          contactPhone = chatIdRaw.replace('@lid', '').split(':')[0] || chatIdRaw;
         }
         
-        const contactPhone = contact.id.user;
-        
-        // Skip if contactPhone is not a valid phone number
-        if (!contactPhone || contactPhone.includes("@") || contactPhone.length < 5) {
-          skippedCount++;
-          continue;
+        // Ensure we have some identifier
+        if (!contactPhone || contactPhone.length < 2) {
+          contactPhone = chatIdRaw || `unknown_${i}`;
         }
         
         const contactID = `${companyId}-${contactPhone}`;
+        
+        // Try to get contact info, but don't fail if we can't
+        let contact = null;
+        let contactName = chat.name || contactPhone;
+        try {
+          contact = await Promise.race([
+            chat.getContact(),
+            new Promise((resolve) => setTimeout(() => resolve(null), 10000))
+          ]);
+          if (contact) {
+            contactName = contact.name || contact.pushname || contact.shortName || chat.name || contactPhone;
+          }
+        } catch (contactError) {
+          // Continue with chat info only
+        }
 
         let profilePicUrl = null;
         try {
-          profilePicUrl = await Promise.race([
-            getProfilePicUrl(contact),
-            new Promise((resolve) => setTimeout(() => resolve(null), 5000))
-          ]);
+          if (contact) {
+            profilePicUrl = await Promise.race([
+              getProfilePicUrl(contact),
+              new Promise((resolve) => setTimeout(() => resolve(null), 5000))
+            ]);
+          }
         } catch (picError) {
           // Ignore
         }
@@ -10249,11 +10253,12 @@ async function syncContacts(client, companyId, phoneIndex = 0) {
           const contactQuery = `
             INSERT INTO public.contacts (
               contact_id, company_id, name, phone, tags, unread_count, created_at, last_updated, 
-              chat_data, company, chat_id, last_message, profile_pic_url
-            ) VALUES ($1, $2, $3, $4, '[]'::jsonb, $5, NOW(), NOW(), $6, $7, $8, '{}'::jsonb, $9)
+              chat_data, company, chat_id, last_message, profile_pic_url, is_group
+            ) VALUES ($1, $2, $3, $4, '[]'::jsonb, $5, NOW(), NOW(), $6, $7, $8, '{}'::jsonb, $9, $10)
             ON CONFLICT (contact_id, company_id) DO UPDATE SET
               last_updated = NOW(),
-              profile_pic_url = EXCLUDED.profile_pic_url,
+              name = COALESCE(EXCLUDED.name, public.contacts.name),
+              profile_pic_url = COALESCE(EXCLUDED.profile_pic_url, public.contacts.profile_pic_url),
               unread_count = EXCLUDED.unread_count,
               last_message = EXCLUDED.last_message,
               chat_data = EXCLUDED.chat_data;
@@ -10261,13 +10266,14 @@ async function syncContacts(client, companyId, phoneIndex = 0) {
           await sqlDb.query(contactQuery, [
             contactID,
             companyId,
-            contact.name || contact.pushname || contact.shortName || contactPhone,
+            contactName,
             contactPhone,
             chat.unreadCount || 0,
-            JSON.stringify({}), // Don't store full chat data to avoid large payloads
-            contact.name || null,
-            chat.id._serialized,
+            JSON.stringify({}),
+            contactName,
+            chatIdRaw,
             profilePicUrl,
+            isGroup,
           ]);
         } catch (dbError) {
           console.log(`⚠️ [SYNC] DB error for ${contactID}: ${dbError.message}`);
@@ -10279,7 +10285,7 @@ async function syncContacts(client, companyId, phoneIndex = 0) {
         let messages = [];
         try {
           messages = await Promise.race([
-            chat.fetchMessages({ limit: 100 }), // Reduced limit for faster sync
+            chat.fetchMessages({ limit: 100 }),
             new Promise((_, reject) => setTimeout(() => reject(new Error('fetchMessages timeout')), 30000))
           ]);
         } catch (fetchError) {
@@ -10373,7 +10379,7 @@ async function syncContacts(client, companyId, phoneIndex = 0) {
     }
 
     console.log(
-      `✅ [SYNC] Finished syncing contacts for company ${companyId}, phone ${phoneIndex}. Processed: ${processedCount}, Skipped: ${skippedCount}, Errors: ${errorCount}`
+      `✅ [SYNC] Finished syncing contacts for company ${companyId}, phone ${phoneIndex}. Total: ${totalChats}, Processed: ${processedCount}, Errors: ${errorCount}`
     );
   } catch (error) {
     console.error(
