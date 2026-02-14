@@ -145,11 +145,15 @@ module.exports = {
               [companyId]
             );
             
+            console.log(`[AUTO-REPLY] Phone config query result:`, phoneConfigResult.rows);
+            
             if (phoneConfigResult.rows.length > 0) {
               const connectionType = phoneConfigResult.rows[0].connection_type;
               phoneIndexToUse = phoneConfigResult.rows[0].phone_index || 0;
               isMetaDirect = ['meta_direct', 'meta_embedded', '360dialog'].includes(connectionType);
-              console.log(`[AUTO-REPLY] Company ${companyId} connection type: ${connectionType}, phoneIndex: ${phoneIndexToUse}`);
+              console.log(`[AUTO-REPLY] Company ${companyId} connection type: ${connectionType}, phoneIndex: ${phoneIndexToUse}, isMetaDirect: ${isMetaDirect}`);
+            } else {
+              console.log(`[AUTO-REPLY] No phone_configs found for company ${companyId}, assuming wwebjs`);
             }
           } catch (error) {
             console.error(`[AUTO-REPLY] Error checking connection type:`, error);
@@ -160,25 +164,22 @@ module.exports = {
           let whatsappClient = null;
           
           if (!isMetaDirect) {
+            console.log(`[AUTO-REPLY] Checking botMap for wwebjs client...`);
             // Get the bot client for wwebjs
             const botData = botMap.get(companyId);
             if (!botData || !botData[0] || !botData[0].client) {
-              console.log(`[AUTO-REPLY] No active bot client found for ${companyId}`);
-              return {
-                success: false,
-                message: `Bot not ready for ${companyId}. Cannot send reply.`,
-                phoneNumber,
-                wouldReply: true,
-                reason: 'bot_not_ready',
-                details: {
-                  messagesFound: messages.length,
-                  unrepliedCount: customerMessages.length,
-                  lastCustomerMessage: latestMessage.content?.substring(0, 100),
-                  lastCustomerMessageTime: latestMessage.timestamp
-                }
-              };
+              console.log(`[AUTO-REPLY] No wwebjs client found in botMap for ${companyId}`);
+              // Don't immediately fail - the bot might be Meta Direct but not detected
+              // Let handleNewMessagesTemplateWweb decide if it can send via Meta API
+              console.log(`[AUTO-REPLY] Will attempt to send via Meta Direct API as fallback`);
+              isMetaDirect = true; // Treat as Meta Direct to proceed
+              whatsappClient = null;
+            } else {
+              whatsappClient = botData[0].client;
+              console.log(`[AUTO-REPLY] Found wwebjs client for ${companyId}`);
             }
-            whatsappClient = botData[0].client;
+          } else {
+            console.log(`[AUTO-REPLY] Meta Direct bot detected for ${companyId}, skipping botMap check`);
           }
 
           const phoneIndex = phoneIndexToUse;
