@@ -3270,7 +3270,7 @@ app.get("/api/auto-reply/status/:companyId", async (req, res) => {
   try {
     const { companyId } = req.params;
 
-    const stats = autoReplyChecker.getStats(companyId);
+    const stats = await autoReplyChecker.getStats(companyId);
     res.json({
       success: true,
       data: stats,

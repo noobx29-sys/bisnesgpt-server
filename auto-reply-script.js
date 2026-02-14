@@ -1,35 +1,161 @@
 const { pool } = require('./db');
 
 module.exports = {
-  getStats: (companyId) => {
+  getStats: async (companyId) => {
     console.log(`[AUTO-REPLY] getStats called for company ${companyId}`);
-    return {
-      totalChecked: 0,
-      totalReplied: 0,
-      lastCheck: null,
-      message: 'Stats not yet implemented'
-    };
+    try {
+      const client = await pool.connect();
+      try {
+        // Get total unreplied count
+        const unrepliedResult = await client.query(`
+          WITH last_messages AS (
+            SELECT contact_id, from_me, timestamp,
+              ROW_NUMBER() OVER (PARTITION BY contact_id ORDER BY timestamp DESC) as rn
+            FROM messages WHERE company_id = $1 AND timestamp >= NOW() - INTERVAL '24 hours'
+          )
+          SELECT COUNT(*) as count FROM last_messages WHERE rn = 1 AND from_me = false
+        `, [companyId]);
+
+        // Get auto-reply log count
+        const repliedResult = await client.query(`
+          SELECT COUNT(*) as count FROM auto_reply_log
+          WHERE company_id = $1 AND created_at >= NOW() - INTERVAL '24 hours'
+        `, [companyId]);
+
+        // Get last check time
+        const lastCheckResult = await client.query(`
+          SELECT MAX(created_at) as last_check FROM auto_reply_log WHERE company_id = $1
+        `, [companyId]);
+
+        return {
+          totalChecked: parseInt(unrepliedResult.rows[0].count) || 0,
+          totalReplied: parseInt(repliedResult.rows[0].count) || 0,
+          lastCheck: lastCheckResult.rows[0]?.last_check || null,
+          message: 'Stats retrieved successfully'
+        };
+      } finally {
+        client.release();
+      }
+    } catch (error) {
+      console.error('[AUTO-REPLY] Error getting stats:', error);
+      return { totalChecked: 0, totalReplied: 0, lastCheck: null, message: 'Error fetching stats' };
+    }
   },
 
   checkUnrepliedMessages: async (companyId, hoursThreshold) => {
     console.log(`[AUTO-REPLY] checkUnrepliedMessages called for company ${companyId} with ${hoursThreshold} hours threshold`);
-    return {
-      success: false,
-      message: 'Auto-reply functionality not yet implemented',
-      checked: 0,
-      replied: 0,
-      errors: []
-    };
+    try {
+      const client = await pool.connect();
+      try {
+        const result = await client.query(`
+          WITH last_messages AS (
+            SELECT contact_id, from_me, timestamp,
+              ROW_NUMBER() OVER (PARTITION BY contact_id ORDER BY timestamp DESC) as rn
+            FROM messages WHERE company_id = $1
+              AND timestamp >= NOW() - INTERVAL '${parseInt(hoursThreshold)} hours'
+          )
+          SELECT COUNT(*) as count FROM last_messages WHERE rn = 1 AND from_me = false
+        `, [companyId]);
+
+        const count = parseInt(result.rows[0].count) || 0;
+        return {
+          success: true,
+          message: `Found ${count} unreplied contacts within ${hoursThreshold} hours`,
+          checked: count,
+          replied: 0,
+          errors: []
+        };
+      } finally {
+        client.release();
+      }
+    } catch (error) {
+      console.error('[AUTO-REPLY] Error checking unreplied:', error);
+      return { success: false, message: error.message, checked: 0, replied: 0, errors: [error.message] };
+    }
   },
 
   testAutoReply: async (companyId, phoneNumber, hoursThreshold) => {
     console.log(`[AUTO-REPLY] testAutoReply called for company ${companyId}, phone ${phoneNumber} with ${hoursThreshold} hours threshold`);
-    return {
-      success: false,
-      message: 'Auto-reply test functionality not yet implemented',
-      phoneNumber,
-      wouldReply: false
-    };
+    try {
+      const client = await pool.connect();
+      try {
+        // Normalize phone number - strip + for contact_id lookup
+        const normalizedPhone = phoneNumber.replace(/^\+/, '');
+        const contactId = companyId + '-' + normalizedPhone;
+
+        // Find this contact's last messages
+        const result = await client.query(`
+          SELECT message_id, content, from_me, timestamp, contact_id
+          FROM messages
+          WHERE company_id = $1 AND contact_id = $2
+            AND timestamp >= NOW() - INTERVAL '${parseInt(hoursThreshold)} hours'
+          ORDER BY timestamp DESC
+          LIMIT 10
+        `, [companyId, contactId]);
+
+        if (result.rows.length === 0) {
+          return {
+            success: true,
+            message: `No messages found for ${phoneNumber} in the last ${hoursThreshold} hours`,
+            phoneNumber,
+            wouldReply: false,
+            reason: 'no_messages',
+            details: { messagesFound: 0 }
+          };
+        }
+
+        const messages = result.rows;
+        const latestMessage = messages[0];
+
+        // Check if latest message is from customer (not from_me)
+        if (latestMessage.from_me) {
+          return {
+            success: true,
+            message: `Already replied to ${phoneNumber}. Last message was from bot.`,
+            phoneNumber,
+            wouldReply: false,
+            reason: 'already_replied',
+            details: {
+              messagesFound: messages.length,
+              lastMessageFrom: 'bot',
+              lastMessageTime: latestMessage.timestamp,
+              lastMessageContent: latestMessage.content?.substring(0, 100)
+            }
+          };
+        }
+
+        // Find when the last bot reply was
+        const lastBotReply = messages.find(m => m.from_me);
+        const customerMessages = messages.filter(m => !m.from_me);
+
+        return {
+          success: true,
+          message: `${phoneNumber} has ${customerMessages.length} unreplied message(s). Would trigger auto-reply.`,
+          phoneNumber,
+          wouldReply: true,
+          reason: 'unreplied',
+          details: {
+            messagesFound: messages.length,
+            unrepliedCount: customerMessages.length,
+            lastCustomerMessage: latestMessage.content?.substring(0, 100),
+            lastCustomerMessageTime: latestMessage.timestamp,
+            lastBotReplyTime: lastBotReply?.timestamp || null,
+            lastBotReplyContent: lastBotReply?.content?.substring(0, 100) || null
+          }
+        };
+      } finally {
+        client.release();
+      }
+    } catch (error) {
+      console.error('[AUTO-REPLY] Error testing auto-reply:', error);
+      return {
+        success: false,
+        message: `Error testing auto-reply: ${error.message}`,
+        phoneNumber,
+        wouldReply: false,
+        error: error.message
+      };
+    }
   },
 
   getUnrepliedMessages: async (companyId, hoursThreshold) => {
