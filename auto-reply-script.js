@@ -132,27 +132,56 @@ module.exports = {
         if (botMap && handleNewMessagesTemplateWweb) {
           console.log(`[AUTO-REPLY] Attempting to send actual reply to ${phoneNumber}`);
           
-          // Get the bot client
-          const botData = botMap.get(companyId);
-          if (!botData || !botData[0] || !botData[0].client) {
-            console.log(`[AUTO-REPLY] No active bot client found for ${companyId}`);
-            return {
-              success: false,
-              message: `Bot not ready for ${companyId}. Cannot send reply.`,
-              phoneNumber,
-              wouldReply: true,
-              reason: 'bot_not_ready',
-              details: {
-                messagesFound: messages.length,
-                unrepliedCount: customerMessages.length,
-                lastCustomerMessage: latestMessage.content?.substring(0, 100),
-                lastCustomerMessageTime: latestMessage.timestamp
-              }
-            };
+          // Check if this is a Meta Direct company first
+          const { Pool } = require('pg');
+          const sqlPool = new Pool({ connectionString: process.env.NEON_DB_URL, ssl: { rejectUnauthorized: false } });
+          
+          let isMetaDirect = false;
+          let phoneIndexToUse = 0;
+          
+          try {
+            const phoneConfigResult = await sqlPool.query(
+              'SELECT connection_type, phone_index FROM phone_configs WHERE company_id = $1 LIMIT 1',
+              [companyId]
+            );
+            
+            if (phoneConfigResult.rows.length > 0) {
+              const connectionType = phoneConfigResult.rows[0].connection_type;
+              phoneIndexToUse = phoneConfigResult.rows[0].phone_index || 0;
+              isMetaDirect = ['meta_direct', 'meta_embedded', '360dialog'].includes(connectionType);
+              console.log(`[AUTO-REPLY] Company ${companyId} connection type: ${connectionType}, phoneIndex: ${phoneIndexToUse}`);
+            }
+          } catch (error) {
+            console.error(`[AUTO-REPLY] Error checking connection type:`, error);
+          }
+          
+          // For Meta Direct companies, we can proceed without a wwebjs client
+          // For regular wwebjs, we need to check the botMap
+          let whatsappClient = null;
+          
+          if (!isMetaDirect) {
+            // Get the bot client for wwebjs
+            const botData = botMap.get(companyId);
+            if (!botData || !botData[0] || !botData[0].client) {
+              console.log(`[AUTO-REPLY] No active bot client found for ${companyId}`);
+              return {
+                success: false,
+                message: `Bot not ready for ${companyId}. Cannot send reply.`,
+                phoneNumber,
+                wouldReply: true,
+                reason: 'bot_not_ready',
+                details: {
+                  messagesFound: messages.length,
+                  unrepliedCount: customerMessages.length,
+                  lastCustomerMessage: latestMessage.content?.substring(0, 100),
+                  lastCustomerMessageTime: latestMessage.timestamp
+                }
+              };
+            }
+            whatsappClient = botData[0].client;
           }
 
-          const whatsappClient = botData[0].client;
-          const phoneIndex = 0; // Default to first phone
+          const phoneIndex = phoneIndexToUse;
 
           // Create a mock message object that mimics what WhatsApp sends
           const mockMessage = {
