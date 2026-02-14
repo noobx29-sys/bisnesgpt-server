@@ -198,7 +198,107 @@ module.exports = {
 
           console.log(`[AUTO-REPLY] Sending message through handleNewMessagesTemplateWweb`, mockMessage);
 
-          // Process the message through the AI assistant
+          // For Meta Direct bots, send directly via Meta API instead of handleNewMessagesTemplateWweb
+          // because handleNewMessagesTemplateWweb requires a valid wwebjs client for initial processing
+          if (isMetaDirect) {
+            console.log(`[AUTO-REPLY] Using Meta Direct API to send auto-reply`);
+            try {
+              const metaDirectModule = require('./src/services/whatsapp/metaDirect');
+              const OpenAI = require('openai');
+              
+              // Get assistant ID for this company
+              const assistantResult = await client.query(
+                'SELECT assistant_id FROM companies WHERE company_id = $1',
+                [companyId]
+              );
+              
+              if (!assistantResult.rows.length || !assistantResult.rows[0].assistant_id) {
+                console.log(`[AUTO-REPLY] No assistant configured for ${companyId}`);
+                return {
+                  success: false,
+                  message: `No AI assistant configured for company ${companyId}`,
+                  phoneNumber,
+                  wouldReply: false,
+                  reason: 'no_assistant'
+                };
+              }
+              
+              const assistantId = assistantResult.rows[0].assistant_id;
+              const openai = new OpenAI({ apiKey: process.env.OPENAIKEY });
+              
+              // Create a simple auto-reply message using OpenAI
+              const thread = await openai.beta.threads.create();
+              await openai.beta.threads.messages.create(thread.id, {
+                role: 'user',
+                content: latestMessage.content || 'hi'
+              });
+              
+              const run = await openai.beta.threads.runs.create(thread.id, {
+                assistant_id: assistantId
+              });
+              
+              // Wait for completion
+              let runStatus = await openai.beta.threads.runs.retrieve(thread.id, run.id);
+              let attempts = 0;
+              while (runStatus.status !== 'completed' && attempts < 30) {
+                if (runStatus.status === 'failed' || runStatus.status === 'cancelled' || runStatus.status === 'expired') {
+                  throw new Error(`OpenAI run ${runStatus.status}`);
+                }
+                await new Promise(resolve => setTimeout(resolve, 1000));
+                runStatus = await openai.beta.threads.runs.retrieve(thread.id, run.id);
+                attempts++;
+              }
+              
+              if (runStatus.status !== 'completed') {
+                throw new Error('OpenAI timeout');
+              }
+              
+              // Get the response
+              const messagesResponse = await openai.beta.threads.messages.list(thread.id);
+              const aiMessages = messagesResponse.data.filter(m => m.role === 'assistant');
+              
+              if (aiMessages.length === 0) {
+                throw new Error('No AI response');
+              }
+              
+              const aiResponse = aiMessages[0].content[0].text.value;
+              
+              // Send via Meta Direct API
+              const normalizedPhone = phoneNumber.replace(/^\+/, '').replace(/[^0-9]/g, '');
+              await metaDirectModule.sendText(companyId, phoneIndexToUse, normalizedPhone, aiResponse, true);
+              
+              console.log(`[AUTO-REPLY] Successfully sent Meta Direct auto-reply to ${phoneNumber}`);
+              
+              return {
+                success: true,
+                message: `✅ Auto-reply sent to ${phoneNumber} via Meta Direct`,
+                phoneNumber,
+                wouldReply: true,
+                reason: 'reply_sent',
+                details: {
+                  messagesFound: messages.length,
+                  unrepliedCount: customerMessages.length,
+                  lastCustomerMessage: latestMessage.content?.substring(0, 100),
+                  lastCustomerMessageTime: latestMessage.timestamp,
+                  lastBotReplyTime: lastBotReply?.timestamp || null,
+                  lastBotReplyContent: lastBotReply?.content?.substring(0, 100) || null,
+                  aiResponse: aiResponse.substring(0, 100)
+                }
+              };
+            } catch (metaError) {
+              console.error(`[AUTO-REPLY] Meta Direct send failed:`, metaError);
+              return {
+                success: false,
+                message: `Failed to send via Meta Direct: ${metaError.message}`,
+                phoneNumber,
+                wouldReply: true,
+                reason: 'meta_send_failed',
+                error: metaError.message
+              };
+            }
+          }
+
+          // For wwebjs bots, process the message through the AI assistant
           await handleNewMessagesTemplateWweb(whatsappClient, mockMessage, companyId, phoneIndex);
 
           return {
