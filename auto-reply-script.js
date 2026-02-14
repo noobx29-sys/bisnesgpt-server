@@ -290,9 +290,72 @@ module.exports = {
               
               // Send via Meta Direct API
               const normalizedPhone = phoneNumber.replace(/^\+/, '').replace(/[^0-9]/g, '');
-              await metaDirectModule.sendText(companyId, phoneIndexToUse, normalizedPhone, aiResponse, true);
+              const sendResult = await metaDirectModule.sendText(companyId, phoneIndexToUse, normalizedPhone, aiResponse, true);
               
               console.log(`[AUTO-REPLY] Successfully sent Meta Direct auto-reply to ${phoneNumber}`);
+              
+              // Save the bot's reply to messages table (same structure as handleMessagesTemplateWweb)
+              const messageId = sendResult.id || `auto_reply_${Date.now()}`;
+              const chatId = `${normalizedPhone}@c.us`;
+              const timestamp = new Date();
+              
+              // Insert the outbound message with full structure like handleMessagesTemplateWweb
+              await client.query(`
+                INSERT INTO public.messages (
+                  message_id, company_id, contact_id, thread_id, customer_phone,
+                  content, message_type, media_url, timestamp, direction,
+                  status, from_me, chat_id, author, quoted_message, media_data, media_metadata, phone_index
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+                ON CONFLICT (message_id, company_id) DO NOTHING
+              `, [
+                messageId,
+                companyId,
+                contactId,
+                chatId,
+                phoneNumber,
+                aiResponse,
+                'chat',
+                null,
+                timestamp,
+                'outbound',
+                'delivered',
+                true,
+                chatId,
+                contactId,
+                null,
+                null,
+                null,
+                phoneIndexToUse
+              ]);
+              
+              // Update contact's last_message
+              await client.query(`
+                UPDATE public.contacts 
+                SET last_message = $1, last_updated = CURRENT_TIMESTAMP
+                WHERE contact_id = $2 AND company_id = $3
+              `, [
+                JSON.stringify({
+                  chat_id: chatId,
+                  from: chatId,
+                  from_me: true,
+                  id: messageId,
+                  status: 'delivered',
+                  text: { body: aiResponse },
+                  timestamp: Math.floor(timestamp.getTime() / 1000),
+                  type: 'chat',
+                  phoneIndex: phoneIndexToUse
+                }),
+                contactId,
+                companyId
+              ]);
+              
+              // Log to auto_reply_log table
+              await client.query(`
+                INSERT INTO auto_reply_log (company_id, contact_id, phone_number, message_content, status, created_at)
+                VALUES ($1, $2, $3, $4, 'sent', NOW())
+              `, [companyId, contactId, phoneNumber, aiResponse]);
+              
+              console.log(`[AUTO-REPLY] Saved bot reply to messages, contacts, and auto_reply_log tables for ${phoneNumber}`);
               
               return {
                 success: true,
