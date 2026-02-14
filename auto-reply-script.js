@@ -208,12 +208,37 @@ module.exports = {
               
               // Get assistant ID for this company
               const assistantResult = await client.query(
-                'SELECT assistant_id FROM companies WHERE company_id = $1',
+                'SELECT assistant_ids FROM companies WHERE company_id = $1',
                 [companyId]
               );
               
-              if (!assistantResult.rows.length || !assistantResult.rows[0].assistant_id) {
-                console.log(`[AUTO-REPLY] No assistant configured for ${companyId}`);
+              if (!assistantResult.rows.length) {
+                console.log(`[AUTO-REPLY] Company ${companyId} not found`);
+                return {
+                  success: false,
+                  message: `Company ${companyId} not found`,
+                  phoneNumber,
+                  wouldReply: false,
+                  reason: 'company_not_found'
+                };
+              }
+              
+              // Parse assistant_ids (can be array or JSON string)
+              const assistantIds = assistantResult.rows[0].assistant_ids;
+              let assistantId;
+              if (Array.isArray(assistantIds)) {
+                assistantId = assistantIds[phoneIndexToUse] || assistantIds[0];
+              } else if (typeof assistantIds === 'string') {
+                try {
+                  const parsed = JSON.parse(assistantIds);
+                  assistantId = Array.isArray(parsed) ? (parsed[phoneIndexToUse] || parsed[0]) : parsed;
+                } catch {
+                  assistantId = assistantIds;
+                }
+              }
+              
+              if (!assistantId) {
+                console.log(`[AUTO-REPLY] No assistant ID found for ${companyId}`);
                 return {
                   success: false,
                   message: `No AI assistant configured for company ${companyId}`,
@@ -223,7 +248,7 @@ module.exports = {
                 };
               }
               
-              const assistantId = assistantResult.rows[0].assistant_id;
+              console.log(`[AUTO-REPLY] Using assistant ID ${assistantId} for ${companyId}`);
               const openai = new OpenAI({ apiKey: process.env.OPENAIKEY });
               
               // Create a simple auto-reply message using OpenAI
