@@ -74,7 +74,7 @@ module.exports = {
     }
   },
 
-  testAutoReply: async (companyId, phoneNumber, hoursThreshold) => {
+  testAutoReply: async (companyId, phoneNumber, hoursThreshold, botMap, handleNewMessagesTemplateWweb) => {
     console.log(`[AUTO-REPLY] testAutoReply called for company ${companyId}, phone ${phoneNumber} with ${hoursThreshold} hours threshold`);
     try {
       const client = await pool.connect();
@@ -128,6 +128,67 @@ module.exports = {
         const lastBotReply = messages.find(m => m.from_me);
         const customerMessages = messages.filter(m => !m.from_me);
 
+        // Actually send the auto-reply using the same logic as setupMessageHandler
+        if (botMap && handleNewMessagesTemplateWweb) {
+          console.log(`[AUTO-REPLY] Attempting to send actual reply to ${phoneNumber}`);
+          
+          // Get the bot client
+          const botData = botMap.get(companyId);
+          if (!botData || !botData[0] || !botData[0].client) {
+            console.log(`[AUTO-REPLY] No active bot client found for ${companyId}`);
+            return {
+              success: false,
+              message: `Bot not ready for ${companyId}. Cannot send reply.`,
+              phoneNumber,
+              wouldReply: true,
+              reason: 'bot_not_ready',
+              details: {
+                messagesFound: messages.length,
+                unrepliedCount: customerMessages.length,
+                lastCustomerMessage: latestMessage.content?.substring(0, 100),
+                lastCustomerMessageTime: latestMessage.timestamp
+              }
+            };
+          }
+
+          const whatsappClient = botData[0].client;
+          const phoneIndex = 0; // Default to first phone
+
+          // Create a mock message object that mimics what WhatsApp sends
+          const mockMessage = {
+            from: phoneNumber.includes('@') ? phoneNumber : `${normalizedPhone}@c.us`,
+            body: latestMessage.content || '',
+            fromMe: false,
+            timestamp: Math.floor(new Date(latestMessage.timestamp).getTime() / 1000),
+            type: 'chat',
+            id: {
+              _serialized: latestMessage.message_id || `mock_${Date.now()}`
+            }
+          };
+
+          console.log(`[AUTO-REPLY] Sending message through handleNewMessagesTemplateWweb`, mockMessage);
+
+          // Process the message through the AI assistant
+          await handleNewMessagesTemplateWweb(whatsappClient, mockMessage, companyId, phoneIndex);
+
+          return {
+            success: true,
+            message: `✅ Auto-reply sent to ${phoneNumber}`,
+            phoneNumber,
+            wouldReply: true,
+            reason: 'reply_sent',
+            details: {
+              messagesFound: messages.length,
+              unrepliedCount: customerMessages.length,
+              lastCustomerMessage: latestMessage.content?.substring(0, 100),
+              lastCustomerMessageTime: latestMessage.timestamp,
+              lastBotReplyTime: lastBotReply?.timestamp || null,
+              lastBotReplyContent: lastBotReply?.content?.substring(0, 100) || null
+            }
+          };
+        }
+
+        // Fallback if botMap or handler not provided (just check mode)
         return {
           success: true,
           message: `${phoneNumber} has ${customerMessages.length} unreplied message(s). Would trigger auto-reply.`,

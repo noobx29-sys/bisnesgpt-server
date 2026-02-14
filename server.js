@@ -3330,11 +3330,13 @@ app.post("/api/auto-reply/test/:companyId", async (req, res) => {
       `Auto-reply test requested for company ${companyId}, phone: ${phoneNumber}`
     );
 
-    // Run the test
+    // Run the test with botMap and message handler to actually send replies
     const result = await autoReplyChecker.testAutoReply(
       companyId,
       phoneNumber,
-      hoursThreshold
+      hoursThreshold,
+      botMap,
+      handleNewMessagesTemplateWweb
     );
 
     res.json(result);
