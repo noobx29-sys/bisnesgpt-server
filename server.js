@@ -27745,6 +27745,128 @@ app.delete(
   }
 );
 
+// Send template message route (for Meta Direct / Official API)
+app.post("/api/v2/messages/template/:companyId/:chatId", async (req, res) => {
+  console.log("\n=== New Template Message Request ===");
+  const { companyId, chatId } = req.params;
+  const {
+    templateName,
+    language,
+    variables = [],
+    phoneIndex: requestedPhoneIndex,
+  } = req.body;
+
+  const phoneIndex =
+    requestedPhoneIndex !== undefined ? parseInt(requestedPhoneIndex) : 0;
+  const contactID = companyId + "-" + chatId.split("@")[0];
+  const phoneNumber = "+" + chatId.split("@")[0];
+
+  console.log("Template request details:", {
+    companyId,
+    chatId,
+    templateName,
+    language,
+    variableCount: variables.length,
+    phoneIndex,
+  });
+
+  if (!templateName) {
+    return res.status(400).json({ success: false, error: "templateName is required" });
+  }
+
+  try {
+    // Check if this company uses Meta Direct
+    const metaConfigResult = await sqlDb.query(
+      'SELECT * FROM phone_configs WHERE company_id = $1 AND phone_index = $2 AND connection_type = $3',
+      [companyId, phoneIndex, 'meta_direct']
+    );
+
+    const hasMetaDirect = metaConfigResult.rows?.length > 0;
+
+    if (!hasMetaDirect) {
+      return res.status(400).json({
+        success: false,
+        error: "Template messages require Meta Direct API connection. This phone is not configured with Meta Direct.",
+      });
+    }
+
+    // Build components for template
+    const components = [];
+    if (variables && variables.length > 0) {
+      components.push({
+        type: 'body',
+        parameters: variables.map(v => ({
+          type: 'text',
+          text: String(v),
+        })),
+      });
+    }
+
+    // Use Meta Direct API to send template
+    console.log("📋 [META DIRECT] Sending template via Meta API");
+    const metaDirect = require('./src/services/whatsapp/metaDirect');
+    const { broadcastNewMessageToCompany } = require("./utils/broadcast");
+
+    try {
+      const result = await metaDirect.sendTemplate(
+        companyId,
+        phoneIndex,
+        chatId,
+        templateName,
+        language || 'en',
+        components
+      );
+      console.log("📋 [META DIRECT] Template sent successfully:", result);
+
+      // Save to database
+      const messageId = result.id;
+      const templateContent = `[Template: ${templateName}]${variables.length > 0 ? ' Variables: ' + variables.join(', ') : ''}`;
+      await sqlDb.query(`
+        INSERT INTO messages (company_id, contact_id, message_id, content, message_type, from_me, timestamp, phone_index)
+        VALUES ($1, $2, $3, $4, $5, $6, NOW(), $7)
+        ON CONFLICT (message_id, company_id) DO NOTHING
+      `, [companyId, contactID, messageId, templateContent, 'template', true, phoneIndex]);
+
+      // Broadcast to frontend
+      broadcastNewMessageToCompany(companyId, {
+        chatId,
+        message: templateContent,
+        messageContent: templateContent,
+        fromMe: true,
+        timestamp: Date.now(),
+        messageType: 'template',
+        extractedNumber: phoneNumber,
+        phone: phoneNumber,
+        contactId: contactID,
+        messageId: messageId,
+        provider: 'meta_direct',
+        templateName,
+        templateLanguage: language,
+      });
+
+      return res.status(200).json({
+        success: true,
+        messageId,
+        provider: 'meta_direct',
+      });
+    } catch (metaError) {
+      console.error("📋 [META DIRECT] Error sending template:", metaError.response?.data || metaError.message);
+      return res.status(500).json({
+        success: false,
+        error: "Failed to send template via Meta API",
+        details: metaError.response?.data?.error?.message || metaError.message,
+      });
+    }
+  } catch (error) {
+    console.error("Error sending template message:", error);
+    res.status(500).json({
+      success: false,
+      error: "Failed to send template message",
+      details: error.message,
+    });
+  }
+});
+
 app.post("/api/v2/messages/image/:companyId/:chatId", async (req, res) => {
   const companyId = req.params.companyId;
   const chatId = req.params.chatId;
