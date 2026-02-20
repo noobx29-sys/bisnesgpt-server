@@ -1,5 +1,5 @@
-const { Pool } = require('pg');
-const { neon, neonConfig } = require('@neondatabase/serverless');
+const { Pool } = require('../../node_modules/@types/pg');
+const { neon, neonConfig } = require('../../node_modules/@neondatabase/serverless');
 const WebSocket = require('ws');
 
 neonConfig.webSocketConstructor = WebSocket;

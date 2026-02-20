@@ -55,6 +55,12 @@
   },
   "scripts": {
     "start": "node server.js",
+    "start:orchestrator": "node server-orchestrator.js",
+    "start:api": "PROCESS_NAME=api PORT=3000 node server-api.js",
+    "start:wwebjs": "PROCESS_NAME=wwebjs PORT=3001 node server-wwebjs.js",
+    "start:meta": "PROCESS_NAME=meta PORT=3002 node server-meta.js",
+    "start:multiprocess": "bash scripts/start-multiprocess.sh",
+    "migrate": "psql $DATABASE_URL -f migrations/process_isolation.sql",
     "build": "pkg .",
     "logs": "node logCLI.js",
     "logs:list": "node logCLI.js list",
@@ -65,7 +71,9 @@
     "logs:tail": "node logCLI.js tail",
     "logs:help": "node logCLI.js help",
     "pm2:capture": "powershell -ExecutionPolicy Bypass -File capture-pm2-logs.ps1",
-    "pm2:monitor": "powershell -ExecutionPolicy Bypass -File capture-pm2-logs.ps1 -Monitor"
+    "pm2:monitor": "powershell -ExecutionPolicy Bypass -File capture-pm2-logs.ps1 -Monitor",
+    "pm2:multiprocess": "pm2 start ecosystem.config.js --only bisnesgpt-api,bisnesgpt-wwebjs,bisnesgpt-meta",
+    "pm2:legacy": "pm2 start ecosystem.config.js --only whatsapp-service-legacy"
   },
   "bin": "server.js",
   "pkg": {

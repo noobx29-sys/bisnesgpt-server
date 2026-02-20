@@ -236,8 +236,7 @@ async function getDatabaseConnection(timeoutMs = 5000) {
   while (attempts < maxAttempts) {
     try {
       console.log(
-        `Attempting to get database connection (attempt ${
-          attempts + 1
+        `Attempting to get database connection (attempt ${attempts + 1
         }/${maxAttempts})`
       );
 
@@ -249,8 +248,7 @@ async function getDatabaseConnection(timeoutMs = 5000) {
       ]);
 
       console.log(
-        `Database connection acquired successfully in ${
-          Date.now() - startTime
+        `Database connection acquired successfully in ${Date.now() - startTime
         }ms`
       );
       return client;
@@ -1167,11 +1165,9 @@ app.get("/topup-success", (req, res) => {
 
   // Build redirect URL with payment information
 
-  const webUrl = `https://web.jutateknologi.com/chat?payment_intent=${
-    payment_intent || ""
-  }&reference_number=${reference_number || ""}&company_id=${
-    company_id || ""
-  }&status=success`;
+  const webUrl = `https://web.jutateknologi.com/chat?payment_intent=${payment_intent || ""
+    }&reference_number=${reference_number || ""}&company_id=${company_id || ""
+    }&status=success`;
 
   res.send(`    <!DOCTYPE html>
     <html>
@@ -1200,25 +1196,21 @@ app.get("/topup-success", (req, res) => {
         <h1>Payment Successful!</h1>
         <p>Your AI message quota has been successfully topped up.</p>
         
-        ${
-          transactionDetails
-            ? `
+        ${transactionDetails
+      ? `
         <div class="payment-info">
           <h3>Payment Details:</h3>
-          <p><strong>Transaction ID:</strong> ${
-            transactionDetails.txn_id || "N/A"
-          }</p>
+          <p><strong>Transaction ID:</strong> ${transactionDetails.txn_id || "N/A"
+      }</p>
           <p><strong>Amount:</strong> RM ${transactionDetails.amount}</p>
-          <p><strong>AI Responses:</strong> ${
-            transactionDetails.ai_responses
-          }</p>
-          <p><strong>Reference:</strong> ${
-            transactionDetails.reference_number || "N/A"
-          }</p>
+          <p><strong>AI Responses:</strong> ${transactionDetails.ai_responses
+      }</p>
+          <p><strong>Reference:</strong> ${transactionDetails.reference_number || "N/A"
+      }</p>
         </div>
         `
-            : ""
-        }
+      : ""
+    }
         
         <p>Redirecting you back to your application...</p>
         <div id="countdown">5</div>
@@ -1331,13 +1323,10 @@ app.post("/topup-success", (req, res) => {
   }
 
   // Build redirect URL with payment information
-  const webUrl = `https://web.jutateknologi.com/chat?payment_intent=${
-    payment_intent || ""
-  }&reference_number=${reference_number || ""}&company_id=${
-    companyId || ""
-  }&txn_id=${txn_id || ""}&amount=${
-    amount || ""
-  }&ai_responses=${aiResponses}&status=success`;
+  const webUrl = `https://web.jutateknologi.com/chat?payment_intent=${payment_intent || ""
+    }&reference_number=${reference_number || ""}&company_id=${companyId || ""
+    }&txn_id=${txn_id || ""}&amount=${amount || ""
+    }&ai_responses=${aiResponses}&status=success`;
 
   // Send the same success page with payment information
   res.send(`    <!DOCTYPE html>
@@ -1367,22 +1356,20 @@ app.post("/topup-success", (req, res) => {
         <h1>Payment Successful!</h1>
         <p>Your AI message quota has been successfully topped up.</p>
         
-        ${
-          payment_intent
-            ? `
+        ${payment_intent
+      ? `
         <div class="payment-info">
           <h3>Payment Details:</h3>
           <p><strong>Transaction ID:</strong> ${txn_id || "N/A"}</p>
-          <p><strong>Amount:</strong> RM ${
-            amount ? (parseFloat(amount) / 100).toFixed(2) : "N/A"
-          }</p>
+          <p><strong>Amount:</strong> RM ${amount ? (parseFloat(amount) / 100).toFixed(2) : "N/A"
+      }</p>
           <p><strong>AI Responses:</strong> ${aiResponses}</p>
           <p><strong>Reference:</strong> ${reference_number || "N/A"}</p>
           <p><strong>Payment Intent:</strong> ${payment_intent}</p>
         </div>
         `
-            : ""
-        }
+      : ""
+    }
         
         <p>Redirecting you back to your application...</p>
         <div id="countdown">5</div>
@@ -2234,11 +2221,11 @@ async function fetchParticipantData() {
 
         console.log(
           "[Certificates] 📊 Parsed arrays: participants=" +
-            participantsArray.length +
-            ", enrollees=" +
-            enrolleesArray.length +
-            ", events=" +
-            eventsArray.length
+          participantsArray.length +
+          ", enrollees=" +
+          enrolleesArray.length +
+          ", events=" +
+          eventsArray.length
         );
 
         // Process participants and join with enrollee and event data
@@ -2281,8 +2268,8 @@ async function fetchParticipantData() {
         allParticipants.push(...dbParticipants);
         console.log(
           "[Certificates] 📊 Database: " +
-            dbParticipants.length +
-            " participants"
+          dbParticipants.length +
+          " participants"
         );
 
         // ADD THIS: Also check enrollees who might not have participant records
@@ -2319,12 +2306,12 @@ async function fetchParticipantData() {
         allParticipants.push(...orphanedEnrollees);
         console.log(
           "[Certificates] 📊 Database: " +
-            dbParticipants.length +
-            " participants + " +
-            orphanedEnrollees.length +
-            " orphaned = " +
-            (dbParticipants.length + orphanedEnrollees.length) +
-            " total"
+          dbParticipants.length +
+          " participants + " +
+          orphanedEnrollees.length +
+          " orphaned = " +
+          (dbParticipants.length + orphanedEnrollees.length) +
+          " total"
         );
 
         // Debug: Check if NOOR HASANAH is in the results
@@ -2426,9 +2413,8 @@ async function fetchParticipantData() {
     // 3. Fetch from registration form responses
     try {
       const registrationFormId = "1f666a83-9825-4d26-af03-edc2c0aeb39e";
-      const registrationUrl = `${
-        process.env.BASE_URL || "https://bisnesgpt.jutateknologi.com"
-      }/api/feedback-responses/form/${registrationFormId}`;
+      const registrationUrl = `${process.env.BASE_URL || "https://bisnesgpt.jutateknologi.com"
+        }/api/feedback-responses/form/${registrationFormId}`;
 
       const registrationResponse = await axios.get(registrationUrl);
 
@@ -2941,7 +2927,7 @@ async function generateCertificate(
       // Truncate lastLine to fit and add ellipsis
       while (
         subtitleFont.widthOfTextAtSize(lastLine + "...", subtitleFontSize) >
-          subtitleMaxWidth &&
+        subtitleMaxWidth &&
         lastLine.length > 0
       ) {
         lastLine = lastLine.slice(0, -1);
@@ -3540,8 +3526,13 @@ app.post("/api/manual-sync-auto-reply/:companyId", async (req, res) => {
   }
 });
 
-const port = process.env.PORT;
-server.listen(port, () => console.log(`Server is running on port ${port}`));
+const port = process.env.PORT || 3000;
+const processName = process.env.PROCESS_NAME || 'legacy';
+if (processName === 'api' || processName === 'meta' || processName === 'legacy') {
+  server.listen(port, () => console.log(`[${processName}] Server is running on port ${port}`));
+} else {
+  console.log(`[${processName}] Skipping Express server listen`);
+}
 
 // Function to broadcast logs to WebSocket clients
 function broadcastLog(logData) {
@@ -3695,12 +3686,12 @@ wss.on("connection", (ws, req) => {
   ws.pathname = req.url.startsWith("/status")
     ? "/status"
     : req.url.startsWith("/logs")
-    ? "/logs"
-    : req.url.startsWith("/ai-assistant-stream")
-    ? "/ai-assistant-stream"
-    : req.url.startsWith("/ws/chatgpt/")
-    ? "/ws/chatgpt"
-    : "/ws";
+      ? "/logs"
+      : req.url.startsWith("/ai-assistant-stream")
+        ? "/ai-assistant-stream"
+        : req.url.startsWith("/ws/chatgpt/")
+          ? "/ws/chatgpt"
+          : "/ws";
   ws.companyId = companyId;
   ws.email = email;
   ws.subscribedChatId = null;
@@ -3833,7 +3824,7 @@ wss.on("connection", (ws, req) => {
             try {
               // Execute git pull first, then PM2 restart
               const { exec } = require("child_process");
-              
+
               ws.send(
                 JSON.stringify({
                   type: "restart",
@@ -3856,7 +3847,7 @@ wss.on("connection", (ws, req) => {
                   );
                   return;
                 }
-                
+
                 console.log("Git pull successful:", gitStdout);
                 ws.send(
                   JSON.stringify({
@@ -4431,8 +4422,7 @@ async function waitForCompletionBrainstormStream(
       );
 
       console.log(
-        `🔄 Run status (depth: ${depth}, attempt: ${attempts + 1}): ${
-          runObject.status
+        `🔄 Run status (depth: ${depth}, attempt: ${attempts + 1}): ${runObject.status
         }`
       );
 
@@ -4733,8 +4723,7 @@ async function searchWeb(query) {
   try {
     console.log(`�� [searchWeb] Making request to Serper API...`);
     console.log(
-      `🔑 [searchWeb] Using API key: ${
-        process.env.SERPER_API_KEY ? "Present" : "Missing"
+      `🔑 [searchWeb] Using API key: ${process.env.SERPER_API_KEY ? "Present" : "Missing"
       }`
     );
 
@@ -4903,19 +4892,18 @@ Formatting rules:
 - *Bold Rules*: only one * at start and one * at end of each bold word
 - Stages must have both a name and a ready script
 
-${
-  currentPrompt
-    ? `Current Prompt:\n${currentPrompt}\n\nUser Request: ${userInput}\n\nCompany Info (from user): ${JSON.stringify(
-        req.body.companyInfo || {},
-        null,
-        2
-      )}\n\nProvide the EXACT text to add/change.`
-    : `User Request: ${userInput}\n\nCompany Info (from user): ${JSON.stringify(
-        req.body.companyInfo || {},
-        null,
-        2
-      )}\n\nProvide the EXACT text for a NEW assistant prompt with named stages and scripts.`
-}`;
+${currentPrompt
+        ? `Current Prompt:\n${currentPrompt}\n\nUser Request: ${userInput}\n\nCompany Info (from user): ${JSON.stringify(
+          req.body.companyInfo || {},
+          null,
+          2
+        )}\n\nProvide the EXACT text to add/change.`
+        : `User Request: ${userInput}\n\nCompany Info (from user): ${JSON.stringify(
+          req.body.companyInfo || {},
+          null,
+          2
+        )}\n\nProvide the EXACT text for a NEW assistant prompt with named stages and scripts.`
+      }`;
 
     // Add user message to thread
     await addMessage(threadID, fullPrompt);
@@ -4942,8 +4930,7 @@ ${
     // Save the interaction to the thread for future reference
     await addMessageAssistant(
       threadID,
-      `Brainstorm Request: ${userInput}\nCurrent Prompt: ${
-        currentPrompt || "None"
+      `Brainstorm Request: ${userInput}\nCurrent Prompt: ${currentPrompt || "None"
       }\nResponse: ${answer}`
     );
 
@@ -5015,35 +5002,30 @@ Briefly explain what specific changes you applied and why
 [ANALYSIS_END]
 
 [PROMPT_START]
-${
-  currentPrompt
-    ? "The complete prompt with the applied changes:"
-    : "Create a new prompt using this structure:"
-}
-${
-  currentPrompt ||
-  `#ROLE: [AI's primary function and identity]
+${currentPrompt
+        ? "The complete prompt with the applied changes:"
+        : "Create a new prompt using this structure:"
+      }
+${currentPrompt ||
+      `#ROLE: [AI's primary function and identity]
 #CONTEXT: [Business context and background]
 #CAPABILITIES: [Specific tasks and functions]
 #CONSTRAINTS: [Boundaries and limitations]
 #COMMUNICATION STYLE: [Tone and interaction approach]
 #WORKFLOW: [Process for handling requests]`
-}
+      }
 [PROMPT_END]
 
-${
-  currentPrompt
-    ? `Current Prompt:\n${currentPrompt}\n\nChanges to Apply:\n${changesToApply}${
-        brainstormContext
+${currentPrompt
+        ? `Current Prompt:\n${currentPrompt}\n\nChanges to Apply:\n${changesToApply}${brainstormContext
           ? `\n\nBrainstorming Context:\n${brainstormContext}`
           : ""
-      }`
-    : `Create a new prompt with these requirements:\n${changesToApply}${
-        brainstormContext
+        }`
+        : `Create a new prompt with these requirements:\n${changesToApply}${brainstormContext
           ? `\n\nBrainstorming Context:\n${brainstormContext}`
           : ""
-      }`
-}`;
+        }`
+      }`;
 
     // Add user message to thread
     await addMessage(threadID, fullPrompt);
@@ -5081,10 +5063,8 @@ ${
     // Save the interaction to the thread for future reference
     await addMessageAssistant(
       threadID,
-      `Apply Changes Request: ${changesToApply}\nCurrent Prompt: ${
-        currentPrompt || "None"
-      }\nBrainstorm Context: ${
-        brainstormContext || "None"
+      `Apply Changes Request: ${changesToApply}\nCurrent Prompt: ${currentPrompt || "None"
+      }\nBrainstorm Context: ${brainstormContext || "None"
       }\nResponse: ${answer}`
     );
 
@@ -5233,9 +5213,8 @@ app.get("/api/lalamove/quote", async (req, res) => {
               lat: destinationCoords.lat,
               lng: destinationCoords.lng,
             },
-            address: `${
-              store_location.charAt(0).toUpperCase() + store_location.slice(1)
-            } Storage Facility, Malaysia`,
+            address: `${store_location.charAt(0).toUpperCase() + store_location.slice(1)
+              } Storage Facility, Malaysia`,
           },
         ],
       },
@@ -7905,7 +7884,7 @@ function toPgTimestamp(firestoreTimestamp) {
   ) {
     return new Date(
       firestoreTimestamp.seconds * 1000 +
-        firestoreTimestamp.nanoseconds / 1000000
+      firestoreTimestamp.nanoseconds / 1000000
     );
   }
 
@@ -8035,7 +8014,7 @@ app.post("/api/schedule-message/:companyId", async (req, res) => {
   console.log("Timestamp:", new Date().toISOString());
   console.log("Company ID:", req.params.companyId);
   console.log("Request body keys:", Object.keys(req.body));
-  
+
   const { companyId } = req.params;
   const scheduledMessage = req.body;
   const phoneIndex = scheduledMessage.phoneIndex || 0;
@@ -8057,7 +8036,7 @@ app.post("/api/schedule-message/:companyId", async (req, res) => {
     chatIds: scheduledMessage.chatIds?.length || 0,
     contact_id: scheduledMessage.contact_id?.length || 0,
   });
-  
+
   console.log("Request body sample:", {
     message: scheduledMessage.message?.substring(0, 50),
     chatIds: scheduledMessage.chatIds?.slice(0, 3),
@@ -8073,9 +8052,9 @@ app.post("/api/schedule-message/:companyId", async (req, res) => {
     console.log("Active hours from request:", scheduledMessage.activeHours);
 
     // Only validate if activeHours is explicitly provided and not null/undefined
-    if (scheduledMessage.activeHours && 
-        scheduledMessage.activeHours.start && 
-        scheduledMessage.activeHours.end) {
+    if (scheduledMessage.activeHours &&
+      scheduledMessage.activeHours.start &&
+      scheduledMessage.activeHours.end) {
       const start = scheduledMessage.activeHours.start;
       const end = scheduledMessage.activeHours.end;
 
@@ -8179,7 +8158,7 @@ app.post("/api/schedule-message/:companyId", async (req, res) => {
         // Remove invalid entries
         chatIds = chatIds.filter((id) => validChatIdRegex.test(String(id)));
       }
-      
+
       console.log("Chat IDs after validation:", {
         totalChatIds: chatIds.length,
         sampleChatIds: chatIds.slice(0, 5),
@@ -8268,7 +8247,7 @@ app.post("/api/schedule-message/:companyId", async (req, res) => {
         activeHoursEnd,
         scheduledMessage.whatsapp_template_name || null,
         scheduledMessage.whatsapp_template_language || 'en',
-        scheduledMessage.whatsapp_template_variables 
+        scheduledMessage.whatsapp_template_variables
           ? JSON.stringify(scheduledMessage.whatsapp_template_variables)
           : '[]',
       ]);
@@ -8374,12 +8353,12 @@ app.post("/api/schedule-message/:companyId", async (req, res) => {
             delay: scheduledMessage.messageDelays
               ? JSON.parse(scheduledMessage.messageDelays)[0] || 0
               : Math.floor(
-                  Math.random() *
-                    ((scheduledMessage.maxDelay || 5) -
-                      (scheduledMessage.minDelay || 1) +
-                      1) +
-                    (scheduledMessage.minDelay || 1)
-                ),
+                Math.random() *
+                ((scheduledMessage.maxDelay || 5) -
+                  (scheduledMessage.minDelay || 1) +
+                  1) +
+                (scheduledMessage.minDelay || 1)
+              ),
             mediaUrl: scheduledMessage.mediaUrl || "",
             documentUrl: scheduledMessage.documentUrl || "",
             fileName: scheduledMessage.fileName || "",
@@ -8489,12 +8468,12 @@ app.post("/api/schedule-message/:companyId", async (req, res) => {
       companyId: req.params.companyId,
       requestBody: req.body,
     });
-    
+
     // Send appropriate status code based on error type
-    const statusCode = error.message?.includes("No valid") || 
-                       error.message?.includes("No message content") ? 400 : 500;
-    
-    res.status(statusCode).json({ 
+    const statusCode = error.message?.includes("No valid") ||
+      error.message?.includes("No message content") ? 400 : 500;
+
+    res.status(statusCode).json({
       success: false,
       error: error.message || "Failed to schedule message",
       details: statusCode === 400 ? error.message : undefined
@@ -9584,10 +9563,10 @@ function mapFirestoreContactToNeon(contact, companyId) {
     unread_count: contact.unreadCount || 0,
     last_message: contact.last_message
       ? JSON.stringify({
-          ...contact.last_message,
-          phone_index: contact.last_message.phoneIndex || 0,
-          timestamp: contact.last_message.timestamp,
-        })
+        ...contact.last_message,
+        phone_index: contact.last_message.phoneIndex || 0,
+        timestamp: contact.last_message.timestamp,
+      })
       : null,
     profile_pic_url: contact.profilePicUrl || null,
     not_spam: contact.not_spam || false,
@@ -9860,8 +9839,7 @@ async function syncContactsFromFirebaseToNeon(companyId, phoneIndex = 0) {
     for (let batchIndex = 0; batchIndex < contactBatches.length; batchIndex++) {
       const batch = contactBatches[batchIndex];
       console.log(
-        `Processing batch ${batchIndex + 1}/${contactBatches.length} (${
-          batch.length
+        `Processing batch ${batchIndex + 1}/${contactBatches.length} (${batch.length
         } contacts)`
       );
 
@@ -9914,9 +9892,8 @@ async function syncContactsFromFirebaseToNeon(companyId, phoneIndex = 0) {
             INSERT INTO contacts (${contactFields.join(", ")})
             VALUES (${contactPlaceholders.join(", ")})
             ON CONFLICT (contact_id, company_id) DO UPDATE SET
-            ${contactUpdateSet}${
-            contactUpdateSet ? ", " : ""
-          }updated_at = CURRENT_TIMESTAMP
+            ${contactUpdateSet}${contactUpdateSet ? ", " : ""
+            }updated_at = CURRENT_TIMESTAMP
           `;
           await sqlDb.query(contactQuery, contactValues);
 
@@ -9987,9 +9964,8 @@ async function syncContactsFromFirebaseToNeon(companyId, phoneIndex = 0) {
                       INSERT INTO private_notes (${noteFields.join(", ")})
                       VALUES (${notePlaceholders.join(", ")})
                       ON CONFLICT (id) DO UPDATE SET
-                      ${noteUpdateSet}${
-                      noteUpdateSet ? ", " : ""
-                    }updated_at = CURRENT_TIMESTAMP
+                      ${noteUpdateSet}${noteUpdateSet ? ", " : ""
+                      }updated_at = CURRENT_TIMESTAMP
                     `;
                     await sqlDb.query(noteQuery, noteValues);
 
@@ -10194,35 +10170,35 @@ async function syncContacts(client, companyId, phoneIndex = 0) {
 
     for (let i = 0; i < chats.length; i++) {
       const chat = chats[i];
-      
+
       // Log progress at the start of each chat processing
       if (i % 25 === 0 || i === totalChats - 1) {
         console.log(`📊 [SYNC] Progress: ${i + 1}/${totalChats} chats for company ${companyId} (Processed: ${processedCount}, Errors: ${errorCount})`);
       }
-      
+
       try {
         // Extract phone/identifier from chat ID
         let chatIdRaw = chat.id?._serialized || chat.id?.user || '';
         let contactPhone = chatIdRaw.split('@')[0]; // Extract number before @
-        
+
         // For group chats, use the group ID as identifier
         const isGroup = chat.isGroup || chatIdRaw.includes('@g.us');
         if (isGroup) {
           contactPhone = chatIdRaw.replace('@g.us', '').replace('@c.us', '');
         }
-        
+
         // Handle @lid chats - extract what we can
         if (chatIdRaw.includes('@lid')) {
           contactPhone = chatIdRaw.replace('@lid', '').split(':')[0] || chatIdRaw;
         }
-        
+
         // Ensure we have some identifier
         if (!contactPhone || contactPhone.length < 2) {
           contactPhone = chatIdRaw || `unknown_${i}`;
         }
-        
+
         const contactID = `${companyId}-${contactPhone}`;
-        
+
         // Try to get contact info, but don't fail if we can't
         let contact = null;
         let contactName = chat.name || contactPhone;
@@ -10294,7 +10270,7 @@ async function syncContacts(client, companyId, phoneIndex = 0) {
           processedCount++;
           continue;
         }
-        
+
         let lastMessage = null;
 
         for (const msg of messages) {
@@ -10303,7 +10279,7 @@ async function syncContacts(client, companyId, phoneIndex = 0) {
             const messageBody = msg.body || "";
             const messageType = msg.type === "chat" ? "text" : msg.type;
             const timestamp = msg.timestamp || Math.floor(Date.now() / 1000);
-            
+
             // Determine author for group messages
             let author = null;
             if (msg.from && msg.from.includes("@g.us") && msg.author) {
@@ -10373,7 +10349,7 @@ async function syncContacts(client, companyId, phoneIndex = 0) {
             // Ignore update errors
           }
         }
-        
+
         processedCount++;
       } catch (error) {
         errorCount++;
@@ -10408,7 +10384,7 @@ async function syncContactNames(client, companyId, phoneIndex = 0) {
           skippedCount++;
           continue;
         }
-        
+
         let contact;
         try {
           contact = await chat.getContact();
@@ -10419,21 +10395,21 @@ async function syncContactNames(client, companyId, phoneIndex = 0) {
           skippedCount++;
           continue;
         }
-        
+
         // Check if contact uses @lid identifier
         if (contact.id._serialized && contact.id._serialized.includes("@lid")) {
           skippedCount++;
           continue;
         }
-        
+
         const contactPhone = contact.id.user;
-        
+
         // Skip if contactPhone is not a valid phone number
         if (!contactPhone || contactPhone.includes("@") || contactPhone.length < 5) {
           skippedCount++;
           continue;
         }
-        
+
         const contactID = `${companyId}-${contactPhone}`;
 
         // Log progress every 50 chats
@@ -10660,7 +10636,7 @@ async function syncSingleContact(
               if (
                 transcription &&
                 transcription !==
-                  "Audio transcription failed. Please try again."
+                "Audio transcription failed. Please try again."
               ) {
                 messageBody += transcription;
               } else {
@@ -10928,8 +10904,7 @@ async function syncMessagesAndHandleAutoReplies(
   customHours = null
 ) {
   console.log(
-    `=== Starting syncMessagesAndHandleAutoReplies for bot ${botName} ${
-      forceEnabled ? "(Manual trigger)" : ""
+    `=== Starting syncMessagesAndHandleAutoReplies for bot ${botName} ${forceEnabled ? "(Manual trigger)" : ""
     } ===`
   );
 
@@ -11587,13 +11562,13 @@ function isWithinActiveHours(message) {
  */
 function normalizeTimeFormat(time) {
   if (!time) return null;
-  
+
   const parts = time.split(':');
   if (parts.length !== 2) return null;
-  
+
   const hours = parts[0].padStart(2, '0');
   const minutes = parts[1].padStart(2, '0');
-  
+
   return `${hours}:${minutes}`;
 }
 
@@ -11607,8 +11582,7 @@ setInterval(() => {
   for (const [chatId, timestamp] of processingChatIds.entries()) {
     if (now - timestamp > 300000) {
       console.log(
-        `Releasing stale chatId reservation: ${chatId} (processing for ${
-          (now - timestamp) / 1000
+        `Releasing stale chatId reservation: ${chatId} (processing for ${(now - timestamp) / 1000
         }s)`
       );
       processingChatIds.delete(chatId);
@@ -11817,7 +11791,7 @@ async function sendScheduledMessage(message) {
 
     const hasMetaDirect = metaConfigResult.rows.length > 0;
     let metaDirectService = null;
-    
+
     if (hasMetaDirect) {
       console.log(`[Company ${companyId}] 📱 Using Meta Direct API for blasting`);
       metaDirectService = require('./src/services/whatsapp/metaDirect');
@@ -11852,7 +11826,7 @@ async function sendScheduledMessage(message) {
         });
         throw error;
       }
-      
+
       whatsappClient = botData[message.phone_index].client;
     }
 
@@ -11862,10 +11836,10 @@ async function sendScheduledMessage(message) {
         hasInfo: Boolean(whatsappClient.info),
         info: whatsappClient.info
           ? {
-              wid: whatsappClient.info.wid?._serialized,
-              platform: whatsappClient.info.platform,
-              pushname: whatsappClient.info.pushname,
-            }
+            wid: whatsappClient.info.wid?._serialized,
+            platform: whatsappClient.info.platform,
+            pushname: whatsappClient.info.pushname,
+          }
           : null,
         isReady: Boolean(whatsappClient.info),
       });
@@ -11930,9 +11904,9 @@ async function sendScheduledMessage(message) {
           const delay =
             message.min_delay && message.max_delay
               ? Math.floor(
-                  Math.random() * (message.max_delay - message.min_delay + 1) +
-                    message.min_delay
-                )
+                Math.random() * (message.max_delay - message.min_delay + 1) +
+                message.min_delay
+              )
               : 0;
 
           const messageObj = {
@@ -11960,10 +11934,10 @@ async function sendScheduledMessage(message) {
         infiniteLoop: message.infinite_loop,
         activeHours: message.active_hours
           ? safeJsonParse(
-              message.active_hours,
-              null,
-              `active_hours for company ${companyId}`
-            )
+            message.active_hours,
+            null,
+            `active_hours for company ${companyId}`
+          )
           : null,
         totalMessages: messages.length,
         messages: messages.map((m, index) => ({
@@ -12147,8 +12121,7 @@ async function sendScheduledMessage(message) {
           }
 
           console.log(
-            `[Company ${companyId}] Waiting ${
-              timeUntilTomorrow / 1000 / 60
+            `[Company ${companyId}] Waiting ${timeUntilTomorrow / 1000 / 60
             } minutes until next day`
           );
           await new Promise((resolve) =>
@@ -12179,33 +12152,33 @@ async function sendScheduledMessage(message) {
             console.log(
               `[Company ${companyId}] ⏰ Outside active hours (${message.active_hours_start} - ${message.active_hours_end})`
             );
-            
+
             // Calculate next check time (10 minutes from now)
             const nextCheckDelay = 10 * 60 * 1000; // 10 minutes
-            
+
             console.log(
               `[Company ${companyId}] 🔄 Rescheduling job to check again in 10 minutes...`
             );
-            
+
             // Get the queue for this company
             const queue = getQueueForBot(companyId);
-            
+
             // Determine if this is a batch or single message
             const isBatch = message.id !== message.schedule_id;
-            
+
             // Reschedule the job
             await queue.add(
               isBatch ? "send-message-batch" : "send-single-message",
-              isBatch 
+              isBatch
                 ? {
-                    companyId,
-                    messageId: message.schedule_id,
-                    batchId: message.id,
-                  }
+                  companyId,
+                  messageId: message.schedule_id,
+                  batchId: message.id,
+                }
                 : {
-                    companyId,
-                    messageId: message.id,
-                  },
+                  companyId,
+                  messageId: message.id,
+                },
               {
                 removeOnComplete: false,
                 removeOnFail: false,
@@ -12213,11 +12186,11 @@ async function sendScheduledMessage(message) {
                 jobId: message.id, // Use same jobId to replace existing job
               }
             );
-            
+
             console.log(
               `[Company ${companyId}] ✅ Job rescheduled successfully. Exiting current job.`
             );
-            
+
             // Return success to complete this job and let the rescheduled one take over
             return {
               success: true,
@@ -12271,8 +12244,7 @@ async function sendScheduledMessage(message) {
           }
 
           console.log(
-            `\n=== [Company ${companyId}] Processing Message Item ${
-              currentMessageIndex + 1
+            `\n=== [Company ${companyId}] Processing Message Item ${currentMessageIndex + 1
             }/${messages.length} ===`
           );
           const messageItem = messages[currentMessageIndex];
@@ -12521,7 +12493,7 @@ async function sendScheduledMessage(message) {
 
             // Check for WhatsApp template (for official API outside 24-hour window)
             const hasWhatsAppTemplate = Boolean(message.whatsapp_template_name);
-            
+
             let messageResult;
 
             // Use Meta Direct API if available, otherwise use wwebjs client
@@ -12531,7 +12503,7 @@ async function sendScheduledMessage(message) {
               // Check if we should use WhatsApp template
               if (hasWhatsAppTemplate) {
                 console.log(`[Company ${companyId}] 📋 Sending WhatsApp template: ${message.whatsapp_template_name}`);
-                
+
                 // Parse variables if stored as JSON string
                 let templateVariables = message.whatsapp_template_variables || [];
                 if (typeof templateVariables === 'string') {
@@ -12850,8 +12822,7 @@ async function scheduleAllMessages(specificCompanyId = null) {
   const client = await pool.connect();
   try {
     console.log(
-      `🔄 Scheduling all previous scheduled messages${
-        specificCompanyId ? ` for company ${specificCompanyId}` : ""
+      `🔄 Scheduling all previous scheduled messages${specificCompanyId ? ` for company ${specificCompanyId}` : ""
       }...`
     );
 
@@ -12894,7 +12865,7 @@ async function scheduleAllMessages(specificCompanyId = null) {
 
       console.log(`🤖 Initializing queue and worker for company ${companyId}...`);
       const queue = getQueueForBot(companyId);
-      
+
       // Verify queue is ready
       await queue.waitUntilReady();
       console.log(`✅ Queue ready for company ${companyId}`);
@@ -12912,7 +12883,7 @@ async function scheduleAllMessages(specificCompanyId = null) {
       console.log(
         `📨 Found ${messagesResult.rows.length} scheduled messages for company ${companyId} (scheduled_time > NOW())`
       );
-      
+
       // Also log how many are in the past (for debugging)
       const pastMessagesQuery = `
         SELECT COUNT(*) as past_count FROM scheduled_messages
@@ -12922,7 +12893,7 @@ async function scheduleAllMessages(specificCompanyId = null) {
       `;
       const pastMessagesResult = await client.query(pastMessagesQuery, [companyId]);
       const pastCount = pastMessagesResult.rows[0]?.past_count || 0;
-      
+
       if (pastCount > 0) {
         console.log(
           `⚠️ Warning: ${pastCount} scheduled messages for company ${companyId} have scheduled_time in the past (these will NOT be rescheduled)`
@@ -12946,7 +12917,7 @@ async function scheduleAllMessages(specificCompanyId = null) {
         if (isBatch) {
           // This is a batch message
           console.log(
-            `📦 Checking batch message ${messageId} for schedule ${scheduleId} (delay: ${Math.round(delay/1000)}s)`
+            `📦 Checking batch message ${messageId} for schedule ${scheduleId} (delay: ${Math.round(delay / 1000)}s)`
           );
           // Verify parent schedule still exists and is scheduled (protect against deleted main rows)
           try {
@@ -13151,8 +13122,7 @@ async function scheduleAllMessages(specificCompanyId = null) {
     }
 
     console.log(
-      `Finished scheduling messages${
-        specificCompanyId ? ` for company ${specificCompanyId}` : ""
+      `Finished scheduling messages${specificCompanyId ? ` for company ${specificCompanyId}` : ""
       }`
     );
   } catch (error) {
@@ -15071,11 +15041,10 @@ CURRENT AI ASSISTANT INSTRUCTIONS TO ANALYZE:
 ${currentPrompt || "No current AI assistant instructions provided."}
 
 CURRENT FOLLOW-UP TEMPLATES:
-${
-  currentFollowUps
-    ? JSON.stringify(currentFollowUps, null, 2)
-    : "No current follow-up templates provided."
-}
+${currentFollowUps
+        ? JSON.stringify(currentFollowUps, null, 2)
+        : "No current follow-up templates provided."
+      }
 
 USER REQUEST: ${message}
 
@@ -15138,10 +15107,8 @@ Remember: The goal is to create follow-up sequences that re-engage customers who
     // Save the interaction to the thread for future reference
     await addMessageAssistant(
       threadID,
-      `Follow-up Brainstorm Request: ${message}\nCurrent Prompt: ${
-        currentPrompt || "None"
-      }\nCurrent Follow-ups: ${
-        currentFollowUps ? JSON.stringify(currentFollowUps) : "None"
+      `Follow-up Brainstorm Request: ${message}\nCurrent Prompt: ${currentPrompt || "None"
+      }\nCurrent Follow-ups: ${currentFollowUps ? JSON.stringify(currentFollowUps) : "None"
       }\nResponse: ${answer}`
     );
 
@@ -15704,10 +15671,9 @@ app.post("/api/payex/create-topup", async (req, res) => {
         : "https://sandbox-payexapi.azurewebsites.net";
 
     console.log(
-      `Using PayEx ${
-        process.env.PAYEX_ENVIRONMENT === "production"
-          ? "Production"
-          : "Sandbox"
+      `Using PayEx ${process.env.PAYEX_ENVIRONMENT === "production"
+        ? "Production"
+        : "Sandbox"
       } API: ${payexApiUrl}`
     );
 
@@ -15853,8 +15819,7 @@ app.post("/api/payex/create-topup", async (req, res) => {
         });
       } else {
         throw new Error(
-          `PayEx payment creation failed: ${
-            paymentResult.error || "Unknown error"
+          `PayEx payment creation failed: ${paymentResult.error || "Unknown error"
           }`
         );
       }
@@ -16173,7 +16138,7 @@ app.post("/api/payex/test-webhook", async (req, res) => {
     };
 
     // Call the actual webhook handler
-    await app._router.handle(webhookReq, webhookRes, () => {});
+    await app._router.handle(webhookReq, webhookRes, () => { });
 
     res.json({
       success: true,
@@ -16294,8 +16259,7 @@ app.post("/api/followup-save-templates/", async (req, res) => {
 
       for (const template of templates) {
         console.log(
-          `Processing template: ${template.stageName} with ${
-            template.messages?.length || 0
+          `Processing template: ${template.stageName} with ${template.messages?.length || 0
           } messages`
         );
         console.log(
@@ -16354,10 +16318,9 @@ app.post("/api/followup-save-templates/", async (req, res) => {
           for (let i = 0; i < template.messages.length; i++) {
             const message = template.messages[i];
             console.log(
-              `Inserting message ${i + 1}: ${
-                message.message
-                  ? message.message.substring(0, 50)
-                  : "No message"
+              `Inserting message ${i + 1}: ${message.message
+                ? message.message.substring(0, 50)
+                : "No message"
               }...`
             );
 
@@ -16368,23 +16331,23 @@ app.post("/api/followup-save-templates/", async (req, res) => {
               typeof message === "object"
                 ? message
                 : {
-                    message: message,
-                    dayNumber: i + 1,
-                    sequence: i + 1,
-                    delayAfter: {
-                      value: 30,
-                      unit: "minutes",
-                      isInstantaneous: false,
-                    },
-                    useScheduledTime: false,
-                    scheduledTime: "",
-                    addTags: [],
-                    removeTags: [],
-                    specificNumbers: {
-                      enabled: false,
-                      numbers: [],
-                    },
-                  };
+                  message: message,
+                  dayNumber: i + 1,
+                  sequence: i + 1,
+                  delayAfter: {
+                    value: 30,
+                    unit: "minutes",
+                    isInstantaneous: false,
+                  },
+                  useScheduledTime: false,
+                  scheduledTime: "",
+                  addTags: [],
+                  removeTags: [],
+                  specificNumbers: {
+                    enabled: false,
+                    numbers: [],
+                  },
+                };
 
             await sqlClient.query(
               `INSERT INTO public.followup_messages (
@@ -16441,10 +16404,9 @@ app.post("/api/followup-save-templates/", async (req, res) => {
           for (let i = 0; i < template.messages.length; i++) {
             const message = template.messages[i];
             console.log(
-              `Inserting message ${i + 1}: ${
-                message.message
-                  ? message.message.substring(0, 50)
-                  : "No message"
+              `Inserting message ${i + 1}: ${message.message
+                ? message.message.substring(0, 50)
+                : "No message"
               }...`
             );
 
@@ -16455,23 +16417,23 @@ app.post("/api/followup-save-templates/", async (req, res) => {
               typeof message === "object"
                 ? message
                 : {
-                    message: message,
-                    dayNumber: i + 1,
-                    sequence: i + 1,
-                    delayAfter: {
-                      value: 30,
-                      unit: "minutes",
-                      isInstantaneous: false,
-                    },
-                    useScheduledTime: false,
-                    scheduledTime: "",
-                    addTags: [],
-                    removeTags: [],
-                    specificNumbers: {
-                      enabled: false,
-                      numbers: [],
-                    },
-                  };
+                  message: message,
+                  dayNumber: i + 1,
+                  sequence: i + 1,
+                  delayAfter: {
+                    value: 30,
+                    unit: "minutes",
+                    isInstantaneous: false,
+                  },
+                  useScheduledTime: false,
+                  scheduledTime: "",
+                  addTags: [],
+                  removeTags: [],
+                  specificNumbers: {
+                    enabled: false,
+                    numbers: [],
+                  },
+                };
 
             await sqlClient.query(
               `INSERT INTO public.followup_messages (
@@ -17695,8 +17657,8 @@ async function handleEmployeeAssignment(
     const newIndex = (currentIndex + 1) % employeeIDs.length;
     await pool.query(
       "INSERT INTO bot_state (company_id, bot_name, state, current_index, last_updated) " +
-        "VALUES ($1, $2, $3, $4, $5) " +
-        "ON CONFLICT (company_id, bot_name) DO UPDATE SET current_index = $4, last_updated = $5",
+      "VALUES ($1, $2, $3, $4, $5) " +
+      "ON CONFLICT (company_id, bot_name) DO UPDATE SET current_index = $4, last_updated = $5",
       [
         idSubstring,
         "assignmentState",
@@ -17735,19 +17697,18 @@ async function assignToEmployee(
 Name: ${contactName}
 Phone: ${contactID}
      
-Triggered keyword: ${
-          triggerKeyword ? `*${triggerKeyword}*` : "[No keyword trigger found]"
-        }
+Triggered keyword: ${triggerKeyword ? `*${triggerKeyword}*` : "[No keyword trigger found]"
+      }
      
 Date & Time: ${currentDateTime}`
       : idSubstring === "0335"
-      ? `Hello ${employee.name}, a new contact has been assigned to you:
+        ? `Hello ${employee.name}, a new contact has been assigned to you:
 
 Name: ${contactName}
 Phone: ${contactID}
 
 Thank you.`
-      : `Hello ${employee.name}, a new contact has been assigned to you:
+        : `Hello ${employee.name}, a new contact has been assigned to you:
 
 Name: ${contactName}
 Phone: ${contactID}
@@ -17792,9 +17753,8 @@ Thank you.`;
           .toString()
           .padStart(2, "0")}`;
 
-        const assignmentId = `${idSubstring}-${
-          contactResult.rows[0].contact_id
-        }-${employee.employee_id}-${Date.now()}`;
+        const assignmentId = `${idSubstring}-${contactResult.rows[0].contact_id
+          }-${employee.employee_id}-${Date.now()}`;
 
         const assignmentInsertQuery = `
           INSERT INTO assignments (
@@ -17914,8 +17874,7 @@ async function handleFollowUpTemplateCleanup(
   console.log(`Tag to remove: ${tag}`);
   console.log(`Company ID: ${idSubstring}`);
   console.log(
-    `Number of templates to check: ${
-      followUpTemplates ? followUpTemplates.length : "undefined"
+    `Number of templates to check: ${followUpTemplates ? followUpTemplates.length : "undefined"
     }`
   );
 
@@ -18011,8 +17970,7 @@ app.get("/api/scheduled-messages", async (req, res) => {
   const { companyId, status } = req.query;
 
   console.log(
-    `Fetching scheduled messages for companyId: ${companyId}, status: ${
-      status || "all"
+    `Fetching scheduled messages for companyId: ${companyId}, status: ${status || "all"
     }`
   );
 
@@ -18141,8 +18099,7 @@ app.get("/api/scheduled-messages/contact", async (req, res) => {
   const { companyId, contactId, status } = req.query;
 
   console.log(
-    `Fetching scheduled messages for companyId: ${companyId}, contactId: ${contactId}, status: ${
-      status || "all"
+    `Fetching scheduled messages for companyId: ${companyId}, contactId: ${contactId}, status: ${status || "all"
     }`
   );
 
@@ -19091,8 +19048,8 @@ async function saveContactWithRateLimit(
         ? "text"
         : msg.type === "e2e_notification" ||
           msg.type === "notification_template"
-        ? null
-        : msg.type;
+          ? null
+          : msg.type;
 
     if (!type) return; // Skip if message type is not valid
 
@@ -19828,7 +19785,7 @@ async function main(reinitialize = false) {
   // and can be edited from the status.html page
   // ============================================
   let WWEBJS_COMPANY_IDS = [];
-  
+
   // Default fallback list if database read fails
   const DEFAULT_COMPANY_IDS = [
     "0101", "0107", "128137", "0149", "0156", "0160", "0161", "0210",
@@ -19892,9 +19849,9 @@ async function main(reinitialize = false) {
       WHERE connection_type IN ('meta_direct', 'meta_embedded', '360dialog')
       AND company_id = ANY($1::text[])
     `, [WWEBJS_COMPANY_IDS]);
-    
+
     metaVerifiedCompanies = metaConfigResult.rows.map(row => row.company_id);
-    
+
     if (metaVerifiedCompanies.length > 0) {
       console.log(`📱 Found ${metaVerifiedCompanies.length} Meta verified companies: ${metaVerifiedCompanies.join(', ')}`);
       console.log("   These companies will NOT start WWebJS - they use Meta Cloud API instead.");
@@ -19906,39 +19863,39 @@ async function main(reinitialize = false) {
 
   // Filter out Meta verified companies from WWebJS initialization
   const companyIds = WWEBJS_COMPANY_IDS.filter(id => !metaVerifiedCompanies.includes(id));
-  
+
   console.log(`🤖 Will initialize WWebJS for ${companyIds.length} companies: ${companyIds.join(', ')}`);
   if (metaVerifiedCompanies.length > 0) {
     console.log(`📱 Skipping WWebJS for ${metaVerifiedCompanies.length} Meta verified companies: ${metaVerifiedCompanies.join(', ')}`);
   }
 
   const placeholders = companyIds.map((_, i) => `$${i + 1}`).join(", ");
-  const query = companyIds.length > 0 
+  const query = companyIds.length > 0
     ? `SELECT * FROM companies WHERE company_id IN (${placeholders})`
     : `SELECT * FROM companies WHERE 1=0`; // Empty result if no companies need WWebJS
-  const companiesPromise = companyIds.length > 0 
+  const companiesPromise = companyIds.length > 0
     ? sqlDb.query(query, companyIds)
     : Promise.resolve({ rows: [] });
 
   // 2. If reinitializing, start cleanup early
   const cleanupPromise = reinitialize
     ? (async () => {
-        console.log("Reinitializing, clearing existing bot instances...");
-        await Promise.all(
-          [...botMap.entries()].map(async ([_, botData]) => {
-            if (Array.isArray(botData)) {
-              await Promise.all(
-                botData.map(async (clientData) => {
-                  if (clientData.client) await clientData.client.destroy();
-                })
-              );
-            } else if (botData?.client) {
-              await botData.client.destroy();
-            }
-          })
-        );
-        botMap.clear();
-      })()
+      console.log("Reinitializing, clearing existing bot instances...");
+      await Promise.all(
+        [...botMap.entries()].map(async ([_, botData]) => {
+          if (Array.isArray(botData)) {
+            await Promise.all(
+              botData.map(async (clientData) => {
+                if (clientData.client) await clientData.client.destroy();
+              })
+            );
+          } else if (botData?.client) {
+            await botData.client.destroy();
+          }
+        })
+      );
+      botMap.clear();
+    })()
     : Promise.resolve();
 
   // 3. Start job cleanup in parallel
@@ -20171,17 +20128,15 @@ async function main(reinitialize = false) {
               };
 
               const completedPhones = statusCounts.ready + statusCounts.qr;
-              phoneStatusDetails = ` (Bot ${botName}: ${completedPhones}/${totalPhones} phones done - P${
-                phoneIndex + 1
-              }: ${phoneStatus})`;
+              phoneStatusDetails = ` (Bot ${botName}: ${completedPhones}/${totalPhones} phones done - P${phoneIndex + 1
+                }: ${phoneStatus})`;
             }
 
             const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
 
             if (phoneStatus !== lastStatus) {
               console.log(
-                `🔄 Phone ${botName}-P${
-                  phoneIndex + 1
+                `🔄 Phone ${botName}-P${phoneIndex + 1
                 } status: ${lastStatus} → ${phoneStatus}${phoneStatusDetails} (${elapsed}s)`
               );
               lastStatus = phoneStatus;
@@ -20191,8 +20146,7 @@ async function main(reinitialize = false) {
             if (phoneStatus === "ready") {
               clearInterval(statusCheckInterval);
               console.log(
-                `✅ Phone ${botName}-P${
-                  phoneIndex + 1
+                `✅ Phone ${botName}-P${phoneIndex + 1
                 } ready${phoneStatusDetails} (${elapsed}s)`
               );
               resolve({
@@ -20202,16 +20156,14 @@ async function main(reinitialize = false) {
             } else if (phoneStatus === "qr") {
               clearInterval(statusCheckInterval);
               console.log(
-                `📱 Phone ${botName}-P${
-                  phoneIndex + 1
+                `📱 Phone ${botName}-P${phoneIndex + 1
                 } showing QR${phoneStatusDetails} (${elapsed}s)`
               );
               resolve({ status: "qr", shouldProceedWithPostInit: false });
             } else if (phoneStatus === "error") {
               clearInterval(statusCheckInterval);
               console.log(
-                `❌ Phone ${botName}-P${
-                  phoneIndex + 1
+                `❌ Phone ${botName}-P${phoneIndex + 1
                 } error${phoneStatusDetails} (${elapsed}s)`
               );
               reject(new Error(`Phone ${phoneIndex + 1} error`));
@@ -20220,8 +20172,7 @@ async function main(reinitialize = false) {
             // Check for stuck initialization
             if (phoneStatus === "initializing" && elapsed > 60) {
               console.warn(
-                `⚠️ Phone ${botName}-P${
-                  phoneIndex + 1
+                `⚠️ Phone ${botName}-P${phoneIndex + 1
                 } still initializing after ${elapsed}s${phoneStatusDetails}`
               );
             }
@@ -20236,8 +20187,7 @@ async function main(reinitialize = false) {
 
       const initPromise = (async () => {
         console.log(
-          `🚀 Initializing phone ${botName}-P${
-            phoneIndex + 1
+          `🚀 Initializing phone ${botName}-P${phoneIndex + 1
           }/${totalPhones}...`
         );
 
@@ -20254,8 +20204,7 @@ async function main(reinitialize = false) {
         ]);
 
         console.log(
-          `✅ Phone ${botName}-P${
-            phoneIndex + 1
+          `✅ Phone ${botName}-P${phoneIndex + 1
           } initialization completed with status: ${result.status}`
         );
 
@@ -20292,8 +20241,7 @@ async function main(reinitialize = false) {
       } catch (error) {
         clearInterval(statusCheckInterval);
         console.error(
-          `❌ Phone ${botName}-P${phoneIndex + 1} failed (attempt ${
-            retryCount + 1
+          `❌ Phone ${botName}-P${phoneIndex + 1} failed (attempt ${retryCount + 1
           }/${MAX_RETRIES + 1}):`,
           error.message
         );
@@ -20302,8 +20250,7 @@ async function main(reinitialize = false) {
         const botData = botMap.get(botName);
         if (botData && botData[phoneIndex]?.status === "initializing") {
           console.log(
-            `⚠️ Phone ${botName}-P${
-              phoneIndex + 1
+            `⚠️ Phone ${botName}-P${phoneIndex + 1
             } is stuck in initializing state - skipping cleanup, please restart server manually`
           );
           // Don't cleanup - user will restart server manually
@@ -20483,8 +20430,7 @@ async function main(reinitialize = false) {
       } catch (error) {
         clearInterval(statusCheckInterval);
         console.error(
-          `❌ Bot ${config.botName} failed (attempt ${retryCount + 1}/${
-            MAX_RETRIES + 1
+          `❌ Bot ${config.botName} failed (attempt ${retryCount + 1}/${MAX_RETRIES + 1
           }):`,
           error.message
         );
@@ -20530,10 +20476,8 @@ async function main(reinitialize = false) {
           const phoneTask = pendingPhones.shift();
           const phoneId = `${phoneTask.botName}-P${phoneTask.phoneIndex + 1}`;
           console.log(
-            `🚀 Starting phone ${phoneId} (${
-              activePhones.size + 1
-            }/${MAX_CONCURRENT} concurrent, ${
-              pendingPhones.length
+            `🚀 Starting phone ${phoneId} (${activePhones.size + 1
+            }/${MAX_CONCURRENT} concurrent, ${pendingPhones.length
             } phones remaining)`
           );
 
@@ -20616,10 +20560,8 @@ async function main(reinitialize = false) {
                 retryCount: result.retryCount + 1,
               };
               console.log(
-                `🔄 Phone ${phoneId} failed (status: ${
-                  result.status || "unknown"
-                }), retry attempt ${retryTask.retryCount + 1}/${
-                  MAX_RETRIES + 1
+                `🔄 Phone ${phoneId} failed (status: ${result.status || "unknown"
+                }), retry attempt ${retryTask.retryCount + 1}/${MAX_RETRIES + 1
                 }`
               );
 
@@ -20630,8 +20572,7 @@ async function main(reinitialize = false) {
               failedPhones.get(botName).push(phoneTask);
               const failedCount = failedPhones.get(botName).length;
               console.log(
-                `❌ Phone ${phoneId} permanently failed after ${
-                  MAX_RETRIES + 1
+                `❌ Phone ${phoneId} permanently failed after ${MAX_RETRIES + 1
                 } attempts (Bot ${botName}: ${failedCount}/${totalPhones} phones failed)`
               );
 
@@ -20657,8 +20598,7 @@ async function main(reinitialize = false) {
         `📱 QR bots (awaiting pairing): ${qrBots.size}/${botConfigs.length}`
       );
       console.log(
-        `🟢 Total successful: ${completedBots.size + qrBots.size}/${
-          botConfigs.length
+        `🟢 Total successful: ${completedBots.size + qrBots.size}/${botConfigs.length
         }`
       );
 
@@ -20683,10 +20623,10 @@ async function main(reinitialize = false) {
         const status = failedBots.has(botName)
           ? "❌ FAILED"
           : qrBots.has(botName)
-          ? "📱 QR"
-          : completedBots.has(botName)
-          ? "✅ READY"
-          : "⏳ PROCESSING";
+            ? "📱 QR"
+            : completedBots.has(botName)
+              ? "✅ READY"
+              : "⏳ PROCESSING";
         console.log(
           `  Bot ${botName}: ${completed}/${totalPhones} phones completed, ${failed} failed - ${status}`
         );
@@ -20745,8 +20685,7 @@ function startBotMonitoringSystem() {
 
             if (stuckDuration > STUCK_THRESHOLD) {
               console.warn(
-                `⚠️ Bot ${botName} Phone ${
-                  phoneIndex + 1
+                `⚠️ Bot ${botName} Phone ${phoneIndex + 1
                 } stuck in initializing for ${(stuckDuration / 1000).toFixed(
                   1
                 )}s - please restart server manually if needed`
@@ -21090,8 +21029,8 @@ async function sendDailyContactReport(client, idSubstring, targetDate = null) {
     const replyRate =
       replyStats.total_contacted > 0
         ? Math.round(
-            (replyStats.replied_count / replyStats.total_contacted) * 100
-          )
+          (replyStats.replied_count / replyStats.total_contacted) * 100
+        )
         : 0;
 
     // Get total AI conversations today
@@ -21178,8 +21117,8 @@ async function sendDailyContactReport(client, idSubstring, targetDate = null) {
     const repliesTrend =
       repliedYesterday > 0
         ? Math.round(
-            ((repliedToday - repliedYesterday) / repliedYesterday) * 100
-          )
+          ((repliedToday - repliedYesterday) / repliedYesterday) * 100
+        )
         : 0;
     const repliesTrendArrow =
       repliesTrend > 0 ? "↑" : repliesTrend < 0 ? "↓" : "→";
@@ -21197,15 +21136,15 @@ async function sendDailyContactReport(client, idSubstring, targetDate = null) {
         : "No messages yet",
       daysSinceLastContact: lead.last_message_time
         ? Math.ceil(
-            moment
-              .duration(moment().diff(moment(lead.last_message_time)))
-              .asDays()
-          )
+          moment
+            .duration(moment().diff(moment(lead.last_message_time)))
+            .asDays()
+        )
         : Math.ceil(
-            moment
-              .duration(moment().diff(moment(lead.contact_created)))
-              .asDays()
-          ),
+          moment
+            .duration(moment().diff(moment(lead.contact_created)))
+            .asDays()
+        ),
       messageCount: lead.total_messages || 0,
     }));
 
@@ -21228,15 +21167,13 @@ async function sendDailyContactReport(client, idSubstring, targetDate = null) {
     // Generate personalized encouragement/motivation
     let motivationalMessage = "";
     if (count > leadsYesterday && count > 0) {
-      motivationalMessage = `🔥 You're on fire! ${count} leads today is ${
-        leadsTrendText.includes("+")
+      motivationalMessage = `🔥 You're on fire! ${count} leads today is ${leadsTrendText.includes("+")
           ? "your best this week"
           : "momentum building"
-      }!`;
+        }!`;
     } else if (closedToday > 0) {
-      motivationalMessage = `🎯 ${closedToday} deal${
-        closedToday > 1 ? "s" : ""
-      } closed today — great work converting!`;
+      motivationalMessage = `🎯 ${closedToday} deal${closedToday > 1 ? "s" : ""
+        } closed today — great work converting!`;
     } else if (replyRate > 60) {
       motivationalMessage = `💪 ${replyRate}% response rate — your messaging is working!`;
     } else if (count > 0) {
@@ -21248,15 +21185,12 @@ async function sendDailyContactReport(client, idSubstring, targetDate = null) {
     // Actionable alert with context
     let actionableAlert = "";
     if (coldLeads.length > 0) {
-      actionableAlert = `⚠️ ${coldLeads.length} lead${
-        coldLeads.length > 1 ? "s" : ""
-      } ${
-        coldLeads.length > 1 ? "haven't" : "hasn't"
-      } been followed up in 48h. Try re-engaging them today 💪\n\n`;
+      actionableAlert = `⚠️ ${coldLeads.length} lead${coldLeads.length > 1 ? "s" : ""
+        } ${coldLeads.length > 1 ? "haven't" : "hasn't"
+        } been followed up in 48h. Try re-engaging them today 💪\n\n`;
     } else if (repliedToday > 0 && closedToday === 0) {
-      actionableAlert = `💡 You have ${repliedToday} engaged lead${
-        repliedToday > 1 ? "s" : ""
-      } — follow up to convert them!\n\n`;
+      actionableAlert = `💡 You have ${repliedToday} engaged lead${repliedToday > 1 ? "s" : ""
+        } — follow up to convert them!\n\n`;
     }
 
     // Format new contacts section for the message
@@ -21267,8 +21201,7 @@ async function sendDailyContactReport(client, idSubstring, targetDate = null) {
         newContactsDetails
           .map(
             (contact, index) =>
-              `${index + 1}. ${contact.name} (${contact.phone}) - ${
-                contact.addedAt
+              `${index + 1}. ${contact.name} (${contact.phone}) - ${contact.addedAt
               }` + (contact.tags ? `\n   🏷️ Tags: ${contact.tags}` : "")
           )
           .join("\n") +
@@ -21283,10 +21216,8 @@ async function sendDailyContactReport(client, idSubstring, targetDate = null) {
         coldLeadsDetails
           .map(
             (lead, index) =>
-              `${index + 1}. ${lead.name} (${
-                lead.phone
-              })\n   ⏱️ Last contact: ${lead.lastContact} (${
-                lead.daysSinceLastContact
+              `${index + 1}. ${lead.name} (${lead.phone
+              })\n   ⏱️ Last contact: ${lead.lastContact} (${lead.daysSinceLastContact
               } days ago)\n` + `   💬 Messages: ${lead.messageCount}`
           )
           .join("\n") +
@@ -21432,10 +21363,10 @@ async function generateDailyAIInsight(companyId, sqlClient) {
     const leadTrend =
       data.contacts_yesterday > 0
         ? Math.round(
-            ((data.contacts_today - data.contacts_yesterday) /
-              data.contacts_yesterday) *
-              100
-          )
+          ((data.contacts_today - data.contacts_yesterday) /
+            data.contacts_yesterday) *
+          100
+        )
         : 0;
     const replyRateToday =
       data.contacts_today > 0
@@ -21454,24 +21385,22 @@ async function generateDailyAIInsight(companyId, sqlClient) {
     const avgMessagesPerContact =
       conversationSamples.length > 0
         ? Math.round(
-            conversationSamples.reduce((sum, c) => sum + c.message_count, 0) /
-              conversationSamples.length
-          )
+          conversationSamples.reduce((sum, c) => sum + c.message_count, 0) /
+          conversationSamples.length
+        )
         : 0;
 
     const prompt = `You are a WhatsApp sales performance analyst. Analyze these REAL conversation metrics and provide ONE specific, actionable insight (max 2 sentences).
 
 REAL DATA FROM TODAY:
-- New leads today: ${data.contacts_today} (${
-      leadTrend > 0 ? "+" : ""
-    }${leadTrend}% vs yesterday)
+- New leads today: ${data.contacts_today} (${leadTrend > 0 ? "+" : ""
+      }${leadTrend}% vs yesterday)
 - Reply rate today: ${replyRateToday}% (yesterday: ${replyRateYesterday}%)
 - Total messages exchanged: ${data.messages_today}
 - Deals closed today: ${data.closed_count || 0}
 - Average messages per conversation: ${avgMessagesPerContact}
-- Leads not responding: ${noReplyContacts.length} out of ${
-      conversationSamples.length
-    } recent
+- Leads not responding: ${noReplyContacts.length} out of ${conversationSamples.length
+      } recent
 
 7-DAY TREND:
 - Weekly engagement rate: ${Math.round((data.engagement_rate_week || 0) * 100)}%
@@ -21542,8 +21471,8 @@ Return ONLY the tip as plain text, no formatting, no bullet points. Start direct
     const engagementRate =
       parseInt(stats.total_leads) > 0
         ? Math.round(
-            (parseInt(stats.engaged_leads) / parseInt(stats.total_leads)) * 100
-          )
+          (parseInt(stats.engaged_leads) / parseInt(stats.total_leads)) * 100
+        )
         : 0;
 
     if (engagementRate < 40) {
@@ -21656,9 +21585,9 @@ async function sendWeeklySummaryReport(client, idSubstring) {
     const bestDayRate =
       bestDay && parseInt(bestDay.leads_count) > 0
         ? Math.round(
-            (parseInt(bestDay.replied_count) / parseInt(bestDay.leads_count)) *
-              100
-          )
+          (parseInt(bestDay.replied_count) / parseInt(bestDay.leads_count)) *
+          100
+        )
         : 0;
 
     // Cold leads that need re-engagement
@@ -21707,23 +21636,19 @@ async function sendWeeklySummaryReport(client, idSubstring) {
     // Action suggestions
     let actionSuggestions = `🎯 *Recommended Actions:*\n`;
     if (coldLeadsCount > 0) {
-      actionSuggestions += `Re-engage ${coldLeadsCount} cold lead${
-        coldLeadsCount > 1 ? "s" : ""
-      } from this week.\n`;
+      actionSuggestions += `Re-engage ${coldLeadsCount} cold lead${coldLeadsCount > 1 ? "s" : ""
+        } from this week.\n`;
     }
 
     const message =
       `📅 *Weekly Report (${startDate.format("DD MMM")}–${endDate.format(
         "DD MMM YYYY"
       )})*\n\n` +
-      `👥 Total Leads: *${totalLeads}*  (${
-        leadsTrend > 0 ? "↑" : leadsTrend < 0 ? "↓" : "→"
+      `👥 Total Leads: *${totalLeads}*  (${leadsTrend > 0 ? "↑" : leadsTrend < 0 ? "↓" : "→"
       } ${leadsTrend > 0 ? "+" : ""}${leadsTrend}% from last week)\n` +
-      `💬 Replies: *${engagedLeads}*  (${
-        engagedTrend > 0 ? "↑" : engagedTrend < 0 ? "↓" : "→"
+      `💬 Replies: *${engagedLeads}*  (${engagedTrend > 0 ? "↑" : engagedTrend < 0 ? "↓" : "→"
       } ${engagedTrend > 0 ? "+" : ""}${engagedTrend}%)\n` +
-      `✅ Closed Deals: *${closedDeals}*  (${
-        closedTrend > 0 ? "↑" : closedTrend < 0 ? "↓" : "→"
+      `✅ Closed Deals: *${closedDeals}*  (${closedTrend > 0 ? "↑" : closedTrend < 0 ? "↓" : "→"
       } ${closedTrend > 0 ? "+" : ""}${closedTrend}%)\n` +
       `⚡ Response Rate: *${responseRate}%*\n\n` +
       `━━━━━━━━━━━━━━━━━━━━\n` +
@@ -21781,9 +21706,9 @@ async function getContactsAddedToday(idSubstring, targetDate = null) {
     // If targetDate is provided, use it; otherwise use today
     const date = targetDate
       ? moment(targetDate)
-          .tz("Asia/Kuala_Lumpur")
-          .startOf("day")
-          .format("YYYY-MM-DD")
+        .tz("Asia/Kuala_Lumpur")
+        .startOf("day")
+        .format("YYYY-MM-DD")
       : moment().tz("Asia/Kuala_Lumpur").startOf("day").format("YYYY-MM-DD");
 
     const result = await sql`
@@ -23408,9 +23333,8 @@ app.post("/api/bots/reinitialize", async (req, res) => {
     // Send immediate response to prevent frontend timeout
     res.json({
       success: true,
-      message: `Reinitialization started for ${
-        phoneIndex !== undefined ? `Phone ${phoneIndex + 1}` : "Bot"
-      }`,
+      message: `Reinitialization started for ${phoneIndex !== undefined ? `Phone ${phoneIndex + 1}` : "Bot"
+        }`,
       phoneCount,
       phoneIndex,
     });
@@ -23600,9 +23524,8 @@ app.post("/api/bots/:botName/disconnect", async (req, res) => {
 
           res.json({
             success: true,
-            message: `Phone ${
-              phoneIndex + 1
-            } disconnected and reinitialized successfully`,
+            message: `Phone ${phoneIndex + 1
+              } disconnected and reinitialized successfully`,
             phoneIndex,
           });
         } catch (error) {
@@ -23994,8 +23917,7 @@ async function checkingStatus(threadId, runId) {
     status === "expired"
   ) {
     throw new Error(
-      `Assistant run ${status}: ${
-        runObject.last_error?.message || "Unknown error"
+      `Assistant run ${status}: ${runObject.last_error?.message || "Unknown error"
       }`
     );
   }
@@ -24459,13 +24381,13 @@ app.get(
         const dateA = a.last_message?.createdAt
           ? new Date(a.last_message.createdAt)
           : a.last_message?.timestamp
-          ? new Date(a.last_message.timestamp * 1000)
-          : new Date(0);
+            ? new Date(a.last_message.timestamp * 1000)
+            : new Date(0);
         const dateB = b.last_message?.createdAt
           ? new Date(b.last_message.createdAt)
           : b.last_message?.timestamp
-          ? new Date(b.last_message.timestamp * 1000)
-          : new Date(0);
+            ? new Date(b.last_message.timestamp * 1000)
+            : new Date(0);
         return dateB - dateA;
       });
 
@@ -24944,9 +24866,9 @@ app.post("/api/monitored-companies", async (req, res) => {
     );
 
     if (companyExists.rows.length === 0) {
-      return res.status(404).json({ 
-        success: false, 
-        error: `Company ${companyId} not found in companies table` 
+      return res.status(404).json({
+        success: false,
+        error: `Company ${companyId} not found in companies table`
       });
     }
 
@@ -24992,9 +24914,9 @@ app.delete("/api/monitored-companies/:companyId", async (req, res) => {
     `, [companyId]);
 
     if (result.rows.length === 0) {
-      return res.status(404).json({ 
-        success: false, 
-        error: `Company ${companyId} not found in monitored list` 
+      return res.status(404).json({
+        success: false,
+        error: `Company ${companyId} not found in monitored list`
       });
     }
 
@@ -25187,7 +25109,7 @@ app.get("/api/bot-status/:companyId", async (req, res) => {
     for (let i = 0; i < phoneCount; i++) {
       // Check if this phone has a Meta Direct connection
       const metaConfig = metaConfigsResult.rows.find(row => row.phone_index === i);
-      
+
       if (metaConfig) {
         // Use Meta Direct status
         statusArray.push({
@@ -25208,7 +25130,7 @@ app.get("/api/bot-status/:companyId", async (req, res) => {
             console.error(`Error getting client info for company ${companyId} phone ${i}:`, err);
           }
         }
-        
+
         statusArray.push({
           phoneIndex: i,
           status: botData[i].status,
@@ -25269,7 +25191,7 @@ app.get("/api/bot-status/:companyId", async (req, res) => {
 // POST /api/companies/{companyId}/phones/add - Add a new phone to company
 app.post("/api/companies/:companyId/phones/add", async (req, res) => {
   const { companyId } = req.params;
-  
+
   console.log(`=== Add Phone Request for Company: ${companyId} ===`);
 
   try {
@@ -25324,7 +25246,7 @@ app.post("/api/companies/:companyId/phones/add", async (req, res) => {
 
     // Initialize the new phone in background
     console.log(`Initializing new phone ${newPhoneIndex} for company ${companyId}...`);
-    
+
     try {
       await initializeBot(companyId, newPhoneCount, newPhoneIndex);
       console.log(`Successfully initialized phone ${newPhoneIndex} for company ${companyId}`);
@@ -25347,7 +25269,7 @@ app.post("/api/companies/:companyId/phones/add", async (req, res) => {
 app.delete("/api/companies/:companyId/phones/:phoneIndex", async (req, res) => {
   const { companyId, phoneIndex } = req.params;
   const phoneIndexNum = parseInt(phoneIndex, 10);
-  
+
   console.log(`=== Remove Phone Request for Company: ${companyId}, Phone: ${phoneIndexNum} ===`);
 
   try {
@@ -25408,11 +25330,11 @@ app.delete("/api/companies/:companyId/phones/:phoneIndex", async (req, res) => {
           await destroyClient(botData[phoneIndexNum].client);
           console.log(`Destroyed client for ${companyId} phone ${phoneIndexNum}`);
         }
-        
+
         // Remove the phone from botMap
         botData.splice(phoneIndexNum, 1);
         botMap.set(companyId, botData);
-        
+
       } catch (destroyError) {
         console.error(`Error destroying client for ${companyId} phone ${phoneIndexNum}:`, destroyError);
         // Continue with removal even if client destruction fails
@@ -25451,7 +25373,7 @@ app.delete("/api/companies/:companyId/phones/:phoneIndex", async (req, res) => {
 // GET /api/companies/{companyId}/phones - Get phone information for company
 app.get("/api/companies/:companyId/phones", async (req, res) => {
   const { companyId } = req.params;
-  
+
   try {
     // Get company data
     const companyData = await sqlDb.getRow(
@@ -25480,7 +25402,7 @@ app.get("/api/companies/:companyId/phones", async (req, res) => {
       if (botData && botData[i]) {
         phoneStatus = botData[i].status || "unknown";
         qrCode = botData[i].qrCode;
-        
+
         if (botData[i].client) {
           try {
             const info = await botData[i].client.info;
@@ -26232,14 +26154,13 @@ app.post("/api/ai-response-brainstorm/", async (req, res) => {
 
 Your task: Help them create the perfect AI response by analyzing their request and any provided file URLs.
 
-${
-  fileUrls && fileUrls.length > 0
-    ? `📎 **FILE URLS AVAILABLE:**
+${fileUrls && fileUrls.length > 0
+        ? `📎 **FILE URLS AVAILABLE:**
 ${fileUrls.map((url, index) => `${index + 1}. ${url}`).join("\n")}
 
 Use these file URLs to create the appropriate AI response. If they provided image URLs, create an image response with these URLs. If they provided document URLs, create a document response with these URLs, etc.`
-    : "If the user wants image/audio/document/video responses, ask them to provide the necessary file URLs first."
-}
+        : "If the user wants image/audio/document/video responses, ask them to provide the necessary file URLs first."
+      }
 
 Response format:
 [RESPONSE_START]
@@ -26304,8 +26225,7 @@ Help create the perfect AI response using the provided file URLs if any.`;
     // Save the interaction to the thread for future reference
     await addMessageAssistant(
       threadID,
-      `AI Response Creation Request: ${userInput}\nFile URLs: ${
-        fileInfo || "None"
+      `AI Response Creation Request: ${userInput}\nFile URLs: ${fileInfo || "None"
       }\nCurrent Prompt: ${currentPrompt || "None"}\nResponse: ${answer}`
     );
 
@@ -26627,9 +26547,8 @@ async function handleToolCallsAIResponseBuilder(toolCalls, email) {
           const args = JSON.parse(toolCall.function.arguments);
 
           // This tool should ask the user to upload an image
-          const result = `Please upload an image for: ${
-            args.purpose || "your AI response"
-          }. 
+          const result = `Please upload an image for: ${args.purpose || "your AI response"
+            }. 
           
           Supported formats: JPG, PNG, GIF
           Maximum size: 10MB
@@ -26655,9 +26574,8 @@ async function handleToolCallsAIResponseBuilder(toolCalls, email) {
           console.log("📁 Processing askForFile tool call...");
           const args = JSON.parse(toolCall.function.arguments);
 
-          const result = `Please upload a file for: ${
-            args.purpose || "your AI response"
-          }. 
+          const result = `Please upload a file for: ${args.purpose || "your AI response"
+            }. 
           
           Supported formats: PDF, DOC, DOCX, TXT
           Maximum size: 20MB
@@ -26683,9 +26601,8 @@ async function handleToolCallsAIResponseBuilder(toolCalls, email) {
           console.log("🎵 Processing askForAudio tool call...");
           const args = JSON.parse(toolCall.function.arguments);
 
-          const result = `Please upload an audio file for: ${
-            args.purpose || "your AI response"
-          }. 
+          const result = `Please upload an audio file for: ${args.purpose || "your AI response"
+            }. 
           
           Supported formats: MP3, WAV, M4A
           Maximum size: 15MB
@@ -26711,9 +26628,8 @@ async function handleToolCallsAIResponseBuilder(toolCalls, email) {
           console.log("🎬 Processing askForVideo tool call...");
           const args = JSON.parse(toolCall.function.arguments);
 
-          const result = `Please upload a video file for: ${
-            args.purpose || "your AI response"
-          }. 
+          const result = `Please upload a video file for: ${args.purpose || "your AI response"
+            }. 
           
           Supported formats: MP4, MOV, AVI
           Maximum size: 50MB
@@ -26963,7 +26879,7 @@ app.post("/api/v2/messages/text/:companyId/:chatId", async (req, res) => {
       console.log("📱 [META DIRECT] Sending message via Meta API");
       const metaDirect = require('./src/services/whatsapp/metaDirect');
       const { broadcastNewMessageToCompany } = require("./utils/broadcast");
-      
+
       try {
         const result = await metaDirect.sendText(companyId, phoneIndex, chatId, message);
         console.log("📱 [META DIRECT] Message sent successfully:", result);
@@ -27026,15 +26942,15 @@ app.post("/api/v2/messages/text/:companyId/:chatId", async (req, res) => {
       hasClient: Boolean(client),
       clientInfo: client
         ? {
-            info: (() => {
-              try {
-                return client.info;
-              } catch (e) {
-                return "Error getting info";
-              }
-            })(),
-            isConnected: client.isConnected,
-          }
+          info: (() => {
+            try {
+              return client.info;
+            } catch (e) {
+              return "Error getting info";
+            }
+          })(),
+          isConnected: client.isConnected,
+        }
         : null,
     });
 
@@ -27886,17 +27802,17 @@ app.post("/api/v2/messages/image/:companyId/:chatId", async (req, res) => {
       'SELECT connection_type FROM phone_configs WHERE company_id = $1 AND phone_index = $2',
       [companyId, phoneIndex]
     );
-    
+
     const isMetaDirect = phoneConfig.rows[0]?.connection_type === 'meta_direct';
-    
+
     if (isMetaDirect) {
       // Use Meta Direct API to send image
       const metaDirect = require('./src/services/whatsapp/metaDirect');
       const result = await metaDirect.sendMedia(companyId, phoneIndex, chatId, 'image', imageUrl, caption);
-      
+
       let phoneNumber = "+" + chatId.split("@")[0];
       const contactData = await getContactDataFromDatabaseByPhone(phoneNumber, companyId);
-      
+
       // Save message to database with all required fields
       const contactID = companyId + "-" + chatId.split("@")[0];
       try {
@@ -27927,7 +27843,7 @@ app.post("/api/v2/messages/image/:companyId/:chatId", async (req, res) => {
       } catch (dbError) {
         console.error('Error saving image message to database:', dbError);
       }
-      
+
       // Broadcast to frontend
       const { broadcastNewMessageToCompany } = require("./utils/broadcast");
       broadcastNewMessageToCompany(companyId, {
@@ -27944,14 +27860,14 @@ app.post("/api/v2/messages/image/:companyId/:chatId", async (req, res) => {
         provider: 'meta_direct',
         mediaUrl: imageUrl,
       });
-      
+
       if (caption) {
         await findAndUpdateMessageAuthor(caption, contactID, companyId, userName);
       }
-      
+
       return res.json({ success: true, messageId: result.id });
     }
-    
+
     // Fallback to wwebjs for non-Meta Direct companies
     let client;
     const botData = botMap.get(companyId);
@@ -27965,7 +27881,7 @@ app.post("/api/v2/messages/image/:companyId/:chatId", async (req, res) => {
         .status(404)
         .send("No active WhatsApp client found for this company");
     }
-    
+
     const media = await MessageMedia.fromUrl(imageUrl);
     const sentMessage = await client.sendMessage(chatId, media, { caption });
     let phoneNumber = "+" + chatId.split("@")[0];
@@ -28020,17 +27936,17 @@ app.post("/api/v2/messages/audio/:companyId/:chatId", async (req, res) => {
       'SELECT connection_type FROM phone_configs WHERE company_id = $1 AND phone_index = $2',
       [companyId, phoneIndex]
     );
-    
+
     const isMetaDirect = phoneConfig.rows[0]?.connection_type === 'meta_direct';
-    
+
     if (isMetaDirect) {
       // Use Meta Direct API to send audio
       const metaDirect = require('./src/services/whatsapp/metaDirect');
       const result = await metaDirect.sendMedia(companyId, phoneIndex, chatId, 'audio', audioUrl, caption);
-      
+
       let phoneNumber = "+" + chatId.split("@")[0];
       const contactID = companyId + "-" + chatId.split("@")[0];
-      
+
       // Save message to database with all required fields
       try {
         await sqlDb.query(`
@@ -28060,7 +27976,7 @@ app.post("/api/v2/messages/audio/:companyId/:chatId", async (req, res) => {
       } catch (dbError) {
         console.error('Error saving audio message to database:', dbError);
       }
-      
+
       // Broadcast to frontend
       const { broadcastNewMessageToCompany } = require("./utils/broadcast");
       broadcastNewMessageToCompany(companyId, {
@@ -28077,11 +27993,11 @@ app.post("/api/v2/messages/audio/:companyId/:chatId", async (req, res) => {
         provider: 'meta_direct',
         mediaUrl: audioUrl,
       });
-      
+
       if (caption) {
         await findAndUpdateMessageAuthor(caption, contactID, companyId, userName);
       }
-      
+
       return res.json({ success: true, messageId: result.id });
     }
 
@@ -28244,8 +28160,7 @@ app.post("/api/request-pairing-code/:botName", async (req, res) => {
       const checkForPairingCode = async () => {
         try {
           console.log(
-            `Checking database for pairing code for ${botName} Phone ${
-              phoneIndex + 1
+            `Checking database for pairing code for ${botName} Phone ${phoneIndex + 1
             }...`
           );
           const result = await sqlDb.query(
@@ -28399,7 +28314,7 @@ app.delete("/api/contacts/:companyId/:contactId/tags", async (req, res) => {
   // Normalize stop bot tags
   tags = tags.map((tag) =>
     typeof tag === "string" &&
-    tag.trim().toLowerCase().replace(/\s+/g, "") === "stopbot"
+      tag.trim().toLowerCase().replace(/\s+/g, "") === "stopbot"
       ? "stop bot"
       : tag
   );
@@ -28435,7 +28350,7 @@ app.post("/api/contacts/:companyId/:contactId/tags", async (req, res) => {
   // Normalize stop bot tags
   tags = tags.map((tag) =>
     typeof tag === "string" &&
-    tag.trim().toLowerCase().replace(/\s+/g, "") === "stopbot"
+      tag.trim().toLowerCase().replace(/\s+/g, "") === "stopbot"
       ? "stop bot"
       : tag
   );
@@ -28568,9 +28483,8 @@ app.post(
           .toString()
           .padStart(2, "0")}`;
 
-        const assignmentId = `${companyId}-${
-          contactResult.rows[0].contact_id
-        }-${employeeResult.rows[0].employee_id}-${Date.now()}`;
+        const assignmentId = `${companyId}-${contactResult.rows[0].contact_id
+          }-${employeeResult.rows[0].employee_id}-${Date.now()}`;
 
         const assignmentInsertQuery = `
         INSERT INTO assignments (
@@ -28925,8 +28839,8 @@ app.delete(
                 companyId,
                 phoneNumber,
                 updateResult.rows[0].name ||
-                  updateResult.rows[0].contact_name ||
-                  "",
+                updateResult.rows[0].contact_name ||
+                "",
                 0, // phoneIndex
                 "System" // userName
               );
@@ -29100,17 +29014,17 @@ app.post("/api/v2/messages/video/:companyId/:chatId", async (req, res) => {
       'SELECT connection_type FROM phone_configs WHERE company_id = $1 AND phone_index = $2',
       [companyId, phoneIndex]
     );
-    
+
     const isMetaDirect = phoneConfig.rows[0]?.connection_type === 'meta_direct';
-    
+
     if (isMetaDirect) {
       // Use Meta Direct API to send video
       const metaDirect = require('./src/services/whatsapp/metaDirect');
       const result = await metaDirect.sendMedia(companyId, phoneIndex, chatId, 'video', videoUrl, caption);
-      
+
       let phoneNumber = "+" + chatId.split("@")[0];
       const contactID = companyId + "-" + chatId.split("@")[0];
-      
+
       // Save message to database with all required fields
       try {
         await sqlDb.query(`
@@ -29140,7 +29054,7 @@ app.post("/api/v2/messages/video/:companyId/:chatId", async (req, res) => {
       } catch (dbError) {
         console.error('Error saving video message to database:', dbError);
       }
-      
+
       // Broadcast to frontend
       const { broadcastNewMessageToCompany } = require("./utils/broadcast");
       broadcastNewMessageToCompany(companyId, {
@@ -29157,11 +29071,11 @@ app.post("/api/v2/messages/video/:companyId/:chatId", async (req, res) => {
         provider: 'meta_direct',
         mediaUrl: videoUrl,
       });
-      
+
       if (caption) {
         await findAndUpdateMessageAuthor(caption, contactID, companyId, userName);
       }
-      
+
       return res.json({ success: true, messageId: result.id });
     }
 
@@ -29242,17 +29156,17 @@ app.post("/api/v2/messages/document/:companyId/:chatId", async (req, res) => {
       'SELECT connection_type FROM phone_configs WHERE company_id = $1 AND phone_index = $2',
       [companyId, phoneIndex]
     );
-    
+
     const isMetaDirect = phoneConfig.rows[0]?.connection_type === 'meta_direct';
-    
+
     if (isMetaDirect) {
       // Use Meta Direct API to send document
       const metaDirect = require('./src/services/whatsapp/metaDirect');
       const result = await metaDirect.sendMedia(companyId, phoneIndex, chatId, 'document', documentUrl, caption, filename);
-      
+
       let phoneNumber = "+" + chatId.split("@")[0];
       const contactID = companyId + "-" + chatId.split("@")[0];
-      
+
       // Save message to database with all required fields
       try {
         await sqlDb.query(`
@@ -29284,7 +29198,7 @@ app.post("/api/v2/messages/document/:companyId/:chatId", async (req, res) => {
       } catch (dbError) {
         console.error('Error saving document message to database:', dbError);
       }
-      
+
       // Broadcast to frontend
       const { broadcastNewMessageToCompany } = require("./utils/broadcast");
       broadcastNewMessageToCompany(companyId, {
@@ -29302,11 +29216,11 @@ app.post("/api/v2/messages/document/:companyId/:chatId", async (req, res) => {
         mediaUrl: documentUrl,
         filename: filename,
       });
-      
+
       if (caption) {
         await findAndUpdateMessageAuthor(caption, contactID, companyId, userName);
       }
-      
+
       return res.json({ success: true, messageId: result.id });
     }
 
@@ -29361,6 +29275,241 @@ app.post("/api/v2/messages/document/:companyId/:chatId", async (req, res) => {
   } catch (error) {
     console.error("Error sending document message:", error);
     res.status(500).send("Internal Server Error: " + error.message);
+  }
+});
+
+app.post("/api/v2/messages/template/:companyId/:chatId", async (req, res) => {
+  console.log("\n=== New Template Message Request ===");
+  const companyId = req.params.companyId;
+  const chatId = req.params.chatId;
+  const {
+    templateName,
+    language,
+    variables,
+    phoneIndex: requestedPhoneIndex,
+    userName: requestedUserName,
+    scheduledTime,
+    batchDelay,
+    enableActiveHours,
+    activeTimeStart,
+    activeTimeEnd,
+  } = req.body;
+
+  console.log("Request details:", {
+    companyId,
+    chatId,
+    templateName,
+    language,
+    variables,
+    requestedPhoneIndex,
+    userName: requestedUserName,
+    scheduledTime,
+    batchDelay,
+    enableActiveHours,
+    activeTimeStart,
+    activeTimeEnd,
+  });
+
+  const phoneIndex =
+    requestedPhoneIndex !== undefined ? parseInt(requestedPhoneIndex) : 0;
+  const userName = requestedUserName !== undefined ? requestedUserName : "";
+  const contactID = companyId + "-" + chatId.split("@")[0];
+  const phoneNumber = "+" + chatId.split("@")[0];
+
+  try {
+    // Check if this company uses Meta Direct
+    const metaConfigResult = await sqlDb.query(
+      'SELECT * FROM phone_configs WHERE company_id = $1 AND phone_index = $2 AND connection_type = $3',
+      [companyId, phoneIndex, 'meta_direct']
+    );
+
+    const hasMetaDirect = metaConfigResult.rows?.length > 0;
+    console.log("Connection type check:", { hasMetaDirect, companyId, phoneIndex });
+
+    if (hasMetaDirect) {
+      // Use Meta Direct API to send template
+      console.log("📱 [META DIRECT] Sending template via Meta API");
+      const metaDirect = require('./src/services/whatsapp/metaDirect');
+      const { broadcastNewMessageToCompany } = require("./utils/broadcast");
+
+      try {
+        // Build components array for template variables
+        const components = [];
+
+        // If we have variables, add them to the body component
+        if (variables && variables.length > 0) {
+          components.push({
+            type: 'body',
+            parameters: variables.map(variable => ({
+              type: 'text',
+              text: variable
+            }))
+          });
+        }
+
+        // Check if this message should be scheduled
+        if (scheduledTime) {
+          const sendTime = new Date(scheduledTime);
+          const now = new Date();
+
+          // If scheduled for future, save to database for later sending
+          if (sendTime > now) {
+            console.log("📅 Scheduling template message for future delivery:", sendTime);
+
+            // Save to scheduled_messages table
+            await sqlDb.query(`
+              INSERT INTO scheduled_messages (
+                company_id, contact_id, chat_id, message_type, content,
+                scheduled_time, status, phone_index,
+                whatsapp_template_name, whatsapp_template_language,
+                whatsapp_template_variables, batch_delay,
+                enable_active_hours, active_time_start, active_time_end
+              )
+              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+            `, [
+              companyId,
+              contactID,
+              chatId,
+              'template',
+              `[Template: ${templateName}]`,
+              sendTime,
+              'scheduled',
+              phoneIndex,
+              templateName,
+              language,
+              JSON.stringify(variables || []),
+              batchDelay || null,
+              enableActiveHours || false,
+              activeTimeStart || null,
+              activeTimeEnd || null
+            ]);
+
+            return res.status(200).json({
+              success: true,
+              scheduled: true,
+              scheduledTime: sendTime.toISOString(),
+              message: 'Template message scheduled successfully'
+            });
+          }
+        }
+
+        // Send immediately if not scheduled or scheduled time is now/past
+        const result = await metaDirect.sendTemplate(
+          companyId,
+          phoneIndex,
+          chatId,
+          templateName,
+          language,
+          components
+        );
+
+        console.log("📱 [META DIRECT] Template sent successfully:", result);
+
+        // Save to database
+        const messageId = result.id;
+        const messageContent = `[Template: ${templateName}]`;
+
+        await sqlDb.query(`
+          INSERT INTO messages (company_id, contact_id, message_id, content, message_type, from_me, timestamp, phone_index)
+          VALUES ($1, $2, $3, $4, $5, $6, NOW(), $7)
+          ON CONFLICT (message_id, company_id) DO NOTHING
+        `, [companyId, contactID, messageId, messageContent, 'template', true, phoneIndex]);
+
+        // Broadcast to frontend
+        broadcastNewMessageToCompany(companyId, {
+          chatId,
+          message: messageContent,
+          messageContent: messageContent,
+          fromMe: true,
+          timestamp: Date.now(),
+          messageType: 'template',
+          extractedNumber: phoneNumber,
+          phone: phoneNumber,
+          contactId: contactID,
+          messageId: messageId,
+          provider: 'meta_direct',
+          templateName,
+          templateLanguage: language,
+        });
+
+        return res.status(200).json({
+          success: true,
+          messageId,
+          provider: 'meta_direct',
+        });
+      } catch (metaError) {
+        console.error("📱 [META DIRECT] Error sending template:", metaError.response?.data || metaError.message);
+
+        // Check for specific Meta API errors
+        if (metaError.response?.data?.error) {
+          const errorMessage = metaError.response.data.error.message || 'Failed to send template';
+          return res.status(metaError.response.status || 500).json({
+            success: false,
+            error: errorMessage,
+            details: metaError.response.data.error
+          });
+        }
+
+        return res.status(500).json({
+          success: false,
+          error: metaError.message || 'Failed to send template message'
+        });
+      }
+    }
+
+    // Fallback to wwebjs for non-Meta Direct companies
+    console.log("Using wwebjs for template message");
+    let client;
+    const botData = botMap.get(companyId);
+    if (!botData) {
+      console.error("WhatsApp client not found for this company");
+      return res.status(404).json({
+        success: false,
+        error: "WhatsApp client not found for this company"
+      });
+    }
+    client = botData[phoneIndex]?.client;
+
+    if (!client) {
+      console.error("No active WhatsApp client found for this company");
+      return res.status(404).json({
+        success: false,
+        error: "No active WhatsApp client found for this company"
+      });
+    }
+
+    // For wwebjs, we can't send templates directly, so send as text
+    const templateMessage = `Template: ${templateName}\nLanguage: ${language}\nVariables: ${variables?.join(', ') || 'none'}`;
+    const sentMessage = await client.sendMessage(chatId, templateMessage);
+
+    console.log("Template message sent via wwebjs:", {
+      messageId: sentMessage?.id?._serialized ?? "no id",
+      timestamp: sentMessage?.timestamp ?? "no timestamp",
+    });
+
+    const contactData = await getContactDataFromDatabaseByPhone(
+      phoneNumber,
+      companyId
+    );
+
+    await addMessageToPostgres(
+      sentMessage,
+      companyId,
+      phoneNumber,
+      contactData?.name || contactData?.contact_name || "",
+      phoneIndex,
+      userName
+    );
+
+    await findAndUpdateMessageAuthor(templateMessage, contactID, companyId, userName);
+
+    res.json({ success: true, messageId: sentMessage.id._serialized });
+  } catch (error) {
+    console.error("Error sending template message:", error);
+    res.status(500).json({
+      success: false,
+      error: "Internal Server Error: " + error.message
+    });
   }
 });
 
@@ -29605,7 +29754,7 @@ async function copyFileWithStreams(sourcePath, targetPath) {
   } catch (error) {
     // Clean up partially copied file if error occurs
     try {
-      await fs.unlink(targetPath).catch(() => {});
+      await fs.unlink(targetPath).catch(() => { });
     } catch (cleanupError) {
       console.warn(
         `Could not clean up failed copy ${targetPath}:`,
@@ -29661,14 +29810,12 @@ async function initializeBot(
 ) {
   try {
     console.log(
-      `Starting initialization for bot: ${botName} with ${phoneCount} phone(s)${
-        specificPhoneIndex !== undefined
-          ? `, phone ${specificPhoneIndex + 1}`
-          : ""
-      }${
-        pairingConfig
-          ? ` with pairing config for ${pairingConfig.phoneNumber}`
-          : ""
+      `Starting initialization for bot: ${botName} with ${phoneCount} phone(s)${specificPhoneIndex !== undefined
+        ? `, phone ${specificPhoneIndex + 1}`
+        : ""
+      }${pairingConfig
+        ? ` with pairing config for ${pairingConfig.phoneNumber}`
+        : ""
       }`
     );
 
@@ -29837,8 +29984,7 @@ function startPhoneMonitoring(botName, phoneIndex) {
 
       if (result.rows.length > 0 && result.rows[0].status === "initializing") {
         console.log(
-          `${botName} Phone ${
-            phoneIndex + 1
+          `${botName} Phone ${phoneIndex + 1
           } - Still initializing, running cleanup...`
         );
 
@@ -29848,8 +29994,7 @@ function startPhoneMonitoring(botName, phoneIndex) {
       }
     } catch (error) {
       console.error(
-        `Error checking initialization status for ${botName} Phone ${
-          phoneIndex + 1
+        `Error checking initialization status for ${botName} Phone ${phoneIndex + 1
         }:`,
         error
       );
@@ -29894,8 +30039,7 @@ async function initializeWithTimeout(
         fs.existsSync(sessionDir)
       ) {
         console.log(
-          `${botName} Phone ${
-            phoneIndex + 1
+          `${botName} Phone ${phoneIndex + 1
           } - Previous status was ready, creating backup...`
         );
         try {
@@ -30008,8 +30152,7 @@ async function initializeWithTimeout(
           intervalMs: 180000,
         };
         console.log(
-          `${botName} Phone ${phoneIndex + 1} - Initializing with pairing for ${
-            pairingConfig.phoneNumber
+          `${botName} Phone ${phoneIndex + 1} - Initializing with pairing for ${pairingConfig.phoneNumber
           }`
         );
         console.log(
@@ -30018,8 +30161,7 @@ async function initializeWithTimeout(
         );
       } else {
         console.log(
-          `${botName} Phone ${
-            phoneIndex + 1
+          `${botName} Phone ${phoneIndex + 1
           } - Initializing without pairing config`
         );
       }
@@ -30054,8 +30196,7 @@ async function initializeWithTimeout(
             // Check for stuck in initializing state
             if (status === "initializing") {
               console.log(
-                `${botName} Phone ${
-                  phoneIndex + 1
+                `${botName} Phone ${phoneIndex + 1
                 } - Still initializing after 2 minutes, running cleanup...`
               );
               clearInterval(checkInitialization);
@@ -30066,8 +30207,7 @@ async function initializeWithTimeout(
             // Only trigger after second check (4 minutes total, 2 minutes in authenticated)
             if (status === "authenticated" && checkCount >= 2) {
               console.log(
-                `${botName} Phone ${
-                  phoneIndex + 1
+                `${botName} Phone ${phoneIndex + 1
                 } - Stuck in authenticated state, running cleanup...`
               );
               clearInterval(checkInitialization);
@@ -30109,8 +30249,7 @@ async function initializeWithTimeout(
         try {
           clearInterval(checkInitialization);
           console.log(
-            `${botName} Phone ${
-              phoneIndex + 1
+            `${botName} Phone ${phoneIndex + 1
             } - PAIRING CODE RECEIVED: ${code}`
           );
           clients[phoneIndex] = {
@@ -30125,8 +30264,7 @@ async function initializeWithTimeout(
             pairingCode: code,
           });
           console.log(
-            `${botName} Phone ${
-              phoneIndex + 1
+            `${botName} Phone ${phoneIndex + 1
             } - Pairing code saved to database: ${code}`
           );
           broadcastAuthStatus(
@@ -30154,7 +30292,7 @@ async function initializeWithTimeout(
         clearInterval(checkInitialization);
         console.log(`${botName} Phone ${phoneIndex + 1} - READY`);
 
-  
+
         clients[phoneIndex] = {
           ...clients[phoneIndex],
           status: "ready",
@@ -30186,8 +30324,7 @@ async function initializeWithTimeout(
           error.message.includes("TLSWrap")
         ) {
           console.error(
-            `${botName} Phone ${
-              phoneIndex + 1
+            `${botName} Phone ${phoneIndex + 1
             } - Network connectivity error detected, will retry...`
           );
 
@@ -30203,8 +30340,7 @@ async function initializeWithTimeout(
             await initializeBot(botName, 1, phoneIndex);
           } catch (handlingError) {
             console.error(
-              `${botName} Phone ${
-                phoneIndex + 1
+              `${botName} Phone ${phoneIndex + 1
               } - Error handling network error:`,
               handlingError
             );
@@ -30218,8 +30354,7 @@ async function initializeWithTimeout(
           });
 
           console.log(
-            `${botName} Phone ${
-              phoneIndex + 1
+            `${botName} Phone ${phoneIndex + 1
             } - Error detected, attempting cleanup and reinitialization...`
           );
 
@@ -30233,8 +30368,7 @@ async function initializeWithTimeout(
             await initializeBot(botName, 1, phoneIndex);
           } catch (lastError) {
             console.error(
-              `${botName} Phone ${
-                phoneIndex + 1
+              `${botName} Phone ${phoneIndex + 1
               } - Last resort reinitialization failed:`,
               lastError
             );
@@ -30261,8 +30395,7 @@ async function initializeWithTimeout(
           // Clean up session if disconnected due to navigation or logout
           if (reason === "NAVIGATION" || reason === "LOGOUT") {
             console.log(
-              `${botName} Phone ${
-                phoneIndex + 1
+              `${botName} Phone ${phoneIndex + 1
               } - Navigation or logout detected, attempting cleanup...`
             );
             await safeCleanup(botName, phoneIndex);
@@ -30275,8 +30408,7 @@ async function initializeWithTimeout(
           );
         } catch (error) {
           console.error(
-            `${botName} Phone ${
-              phoneIndex + 1
+            `${botName} Phone ${phoneIndex + 1
             } - Error in disconnection handler:`,
             error
           );
@@ -30285,8 +30417,7 @@ async function initializeWithTimeout(
             await initializeBot(botName, 1, phoneIndex);
           } catch (lastError) {
             console.error(
-              `${botName} Phone ${
-                phoneIndex + 1
+              `${botName} Phone ${phoneIndex + 1
               } - Last resort reinitialization failed:`,
               lastError
             );
@@ -30315,16 +30446,14 @@ async function initializeWithTimeout(
           result.rows[0].status === "initializing"
         ) {
           console.log(
-            `${botName} Phone ${
-              phoneIndex + 1
+            `${botName} Phone ${phoneIndex + 1
             } - Still initializing, running cleanup...`
           );
           await safeCleanup(botName, phoneIndex);
         }
       } catch (error) {
         console.error(
-          `Error checking initialization status for ${botName} Phone ${
-            phoneIndex + 1
+          `Error checking initialization status for ${botName} Phone ${phoneIndex + 1
           }:`,
           error
         );
@@ -30741,11 +30870,16 @@ async function createAssistant(companyID) {
 // ... existing code ...
 
 // 1. Modify the main() error handler (around line 15678)
-main().catch((error) => {
-  console.error("Error during initialization:", error);
-  // Don't exit - just log the error and continue
-  console.log("Continuing operation despite initialization error...");
-});
+const currentProcessName = process.env.PROCESS_NAME || 'legacy';
+if (currentProcessName === 'wwebjs' || currentProcessName === 'legacy') {
+  main().catch((error) => {
+    console.error("Error during initialization:", error);
+    // Don't exit - just log the error and continue
+    console.log("Continuing operation despite initialization error...");
+  });
+} else {
+  console.log(`[${currentProcessName}] Skipping WWebJS bot initialization`);
+}
 
 // 2. Modify the uncaughtException handler (around line 15802)
 process.on("uncaughtException", (error) => {
@@ -31036,8 +31170,8 @@ async function sendHealthReportToGroup() {
       healthReport.status === "OK"
         ? "✅"
         : healthReport.status === "DEGRADED"
-        ? "⚠️"
-        : "❌";
+          ? "⚠️"
+          : "❌";
 
     let message = `${statusEmoji} *Hourly Server Health Report*\n\n`;
     message += `🕐 *Time:* ${moment()
@@ -31170,31 +31304,31 @@ app.get(
           ...batch,
           chat_ids: batch.chat_ids
             ? safeJsonParse(
-                batch.chat_ids,
-                [],
-                `chat_ids for batch ${batch.id}`
-              )
+              batch.chat_ids,
+              [],
+              `chat_ids for batch ${batch.id}`
+            )
             : [],
           messages: batch.messages
             ? safeJsonParse(
-                batch.messages,
-                [],
-                `messages for batch ${batch.id}`
-              )
+              batch.messages,
+              [],
+              `messages for batch ${batch.id}`
+            )
             : [],
           message_delays: batch.message_delays
             ? safeJsonParse(
-                batch.message_delays,
-                null,
-                `message_delays for batch ${batch.id}`
-              )
+              batch.message_delays,
+              null,
+              `message_delays for batch ${batch.id}`
+            )
             : null,
           active_hours: batch.active_hours
             ? safeJsonParse(
-                batch.active_hours,
-                null,
-                `active_hours for batch ${batch.id}`
-              )
+              batch.active_hours,
+              null,
+              `active_hours for batch ${batch.id}`
+            )
             : null,
         }));
 
@@ -31202,31 +31336,31 @@ app.get(
           ...messageData,
           chat_ids: messageData.chat_ids
             ? safeJsonParse(
-                messageData.chat_ids,
-                [],
-                `chat_ids for message ${messageId}`
-              )
+              messageData.chat_ids,
+              [],
+              `chat_ids for message ${messageId}`
+            )
             : [],
           messages: messageData.messages
             ? safeJsonParse(
-                messageData.messages,
-                [],
-                `messages for message ${messageId}`
-              )
+              messageData.messages,
+              [],
+              `messages for message ${messageId}`
+            )
             : [],
           message_delays: messageData.message_delays
             ? safeJsonParse(
-                messageData.message_delays,
-                null,
-                `message_delays for message ${messageId}`
-              )
+              messageData.message_delays,
+              null,
+              `message_delays for message ${messageId}`
+            )
             : null,
           active_hours: messageData.active_hours
             ? safeJsonParse(
-                messageData.active_hours,
-                null,
-                `active_hours for message ${messageId}`
-              )
+              messageData.active_hours,
+              null,
+              `active_hours for message ${messageId}`
+            )
             : null,
         };
 
@@ -31590,7 +31724,7 @@ app.post("/api/queue/cleanup-stale/:companyId", async (req, res) => {
     if (client)
       try {
         client.release();
-      } catch (e) {}
+      } catch (e) { }
   }
 });
 
@@ -33539,13 +33673,13 @@ app.get("/api/appointments", async (req, res) => {
       dateAdded: appointment.dateAdded,
       contacts: appointment.contact_id
         ? [
-            {
-              id: appointment.contact_id,
-              name: appointment.contact_name || "Unknown",
-              phone: appointment.contact_phone || "",
-              email: appointment.contact_email || "",
-            },
-          ]
+          {
+            id: appointment.contact_id,
+            name: appointment.contact_name || "Unknown",
+            phone: appointment.contact_phone || "",
+            email: appointment.contact_email || "",
+          },
+        ]
         : [],
       details: appointment.details || "",
       meetLink: "",
@@ -33576,8 +33710,7 @@ app.get("/api/appointment-tags", async (req, res) => {
 
     // Redirect to the existing company tags endpoint
     const response = await fetch(
-      `${req.protocol}://${req.get("host")}/api/companies/${
-        user.company_id
+      `${req.protocol}://${req.get("host")}/api/companies/${user.company_id
       }/tags`
     );
     const data = await response.json();
@@ -33678,8 +33811,7 @@ app.post("/api/send-whatsapp-notification", async (req, res) => {
 
           // Use the existing v2 messages API
           const response = await fetch(
-            `${req.protocol}://${req.get("host")}/api/v2/messages/text/${
-              user.company_id
+            `${req.protocol}://${req.get("host")}/api/v2/messages/text/${user.company_id
             }/${encodeURIComponent(chatId)}`,
             {
               method: "POST",
@@ -33927,9 +34059,9 @@ app.post("/api/appointments", async (req, res) => {
       startTime: appointment.scheduled_time,
       endTime: appointment.duration_minutes
         ? new Date(
-            new Date(appointment.scheduled_time).getTime() +
-              appointment.duration_minutes * 60000
-          )
+          new Date(appointment.scheduled_time).getTime() +
+          appointment.duration_minutes * 60000
+        )
         : appointment.scheduled_time,
       address:
         appointment.metadata?.location || appointment.metadata?.address || "",
@@ -34137,9 +34269,9 @@ app.put("/api/appointments/:id", async (req, res) => {
       startTime: appointment.scheduled_time,
       endTime: appointment.duration_minutes
         ? new Date(
-            new Date(appointment.scheduled_time).getTime() +
-              appointment.duration_minutes * 60000
-          )
+          new Date(appointment.scheduled_time).getTime() +
+          appointment.duration_minutes * 60000
+        )
         : appointment.scheduled_time,
       address:
         appointment.metadata?.location || appointment.metadata?.address || "",
@@ -34208,7 +34340,7 @@ app.get("/api/appointments/:id", async (req, res) => {
       startTime: appointment.scheduled_time,
       endTime: new Date(
         new Date(appointment.scheduled_time).getTime() +
-          appointment.duration_minutes * 60000
+        appointment.duration_minutes * 60000
       ),
       address: appointment.metadata?.location || "",
       appointmentStatus: appointment.status,
@@ -34218,13 +34350,13 @@ app.get("/api/appointments/:id", async (req, res) => {
       dateAdded: appointment.created_at,
       contacts: appointment.contact_id
         ? [
-            {
-              id: appointment.contact_id,
-              name: appointment.contact_name || "Unknown",
-              phone: appointment.contact_phone || "",
-              email: appointment.contact_email || "",
-            },
-          ]
+          {
+            id: appointment.contact_id,
+            name: appointment.contact_name || "Unknown",
+            phone: appointment.contact_phone || "",
+            email: appointment.contact_email || "",
+          },
+        ]
         : [],
       details: appointment.description || "",
       meetLink: "",
@@ -34761,9 +34893,8 @@ app.post("/api/google-calendar/create-event", async (req, res) => {
         .map((attendee) => `${attendee.displayName || ""} (${attendee.email})`)
         .join(", ");
 
-      eventForCalendar.description = `${
-        event.description || ""
-      }\n\nGuest: ${attendeeInfo}`.trim();
+      eventForCalendar.description = `${event.description || ""
+        }\n\nGuest: ${attendeeInfo}`.trim();
       console.log("Adding attendee info to description:", attendeeInfo);
 
       // Remove attendees from the event to avoid permission errors
@@ -34850,9 +34981,8 @@ app.post("/api/google-calendar/create-event", async (req, res) => {
 
           // Add manual Google Meet link to description as fallback
           manualMeetLink = `https://meet.google.com/new`;
-          eventForCalendar.description = `${
-            eventForCalendar.description || ""
-          }\n\n🎥 Google Meet: ${manualMeetLink}\n(Click to create a new meeting room)`.trim();
+          eventForCalendar.description = `${eventForCalendar.description || ""
+            }\n\n🎥 Google Meet: ${manualMeetLink}\n(Click to create a new meeting room)`.trim();
 
           response = await calendar.events.insert(insertParamsWithoutMeet);
           console.log("Successfully created event without Google Meet");
@@ -35654,9 +35784,8 @@ app.post("/api/financial/add-entry", async (req, res) => {
     if (type === "income") {
       await sql`
         INSERT INTO income_sources (month, year, source_name, amount, description)
-        VALUES (${month}, ${parseInt(year)}, ${name}, ${parseFloat(amount)}, ${
-        description || ""
-      })
+        VALUES (${month}, ${parseInt(year)}, ${name}, ${parseFloat(amount)}, ${description || ""
+        })
       `;
 
       // Update monthly totals
@@ -37152,4 +37281,4 @@ app.post("/api/booking-slots/public/book", async (req, res) => {
       error: "Failed to create booking",
     });
   }
-});
+}); module.exports = { botMap, app, server, sqlDb, handleNewMessagesTemplateWweb, safeRelease };

@@ -4,7 +4,7 @@ const moment = require('moment-timezone');
 const axios = require('axios');
 const admin = require('../firebase.js');
 const db = admin.firestore();
-const OpenAI = require('openai');
+const OpenAI = require('openai/index.mjs');
 const openai = new OpenAI({
   apiKey: process.env.OPENAIKEY,
   assistantId: process.env.OPENAI_ASSISTANT_ID
