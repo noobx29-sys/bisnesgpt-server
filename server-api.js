@@ -35,7 +35,7 @@ function bridgeProcessWS(name, port) {
             const wss = global.wss;
             if (!wss) return;
             wss.clients.forEach(client => {
-                if (client.readyState === WebSocket.OPEN) {
+                if (client.readyState === WebSocket.OPEN && client.pathname === '/status') {
                     client.send(data.toString());
                 }
             });

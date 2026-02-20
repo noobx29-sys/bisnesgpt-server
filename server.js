@@ -3726,10 +3726,13 @@ wss.on("connection", (ws, req) => {
     // Send current statuses for all bots
     setTimeout(async () => {
       try {
+        const sentKeys = new Set();
+
         for (const [botName, botData] of botMap.entries()) {
           if (Array.isArray(botData)) {
             botData.forEach((phoneData, phoneIndex) => {
               if (phoneData && phoneData.status) {
+                sentKeys.add(`${botName}_${phoneIndex}`);
                 const statusMessage = {
                   type: "status_update",
                   botName,
@@ -3745,6 +3748,30 @@ wss.on("connection", (ws, req) => {
               }
             });
           }
+        }
+
+        // Also send statuses from DB for phones managed by other processes
+        // (e.g. wwebjs process) that are not in this process's botMap
+        try {
+          const dbResult = await sqlDb.query(
+            `SELECT company_id, phone_index, status FROM phone_status ORDER BY company_id, phone_index`
+          );
+          for (const row of dbResult.rows) {
+            const phoneIndex = parseInt(row.phone_index) || 0;
+            const key = `${row.company_id}_${phoneIndex}`;
+            if (!sentKeys.has(key) && ws.readyState === WebSocket.OPEN) {
+              ws.send(JSON.stringify({
+                type: "status_update",
+                botName: row.company_id,
+                status: row.status,
+                phoneIndex,
+                qrCode: null,
+                timestamp: new Date().toISOString(),
+              }));
+            }
+          }
+        } catch (dbErr) {
+          console.error("Error fetching phone statuses from DB for status page:", dbErr);
         }
       } catch (error) {
         console.error(
