@@ -1,5 +1,5 @@
 const os = require("os");
-const OpenAI = require("openai/index.mjs");
+const OpenAI = require("openai");
 const axios = require("axios");
 const { google } = require("googleapis");
 const { MessageMedia } = require("whatsapp-web.js");
@@ -24,8 +24,8 @@ const { fromPath } = require("pdf2pic");
 const SKCSpreadsheet = require("../spreadsheet/SKCSpreadsheet.js");
 const CarCareSpreadsheet = require("../blast/bookingCarCareGroup.js");
 const { Poppler } = require("node-poppler");
-const { neon, neonConfig } = require("../node_modules/@neondatabase/serverless/index.js");
-const { Pool } = require("../node_modules/@types/pg/index.js");
+const { neon, neonConfig } = require("@neondatabase/serverless");
+const { Pool } = require("pg");
 const mime = require("mime-types");
 const FormData = require("form-data");
 const { ids } = require("googleapis/build/src/apis/ids/index.js");

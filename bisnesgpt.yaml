@@ -6,5 +6,5 @@ ingress:
     path: ^/api/server-manager
     service: http://localhost:9000
   - hostname: bisnesgpt.jutateknologi.com
-    service: http://localhost:8443
+    service: http://localhost:3000
   - service: http_status:404

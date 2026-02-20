@@ -110,6 +110,26 @@
       .stat-card.accent-blue .stat-value { color: var(--blue); }
       .stat-card.accent-green .stat-value { color: var(--green); }
 
+      /* ─── Process Health ─── */
+      .proc-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 20px; }
+      @media (max-width: 700px) { .proc-grid { grid-template-columns: 1fr; } }
+      .proc-card {
+        background: #fff; border: 1px solid var(--gray-200); border-radius: var(--radius);
+        padding: 14px 16px; box-shadow: var(--shadow-sm); display: flex; flex-direction: column; gap: 6px;
+      }
+      .proc-card-header { display: flex; justify-content: space-between; align-items: center; }
+      .proc-name { font-size: 13px; font-weight: 700; color: var(--gray-700); display: flex; align-items: center; gap: 7px; }
+      .proc-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--gray-300); flex-shrink: 0; }
+      .proc-dot.healthy { background: var(--green); animation: pulse 2s infinite; }
+      .proc-dot.down { background: var(--red); }
+      .proc-badge { padding: 2px 9px; border-radius: 10px; font-size: 10px; font-weight: 700; text-transform: uppercase; }
+      .proc-badge.healthy { background: var(--green-bg); color: var(--green); border: 1px solid #BBF7D0; }
+      .proc-badge.down { background: var(--red-bg); color: var(--red); border: 1px solid #FECACA; }
+      .proc-badge.unknown { background: var(--gray-100); color: var(--gray-500); border: 1px solid var(--gray-200); }
+      .proc-detail { font-size: 11px; color: var(--gray-500); }
+      .proc-detail b { color: var(--gray-700); }
+      .proc-port { font-size: 10px; font-family: monospace; color: var(--gray-400); }
+
       /* ─── Search ─── */
       .search-bar {
         width: 100%;
@@ -400,6 +420,37 @@
           <div class="stat-card accent-green"><div class="stat-value" id="wwebjsConnected">0</div><div class="stat-label">WWebJS</div></div>
           <div class="stat-card"><div class="stat-value" id="disconnectedBots">0</div><div class="stat-label">Disconnected</div></div>
           <div class="stat-card"><div class="stat-value" id="currentlyActiveBots">0</div><div class="stat-label">Active Now</div></div>
+        </div>
+
+        <!-- Process Health -->
+        <div class="proc-grid">
+          <div class="proc-card">
+            <div class="proc-card-header">
+              <div class="proc-name"><span class="proc-dot unknown" id="dot-api"></span>API Server</div>
+              <span class="proc-badge unknown" id="badge-api">Checking</span>
+            </div>
+            <div class="proc-detail">Port <b>3000</b> &nbsp;·&nbsp; <span class="proc-port">bisnesgpt-api</span></div>
+            <div class="proc-detail">Uptime: <b id="uptime-api">—</b></div>
+            <div class="proc-detail" id="info-api" style="color:var(--gray-400)">HTTP API &amp; routing</div>
+          </div>
+          <div class="proc-card">
+            <div class="proc-card-header">
+              <div class="proc-name"><span class="proc-dot unknown" id="dot-wwebjs"></span>WWebJS</div>
+              <span class="proc-badge unknown" id="badge-wwebjs">Checking</span>
+            </div>
+            <div class="proc-detail">Port <b>3001</b> &nbsp;·&nbsp; <span class="proc-port">bisnesgpt-wwebjs</span></div>
+            <div class="proc-detail">Uptime: <b id="uptime-wwebjs">—</b></div>
+            <div class="proc-detail" id="info-wwebjs" style="color:var(--gray-400)">WhatsApp Web (Puppeteer)</div>
+          </div>
+          <div class="proc-card">
+            <div class="proc-card-header">
+              <div class="proc-name"><span class="proc-dot unknown" id="dot-meta"></span>Meta Direct</div>
+              <span class="proc-badge unknown" id="badge-meta">Checking</span>
+            </div>
+            <div class="proc-detail">Port <b>3002</b> &nbsp;·&nbsp; <span class="proc-port">bisnesgpt-meta</span></div>
+            <div class="proc-detail">Uptime: <b id="uptime-meta">—</b></div>
+            <div class="proc-detail" id="info-meta" style="color:var(--gray-400)">Meta Cloud API</div>
+          </div>
         </div>
 
         <!-- Search -->
@@ -786,6 +837,8 @@
         await initializeBots();
         connectWebSocket();
         setTimeout(updateAutoReplyStatus, 2000);
+        fetchProcessHealth();
+        setInterval(fetchProcessHealth, 30000);
       }
 
       // ============================================
@@ -1042,6 +1095,41 @@
             if (btns.length) { btns[0].textContent = 'Sent ✓'; btns[0].style.background = 'var(--green)'; btns[0].disabled = true; }
           } else showNotification(`❌ ${d.error}`, true);
         } catch (e) { showNotification(`❌ ${e.message}`, true); }
+      }
+
+      // ============================================
+      // PROCESS HEALTH
+      // ============================================
+      function fmtUptime(secs) {
+        if (!secs && secs !== 0) return '—';
+        const h = Math.floor(secs / 3600);
+        const m = Math.floor((secs % 3600) / 60);
+        const s = secs % 60;
+        if (h > 0) return `${h}h ${m}m`;
+        if (m > 0) return `${m}m ${s}s`;
+        return `${s}s`;
+      }
+
+      async function fetchProcessHealth() {
+        try {
+          const r = await fetch('/health/all');
+          const d = await r.json();
+          ['api', 'wwebjs', 'meta'].forEach(proc => {
+            const info = d[proc] || {};
+            const st = info.status || 'unknown';
+            const dot = document.getElementById(`dot-${proc}`);
+            const badge = document.getElementById(`badge-${proc}`);
+            const uptime = document.getElementById(`uptime-${proc}`);
+            if (dot) dot.className = `proc-dot ${st}`;
+            if (badge) { badge.className = `proc-badge ${st}`; badge.textContent = st === 'healthy' ? 'Online' : st === 'down' ? 'Down' : 'Unknown'; }
+            if (uptime) uptime.textContent = fmtUptime(info.uptime);
+          });
+        } catch {
+          ['api', 'wwebjs', 'meta'].forEach(proc => {
+            const b = document.getElementById(`badge-${proc}`);
+            if (b) { b.className = 'proc-badge down'; b.textContent = 'Error'; }
+          });
+        }
       }
 
       function populateTestCompanySelect() {

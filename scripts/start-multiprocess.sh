@@ -15,7 +15,9 @@ fi
 
 # Load environment
 if [ -f .env ]; then
-    export $(cat .env | grep -v '^#' | xargs)
+    set -a
+    source <(grep -v '^\s*#' .env | grep -v '^\s*$' | sed 's/[[:space:]]*=[[:space:]]*/=/')
+    set +a
 fi
 
 # Choose mode

@@ -942,6 +942,8 @@ app.locals.botMap = botMap;
 
 // CORS Configuration - Define whitelist before WebSocket server
 const whitelist = [
+  "https://app.adleticagency.com/",
+  "https://app.adleticagency.com",
   "https://juta.ngrok.app",
   "https://juta-crm-v3.vercel.app",
   "http://localhost:5173",
@@ -1502,9 +1504,31 @@ app.get("/api/health", (req, res) => {
   res.status(200).json({
     status: "ok",
     timestamp: new Date().toISOString(),
-    uptime: process.uptime(),
+    uptime: Math.floor(process.uptime()),
     service: "bisnesgpt-server",
+    process: process.env.PROCESS_NAME || "server",
   });
+});
+
+// Multi-process health aggregator
+app.get("/health/all", async (req, res) => {
+  const wwebjsPort = process.env.WWEBJS_PORT || 3001;
+  const metaPort = process.env.META_PORT || 3002;
+  const results = {
+    timestamp: new Date().toISOString(),
+    api:    { status: "healthy", uptime: Math.floor(process.uptime()) },
+    wwebjs: { status: "unknown" },
+    meta:   { status: "unknown" },
+  };
+  await Promise.all([
+    axios.get(`http://localhost:${wwebjsPort}/api/health`, { timeout: 3000 })
+      .then(r => { results.wwebjs = { status: "healthy", uptime: r.data.uptime || 0 }; })
+      .catch(() => { results.wwebjs = { status: "down" }; }),
+    axios.get(`http://localhost:${metaPort}/api/health`, { timeout: 3000 })
+      .then(r => { results.meta = { status: "healthy", uptime: r.data.uptime || 0 }; })
+      .catch(() => { results.meta = { status: "down" }; }),
+  ]);
+  res.json(results);
 });
 
 app.get("/status", (req, res) =>
@@ -3528,11 +3552,7 @@ app.post("/api/manual-sync-auto-reply/:companyId", async (req, res) => {
 
 const port = process.env.PORT || 3000;
 const processName = process.env.PROCESS_NAME || 'legacy';
-if (processName === 'api' || processName === 'meta' || processName === 'legacy') {
-  server.listen(port, () => console.log(`[${processName}] Server is running on port ${port}`));
-} else {
-  console.log(`[${processName}] Skipping Express server listen`);
-}
+server.listen(port, () => console.log(`[${processName}] Server is running on port ${port}`));
 
 // Function to broadcast logs to WebSocket clients
 function broadcastLog(logData) {
@@ -25066,8 +25086,10 @@ app.get("/api/bot-status/:companyId", async (req, res) => {
 
   // Allow both localhost for development and your Vercel domain for production
   const allowedOrigins = [
+
     "http://localhost:5173",
     "https://juta-crm-v3.vercel.app",
+    "https://app.adleticagency.com",
   ];
 
   const origin = req.headers.origin;

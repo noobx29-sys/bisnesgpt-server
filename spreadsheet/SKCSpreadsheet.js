@@ -5,7 +5,7 @@ const util = require('util');
 const moment = require('moment-timezone');
 const fs = require('fs');
 const cron = require('node-cron');
-const OpenAI = require('openai/index.mjs');
+const OpenAI = require('openai');
 const { v4: uuidv4 } = require('uuid');
 const axios = require('axios');
 

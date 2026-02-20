@@ -27,7 +27,11 @@
       "Bash(curl:*)",
       "Read(//home/firaz/Pictures/Screenshots/**)",
       "Bash(pkill:*)",
-      "Bash(kill:*)"
+      "Bash(kill:*)",
+      "Bash(pm2 delete:*)",
+      "Bash(pm2 kill:*)",
+      "Bash(pm2 status:*)",
+      "Bash(ss:*)"
     ],
     "deny": [],
     "ask": []
