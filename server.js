@@ -1056,6 +1056,7 @@ const corsOptions = {
       /^https?:\/\/([a-zA-Z0-9-]+\.)*omniyal\.com(?:$|\/)/i,
       /^https?:\/\/([a-zA-Z0-9-]+\.)*xyzaibot\.com(?:$|\/)/i,
       /^https?:\/\/([a-zA-Z0-9-]+\.)*vercel\.app(?:$|\/)/i,
+      /^https?:\/\/([a-zA-Z0-9-]+\.)*adleticagency\.com(?:$|\/)/i,
     ];
 
     // Check if the origin matches any allowed pattern
@@ -3751,10 +3752,14 @@ wss.on("connection", (ws, req) => {
         }
 
         // Also send statuses from DB for phones managed by other processes
-        // (e.g. wwebjs process) that are not in this process's botMap
+        // (e.g. wwebjs process) that are not in this process's botMap.
+        // Only include monitored companies so the status page isn't flooded.
         try {
           const dbResult = await sqlDb.query(
-            `SELECT company_id, phone_index, status FROM phone_status ORDER BY company_id, phone_index`
+            `SELECT ps.company_id, ps.phone_index, ps.status
+             FROM phone_status ps
+             INNER JOIN monitored_companies mc ON mc.company_id = ps.company_id AND mc.is_active = true
+             ORDER BY ps.company_id, ps.phone_index`
           );
           for (const row of dbResult.rows) {
             const phoneIndex = parseInt(row.phone_index) || 0;
