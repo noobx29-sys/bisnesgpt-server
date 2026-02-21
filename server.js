@@ -986,6 +986,7 @@ const wss = new WebSocket.Server({
       /^https?:\/\/([a-zA-Z0-9-]+\.)*omniyal\.com(?:$|\/)/i,
       /^https?:\/\/([a-zA-Z0-9-]+\.)*xyzaibot\.com(?:$|\/)/i,
       /^https?:\/\/([a-zA-Z0-9-]+\.)*vercel\.app(?:$|\/)/i,
+      /^https?:\/\/([a-zA-Z0-9-]+\.)*adleticagency\.com(?:$|\/)/i,
     ];
 
     // Check if origin matches any allowed pattern
