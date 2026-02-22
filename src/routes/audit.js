@@ -4,17 +4,15 @@ const admin = require('../../firebase');
 
 router.post('/run', async (req, res) => {
     try {
-        const { companyId } = req.body;
+        const { companyId, contacts: reqContacts } = req.body;
 
         if (!companyId) {
             return res.status(400).json({ error: 'companyId is required' });
         }
 
-        const db = admin.firestore();
-        const contactsRef = db.collection(`companies/${companyId}/contacts`);
-        const snapshot = await contactsRef.get();
+        const contacts = reqContacts || [];
 
-        if (snapshot.empty) {
+        if (contacts.length === 0) {
             return res.json({
                 pipelineData: { hot: [], warm: [], cold: [], leaked: [] },
                 stats: {
@@ -26,11 +24,6 @@ router.post('/run', async (req, res) => {
                 }
             });
         }
-
-        const contacts = [];
-        snapshot.forEach(doc => {
-            contacts.push({ id: doc.id, ...doc.data() });
-        });
 
         const newPipeline = { hot: [], warm: [], cold: [], leaked: [] };
         let leakedCount = 0;

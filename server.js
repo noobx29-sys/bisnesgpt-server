@@ -88,6 +88,8 @@ const serverManagerRouter = require("./routes/serverManager");
 const whatsappApiRoutes = require("./src/routes/whatsapp");
 const metaWebhookRoutes = require("./src/routes/webhooks/meta");
 const templatesRouter = require("./src/routes/templates");
+// AI Pipeline Audit Route
+const auditRouter = require("./src/routes/audit");
 
 // Initialize logger
 const logger = new ServerLogger();
@@ -1518,9 +1520,9 @@ app.get("/health/all", async (req, res) => {
   const metaPort = process.env.META_PORT || 3002;
   const results = {
     timestamp: new Date().toISOString(),
-    api:    { status: "healthy", uptime: Math.floor(process.uptime()) },
+    api: { status: "healthy", uptime: Math.floor(process.uptime()) },
     wwebjs: { status: "unknown" },
-    meta:   { status: "unknown" },
+    meta: { status: "unknown" },
   };
   await Promise.all([
     axios.get(`http://localhost:${wwebjsPort}/api/health`, { timeout: 3000 })
@@ -3073,6 +3075,7 @@ app.use("/api/server-manager", serverManagerRouter);
 app.use("/api/whatsapp", whatsappApiRoutes);
 app.use("/api/templates", templatesRouter);
 app.use("/webhook", metaWebhookRoutes);
+app.use("/api/audit", auditRouter);
 
 // Read specific log file
 app.get("/api/logs/read/:filename", async (req, res) => {
@@ -21221,8 +21224,8 @@ async function sendDailyContactReport(client, idSubstring, targetDate = null) {
     let motivationalMessage = "";
     if (count > leadsYesterday && count > 0) {
       motivationalMessage = `🔥 You're on fire! ${count} leads today is ${leadsTrendText.includes("+")
-          ? "your best this week"
-          : "momentum building"
+        ? "your best this week"
+        : "momentum building"
         }!`;
     } else if (closedToday > 0) {
       motivationalMessage = `🎯 ${closedToday} deal${closedToday > 1 ? "s" : ""
