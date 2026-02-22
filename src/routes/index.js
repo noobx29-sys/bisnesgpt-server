@@ -10,4 +10,7 @@ router.use('/whatsapp', require('./whatsapp'));
 // Webhook routes
 router.use('/webhook', require('./webhooks'));
 
+// AI Pipeline Audit
+router.use('/audit', require('./audit'));
+
 module.exports = router;
