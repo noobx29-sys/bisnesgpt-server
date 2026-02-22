@@ -21,7 +21,7 @@ async function ensureAuditTable() {
         )
     `);
     // Add settings column if table already existed without it
-    await query(`ALTER TABLE audit_results ADD COLUMN IF NOT EXISTS settings JSONB`).catch(() => {});
+    await query(`ALTER TABLE audit_results ADD COLUMN IF NOT EXISTS settings JSONB`).catch(() => { });
 }
 ensureAuditTable().catch(err => console.error('audit_results table init failed:', err.message));
 
@@ -60,9 +60,9 @@ function classifyToStage(tags, metrics, settings = {}) {
     const m = metrics || {};
     const has = (...args) => args.some(tag => t.includes(tag));
 
-    const hotDays  = settings.hotLeadDays  || 7;
+    const hotDays = settings.hotLeadDays || 7;
     const coldDays = settings.coldLeadDays || 30;
-    const days     = typeof m.daysSinceLastMessage  === 'number' ? m.daysSinceLastMessage  : 999;
+    const days = typeof m.daysSinceLastMessage === 'number' ? m.daysSinceLastMessage : 999;
     const lastFromContact = m.lastMessageFromContact || false;
 
     // ── Explicitly rejected / lost ───────────────────────────────────────────
@@ -70,52 +70,48 @@ function classifyToStage(tags, metrics, settings = {}) {
         return { stage: 'leaked', score: 8, reason: 'Expressed disinterest or rejection' };
     }
 
-    // ── Qualified lead — recency is primary signal ────────────────────────────
+    // ── Customer / Closed Deal ─────────────────────────────────────────────────────
+    if (has('customer', 'closed', 'sold')) {
+        if (days <= coldDays) return { stage: 'closed', score: 100, reason: 'Closed deal — active customer' };
+        return { stage: 'closed', score: 90, reason: `Closed deal — dormant (${Math.round(days)}d)` };
+    }
+
+    // ── Qualified lead (Consideration / Decision) ────────────────────────────
     if (has('qualified-lead')) {
         if (days <= hotDays) {
-            const score = lastFromContact ? 95 : 88;
-            const reason = lastFromContact
-                ? `Messaged you ${days}d ago — reply now before they go cold`
-                : `Your message is pending — followed up ${days}d ago`;
-            return { stage: 'hot', score, reason };
+            return { stage: 'decision', score: 85, reason: 'Qualified lead, recent engagement' };
         }
         if (days <= coldDays) {
-            return { stage: 'warm', score: 65, reason: `Qualified lead — last active ${Math.round(days)}d ago` };
+            return { stage: 'consideration', score: 70, reason: `Qualified lead — pending decision` };
         }
-        return { stage: 'leaked', score: 22, reason: `Qualified lead gone silent (${Math.round(days)}d ago) — revenue at risk` };
+        return { stage: 'leaked', score: 22, reason: `Qualified lead gone silent` };
     }
 
-    // ── Potential lead ────────────────────────────────────────────────────────
+    // ── Potential lead (Intent / Interest) ────────────────────────────────────────────────────────
     if (has('potential-lead')) {
         if (days <= hotDays && lastFromContact) {
-            return { stage: 'hot', score: 75, reason: `Potential lead messaged you ${days}d ago — qualify now` };
+            return { stage: 'intent', score: 65, reason: `Potential lead showing intent` };
         }
         if (days <= hotDays) {
-            return { stage: 'warm', score: 60, reason: `Potential lead — recently active (${Math.round(days)}d ago)` };
+            return { stage: 'interest', score: 55, reason: `Potential lead — exploring` };
         }
         if (days <= coldDays) {
-            return { stage: 'cold', score: 35, reason: `Potential lead — needs re-engagement (${Math.round(days)}d ago)` };
+            return { stage: 'interest', score: 40, reason: `Potential lead — needs re-engagement` };
         }
-        return { stage: 'leaked', score: 18, reason: `Potential lead dormant for ${Math.round(days)}d` };
+        return { stage: 'leaked', score: 18, reason: `Potential lead dormant` };
     }
 
-    // ── Existing customer ─────────────────────────────────────────────────────
-    if (has('customer')) {
-        if (days <= coldDays) return { stage: 'warm', score: 50, reason: 'Existing customer — upsell / support opportunity' };
-        return { stage: 'cold', score: 28, reason: `Existing customer dormant (${Math.round(days)}d)` };
-    }
-
-    // ── Fallback: pure recency ────────────────────────────────────────────────
+    // ── Fallback (Awareness) ────────────────────────────────────────────────
     if (lastFromContact && days <= hotDays) {
-        return { stage: 'warm', score: 48, reason: `Messaged you ${days}d ago — qualification needed` };
+        return { stage: 'awareness', score: 35, reason: `Recent inbound — needs qualification` };
     }
     if (days <= hotDays) {
-        return { stage: 'cold', score: 32, reason: `Recent contact (${Math.round(days)}d ago) — no clear intent yet` };
+        return { stage: 'awareness', score: 25, reason: `Recent contact — building awareness` };
     }
     if (days <= coldDays) {
-        return { stage: 'cold', score: 22, reason: `Moderately inactive (${Math.round(days)}d) — needs outreach` };
+        return { stage: 'awareness', score: 15, reason: `Inactive contact — low awareness` };
     }
-    return { stage: 'leaked', score: 12, reason: `Inactive for ${Math.round(days)}d — at risk of permanent loss` };
+    return { stage: 'leaked', score: 10, reason: `Inactive for ${Math.round(days)}d` };
 }
 
 // ─── Background worker ────────────────────────────────────────────────────────
@@ -173,14 +169,14 @@ async function runAuditBackground(companyId, settings = {}) {
             );
 
             settled.forEach((outcome, idx) => {
-                const orig   = batch[idx];
+                const orig = batch[idx];
                 const result = outcome.status === 'fulfilled' ? outcome.value : null;
                 taggedContacts.push({
-                    id:      orig.contact_id,
-                    name:    orig.name,
-                    phone:   orig.phone,
-                    email:   orig.email,
-                    tags:    sanitiseTags((result?.success && result.tags?.recommended) ? result.tags.recommended : (orig.tags || [])),
+                    id: orig.contact_id,
+                    name: orig.name,
+                    phone: orig.phone,
+                    email: orig.email,
+                    tags: sanitiseTags((result?.success && result.tags?.recommended) ? result.tags.recommended : (orig.tags || [])),
                     metrics: (result?.success && result.metrics) ? result.metrics : {}
                 });
             });
@@ -192,8 +188,8 @@ async function runAuditBackground(companyId, settings = {}) {
         }
 
         // ── Build pipeline (filter non-leads, classify the rest) ───────────────
-        const pipeline = { hot: [], warm: [], cold: [], leaked: [] };
-        const AVG_DEAL  = settings.avgDealSize || 2500;
+        const pipeline = { awareness: [], interest: [], intent: [], consideration: [], decision: [], closed: [], leaked: [] };
+        const AVG_DEAL = settings.avgDealSize || 2500;
         let filteredOut = 0;
 
         for (const contact of taggedContacts) {
@@ -206,23 +202,20 @@ async function runAuditBackground(companyId, settings = {}) {
             pipeline[stage].sort((a, b) => b.score - a.score);
         }
 
-        const hot    = pipeline.hot.length;
-        const warm   = pipeline.warm.length;
-        const cold   = pipeline.cold.length;
-        const leaked = pipeline.leaked.length;
-        const leads  = hot + warm + cold + leaked;
-
         const stats = {
-            totalAnalyzed:       total,
-            totalLeads:          leads,
+            totalAnalyzed: total,
             filteredOut,
-            leakedRevenue:       leaked * AVG_DEAL,
-            activeOpportunities: hot + warm,
-            hotLeads:            hot,
-            warmLeads:           warm,
-            coldLeads:           cold,
-            leakedLeads:         leaked,
-            conversionRate:      leads > 0 ? Math.round((hot / leads) * 100) : 0
+            leakedRevenue: pipeline.leaked.length * AVG_DEAL,
+            closedRevenue: pipeline.closed.length * AVG_DEAL,
+            stages: {
+                awareness: pipeline.awareness.length,
+                interest: pipeline.interest.length,
+                intent: pipeline.intent.length,
+                consideration: pipeline.consideration.length,
+                decision: pipeline.decision.length,
+                closed: pipeline.closed.length,
+                leaked: pipeline.leaked.length
+            }
         };
 
         await persistResult(companyId, { pipelineData: pipeline, stats }, settings, total, total);
@@ -235,14 +228,14 @@ async function runAuditBackground(companyId, settings = {}) {
         await query(
             `UPDATE audit_results SET status='error', error_message=$1, completed_at=NOW() WHERE company_id=$2`,
             [msg, companyId]
-        ).catch(() => {});
+        ).catch(() => { });
     }
 }
 
 function buildEmptyResult() {
     return {
-        pipelineData: { hot: [], warm: [], cold: [], leaked: [] },
-        stats: { totalAnalyzed: 0, totalLeads: 0, filteredOut: 0, leakedRevenue: 0, activeOpportunities: 0, hotLeads: 0, warmLeads: 0, coldLeads: 0, leakedLeads: 0, conversionRate: 0 }
+        pipelineData: { awareness: [], interest: [], intent: [], consideration: [], decision: [], closed: [], leaked: [] },
+        stats: { totalAnalyzed: 0, filteredOut: 0, leakedRevenue: 0, closedRevenue: 0, stages: { awareness: 0, interest: 0, intent: 0, consideration: 0, decision: 0, closed: 0, leaked: 0 } }
     };
 }
 
