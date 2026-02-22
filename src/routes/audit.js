@@ -2,6 +2,19 @@ const express = require('express');
 const router = express.Router();
 const { ContactTagger } = require('../../analytics-dashboard/contactTagger');
 const { query, getRow } = require('../../db');
+const fs = require('fs');
+const path = require('path');
+
+// ─── Audit file logger ────────────────────────────────────────────────────────
+const LOG_FILE = path.join(__dirname, '../../../logs/audit.log');
+function auditLog(companyId, level = 'INFO', message, extra = {}) {
+    const ts = new Date().toISOString();
+    const extraStr = Object.keys(extra).length ? ' ' + JSON.stringify(extra) : '';
+    const line = `[${ts}] [${level}] [company:${companyId}] ${message}${extraStr}\n`;
+    fs.appendFile(LOG_FILE, line, () => { }); // fire-and-forget
+    if (level === 'ERROR') console.error(line.trimEnd());
+    else console.log(line.trimEnd());
+}
 
 // ─── Auto-create results table ────────────────────────────────────────────────
 async function ensureAuditTable() {
@@ -119,6 +132,7 @@ async function runAuditBackground(companyId, settings = {}) {
     const setProgress = (progress, label) =>
         liveJobs.set(companyId, { status: 'running', progress, progressLabel: label });
 
+    auditLog(companyId, 'INFO', 'Audit started', { settings });
     try {
         setProgress(5, 'Fetching contacts…');
 
@@ -156,6 +170,7 @@ async function runAuditBackground(companyId, settings = {}) {
         }
 
         const total = contacts.length;
+        auditLog(companyId, 'INFO', `Processing ${total} contacts`);
         setProgress(10, `AI reading ${total} conversations…`);
         await query('UPDATE audit_results SET total_contacts=$1 WHERE company_id=$2', [total, companyId]);
 
@@ -183,6 +198,7 @@ async function runAuditBackground(companyId, settings = {}) {
 
             const processed = Math.min(i + BATCH, total);
             const pct = Math.round(10 + (processed / total) * 80);
+            auditLog(companyId, 'INFO', `Batch processed`, { processed, total, pct: `${pct}%` });
             setProgress(pct, `AI reading conversations… ${processed}/${total}`);
             await query('UPDATE audit_results SET processed_contacts=$1 WHERE company_id=$2', [processed, companyId]);
         }
@@ -219,11 +235,16 @@ async function runAuditBackground(companyId, settings = {}) {
         };
 
         await persistResult(companyId, { pipelineData: pipeline, stats }, settings, total, total);
+        auditLog(companyId, 'INFO', 'Audit complete', {
+            total,
+            filteredOut,
+            stages: stats.stages
+        });
         liveJobs.set(companyId, { status: 'done', progress: 100, progressLabel: 'Done!' });
 
     } catch (error) {
         const msg = error?.message || String(error) || 'Unknown error';
-        console.error('Audit background error:', msg, error?.stack);
+        auditLog(companyId, 'ERROR', 'Audit background error', { error: msg });
         liveJobs.set(companyId, { status: 'error', progress: 0, progressLabel: msg });
         await query(
             `UPDATE audit_results SET status='error', error_message=$1, completed_at=NOW() WHERE company_id=$2`,
