@@ -37,7 +37,7 @@ class MessageAnalyzer {
   /**
    * Run complete analysis on messages
    */
-  async analyze() {
+  async analyze(skipAI = false) {
     if (this.messages.length === 0) {
       return this.getDefaultMetrics();
     }
@@ -55,8 +55,8 @@ class MessageAnalyzer {
     // Check for follow-up sequences
     await this.checkFollowupStatus();
 
-    // Run AI analysis if enabled
-    if (ANALYSIS_CONFIG.enableAI) {
+    // Run AI analysis only if enabled and not explicitly skipped
+    if (ANALYSIS_CONFIG.enableAI && !skipAI) {
       await this.runAIAnalysis();
     }
 
@@ -682,11 +682,12 @@ class ContactTagger {
   /**
    * Tag a single contact
    */
-  async tagContact(contactId) {
+  async tagContact(contactId, localOptions = {}) {
+    const skipAI = localOptions.skipAI || false;
     try {
       if (this.options.verbose) {
         console.log(`\n${'='.repeat(60)}`);
-        console.log(`Tagging contact: ${contactId}`);
+        console.log(`Tagging contact: ${contactId}${skipAI ? ' [rule-based only]' : ''}`);
         console.log('='.repeat(60));
       }
 
@@ -742,7 +743,7 @@ class ContactTagger {
       }
 
       // Analyze messages with company context
-      const metrics = await this.analyzeMessages(contactId, messages);
+      const metrics = await this.analyzeMessages(contactId, messages, skipAI);
 
       if (this.options.verbose) {
         console.log('\nMetrics:', JSON.stringify(metrics, null, 2));
@@ -914,7 +915,7 @@ class ContactTagger {
   /**
    * Analyze messages with company context
    */
-  async analyzeMessages(contactId, messages) {
+  async analyzeMessages(contactId, messages, skipAI = false) {
     try {
       const analyzer = new MessageAnalyzer(
         messages,
@@ -922,7 +923,7 @@ class ContactTagger {
         this.companyId,
         this.options.companyContext || ''
       );
-      return await analyzer.analyze();
+      return await analyzer.analyze(skipAI);
     } catch (error) {
       console.error(`Error analyzing messages for ${contactId}:`, error);
       return this.getDefaultMetrics();
