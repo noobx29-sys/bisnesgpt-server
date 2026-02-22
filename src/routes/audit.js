@@ -286,6 +286,8 @@ router.get('/status/:companyId', async (req, res) => {
         const { companyId } = req.params;
         const live = liveJobs.get(companyId);
 
+        // Only return 'running' from memory — never return 'done' from memory
+        // because the memory object doesn't include pipelineData/stats
         if (live?.status === 'running') {
             return res.json({ status: 'running', progress: live.progress, progressLabel: live.progressLabel });
         }
@@ -294,12 +296,18 @@ router.get('/status/:companyId', async (req, res) => {
         if (!row) return res.json({ status: 'idle' });
 
         if (row.status === 'done') {
+            // Neon may return JSON columns as strings — parse defensively
+            const parseSafe = (v) => {
+                if (!v) return null;
+                if (typeof v === 'string') { try { return JSON.parse(v); } catch { return null; } }
+                return v;
+            };
             return res.json({
                 status: 'done',
                 progress: 100,
-                pipelineData: row.pipeline_data,
-                stats: row.stats,
-                settings: row.settings,
+                pipelineData: parseSafe(row.pipeline_data),
+                stats: parseSafe(row.stats),
+                settings: parseSafe(row.settings),
                 completedAt: row.completed_at,
                 totalContacts: row.total_contacts
             });
