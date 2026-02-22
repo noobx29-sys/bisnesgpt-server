@@ -78,7 +78,13 @@ function classifyToStage(tags, metrics) {
 }
 
 function sanitiseTags(arr) {
-    return (arr || []).filter(s => typeof s === 'string');
+    if (!arr) return [];
+    // Neon JSONB can return a string when stored with wrong encoding
+    if (typeof arr === 'string') {
+        try { arr = JSON.parse(arr); } catch { return []; }
+    }
+    if (!Array.isArray(arr)) return [];
+    return arr.filter(s => typeof s === 'string');
 }
 
 // ─── Background worker ────────────────────────────────────────────────────────
