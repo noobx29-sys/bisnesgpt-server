@@ -1,16 +1,87 @@
 const express = require('express');
 const router = express.Router();
-const admin = require('../../firebase');
+const { ContactTagger } = require('../../analytics-dashboard/contactTagger');
+
+// Map AI-derived tags to pipeline stages
+function classifyToStage(tags, metrics) {
+    const t = (tags || []).map(s => s.toLowerCase());
+    const m = metrics || {};
+
+    const has = (...args) => args.some(tag => t.includes(tag));
+
+    // Leaked / Dead
+    if (has('unresponsive', 'not-interested')) {
+        return {
+            stage: 'leaked',
+            score: 10,
+            reason: t.includes('unresponsive')
+                ? 'Never replied to any outreach'
+                : 'Expressed disinterest or rejection'
+        };
+    }
+
+    // Potential lead gone dormant
+    if (has('potential-lead') && has('dormant', 'cold', 'cold-lead')) {
+        return { stage: 'leaked', score: 22, reason: 'Potential lead gone dormant (30+ days)' };
+    }
+
+    // Not a sales lead
+    if (has('not-a-lead')) {
+        return { stage: 'cold', score: 15, reason: 'Not a sales lead (general/spam inquiry)' };
+    }
+
+    // Qualified lead - hottest bucket
+    if (has('qualified-lead')) {
+        if (has('hot-lead', 'active', 'follow-up-needed', 'needs-attention')) {
+            return { stage: 'hot', score: 92, reason: 'Qualified lead — high engagement, action needed' };
+        }
+        if (has('awaiting-response', 'followup-active', 'followup-responded')) {
+            return { stage: 'hot', score: 78, reason: 'Qualified lead awaiting your follow-up' };
+        }
+        return { stage: 'warm', score: 65, reason: 'Qualified lead — moderate engagement' };
+    }
+
+    // Potential lead
+    if (has('potential-lead')) {
+        if (has('warm-lead', 'followup-active', 'query', 'active')) {
+            return { stage: 'warm', score: 55, reason: 'Potential lead showing active interest' };
+        }
+        return { stage: 'cold', score: 35, reason: 'Potential lead — needs nurturing outreach' };
+    }
+
+    // Existing customer
+    if (has('customer')) {
+        return { stage: 'warm', score: 50, reason: 'Existing customer — upsell / support opportunity' };
+    }
+
+    // Fallback: use metrics
+    const days = m.daysSinceLastMessage ?? 999;
+    if (days > 30 || has('dormant', 'cold')) {
+        return { stage: 'leaked', score: 18, reason: `Inactive for ${Math.round(days)} days — at-risk of permanent loss` };
+    }
+    if (has('active', 'query')) {
+        return { stage: 'warm', score: 45, reason: 'Active conversation — qualification needed' };
+    }
+    return { stage: 'cold', score: 28, reason: 'Low engagement — no clear buying signal yet' };
+}
 
 router.post('/run', async (req, res) => {
     try {
-        const { companyId, contacts: reqContacts } = req.body;
+        const { companyId } = req.body;
 
         if (!companyId) {
             return res.status(400).json({ error: 'companyId is required' });
         }
 
-        const contacts = reqContacts || [];
+        const tagger = new ContactTagger(companyId, {
+            dryRun: false,
+            verbose: false,
+            aiEnabled: true,
+            daysFilter: null // analyze all contacts
+        });
+
+        // Fetch contacts directly from Neon (excludes groups)
+        const contacts = await tagger.getAllContacts();
 
         if (contacts.length === 0) {
             return res.json({
@@ -20,60 +91,71 @@ router.post('/run', async (req, res) => {
                     leakedRevenue: 0,
                     activeOpportunities: 0,
                     warmLeads: 0,
-                    hotLeads: 0
+                    hotLeads: 0,
+                    coldLeads: 0,
+                    leakedLeads: 0,
+                    conversionRate: 0
                 }
             });
         }
 
-        const newPipeline = { hot: [], warm: [], cold: [], leaked: [] };
-        let leakedCount = 0;
-        const defaultAvgDeal = 2500;
+        // Run AI analysis in parallel batches of 15 for speed
+        const BATCH = 15;
+        const taggedContacts = [];
 
-        // This simulates an AI audit doing the heavy lifting
-        // In a true AI model, we'd pass these to OpenAI/Anthropic and parse the classification
-
-        const updates = []; // Batch updates for tags
-
-        for (const c of contacts) {
-            const randomScore = Math.random();
-            let newStage = 'cold';
-            let aiTags = [...(c.tags || [])];
-
-            if ((c.unreadCount && c.unreadCount > 2) || randomScore < 0.2) {
-                newStage = 'leaked';
-                if (!aiTags.includes('leaked')) aiTags.push('leaked');
-                leakedCount++;
-                newPipeline.leaked.push({ ...c, tags: aiTags });
-            } else if (randomScore > 0.8) {
-                newStage = 'hot';
-                if (!aiTags.includes('hot')) aiTags.push('hot');
-                newPipeline.hot.push({ ...c, tags: aiTags });
-            } else if (randomScore > 0.5) {
-                newStage = 'warm';
-                if (!aiTags.includes('warm')) aiTags.push('warm');
-                newPipeline.warm.push({ ...c, tags: aiTags });
-            } else {
-                newPipeline.cold.push({ ...c, tags: aiTags });
-            }
-
-            // Prepare update if tags changed (optional: currently disabled to avoid spamming real DB)
-            // updates.push(contactsRef.doc(c.id).update({ tags: aiTags }).catch(e => console.error("Update failed", e)));
+        for (let i = 0; i < contacts.length; i += BATCH) {
+            const batch = contacts.slice(i, i + BATCH);
+            const results = await Promise.all(batch.map(c => tagger.tagContact(c.contact_id)));
+            results.forEach((result, idx) => {
+                const original = batch[idx];
+                taggedContacts.push({
+                    id: original.contact_id,
+                    name: original.name,
+                    phone: original.phone,
+                    email: original.email,
+                    tags: result.success ? (result.tags?.recommended || original.tags || []) : (original.tags || []),
+                    metrics: result.success ? (result.metrics || {}) : {}
+                });
+            });
         }
 
-        // await Promise.all(updates); // Disabled until actually desired
+        // Classify each contact into pipeline stage
+        const pipeline = { hot: [], warm: [], cold: [], leaked: [] };
+        const defaultAvgDeal = 2500;
+
+        for (const contact of taggedContacts) {
+            const { stage, score, reason } = classifyToStage(contact.tags, contact.metrics);
+            pipeline[stage].push({
+                ...contact,
+                stage,
+                score,
+                reason
+            });
+        }
+
+        // Sort each stage by score desc (highest priority first)
+        for (const stage of Object.keys(pipeline)) {
+            pipeline[stage].sort((a, b) => b.score - a.score);
+        }
+
+        const leakedCount = pipeline.leaked.length;
+        const hotCount = pipeline.hot.length;
+        const warmCount = pipeline.warm.length;
+        const coldCount = pipeline.cold.length;
+        const total = taggedContacts.length;
 
         const stats = {
-            totalAnalyzed: contacts.length,
+            totalAnalyzed: total,
             leakedRevenue: leakedCount * defaultAvgDeal,
-            activeOpportunities: newPipeline.hot.length + newPipeline.warm.length,
-            warmLeads: newPipeline.warm.length,
-            hotLeads: newPipeline.hot.length
+            activeOpportunities: hotCount + warmCount,
+            warmLeads: warmCount,
+            hotLeads: hotCount,
+            coldLeads: coldCount,
+            leakedLeads: leakedCount,
+            conversionRate: total > 0 ? Math.round((hotCount / total) * 100) : 0
         };
 
-        res.json({
-            pipelineData: newPipeline,
-            stats
-        });
+        res.json({ pipelineData: pipeline, stats });
 
     } catch (error) {
         console.error('Error running AI audit:', error);
