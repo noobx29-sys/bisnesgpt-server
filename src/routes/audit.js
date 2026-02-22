@@ -77,7 +77,7 @@ router.post('/run', async (req, res) => {
             dryRun: false,
             verbose: false,
             aiEnabled: true,
-            daysFilter: null // analyze all contacts
+            daysFilter: null
         });
 
         // Fetch contacts directly from Neon (excludes groups)
@@ -99,22 +99,24 @@ router.post('/run', async (req, res) => {
             });
         }
 
-        // Run AI analysis in parallel batches of 15 for speed
+        // Run AI analysis in parallel batches of 15 for speed.
+        // Promise.allSettled ensures a single contact failure never aborts the whole batch.
         const BATCH = 15;
         const taggedContacts = [];
 
         for (let i = 0; i < contacts.length; i += BATCH) {
             const batch = contacts.slice(i, i + BATCH);
-            const results = await Promise.all(batch.map(c => tagger.tagContact(c.contact_id)));
-            results.forEach((result, idx) => {
+            const settled = await Promise.allSettled(batch.map(c => tagger.tagContact(c.contact_id)));
+            settled.forEach((outcome, idx) => {
                 const original = batch[idx];
+                const result = outcome.status === 'fulfilled' ? outcome.value : null;
                 taggedContacts.push({
                     id: original.contact_id,
                     name: original.name,
                     phone: original.phone,
                     email: original.email,
-                    tags: result.success ? (result.tags?.recommended || original.tags || []) : (original.tags || []),
-                    metrics: result.success ? (result.metrics || {}) : {}
+                    tags: (result?.success && result.tags?.recommended) ? result.tags.recommended : (original.tags || []),
+                    metrics: (result?.success && result.metrics) ? result.metrics : {}
                 });
             });
         }
@@ -158,8 +160,10 @@ router.post('/run', async (req, res) => {
         res.json({ pipelineData: pipeline, stats });
 
     } catch (error) {
-        console.error('Error running AI audit:', error);
-        res.status(500).json({ error: 'Internal server error while running audit' });
+        const msg = error?.message || error?.toString() || JSON.stringify(error) || 'Unknown error';
+        console.error('Error running AI audit:', msg);
+        console.error('Stack:', error?.stack);
+        res.status(500).json({ error: msg });
     }
 });
 
