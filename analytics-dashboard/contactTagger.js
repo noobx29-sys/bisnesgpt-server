@@ -361,7 +361,8 @@ class MessageAnalyzer {
   }
 
   /**
-   * Run AI-based analysis using GPT-4o-mini
+   * Run AI-based analysis using a Multi-Agent System (MAS) Approach
+   * Specialized agents analyze the same context concurrently
    */
   async runAIAnalysis() {
     try {
@@ -371,38 +372,53 @@ class MessageAnalyzer {
         .slice(0, ANALYSIS_CONFIG.aiMessageLimit)
         .reverse(); // Oldest to newest for AI
 
-      // Skip AI analysis if no valid messages
+      // Skip analysis if no valid messages
       if (recentMessages.length === 0) {
-        console.log(`Skipping AI analysis for ${this.contactId} - no valid messages`);
+        console.log(`[Orchestrator] Skipping MAS analysis for ${this.contactId} - no valid messages`);
         return;
       }
 
-      // Sentiment Analysis
+      // ━━━ Multi-Agent System (MAS) Orchestration ━━━
+      // Deploying specialized AI agents concurrently to analyze conversation
+      const activeAgents = [];
+
+      // Agent 1: Sentiment Intelligence
       if (ANALYSIS_CONFIG.enableSentimentAnalysis) {
-        this.metrics.aiSentiment = await this.analyzeWithAI('sentiment', recentMessages);
+        activeAgents.push((async () => {
+          this.metrics.aiSentiment = await this.analyzeWithAI('sentiment', recentMessages);
+          console.log(`[Sentiment Agent] evaluated ${this.contactId} -> ${this.metrics.aiSentiment}`);
+        })());
       }
 
-      // Intent Analysis
+      // Agent 2: Buyer Intent Identifier
       if (ANALYSIS_CONFIG.enableIntentAnalysis) {
-        this.metrics.aiIntent = await this.analyzeWithAI('intent', recentMessages);
+        activeAgents.push((async () => {
+          this.metrics.aiIntent = await this.analyzeWithAI('intent', recentMessages);
+          console.log(`[Intent Agent] evaluated ${this.contactId} -> ${this.metrics.aiIntent}`);
+        })());
       }
 
-      // Stage Analysis
+      // Agent 3: Pipeline Stage Assessor
       if (ANALYSIS_CONFIG.enableStageAnalysis) {
-        this.metrics.aiStage = await this.analyzeWithAI(
-          'stage',
-          recentMessages,
-          this.metrics.daysSinceLastMessage
-        );
+        activeAgents.push((async () => {
+          this.metrics.aiStage = await this.analyzeWithAI('stage', recentMessages, this.metrics.daysSinceLastMessage);
+          console.log(`[Stage Agent] evaluated ${this.contactId} -> ${this.metrics.aiStage}`);
+        })());
       }
 
-      // Summary (optional, more expensive)
+      // Agent 4: Conversation Summarizer (optional, more expensive)
       if (ANALYSIS_CONFIG.enableSummary) {
-        this.metrics.aiSummary = await this.analyzeWithAI('summary', recentMessages);
+        activeAgents.push((async () => {
+          this.metrics.aiSummary = await this.analyzeWithAI('summary', recentMessages);
+          console.log(`[Summary Agent] generated report for ${this.contactId}`);
+        })());
       }
+
+      // Execute all analytical agents simultaneously
+      await Promise.all(activeAgents);
 
     } catch (error) {
-      console.error(`AI Analysis Error for contact ${this.contactId}:`, error.message);
+      console.error(`[Orchestrator] MAS Analysis Error for contact ${this.contactId}:`, error.message);
       this.metrics.aiError = error.message;
     }
   }
@@ -419,7 +435,7 @@ class MessageAnalyzer {
     try {
       // Filter out any messages with null/empty content (defensive check)
       const validMessages = messages.filter(m => m.content && m.content.trim() !== '');
-      
+
       // If no valid messages, return a default value based on analysis type
       if (validMessages.length === 0) {
         console.log(`No valid messages for ${analysisType} analysis on ${this.contactId}`);
@@ -537,7 +553,7 @@ class TagClassifier {
     // Track if we've already assigned a qualification tag
     let hasQualificationTag = false;
     const qualificationTags = ['qualified-lead', 'potential-lead', 'customer', 'not-a-lead', 'unresponsive'];
-    
+
     // Store all matching tags with their priority for sorting
     const matchingTags = [];
 
@@ -573,12 +589,12 @@ class TagClassifier {
     this.tagsToAdd = this.recommendedTags
       .filter(tag => !this.currentTags.includes(tag))
       .slice(0, 3); // Ensure we don't add more than 3 new tags
-      
+
     this.tagsToRemove = []; // Never remove tags
 
     // Merge current tags with new recommendations, but limit to max 3 most important tags
     const finalTags = [...new Set([...this.currentTags, ...this.recommendedTags])];
-    
+
     // If we have more than 3 tags, keep only the most important ones
     const prioritizedTags = sortedTags
       .filter(([tagName]) => finalTags.includes(tagName))
@@ -684,7 +700,7 @@ class ContactTagger {
       // Groups have phone ending with @g.us, individuals end with @c.us
       // Also detect group by phone containing '120363' (WhatsApp group format)
       const isGroup = (contact.phone && contact.phone.includes('@g.us')) ||
-                      (contact.phone && contact.phone.includes('120363'));
+        (contact.phone && contact.phone.includes('120363'));
 
       if (isGroup) {
         if (this.options.verbose) {
@@ -727,7 +743,7 @@ class ContactTagger {
 
       // Analyze messages with company context
       const metrics = await this.analyzeMessages(contactId, messages);
-      
+
       if (this.options.verbose) {
         console.log('\nMetrics:', JSON.stringify(metrics, null, 2));
       }
@@ -901,9 +917,9 @@ class ContactTagger {
   async analyzeMessages(contactId, messages) {
     try {
       const analyzer = new MessageAnalyzer(
-        messages, 
-        contactId, 
-        this.companyId, 
+        messages,
+        contactId,
+        this.companyId,
         this.options.companyContext || ''
       );
       return await analyzer.analyze();
@@ -949,18 +965,18 @@ class ContactTagger {
         [contactId, this.companyId]
       );
       const currentTags = currentTagsResult.rows[0]?.tags || [];
-      
+
       // Merge existing tags with new ones to preserve any manual tags
       const existingTagsSet = new Set(currentTags);
       const tagsToAdd = tagResult.toAdd || [];
-      
+
       // Add new tags
       tagsToAdd.forEach(tag => existingTagsSet.add(tag));
-      
+
       // Remove tags that are explicitly marked for removal
       const tagsToRemove = tagResult.toRemove || [];
       tagsToRemove.forEach(tag => existingTagsSet.delete(tag));
-      
+
       // Convert back to array and stringify for storage
       const mergedTags = Array.from(existingTagsSet);
       const newTags = JSON.stringify(mergedTags);
@@ -983,21 +999,21 @@ class ContactTagger {
           last_response_stage: this.detectResponseStage(metrics),
           response_drop_point: this.detectDropPoint(metrics),
           consecutive_no_reply: metrics.consecutiveOutboundMessages,
-          
+
           // Engagement metrics
           avg_response_time_seconds: metrics.averageResponseTime,
           message_exchange_rate: metrics.messageExchangeRate,
           days_since_last_message: metrics.daysSinceLastMessage,
-          
+
           // Follow-up tracking
           followup_template_id: metrics.followupTemplateId || null,
           followup_progress: metrics.followupProgress || null,
           followup_responded: metrics.hasFollowupResponse || false,
-          
+
           // Reactivation eligibility
           reactivation_eligible: this.isReactivationEligible(metrics),
           reactivation_priority: this.calculateReactivationPriority(metrics),
-          
+
           // Last analysis timestamp
           last_analyzed_at: new Date().toISOString()
         };
@@ -1008,7 +1024,7 @@ class ContactTagger {
         'SELECT custom_fields FROM contacts WHERE contact_id = $1 AND company_id = $2',
         [contactId, this.companyId]
       );
-      
+
       const existingCustomFields = existingResult.rows[0]?.custom_fields || {};
       const updatedCustomFields = {
         ...existingCustomFields,
@@ -1144,7 +1160,7 @@ class ContactTagger {
     // 3. Between 7-90 days since last message
     // 4. No active follow-up running
     // 5. Not marked as not-interested or spam
-    
+
     return (
       metrics.inboundMessages >= 1 &&
       metrics.daysSinceLastMessage >= 7 &&
@@ -1159,28 +1175,28 @@ class ContactTagger {
    */
   calculateReactivationPriority(metrics) {
     if (!this.isReactivationEligible(metrics)) return 0;
-    
+
     let priority = 5; // Base priority
-    
+
     // Higher priority for previously engaged leads
     if (metrics.messageExchangeRate > 0.3) priority += 2;
     else if (metrics.messageExchangeRate > 0.2) priority += 1;
-    
+
     // Higher priority for recent dormancy (7-30 days)
     if (metrics.daysSinceLastMessage >= 7 && metrics.daysSinceLastMessage <= 30) {
       priority += 2;
     } else if (metrics.daysSinceLastMessage > 60) {
       priority -= 1; // Lower priority for very old leads
     }
-    
+
     // Higher priority if they showed interest
     if (metrics.hasInterestKeywords) priority += 1;
-    
+
     // Higher priority for quick responders
     if (metrics.averageResponseTime && metrics.averageResponseTime < 3600) {
       priority += 1;
     }
-    
+
     return Math.min(10, Math.max(1, priority));
   }
 
