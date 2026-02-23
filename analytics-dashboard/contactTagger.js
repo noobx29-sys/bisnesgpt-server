@@ -802,11 +802,12 @@ class ContactTagger {
       };
 
     } catch (error) {
-      console.error(`Error tagging contact ${contactId}:`, error);
+      const errMsg = error?.message || error?.detail || (typeof error === 'string' ? error : JSON.stringify(error)) || 'Unknown error';
+      console.error(`Error tagging contact ${contactId}: ${errMsg}`);
       return {
         contactId,
         success: false,
-        error: error.message
+        error: errMsg
       };
     }
   }

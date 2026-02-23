@@ -25157,8 +25157,24 @@ app.get("/api/bot-status/:companyId", async (req, res) => {
       [companyId]
     );
 
-    // Then get the bot status from botMap (wwebjs clients)
+    // Then get the bot status from botMap (wwebjs clients — only populated in wwebjs process)
     const botData = botMap.get(companyId);
+
+    // Also read phone_status from DB (written by the wwebjs process, includes QR codes in metadata)
+    // This is the cross-process bridge so the API process can serve wwebjs QR codes
+    const dbPhoneStatusResult = await sqlDb.query(
+      'SELECT phone_index, status, phone_number, metadata FROM phone_status WHERE company_id = $1 ORDER BY phone_index',
+      [companyId]
+    );
+    const dbPhoneStatusMap = {};
+    for (const row of dbPhoneStatusResult.rows) {
+      const idx = parseInt(row.phone_index) || 0;
+      let metadata = {};
+      try {
+        metadata = row.metadata ? (typeof row.metadata === 'string' ? JSON.parse(row.metadata) : row.metadata) : {};
+      } catch (e) { /* ignore */ }
+      dbPhoneStatusMap[idx] = { status: row.status, phoneNumber: row.phone_number, qrCode: metadata.qrCode || null };
+    }
 
     // Merge Meta Direct statuses with wwebjs statuses
     const phoneCount = companyData.phone_count || 1;
@@ -25178,7 +25194,7 @@ app.get("/api/bot-status/:companyId", async (req, res) => {
           connectionType: metaConfig.connection_type,
         });
       } else if (botData && botData[i]) {
-        // Use wwebjs status
+        // Use in-memory wwebjs status (same process)
         let phoneInfo = null;
         if (botData[i]?.client) {
           try {
@@ -25196,8 +25212,18 @@ app.get("/api/bot-status/:companyId", async (req, res) => {
           phoneInfo,
           connectionType: 'wwebjs',
         });
+      } else if (dbPhoneStatusMap[i]) {
+        // Cross-process: wwebjs process wrote status/QR to DB, read it from here
+        const dbEntry = dbPhoneStatusMap[i];
+        statusArray.push({
+          phoneIndex: i,
+          status: dbEntry.status || 'initializing',
+          qrCode: dbEntry.qrCode || null,
+          phoneInfo: dbEntry.phoneNumber || null,
+          connectionType: 'wwebjs',
+        });
       } else {
-        // No connection found
+        // No connection found anywhere
         statusArray.push({
           phoneIndex: i,
           status: 'initializing',

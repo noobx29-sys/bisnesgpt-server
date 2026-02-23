@@ -216,9 +216,10 @@ async function runAuditBackground(companyId, settings = {}) {
             auditLog(companyId, 'WARN', 'Could not fetch instruction template', { error: e.message });
         }
 
-        // aiEnabled: false — we skip per-contact AI, do batch AI separately below
+        // dryRun: true — audit is read-only, never writes tags back to DB
+        // This prevents pool exhaustion from 1100+ concurrent updateContactTags calls
         const tagger = new ContactTagger(companyId, {
-            dryRun: false,
+            dryRun: true,
             verbose: false,
             aiEnabled: false,
             daysFilter: null,
@@ -460,7 +461,20 @@ router.get('/status/:companyId', async (req, res) => {
             return res.json({ status: 'error', message: row.error_message });
         }
 
-        return res.json({ status: 'idle', message: 'Previous audit was interrupted. Please re-run.' });
+        // DB row is still 'running' (e.g. audit in progress, or server restarted mid-run)
+        // Compute real progress from DB columns so refreshing the page shows current state
+        if (row.status === 'running') {
+            const total = row.total_contacts || 0;
+            const processed = row.processed_contacts || 0;
+            const pct = total > 0 ? Math.round(10 + (processed / total) * 80) : 5;
+            const label = total > 0
+                ? `Processing contacts… ${processed}/${total}`
+                : 'Starting up…';
+            return res.json({ status: 'running', progress: pct, progressLabel: label });
+        }
+
+        return res.json({ status: 'idle' });
+
 
     } catch (error) {
         const msg = error?.message || String(error) || 'Unknown error';
