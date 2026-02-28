@@ -90,6 +90,10 @@ const metaWebhookRoutes = require("./src/routes/webhooks/meta");
 const templatesRouter = require("./src/routes/templates");
 // AI Pipeline Audit Route
 const auditRouter = require("./src/routes/audit");
+// Firaz AI Sales Employee Route
+const firazAiRouter = require("./src/routes/firaz-ai");
+// Firaz AI MCP Integration Routes (Sheets, Calendar, WhatsApp Cloud, Scheduler, Alerts)
+const firazMcpRouter = require("./src/routes/firaz-mcp");
 
 // Initialize logger
 const logger = new ServerLogger();
@@ -1060,6 +1064,7 @@ const corsOptions = {
       /^https?:\/\/([a-zA-Z0-9-]+\.)*xyzaibot\.com(?:$|\/)/i,
       /^https?:\/\/([a-zA-Z0-9-]+\.)*vercel\.app(?:$|\/)/i,
       /^https?:\/\/([a-zA-Z0-9-]+\.)*adleticagency\.com(?:$|\/)/i,
+      /^chrome-extension:\/\//i, // Chrome extensions (Firaz AI)
     ];
 
     // Check if the origin matches any allowed pattern
@@ -3076,6 +3081,8 @@ app.use("/api/whatsapp", whatsappApiRoutes);
 app.use("/api/templates", templatesRouter);
 app.use("/webhook", metaWebhookRoutes);
 app.use("/api/audit", auditRouter);
+app.use("/api/firaz", firazAiRouter);
+app.use("/api/firaz/mcp", firazMcpRouter);
 
 // Read specific log file
 app.get("/api/logs/read/:filename", async (req, res) => {
