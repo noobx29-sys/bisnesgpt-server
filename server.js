@@ -27963,6 +27963,27 @@ app.post("/api/v2/messages/image/:companyId/:chatId", async (req, res) => {
     let client;
     const botData = botMap.get(companyId);
     if (!botData) {
+      // If botMap is empty (e.g. API process without wwebjs), proxy to wwebjs process
+      const wwebjsPort = process.env.WWEBJS_PORT || 3001;
+      const currentPort = process.env.PORT || 3000;
+      if (String(currentPort) !== String(wwebjsPort)) {
+        try {
+          console.log(`[IMAGE] Proxying to wwebjs process on port ${wwebjsPort} for company ${companyId}`);
+          const proxyRes = await fetch(`http://localhost:${wwebjsPort}/api/v2/messages/image/${companyId}/${chatId}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ imageUrl, caption, phoneIndex: requestedPhoneIndex, userName: requestedUserName }),
+          });
+          const proxyText = await proxyRes.text();
+          try {
+            return res.status(proxyRes.status).json(JSON.parse(proxyText));
+          } catch {
+            return res.status(proxyRes.status).send(proxyText);
+          }
+        } catch (proxyErr) {
+          console.error('[IMAGE] Proxy to wwebjs failed:', proxyErr.message);
+        }
+      }
       return res.status(404).send("WhatsApp client not found for this company");
     }
     client = botData[phoneIndex]?.client;
