@@ -37372,4 +37372,28 @@ app.post("/api/booking-slots/public/book", async (req, res) => {
       error: "Failed to create booking",
     });
   }
-}); module.exports = { botMap, app, server, sqlDb, handleNewMessagesTemplateWweb, safeRelease };
+});
+
+// ============================================
+// SENIRA STUDIO — Payment Reminder Cron
+// Runs every 5 minutes, calls senira Next.js app
+// ============================================
+if (process.env.SENIRA_STUDIO_URL && process.env.SENIRA_CRON_SECRET) {
+  cron.schedule("*/5 * * * *", async () => {
+    try {
+      const res = await fetch(`${process.env.SENIRA_STUDIO_URL}/api/cron/payment-reminder`, {
+        headers: { Authorization: `Bearer ${process.env.SENIRA_CRON_SECRET}` },
+      });
+      const data = await res.json();
+      if (data.cancelled?.length || data.reminded?.length) {
+        console.log(`[Senira Cron] cancelled=${data.cancelled?.length ?? 0} reminded=${data.reminded?.length ?? 0}`);
+      }
+    } catch (err) {
+      console.error("[Senira Cron] Error:", err.message);
+    }
+  }, { timezone: "Asia/Kuala_Lumpur" });
+  console.log("[Senira Cron] Payment reminder cron started (every 5 min)");
+}
+// ============================================
+
+module.exports = { botMap, app, server, sqlDb, handleNewMessagesTemplateWweb, safeRelease };
